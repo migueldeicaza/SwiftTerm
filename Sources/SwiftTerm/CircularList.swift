@@ -12,7 +12,7 @@ enum ArgumentError : Error {
     case invalidArgument(String)
 }
 
-class CircularList<T> {
+final class CircularList<T> {
     private var array: [T?]
     private var startIndex: Int
     var count: Int {
@@ -218,7 +218,7 @@ class CircularList<T> {
     }
 }
 
-internal class CircularBufferLineList {
+internal final class CircularBufferLineList {
 #if DEBUG
     private var array: [BufferLine?]
 #else
@@ -348,10 +348,12 @@ internal class CircularBufferLineList {
     func recycle(clearCell: PackedCell, isWrapped: Bool,
                  bidiState: BidiPresentationState)
     {
+        assert(startIndex < array.count)
         precondition(count == maxLength, "can only recycle when the buffer is full")
-        let index = getCyclicIndex(count)
-        startIndex += 1
-        startIndex = startIndex % maxLength
+        // A full ring makes getCyclicIndex(count) equal to startIndex.
+        let index = startIndex
+        let next = startIndex &+ 1
+        startIndex = next == maxLength ? 0 : next
         // The array owns the line until this function finishes using it.
         unowned(unsafe) let line = array[index]!
         // The line object is being destroyed for reuse. Clear its cells and
@@ -401,6 +403,9 @@ internal class CircularBufferLineList {
         if Int(count) + ic > array.count {
             let countToTrim = count + items.count - array.count
             startIndex = startIndex + countToTrim
+            if !array.isEmpty {
+                startIndex %= array.count
+            }
             count = array.count
         } else {
             count = count + items.count
@@ -411,6 +416,9 @@ internal class CircularBufferLineList {
     {
         let c = count > self.count ? self.count : count
         startIndex = startIndex + c
+        if !array.isEmpty {
+            startIndex %= array.count
+        }
         self.count -= count
     }
 
@@ -443,6 +451,9 @@ internal class CircularBufferLineList {
                 while self._count > maxLength {
                     self._count -= 1
                     startIndex += 1
+                    if !array.isEmpty {
+                        startIndex %= array.count
+                    }
                     // trimmed callback invoke
                 }
             }
@@ -490,13 +501,28 @@ internal class CircularBufferLineList {
                     // reference to the preceding slot without ARC work.
                     var destination = (firstPhysicalIndex &+ top) % capacity
                     if top < bottom {
-                        for _ in top..<bottom {
-                            var source = destination + 1
-                            if source == capacity {
-                                source = 0
+                        let moveCount = bottom - top
+                        if destination + moveCount < capacity {
+                            // The existing raw-pointer binding transfers the
+                            // array's strong references without ARC operations.
+                            // This range is contiguous and overlaps by one slot,
+                            // so memmove preserves that ownership transfer.
+                            let byteCount = moveCount *
+                                MemoryLayout<UnsafeMutableRawPointer?>.stride
+                            memmove(slots.baseAddress!.advanced(by: destination),
+                                    slots.baseAddress!.advanced(by: destination + 1),
+                                    byteCount)
+                            destination += moveCount
+                        } else {
+                            // Keep the element loop when the circular range wraps.
+                            for _ in top..<bottom {
+                                var source = destination + 1
+                                if source == capacity {
+                                    source = 0
+                                }
+                                slots[destination] = slots[source]
+                                destination = source
                             }
-                            slots[destination] = slots[source]
-                            destination = source
                         }
                     }
                     // The former last line is already in the preceding slot. Do
@@ -512,6 +538,36 @@ internal class CircularBufferLineList {
             owner.lineWillRecycle(hadImages: hadImages)
         }
         return true
+    }
+
+    /// Empties the ring in place and gives it `newMaxLength` slots.
+    ///
+    /// `Buffer.clear` uses this instead of replacing its list object. That
+    /// keeps `Buffer._lines` a `let`, which lets the optimizer borrow the list
+    /// at +0 on every ring access instead of retaining it around each load in
+    /// case the property is reassigned underneath the access.
+    ///
+    /// Like `push`, `recycle`, and `shiftUpAndRecycle`, a live list keeps the
+    /// owner's image accounting correct itself: every dropped line that
+    /// carried images is reported before it goes.
+    func reset(maxLength newMaxLength: Int) {
+        if isLive {
+            for line in array where line?.images != nil {
+                owner.lineWillRecycle(hadImages: true)
+            }
+        }
+        _count = 0
+        startIndex = 0
+        // Changing the length is the one allocation; the didSet builds the
+        // new array and copies the old references into it. Clearing the
+        // slots afterwards releases them without a second allocation, and an
+        // unchanged length allocates nothing.
+        if maxLength != newMaxLength {
+            maxLength = newMaxLength
+        }
+        for index in array.indices {
+            array[index] = nil
+        }
     }
 
     var isFull: Bool {

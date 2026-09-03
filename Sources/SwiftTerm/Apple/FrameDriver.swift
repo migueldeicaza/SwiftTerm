@@ -252,12 +252,16 @@ final class FrameDriver {
     /// The view installs a weakly captured frame callback here.
     var onTick: (() -> Void)?
 
+    /// Publishes the same effective visibility that controls frame suspension.
+    var onVisibilityChanged: ((Bool) -> Void)?
+
     private var dirty = false
     private var running = false
     private var invalidated = false
     private var lastResumeTickUptimeNs: UInt64 = 0
     private var visibilitySuspended = false
     private var visibilitySuspensionEnabled = true
+    private var effectivelyVisible = true
     private var lastReportedVisibility = true
     private var windowAttached = true
     private var visibilityObservers: [NSObjectProtocol] = []
@@ -378,6 +382,11 @@ final class FrameDriver {
         removeWindowObservers()
         destroyMacBackend()
         boundWindow = view?.window
+        windowAttached = boundWindow != nil
+        if windowAttached {
+            lastReportedVisibility = isVisibleOnMain()
+        }
+        applyVisibilityPolicyOnMain()
 
         guard let view, let window = view.window, !invalidated else { return }
         let forceCV = ProcessInfo.processInfo.environment["SWIFTTERM_FORCE_CVDISPLAYLINK"] == "1"
@@ -451,8 +460,13 @@ final class FrameDriver {
 #endif
 
     private func applyVisibilityPolicyOnMain() {
-        let shouldSuspend = visibilitySuspensionEnabled &&
-            (!lastReportedVisibility || !windowAttached)
+        let visible = lastReportedVisibility && windowAttached
+        let visibilityChanged = effectivelyVisible != visible
+        effectivelyVisible = visible
+        if visibilityChanged {
+            onVisibilityChanged?(visible)
+        }
+        let shouldSuspend = visibilitySuspensionEnabled && !visible
         let changed = visibilitySuspended != shouldSuspend
         let wasRunning = running
         visibilitySuspended = shouldSuspend

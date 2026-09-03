@@ -205,6 +205,25 @@ struct PackedCell: Hashable, Sendable {
     }
 
     @inline(__always)
+    func replacingWidthState(_ widthState: WidthState) -> PackedCell {
+        PackedCell(rawValue: (rawValue & ~Self.widthStateMask) |
+                   (UInt64(widthState.rawValue) << Self.widthStateShift))
+    }
+
+    /// True when the cell is neither half of a wide pair. This is a single
+    /// mask test, so it stays cheap enough for the per-write seam check.
+    @inline(__always)
+    var isNarrowWidth: Bool {
+        rawValue & Self.widthStateMask == 0
+    }
+
+    @inline(__always)
+    func demotedToNarrowBlank() -> PackedCell {
+        let clearedMask = Self.contentTagMask | Self.contentMask | Self.widthStateMask
+        return PackedCell(rawValue: rawValue & ~clearedMask)
+    }
+
+    @inline(__always)
     func replacingSemanticContentCode(_ code: UInt8) -> PackedCell {
         precondition(code < 7, "Invalid semantic-content code")
         return PackedCell(rawValue: (rawValue & ~Self.semanticContentMask) |
@@ -503,15 +522,27 @@ final class CellArena {
               payloadCode: UInt16 = 0, semanticContentCode: UInt8 = 0,
               isProtected: Bool = false) -> PackedCell?
     {
-        let scalars = character.unicodeScalars.map(\.value)
+        pack(styleID: styleID, scalars: character.unicodeScalars.map(\.value),
+             widthState: widthState, payloadCode: payloadCode,
+             semanticContentCode: semanticContentCode, isProtected: isProtected)
+    }
+
+    /// Creates a cell for a terminal grapheme. Unicode GB9c can define one
+    /// cluster even when the host Swift runtime segments the text differently.
+    func pack(styleID: UInt16, scalars: [UInt32],
+              widthState: PackedCell.WidthState,
+              payloadCode: UInt16 = 0, semanticContentCode: UInt8 = 0,
+              isProtected: Bool = false) -> PackedCell?
+    {
+        guard semanticContentCode < 7, !scalars.isEmpty,
+              scalars.allSatisfy(PackedCell.isValidUnicodeScalar) else {
+            return nil
+        }
         if scalars.count == 1, let scalar = scalars.first {
             return pack(styleID: styleID, scalar: scalar, widthState: widthState,
                         payloadCode: payloadCode,
                         semanticContentCode: semanticContentCode,
                         isProtected: isProtected)
-        }
-        guard semanticContentCode < 7 else {
-            return nil
         }
         guard let identifier = intern(grapheme: scalars) else {
             let scalar = scalars.first(where: PackedCell.isValidUnicodeScalar) ?? 0xfffd
@@ -628,6 +659,64 @@ final class CellArena {
         }
     }
 
+    /// Returns the last scalar stored in `cell`, without materializing the
+    /// scalar array that `scalarValues(for:)` allocates for every cell.
+    @inline(__always)
+    func lastScalarValue(for cell: PackedCell) -> UInt32? {
+        switch cell.contentTag {
+        case .codepoint:
+            return cell.content
+        case .grapheme:
+            return grapheme(for: cell.content)?.last
+        case .backgroundPalette, .backgroundRGB:
+            return nil
+        }
+    }
+
+    /// Returns the scalars of `cell` with `scalar` appended, in the array
+    /// shape that `replacingContent(of:with:widthState:)` stores.
+    func scalarValues(for cell: PackedCell, appending scalar: UInt32) -> [UInt32] {
+        switch cell.contentTag {
+        case .codepoint:
+            return [cell.content, scalar]
+        case .grapheme:
+            guard var values = grapheme(for: cell.content) else { return [scalar] }
+            values.append(scalar)
+            return values
+        case .backgroundPalette, .backgroundRGB:
+            return [scalar]
+        }
+    }
+
+    func scalarValues(for cell: PackedCell) -> [UInt32] {
+        switch cell.contentTag {
+        case .codepoint:
+            return [cell.content]
+        case .grapheme:
+            return grapheme(for: cell.content) ?? []
+        case .backgroundPalette, .backgroundRGB:
+            return []
+        }
+    }
+
+    func text(for cell: PackedCell) -> String {
+        switch cell.contentTag {
+        case .codepoint:
+            guard let scalar = Unicode.Scalar(cell.content) else { return " " }
+            return String(scalar)
+        case .grapheme:
+            guard let values = grapheme(for: cell.content) else { return " " }
+            var text = ""
+            for value in values {
+                guard let scalar = Unicode.Scalar(value) else { return " " }
+                text.unicodeScalars.append(scalar)
+            }
+            return text.isEmpty ? " " : text
+        case .backgroundPalette, .backgroundRGB:
+            return "\0"
+        }
+    }
+
     func pack(attribute: Attribute, scalar: UInt32, widthState: PackedCell.WidthState,
               payloadCode: UInt16 = 0, semanticContentCode: UInt8 = 0,
               isProtected: Bool = false) -> PackedCell?
@@ -701,6 +790,23 @@ final class CellArena {
                         isProtected: cell.isProtected)
         case .backgroundPalette, .backgroundRGB:
             return pack(attribute: attribute(for: cell), character: character,
+                        widthState: widthState, payloadCode: cell.payloadCode,
+                        semanticContentCode: cell.semanticContentCode,
+                        isProtected: cell.isProtected)
+        }
+    }
+    func replacingContent(of cell: PackedCell, with scalars: [UInt32],
+                          widthState: PackedCell.WidthState) -> PackedCell?
+    {
+        switch cell.contentTag {
+        case .codepoint, .grapheme:
+            return pack(styleID: cell.styleID, scalars: scalars,
+                        widthState: widthState, payloadCode: cell.payloadCode,
+                        semanticContentCode: cell.semanticContentCode,
+                        isProtected: cell.isProtected)
+        case .backgroundPalette, .backgroundRGB:
+            let style = intern(attribute: attribute(for: cell)) ?? 0
+            return pack(styleID: style, scalars: scalars,
                         widthState: widthState, payloadCode: cell.payloadCode,
                         semanticContentCode: cell.semanticContentCode,
                         isProtected: cell.isProtected)
@@ -800,6 +906,17 @@ struct PackedCellView {
     @inline(__always)
     func getCharacter() -> Character { arena.character(for: packed) }
 
+    func getText() -> String { arena.text(for: packed) }
+
+    func getScalarValues() -> [UInt32] { arena.scalarValues(for: packed) }
+
+    @inline(__always)
+    func lastScalarValue() -> UInt32? { arena.lastScalarValue(for: packed) }
+
+    func getScalarValues(appending scalar: UInt32) -> [UInt32] {
+        arena.scalarValues(for: packed, appending: scalar)
+    }
+
     @inline(__always)
     func getPayload() -> (any Sendable)? { TinyAtom.stored(code: packed.payloadCode).target }
 
@@ -895,6 +1012,11 @@ final class CellStoragePage {
     }
 
     @inline(__always)
+    func text(at index: Int) -> String {
+        arena.text(for: cells[index])
+    }
+
+    @inline(__always)
     func isSimpleRune(at index: Int) -> Bool {
         cells[index].contentTag != .grapheme
     }
@@ -915,6 +1037,27 @@ final class CellStoragePage {
     @inline(__always)
     func setRawCell(_ value: PackedCell, at index: Int) {
         cells[index] = value
+    }
+
+    /// Writes one validated ASCII run with one destination range check.
+    ///
+    /// Keep the loop next to the storage pointer. Going through `setRawCell`
+    /// for each element makes Swift repeat the buffer subscript checks.
+    @inline(__always)
+    func setPackedAsciiRun(_ source: Span<UInt8>, template: UInt64,
+                           at destinationStart: Int)
+    {
+        precondition(destinationStart >= 0)
+        precondition(source.count <= cells.count - destinationStart)
+        guard !source.isEmpty else { return }
+        source.withUnsafeBufferPointer { sourceBuffer in
+            let destination = cells.baseAddress!.advanced(by: destinationStart)
+            for offset in sourceBuffer.indices {
+                let rawValue = template |
+                    (UInt64(sourceBuffer[offset]) << PackedCell.contentShift)
+                destination[offset] = PackedCell(rawValue: rawValue)
+            }
+        }
     }
 
     func packed(_ value: CharData) -> PackedCell {

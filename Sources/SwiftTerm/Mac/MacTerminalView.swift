@@ -14,6 +14,7 @@ import AppKit
 import CoreText
 import CoreGraphics
 import Carbon.HIToolbox
+import UniformTypeIdentifiers
 #if canImport(MetalKit)
 import MetalKit
 #endif
@@ -245,8 +246,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /**
      * The delegate that the TerminalView uses to interact with its hosting
      */
-    public weak var terminalDelegate: TerminalViewDelegate?
-    
+    public weak var terminalDelegate: TerminalViewDelegate? {
+        didSet {
+            refreshKittyClipboardCapabilities()
+        }
+    }
     /// If true, the caret view will show different shapes depending on the focus
     /// otherwise, it will behave like it is focused
     public var caretViewTracksFocus: Bool {
@@ -260,6 +264,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 #endif
         }
     }
+
+    /// Keeps a blinking cursor visible while input is being sent by restarting
+    /// its blink interval after every input payload. Defaults to `true`.
+    public var cursorBlinkResetsOnInput = true
 
     /// Controls whether rendering pauses while the window is not visible.
     /// The default is `true`. A rendering benchmark can set this to `false`
@@ -279,6 +287,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     let viewStateLock = NSLock()
+    /// Cropped bitmaps for the Kitty placements on screen, reused between
+    /// repaints. Building a crop copies the visible pixels and makes a new
+    /// image, which is far too expensive to repeat on every frame - a cursor
+    /// blink alone would rebuild every placement.
+    nonisolated let kittyPlacementImageCache = Locked([KittyPlacementImageKey: TTImage]())
     nonisolated let crossThreadState = Locked(TerminalViewCrossThreadState())
     nonisolated let frameSignal = FrameDriverSignal()
     public nonisolated let inputSender = TerminalInputSender()
@@ -469,7 +482,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var markedTextOverlay: DictationOverlayTextView?
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
-    private var lastProgressValue: UInt8?
     private enum UIShutdownState {
         case active
         case stopping
@@ -802,24 +814,29 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     /// Inserts the Metal view into the view hierarchy with the correct
     /// z-order: below the caret (which is hidden while Metal owns the
-    /// cursor), with the scroller above it. When there is no caret view
-    /// and `replacing` is non-nil, the new view takes the old one's
-    /// z-position instead. Actually removing the old view is the caller's
-    /// responsibility — the rebind path defers removal until after the new
-    /// view has drawn its first frame so the hierarchy is never empty.
-    private func insertMetalView(_ newView: NSView, replacing oldView: NSView?) {
-        if let caretView = caretView {
+    /// cursor), with the scroller and the progress bar above it. When there
+    /// is no attached caret view and `replacing` is non-nil, the new view takes
+    /// the old one's z-position instead. Actually removing the old view is the
+    /// caller's responsibility — the rebind path defers removal until after
+    /// the new view has drawn its first frame so the hierarchy is never empty.
+    func insertMetalView(_ newView: NSView, replacing oldView: NSView?) {
+        if let caretView = caretView, caretView.superview === self {
             addSubview(newView, positioned: .below, relativeTo: caretView)
-            caretView.disableAnimations()
-            caretView.isHidden = true
         } else if let oldView = oldView {
             addSubview(newView, positioned: .above, relativeTo: oldView)
         } else {
             addSubview(newView, positioned: .below, relativeTo: nil)
         }
+        caretView?.disableAnimations()
+        caretView?.isHidden = true
         if let scroller = scroller {
             addSubview(scroller, positioned: .above, relativeTo: newView)
             addSubview(overlayScrollerIndicator, positioned: .above, relativeTo: scroller)
+        }
+        // The Metal surface is opaque and covers the whole view, so the
+        // progress bar has to be lifted back to the top of the stack.
+        if let progressBarView {
+            addSubview(progressBarView, positioned: .above, relativeTo: nil)
         }
     }
 
@@ -943,6 +960,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         super.viewDidMoveToWindow()
         guard uiShutdownState == .active else { return }
         frameDriver.bind(to: window == nil ? nil : self)
+        refreshCachedViewState()
+        frameDriver.markDirty()
         if window == nil {
 #if canImport(MetalKit)
             stopRenderLoop()
@@ -964,6 +983,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         startRenderLoopIfNeeded()
 #endif
+    }
+
+    open override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        guard uiShutdownState == .active else { return }
+        refreshCachedViewState()
+        frameDriver.markDirty()
     }
 
     open override func viewDidChangeEffectiveAppearance() {
@@ -1021,34 +1047,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private func setupProgressBar() {
         let bar = TerminalProgressBarView(frame: .zero)
         bar.isHidden = true
-        if let scroller {
-            addSubview(bar, positioned: .above, relativeTo: scroller)
-        } else {
-            addSubview(bar)
-        }
+        // Topmost: the bar overlays the terminal content, the scroller and
+        // any renderer surface, the same way Ghostty overlays its own.
+        addSubview(bar, positioned: .above, relativeTo: nil)
         progressBarView = bar
         updateProgressBarFrame()
     }
 
     private func updateProgressBarFrame() {
         guard let progressBarView else { return }
-        let height: CGFloat = 2
+        let height = TerminalProgressBarView.preferredHeight
         progressBarView.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
-    }
-
-    private func resolveProgress(for report: Terminal.ProgressReport) -> UInt8? {
-        switch report.state {
-        case .remove:
-            return nil
-        case .set:
-            return report.progress ?? 0
-        case .error:
-            return report.progress ?? lastProgressValue
-        case .indeterminate:
-            return nil
-        case .pause:
-            return report.progress ?? lastProgressValue ?? 100
-        }
     }
 
     @MainActor
@@ -1065,7 +1074,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private func clearProgressReport() {
         progressReportTimer?.invalidate()
         progressReportTimer = nil
-        lastProgressValue = nil
         progressBarView?.apply(state: .remove, progress: nil)
     }
 
@@ -1076,11 +1084,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
 
-        let resolvedProgress = resolveProgress(for: report)
-        if let resolvedProgress {
-            lastProgressValue = resolvedProgress
-        }
-        progressBarView?.apply(state: report.state, progress: resolvedProgress)
+        progressBarView?.apply(state: report.state, progress: report.progress)
         resetProgressReportTimer()
     }
 
@@ -1112,6 +1116,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         clearProgressReport()
         overlayScrollerHideTimer?.invalidate()
         overlayScrollerHideTimer = nil
+        renderOwner.invalidateSynchronizedOutputWatchdog()
         uiShutdownState = .stopped
         return true
     }
@@ -1491,38 +1496,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         max(0, size.width - reservedScrollerWidth)
     }
     
-    nonisolated open func scrolled(source terminal: Terminal, yDisp: Int) {
-        markScrolledDirty()
-        frameSignal.markDirty()
-    }
-    
-    /// TerminalView handles selection once before each managed feed, so it does
-    /// not call this method for each parsed line feed.
-    ///
-    /// Use `notifyUpdateChanges` and
-    /// `TerminalViewDelegate.rangeChanged(source:startY:endY:)` for display
-    /// updates. Use a separate `Terminal(delegate:)` when you need each parser
-    /// line-feed event.
-    @available(*, deprecated, message: "Use notifyUpdateChanges and TerminalViewDelegate.rangeChanged(source:startY:endY:) for display updates, or use a separate Terminal(delegate:) for each line-feed event.")
-    nonisolated open func linefeed(source: Terminal) {
-        // Preserve manual selection while output is streaming when mouse reporting is disabled.
-        onMain { [weak self] in
-            guard let self, self.allowMouseReporting else { return }
-            self.withTerminal { _ in
-                guard self.selection.active else { return }
-                self.selection.selectNone()
-            }
-        }
-    }
-    
     /// This vaiable controls whether mouse events are sent to the application running under the
     /// terminal if it has requested the data.   This poses a problem for selection, so users
     /// need a way of toggling this behavior.
-    public var allowMouseReporting: Bool = true {
-        didSet {
-            crossThreadState.withLock { $0.allowMouseReporting = allowMouseReporting }
-        }
-    }
+    public var allowMouseReporting: Bool = true
 
     /// Controls how link tracking resolves hovered links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
@@ -2324,17 +2301,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         markedSelectedRange = NSRange(location: NSNotFound, length: 0)
         updateMarkedTextOverlay()
         if let str = string as? NSString {
-            let terminalState = withTerminal { terminal in
-                (keyboardFlags: terminal.keyboardEnhancementFlags, bracketedPasteMode: terminal.bracketedPasteMode)
+            if isPaste {
+                pendingKittyKeyEvent = nil
+                pasteText(str as String)
+                return
             }
-            if !terminalState.keyboardFlags.isEmpty {
-                if isPaste, terminalState.bracketedPasteMode {
-                    pendingKittyKeyEvent = nil
-                    send(data: EscapeSequences.bracketedPasteStart[0...])
-                    send (txt: str as String)
-                    send(data: EscapeSequences.bracketedPasteEnd[0...])
-                    return
-                }
+            let terminalState = withTerminal { terminal in
+                terminal.keyboardEnhancementFlags
+            }
+            if !terminalState.isEmpty {
                 let pendingEvent = pendingKittyKeyEvent
                 pendingKittyKeyEvent = nil
                 kittyIsComposing = false
@@ -2372,13 +2347,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 _ = sendKittyEvent(kittyEvent)
                 return
             }
-            if isPaste, withTerminal({ $0.bracketedPasteMode }) {
-                send(data: EscapeSequences.bracketedPasteStart[0...])
-            }
             send (txt: str as String)
-            if isPaste, withTerminal({ $0.bracketedPasteMode }) {
-                send(data: EscapeSequences.bracketedPasteEnd[0...])
-            }
         }
         // TODO: I do not think we actually need this needsDisplay, the data fed should bubble this up
         // needsDisplay = true
@@ -3167,9 +3136,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     @objc
     open func paste(_ sender: Any)
     {
-        let clipboard = NSPasteboard.general
-        let text = clipboard.string(forType: .string)
-        insertText(text ?? "", replacementRange: NSRange(location: 0, length: 0), isPaste: true)
+        pasteClipboard(.standard)
+    }
+
+    /// Pastes the platform primary selection when the host provides one.
+    public func pastePrimarySelection() {
+        pasteClipboard(.primary)
+    }
+
+    private func pasteClipboard(_ location: KittyClipboardLocation) {
+        guard !sendKittyPasteEvent(location: location) else { return }
+        insertText(
+            kittyPasteboard(location).string(forType: .string) ?? "",
+            replacementRange: NSRange(location: 0, length: 0),
+            isPaste: true)
     }
     
     @objc
@@ -3356,6 +3336,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// tests to confirm the F.5 pre-gate skips scheduling when routing cannot
     /// apply.
     private(set) var semanticDeferralScheduleCount = 0
+    var semanticClickPendingForTesting: Bool {
+        pendingSemanticClick != nil
+    }
 
     open override func mouseDown(with event: NSEvent) {
         pendingSemanticClick?.cancel()
@@ -3586,8 +3569,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let definition = NSAttributedString(
             string: wordAndScreenRow.word.text,
             attributes: [.font: fontSet.normal])
-        let baselineOffset = ceil(
-            CTFontGetDescent(fontSet.normal) + CTFontGetLeading(fontSet.normal))
+        // The popover anchors on the word's baseline, which lineSpacing moves.
+        let baselineOffset = self.baselineOffset
         let baseline = NSPoint(
             x: CGFloat(wordAndScreenRow.word.start.col) * cellDimension.width,
             y: frame.height - CGFloat(wordAndScreenRow.screenRow + 1) * cellDimension.height
@@ -3794,8 +3777,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     /// Leftover fractional trackpad scroll (in points) carried between events so
-    /// sub-cell precise deltas accumulate instead of being dropped.
-    private var scrollAccumulator: CGFloat = 0
+    /// sub-cell precise deltas accumulate instead of being dropped. The bank belongs to one
+    /// route: travel that was reported to the application never scrolls locally when Option
+    /// arrives, and locally scrolled travel never becomes a report when Option lifts.
+    private var scrollAccumulator = WheelDistanceAccumulator<WheelRoute>()
+    private var wheelReportBudget = WheelReportBudget()
+
+    /// Why this wheel event belongs to SwiftTerm. Keeping bypass and alternate-scroll decisions
+    /// distinct prevents a modifier intended for local handling from becoming cursor-key input.
+    private enum WheelRoute: String {
+        case mouse
+        case cursorKeys
+        case localScrollback
+        case none
+    }
 
     /// Multiplier applied to wheel/trackpad scroll deltas. `1.0` scrolls at the
     /// system's native rate; values below `1.0` slow scrolling down, above speed
@@ -3804,6 +3799,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     public var scrollSensitivity: CGFloat = 1.0 {
         didSet { scrollSensitivity = max(0.05, scrollSensitivity) }
     }
+
+    private static let logsMouseInput =
+        ProcessInfo.processInfo.environment["SWIFTTERM_MOUSE_LOG"] == "1"
 
     public override func scrollWheel(with event: NSEvent) {
         // Preserves the previous `deltaY == 0` early exit, restated against the
@@ -3816,27 +3814,27 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
 
-        let scrollRouting = withTerminal { terminal in
-            let reportsMouse = allowMouseReporting &&
-                !shiftBypassesMouseReportingLocked(for: event) &&
-                terminal.mouseMode != .off
-            return (
-                reportsMouse: reportsMouse,
-                isAlternate: terminal.isDisplayBufferAlternate,
-                alternateScrollMode: terminal.alternateScrollMode
-            )
+        let scrollRoute = withTerminal { terminal -> WheelRoute in
+            let requestsLocalHandling =
+                shiftBypassesMouseReportingLocked(for: event) ||
+                event.modifierFlags.contains(.option)
+            if requestsLocalHandling {
+                return terminal.isDisplayBufferAlternate ? .none : .localScrollback
+            }
+            if allowMouseReporting && terminal.mouseMode != .off {
+                return .mouse
+            }
+            if terminal.isDisplayBufferAlternate {
+                return terminal.alternateScrollMode ? .cursorKeys : .none
+            }
+            return .localScrollback
         }
 
-        // Alternate Scroll Mode (DECSET 1007): while the alternate screen is
-        // active and the application is not tracking the mouse, the wheel is
-        // translated into cursor keys below. With the mode reset the wheel
-        // produces nothing at all — the alternate buffer has no scrollback to
-        // move either. Decided here, before the accumulator is touched, so that
-        // suppressed motion is not banked and then handed to the first event
-        // after the mode comes back.
-        if !scrollRouting.reportsMouse && scrollRouting.isAlternate &&
-            !scrollRouting.alternateScrollMode {
-            scrollAccumulator = 0
+        // A suppressed event must not bank a partial trackpad row and hand it to a later route.
+        // This includes Alternate Scroll Mode being reset and a local-handling modifier being
+        // held over the alternate buffer, which has no local scrollback.
+        if scrollRoute == .none {
+            scrollAccumulator.reset()
             return
         }
 
@@ -3850,38 +3848,74 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let scaledDelta = event.scrollingDeltaY * scrollSensitivity
         let lines: Int
         if event.hasPreciseScrollingDeltas {
-            scrollAccumulator += scaledDelta
-            lines = Int(scrollAccumulator / cellHeight)
-            scrollAccumulator -= CGFloat(lines) * cellHeight
+            lines = scrollAccumulator.takeWholeLines(
+                distance: scaledDelta,
+                cellHeight: cellHeight,
+                route: scrollRoute)
         } else {
-            scrollAccumulator = 0
+            scrollAccumulator.reset()
             // A non-precise wheel notch must always move at least one line, even
             // when a low sensitivity would otherwise round it away to zero.
             let rounded = Int(scaledDelta.rounded())
             lines = rounded != 0 ? rounded : (event.scrollingDeltaY > 0 ? 1 : -1)
         }
         if lines == 0 {
+            if Self.logsMouseInput {
+                NSLog("SwiftTerm mouse scroll: deltaY=%g scrollingDeltaY=%g precise=%@ inverted=%@ accumulated=%g lines=0 route=%@",
+                      event.deltaY, event.scrollingDeltaY,
+                      event.hasPreciseScrollingDeltas.description,
+                      event.isDirectionInvertedFromDevice.description,
+                      scrollAccumulator.remainder,
+                      scrollRoute.rawValue)
+            }
             return
         }
         let scrollingUp = lines > 0
         let magnitude = abs(lines)
 
-        if scrollRouting.reportsMouse {
+        if scrollRoute == .mouse {
             let hit = calculateMouseHit(with: event)
+            // AppKit has already applied the system scroll-direction setting to
+            // scrollingDeltaY. Preserve that sign, as Ghostty does, when the
+            // delta becomes a terminal mouse report. Applying
+            // isDirectionInvertedFromDevice here would invert trackpad input a
+            // second time.
             let button = scrollingUp ? 4 : 5
+            if Self.logsMouseInput {
+                NSLog("SwiftTerm mouse scroll: deltaY=%g scrollingDeltaY=%g precise=%@ inverted=%@ accumulated=%g lines=%ld route=mouse button=%d",
+                      event.deltaY, event.scrollingDeltaY,
+                      event.hasPreciseScrollingDeltas.description,
+                      event.isDirectionInvertedFromDevice.description,
+                      scrollAccumulator.remainder, lines, button)
+            }
             let flags = event.modifierFlags
             withTerminal { terminal in
                 let displayBuffer = terminal.displayBuffer
                 let screenRow = max(0, min(displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
                 let buttonFlags = terminal.encodeButton(button: button, release: false,
                                                         shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
-                for _ in 0..<magnitude {
+                let wantedReports = WheelReportBudget.requestedReports(
+                    lineCount: lines,
+                    isPrecise: event.hasPreciseScrollingDeltas)
+                let reports = wheelReportBudget.grant(wantedReports)
+                for _ in 0..<reports {
                     terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow,
                                        pixelX: hit.pixels.col, pixelY: hit.pixels.row)
                 }
             }
-        } else if scrollRouting.isAlternate {
-            for _ in 0..<magnitude {
+        } else if scrollRoute == .cursorKeys {
+            if Self.logsMouseInput {
+                NSLog("SwiftTerm mouse scroll: deltaY=%g scrollingDeltaY=%g precise=%@ inverted=%@ accumulated=%g lines=%ld route=alternate key=%@",
+                      event.deltaY, event.scrollingDeltaY,
+                      event.hasPreciseScrollingDeltas.description,
+                      event.isDirectionInvertedFromDevice.description,
+                      scrollAccumulator.remainder, lines, scrollingUp ? "up" : "down")
+            }
+            // A full-screen application executes each arrow key on its own, so a flick that
+            // banked a hundred lines must not become a hundred keystrokes in one event.
+            let keys = wheelReportBudget.grant(
+                WheelReportBudget.requestedKeys(lineCount: lines))
+            for _ in 0..<keys {
                 if scrollingUp {
                     sendKeyUp()
                 } else {
@@ -3889,6 +3923,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 }
             }
         } else {
+            if Self.logsMouseInput {
+                NSLog("SwiftTerm mouse scroll: deltaY=%g scrollingDeltaY=%g precise=%@ inverted=%@ accumulated=%g lines=%ld route=scrollback direction=%@",
+                      event.deltaY, event.scrollingDeltaY,
+                      event.hasPreciseScrollingDeltas.description,
+                      event.isDirectionInvertedFromDevice.description,
+                      scrollAccumulator.remainder, lines, scrollingUp ? "up" : "down")
+            }
             if scrollingUp {
                 scrollUp(lines: magnitude)
             } else {
@@ -4089,6 +4130,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     public nonisolated func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
         cachedCellPixelSizeValue()
     }
+
+    nonisolated open func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8> {
+        TerminalPasteControls.approximateTerminalControlBytes
+    }
     
     public nonisolated func mouseModeChanged(source: Terminal) {
         // Captured here, where the notifying thread holds the terminal lock.
@@ -4242,6 +4287,54 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         return nil
     }
+
+    @MainActor
+    private func kittyPasteboard(_ location: KittyClipboardLocation) -> NSPasteboard {
+        location == .primary
+            ? NSPasteboard(name: NSPasteboard.Name("NSSelectionPboard"))
+            : .general
+    }
+
+    /// The platform type identifiers at one location, or `nil` when the
+    /// location has no pasteboard.
+    @MainActor
+    func kittyPlatformTypeIdentifiers(location: KittyClipboardLocation) -> [String]? {
+        (kittyPasteboard(location).types ?? []).map(\.rawValue)
+    }
+
+    /// The pasteboard change counter used to detect clipboard replacement.
+    @MainActor
+    func kittyPlatformChangeCount(location: KittyClipboardLocation) -> UInt64 {
+        UInt64(bitPattern: Int64(kittyPasteboard(location).changeCount))
+    }
+
+    /// The data stored under one platform type identifier.
+    @MainActor
+    func kittyPlatformData(location: KittyClipboardLocation, identifier: String) -> Data? {
+        kittyPasteboard(location).data(forType: NSPasteboard.PasteboardType(identifier))
+    }
+
+    /// Publishes every entry as one `NSPasteboardItem` with one `writeObjects` call.
+    @MainActor
+    func kittyPlatformPublish(
+        location: KittyClipboardLocation,
+        items: [(identifier: String, data: Data)]
+    ) -> KittyClipboardWriteResult {
+        let item = NSPasteboardItem()
+        for entry in items {
+            guard item.setData(entry.data, forType: NSPasteboard.PasteboardType(entry.identifier))
+            else {
+                return .ioError
+            }
+        }
+        let pasteboard = kittyPasteboard(location)
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([item]) ? .success : .ioError
+    }
+
+    // Keep new stored properties at the end of the class. Moving the existing
+    // render-path fields changes their Release layout and can reduce throughput.
+    nonisolated let kittyClipboardBridge = AppleKittyClipboardBridge()
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}
@@ -4317,6 +4410,7 @@ extension TerminalViewDelegate {
     public func clipboardRead(source: TerminalView) -> Data? {
         return nil
     }
+
 }
 
 /// NSTextView subclass used for the dictation / IME marked-text overlay.

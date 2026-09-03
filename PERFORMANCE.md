@@ -45,9 +45,62 @@ The suite contains these vtebench cases:
 - `scrolling` and four scrolling-region variants
 - `scrolling_fullscreen`, `sync_medium_cells`, and `unicode`
 
+Six opt-in hardening cases cover ASCII and wide-cell seams, horizontal
+margins, and bounded OSC input. Enable them without changing the default
+vtebench selection:
+
+```bash
+cd Tools/SwiftTermBenchmarks
+SWIFTTERM_HARDENING_BENCHMARKS=1 \
+swift package benchmark --target SwiftTermBenchmarks --filter hardening_
+```
+
 The older manually timed cases remain in
 `Tests/SwiftTermTests/PerformanceTest.swift` for focused experiments. Use the
 nested benchmark package for repeatable A/B measurements.
+
+For a fixed-work, headless Time Profiler capture, use the direct executable:
+
+```bash
+cd Tools/SwiftTermBenchmarks
+swift build -c release --product SwiftTermProfile
+xcrun xctrace record --template 'Time Profiler' --output /tmp/medium.trace \
+    --launch -- .build/release/SwiftTermProfile medium_cells \
+    --iterations 400 --warmup 4
+xcrun xctrace export --input /tmp/medium.trace \
+    --xpath '/trace-toc/run[@number="1"]/data/table[@schema="time-profile"]' \
+    --output /tmp/medium-time-profile.xml
+./analyze-time-profile.py /tmp/medium-time-profile.xml \
+    --root Terminal.feed --callers-of repairWideSeam
+```
+
+This path needs no app, PTY, window, or display. Use the same iteration count
+for both revisions. The executable reports bytes, elapsed time, and MiB/s.
+The analyzer resolves the reference nodes in the exported XML.
+
+For exact seam-check frequency, add
+`-Xswiftc -DSWIFTTERM_SEAM_COUNTER` to the `swift build` command. The profiling
+executable then prints `seam_calls`, `seam_repairs`, and `seam_repair_pct`.
+This build uses a lock for exact counts. Rebuild without the flag before a
+throughput comparison.
+
+The same executable works with the headless CPU Counters template:
+
+```bash
+xcrun xctrace record --template 'CPU Counters' --output /tmp/medium-counters.trace \
+    --no-prompt --launch -- .build/release/SwiftTermProfile medium_cells \
+    --iterations 500 --warmup 4
+xcrun xctrace export --input /tmp/medium-counters.trace \
+    --xpath '//table[@schema="MetricTable"]' \
+    --output /tmp/medium-counter-metrics.xml
+./analyze-cpu-counters.py /tmp/medium-counter-metrics.xml
+```
+
+The default guided mode reports cycles and the useful, delivery, discarded,
+and processing ratios. The command-line interface in Xcode 27 does not list
+the hardware-specific event names for manual mode. Do not guess event aliases.
+Use the guided metrics unless Instruments exposes a verified event setup for
+the host CPU.
 
 2. RenderBench (render path, Instruments)
 -----------------------------------------

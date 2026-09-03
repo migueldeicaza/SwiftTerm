@@ -133,8 +133,9 @@ enum TerminalBidi {
     /// merging glyphs and shifting the column mapping of the rest of the
     /// segment) and any multi-scalar cell (combining marks, emoji).
     @inline(__always)
-    static func needsCellIsolation(_ text: Character) -> Bool {
-        if text.unicodeScalars.count > 1 { return true }
+    static func needsCellIsolation(_ text: Character,
+                                   scalarCount: Int? = nil) -> Bool {
+        if (scalarCount ?? text.unicodeScalars.count) > 1 { return true }
         guard let v = text.unicodeScalars.first?.value else { return false }
         switch v {
         case 0x0600...0x06FF, 0x0750...0x077F, 0x0870...0x08FF,
@@ -444,6 +445,26 @@ enum TerminalBidi {
         let cols: Int
         let font: ObjectIdentifier
         let state: BidiPresentationState
+        // Pin line identities, not mutable lines, while the cache or a deferred
+        // job can still refer to them. Allocator address reuse is not a hit.
+        let lineIdentities: [BufferLine.RenderIdentity]
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.buffer == rhs.buffer && lhs.firstRow == rhs.firstRow &&
+            lhs.lastRow == rhs.lastRow && lhs.revision == rhs.revision &&
+            lhs.cols == rhs.cols && lhs.font == rhs.font && lhs.state == rhs.state &&
+            lhs.lineIdentities.elementsEqual(rhs.lineIdentities, by: { $0 === $1 })
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(buffer)
+            hasher.combine(firstRow)
+            hasher.combine(lastRow)
+            hasher.combine(revision)
+            hasher.combine(cols)
+            hasher.combine(font)
+            hasher.combine(state)
+        }
     }
 
     fileprivate struct ParagraphResult {
@@ -583,13 +604,16 @@ enum TerminalBidi {
         return first...last
     }
 
+    private static func hashLineRevision(_ line: BufferLine, into hasher: inout Hasher) {
+        hasher.combine(ObjectIdentifier(line.renderIdentity))
+        hasher.combine(line.generation)
+        hasher.combine(line.isWrapped)
+    }
+
     private static func paragraphRevision(_ bounds: ClosedRange<Int>, buffer: Buffer) -> Int {
         var hasher = Hasher()
         for row in bounds {
-            let line = buffer.lines[row]
-            hasher.combine(ObjectIdentifier(line))
-            hasher.combine(line.generation)
-            hasher.combine(line.isWrapped)
+            hashLineRevision(buffer.lines[row], into: &hasher)
         }
         return hasher.finalize()
     }
@@ -868,14 +892,23 @@ enum TerminalBidi {
             return .ready(nil)
         }
         let state = buffer.lines[bounds.lowerBound].bidiState
-        let revision = paragraphRevision(bounds, buffer: buffer)
+        var lineIdentities: [BufferLine.RenderIdentity] = []
+        lineIdentities.reserveCapacity(bounds.count)
+        var revisionHasher = Hasher()
+        for row in bounds {
+            let line = buffer.lines[row]
+            lineIdentities.append(line.renderIdentity)
+            hashLineRevision(line, into: &revisionHasher)
+        }
+        let revision = revisionHasher.finalize()
         let key = ParagraphKey(buffer: ObjectIdentifier(buffer),
                                firstRow: bounds.lowerBound,
                                lastRow: bounds.upperBound,
                                revision: revision,
                                cols: cols,
                                font: ObjectIdentifier(font),
-                               state: state)
+                               state: state,
+                               lineIdentities: lineIdentities)
         if let cached = cacheState.withLock({ $0.paragraphCache[key] }) {
             return .ready(cached)
         }

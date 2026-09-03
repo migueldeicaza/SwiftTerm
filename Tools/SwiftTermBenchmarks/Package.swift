@@ -7,7 +7,8 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .library(name: "VTEBenchWorkloads", targets: ["VTEBenchWorkloads"])
+        .library(name: "VTEBenchWorkloads", targets: ["VTEBenchWorkloads"]),
+        .executable(name: "SwiftTermProfile", targets: ["SwiftTermProfile"])
     ],
     dependencies: [
         // The explicit name keeps the package identity stable in git worktrees.
@@ -32,6 +33,12 @@ let package = Package(
             path: "Benchmarks/SwiftTermBenchmarks",
             plugins: [
                 .plugin(name: "BenchmarkPlugin", package: "benchmark")
+            ]),
+        .executableTarget(
+            name: "SwiftTermProfile",
+            dependencies: [
+                .product(name: "SwiftTerm", package: "SwiftTerm"),
+                "VTEBenchWorkloads"
             ]),
         .testTarget(
             name: "VTEBenchWorkloadsTests",

@@ -102,6 +102,27 @@ final class SelectionTests: TerminalDelegate {
         #expect(!view.withTerminal { $0.userScrolling })
     }
 
+    @Test func testPastedTextScrollsToCaretLikeTypedText() {
+        let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 400, height: 100)))
+
+        for i in 0..<30 {
+            view.feed(text: "line \(i)\r\n")
+        }
+
+        view.scrollTo(row: 0)
+        view.insertText("x", replacementRange: NSRange(location: 0, length: 0))
+        let typedTextPosition = view.withTerminal { $0.displayBuffer.yDisp }
+
+        view.scrollTo(row: 0)
+        view.insertText(
+            "pasted text",
+            replacementRange: NSRange(location: 0, length: 0),
+            isPaste: true)
+
+        #expect(view.withTerminal { $0.displayBuffer.yDisp } == typedTextPosition)
+        #expect(!view.withTerminal { $0.userScrolling })
+    }
+
     @Test func testZeroSizedResizeDoesNotChangeTerminalDimensions() {
         let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 320, height: 160)))
         let (originalCols, originalRows) = view.withTerminal { ($0.cols, $0.rows) }
@@ -370,6 +391,18 @@ final class SelectionTests: TerminalDelegate {
         #expect(text.contains("AAA"))
         #expect(text.contains("BBB"))
         #expect(text.contains("CCC"))
+    }
+
+    @Test func testSelectedColumnsRangeRejectsRowsOutsideMultiRowSelection() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 10, rows: 5))
+        let selection = SelectionService(terminal: terminal)
+        selection.setSelection(
+            start: Position(col: 2, row: 1),
+            end: Position(col: 4, row: 3))
+
+        #expect(selection.selectedColumnsRange(row: 0, cols: 10) == nil)
+        #expect(selection.selectedColumnsRange(row: 4, cols: 10) == nil)
+        #expect(selection.selectedColumnsRange(row: 2, cols: 10) == 0..<10)
     }
 
     /// Test word selection at word boundaries

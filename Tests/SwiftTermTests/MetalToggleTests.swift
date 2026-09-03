@@ -27,11 +27,8 @@ struct MetalToggleTests {
         return view
     }
 
-    /// A device is not enough: the renderer loads its shaders from the SwiftTerm
-    /// resource bundle, which is not next to the SwiftPM test binary, so
-    /// `swift test` cannot enable Metal at all. These skip there — reported as
-    /// skipped, not quietly passing — and run from Xcode. The version that
-    /// always runs is the `metaltoggle` scenario in the app harness.
+    /// A device is not enough: the renderer also needs a usable shader library.
+    /// These tests skip when either is unavailable, including on GPU-less CI.
     nonisolated static var metalIsUsable: Bool {
         MetalTerminalRenderer.shaderLibraryIsAvailable
     }
@@ -97,6 +94,23 @@ struct MetalToggleTests {
             for view in views { try view.setUseMetal(false) }
             #expect(views.allSatisfy { !$0.isUsingMetalRenderer })
             #expect(views.allSatisfy { !$0.isUsingRenderLoop })
+        }
+    }
+
+    /// The OSC 9;4 progress bar is an overlay: the opaque Metal surface covers
+    /// the whole view, so the bar has to stay the topmost subview across a
+    /// renderer swap or it is simply never seen (which is how it shipped).
+    @Test func progressBarStaysOnTopOfTheRendererSurface() throws {
+        let view = makeView()
+        defer { view.frameDriver.invalidate() }
+
+        #expect(view.subviews.last is TerminalProgressBarView)
+
+        if MetalToggleTests.metalIsUsable {
+            try view.setUseMetal(true)
+            #expect(view.subviews.last is TerminalProgressBarView)
+            try view.setUseMetal(false)
+            #expect(view.subviews.last is TerminalProgressBarView)
         }
     }
 

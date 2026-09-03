@@ -352,6 +352,7 @@ struct RowDrawData {
     var glyphCellsGray: [TextCell]
     var glyphCellsColor: [TextCell]
     var decorationCells: [ColorCell]
+    var belowBackgroundImageDraws: [ImageDraw]
     var underImageDraws: [ImageDraw]
     var placeholderImageDraws: [ImageDraw]
     var overImageDraws: [ImageDraw]
@@ -369,6 +370,7 @@ struct RowDrawBuffers {
     var glyphColorCount: Int
     var decorationBuffer: MTLBuffer?
     var decorationCount: Int
+    var belowBackgroundImageBuffers: [ImageDrawBuffer]
     var underImageBuffers: [ImageDrawBuffer]
     var placeholderImageBuffers: [ImageDrawBuffer]
     var overImageBuffers: [ImageDrawBuffer]
@@ -393,6 +395,7 @@ struct FrameDrawData {
     var glyphCellsGray: [TextCell]
     var glyphCellsColor: [TextCell]
     var decorationCells: [ColorCell]
+    var belowBackgroundImageDraws: [ImageDraw]
     var underImageDraws: [ImageDraw]
     var placeholderImageDraws: [ImageDraw]
     var overImageDraws: [ImageDraw]
@@ -445,6 +448,7 @@ struct CustomGlyphBitmap {
 struct KittyCacheStamp: Hashable {
     let imagesCount: Int
     let placementsCount: Int
+    let generation: UInt64
 }
 
 struct CacheSignature: Hashable {
@@ -835,6 +839,17 @@ final class MetalCursorBlinkController {
         timer?.invalidate()
         timer = nil
         redrawState.resetCursorBlink()
+    }
+
+    /// Restarts the interval with the cursor visible. If input arrives more
+    /// frequently than the interval, the cursor never reaches its hidden phase.
+    func resetAfterInput() {
+        guard redrawState.cursorBlinkWanted else { return }
+        timer?.invalidate()
+        timer = nil
+        redrawState.resetCursorBlink()
+        redrawState.requestRedraw()
+        apply(shouldBlink: true)
     }
 }
 
@@ -1231,6 +1246,11 @@ final class MetalTerminalRenderer {
             drawFrameData(frame, encoder: encoder, viewport: viewport)
         } else {
             let rows = drawData.rows
+            drawImageRows(rows: rows,
+                          imageKey: \.belowBackgroundImageBuffers,
+                          encoder: encoder,
+                          viewport: viewport)
+
             drawVertexBuffers(rows: rows,
                               bufferKey: \.backgroundBuffer,
                               countKey: \.backgroundCount,
@@ -1421,9 +1441,7 @@ final class MetalTerminalRenderer {
         let scale = context.renderingScale
         let cellWidth = context.cellDimension.width
         let cellHeight = context.cellDimension.height
-        let lineDescent = CTFontGetDescent(context.fonts.normal)
-        let lineLeading = CTFontGetLeading(context.fonts.normal)
-        let yOffset = ceil(lineDescent + lineLeading)
+        let yOffset = context.baselineOffset
         let viewWidthPx = context.viewBounds.width * scale
 
         let rowInfo = visibleRowRange(snapshot: snapshot)
@@ -1448,8 +1466,10 @@ final class MetalTerminalRenderer {
             }
             cacheBufferingMode = bufferingMode
         }
-        let kittyStamp = KittyCacheStamp(imagesCount: snapshot.kitty.imagesById.count,
-                                         placementsCount: snapshot.kitty.placementsByKey.count)
+        let kittyStamp = KittyCacheStamp(
+            imagesCount: snapshot.kitty.renderSnapshot.imagesById.count,
+            placementsCount: snapshot.kitty.renderSnapshot.placements.count,
+            generation: snapshot.kitty.renderSnapshot.storageGeneration)
         let signature = CacheSignature(scale: Double(scale),
                                        cellWidth: Double(cellWidth),
                                        cellHeight: Double(cellHeight),
@@ -1496,6 +1516,7 @@ final class MetalTerminalRenderer {
                                       glyphCellsGray: [],
                                       glyphCellsColor: [],
                                       decorationCells: [],
+                                      belowBackgroundImageDraws: [],
                                       underImageDraws: [],
                                       placeholderImageDraws: [],
                                       overImageDraws: [],
@@ -1583,6 +1604,8 @@ final class MetalTerminalRenderer {
                     currentFrame.glyphCellsGray.append(contentsOf: rowData.glyphCellsGray)
                     currentFrame.glyphCellsColor.append(contentsOf: rowData.glyphCellsColor)
                     currentFrame.decorationCells.append(contentsOf: rowData.decorationCells)
+                    currentFrame.belowBackgroundImageDraws.append(
+                        contentsOf: rowData.belowBackgroundImageDraws)
                     currentFrame.underImageDraws.append(contentsOf: rowData.underImageDraws)
                     currentFrame.placeholderImageDraws.append(contentsOf: rowData.placeholderImageDraws)
                     currentFrame.overImageDraws.append(contentsOf: rowData.overImageDraws)
@@ -1604,8 +1627,6 @@ final class MetalTerminalRenderer {
                                              scale: scale,
                                              cellWidth: cellWidth,
                                              cellHeight: cellHeight,
-                                             lineDescent: lineDescent,
-                                             lineLeading: lineLeading,
                                              yDisp: visibleDisp,
                                              firstRow: firstRow,
                                              lastRow: lastRow)
@@ -1644,6 +1665,7 @@ final class MetalTerminalRenderer {
         var glyphCellsGray: [TextCell] = []
         var glyphCellsColor: [TextCell] = []
         var decorationCells: [ColorCell] = []
+        var belowBackgroundImageDraws: [ImageDraw] = []
         var underImageDraws: [ImageDraw] = []
         var placeholderImageDraws: [ImageDraw] = []
         var overImageDraws: [ImageDraw] = []
@@ -1886,21 +1908,22 @@ final class MetalTerminalRenderer {
                 } else if runAttributes.keys.contains(.backgroundColor) {
                     backgroundColor = runAttributes[.backgroundColor] as? TTColor
                 }
-                    // Runs carrying the default background emit no quad: the
-                    // pass's clear color already paints it (including the
-                    // margins), and a quad on top would double-composite when
-                    // the background is translucent (backgroundOpacity < 1)
-                    if let backgroundColor = backgroundColor,
-                       backgroundColor != context.effectiveBackgroundColor {
-                        let columnSpan = max(0, endColumn - startColumn)
-                        if columnSpan > 0 {
-                            let x0 = lineOriginPx.x + (CGFloat(startColumn) * cellWidthPx)
-                            let y0 = lineOriginPx.y
-                            let x1 = lineOriginPx.x + (CGFloat(startColumn + columnSpan) * cellWidthPx)
-                            let y1 = lineOriginPx.y + cellHeightPx
-                            let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
-                            if let clipped = self.clipRect(tx0, ty0, tx1, ty1, clipRect) {
-                                let color = colorToSIMD(backgroundColor)
+                // Default-background cells emit no quad. The pass clear
+                // paints them, so Kitty images below explicit cell
+                // backgrounds remain visible through these cells.
+                let hasExplicitBackground =
+                    runAttributes.keys.contains(.selectionBackgroundColor)
+                    || runAttributes.keys.contains(SwiftTermExplicitBackgroundKey)
+                if hasExplicitBackground, let backgroundColor {
+                    let columnSpan = max(0, endColumn - startColumn)
+                    if columnSpan > 0 {
+                        let x0 = lineOriginPx.x + (CGFloat(startColumn) * cellWidthPx)
+                        let y0 = lineOriginPx.y
+                        let x1 = lineOriginPx.x + (CGFloat(startColumn + columnSpan) * cellWidthPx)
+                        let y1 = lineOriginPx.y + cellHeightPx
+                        let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
+                        if let clipped = self.clipRect(tx0, ty0, tx1, ty1, clipRect) {
+                            let color = colorToSIMD(backgroundColor)
                             backgroundCells.append(makeColorCell(x0: clipped.0,
                                                                   y0: clipped.1,
                                                                   x1: clipped.2,
@@ -1913,78 +1936,10 @@ final class MetalTerminalRenderer {
         }
 
         if let images = lineInfo.images {
-            var underTextImages: [SnapshotImage] = []
-            var overTextKittyImages: [SnapshotImage] = []
-            var otherImages: [SnapshotImage] = []
             for basicImage in images {
                 guard let image = basicImage as? SnapshotImage else {
                     continue
                 }
-                if image.kittyIsKitty {
-                    if image.kittyZIndex < 0 {
-                        underTextImages.append(image)
-                    } else {
-                        overTextKittyImages.append(image)
-                    }
-                } else {
-                    otherImages.append(image)
-                }
-            }
-            let sortKitty: (SnapshotImage, SnapshotImage) -> Bool = { lhs, rhs in
-                if lhs.kittyZIndex != rhs.kittyZIndex {
-                    return lhs.kittyZIndex < rhs.kittyZIndex
-                }
-                let leftId = lhs.kittyImageId ?? 0
-                let rightId = rhs.kittyImageId ?? 0
-                return leftId < rightId
-            }
-            underTextImages.sort(by: sortKitty)
-            overTextKittyImages.sort(by: sortKitty)
-
-            let offsetScale = context.imageScale
-            for image in underTextImages {
-                guard let texture = texture(for: image) else {
-                    continue
-                }
-                let offsetX = CGFloat(image.kittyPixelOffsetX) / offsetScale
-                let offsetY = CGFloat(image.kittyPixelOffsetY) / offsetScale
-                let rect = CGRect(x: CGFloat(image.col) * cellWidth + offsetX,
-                                  y: rowBase - CGFloat(image.pixelHeight) + offsetY,
-                                  width: CGFloat(image.pixelWidth),
-                                  height: CGFloat(image.pixelHeight))
-                if let draw = imageDraw(texture: texture,
-                                        rect: rect,
-                                        uvRect: CGRect(x: 0, y: 0, width: 1, height: 1),
-                                        renderMode: renderMode,
-                                        clipRect: clipRect,
-                                        pivotY: pivotY,
-                                        scale: scale) {
-                    underImageDraws.append(draw)
-                }
-            }
-
-            for image in overTextKittyImages {
-                guard let texture = texture(for: image) else {
-                    continue
-                }
-                let offsetX = CGFloat(image.kittyPixelOffsetX) / offsetScale
-                let offsetY = CGFloat(image.kittyPixelOffsetY) / offsetScale
-                let rect = CGRect(x: CGFloat(image.col) * cellWidth + offsetX,
-                                  y: rowBase - CGFloat(image.pixelHeight) + offsetY,
-                                  width: CGFloat(image.pixelWidth),
-                                  height: CGFloat(image.pixelHeight))
-                if let draw = imageDraw(texture: texture,
-                                        rect: rect,
-                                        uvRect: CGRect(x: 0, y: 0, width: 1, height: 1),
-                                        renderMode: renderMode,
-                                        clipRect: clipRect,
-                                        pivotY: pivotY,
-                                        scale: scale) {
-                    overImageDraws.append(draw)
-                }
-            }
-
-            for image in otherImages {
                 guard let texture = texture(for: image) else {
                     continue
                 }
@@ -2000,6 +1955,57 @@ final class MetalTerminalRenderer {
                                         pivotY: pivotY,
                                         scale: scale) {
                     otherImageDraws.append(draw)
+                }
+            }
+        }
+
+        // Skipped whole on a frame with no image, which is the common case:
+        // the clip rectangle and the loop below produce nothing then.
+        if !snapshot.kitty.renderSnapshot.placements.isEmpty {
+            let screenRow = absoluteRow - yDisp
+            let kittyLineClip = ClipRect(
+                minX: 0,
+                minY: Float(lineOriginPx.y),
+                maxX: Float(viewWidthPx),
+                maxY: Float(lineOriginPx.y + cellHeightPx))
+            for placement in snapshot.kitty.renderSnapshot.placements where !placement.isVirtual {
+                let geometry = placement.geometry
+                guard screenRow >= geometry.row,
+                      screenRow < geometry.row + geometry.rows,
+                      let image = snapshot.kitty.renderSnapshot.imagesById[placement.imageId],
+                      let texture = kittyTexture(
+                        imageId: placement.imageId,
+                        renderSnapshot: snapshot.kitty.renderSnapshot) else { continue }
+                let offsetX = CGFloat(placement.pixelOffsetX) / context.imageScale
+                let offsetY = CGFloat(placement.pixelOffsetY) / context.imageScale
+                let rowsBelow = geometry.row + geometry.rows - 1 - screenRow
+                let rect = CGRect(
+                    x: CGFloat(geometry.column) * cellWidth + offsetX,
+                    y: lineOrigin.y - CGFloat(rowsBelow) * cellHeight + offsetY,
+                    width: max(0, CGFloat(geometry.columns) * cellWidth - offsetX),
+                    height: max(0, CGFloat(geometry.rows) * cellHeight - offsetY))
+                let source = placement.visibleSource
+                let sourceBottom = image.height - source.y - source.height
+                let uvRect = CGRect(
+                    x: CGFloat(source.x) / CGFloat(image.width),
+                    y: CGFloat(sourceBottom) / CGFloat(image.height),
+                    width: CGFloat(source.width) / CGFloat(image.width),
+                    height: CGFloat(source.height) / CGFloat(image.height))
+                guard let draw = imageDraw(
+                    texture: texture,
+                    rect: rect,
+                    uvRect: uvRect,
+                    renderMode: renderMode,
+                    clipRect: kittyLineClip,
+                    pivotY: pivotY,
+                    scale: scale) else { continue }
+                switch KittyGraphicsRenderLayer(zIndex: placement.zIndex) {
+                case .belowBackground:
+                    belowBackgroundImageDraws.append(draw)
+                case .belowText:
+                    underImageDraws.append(draw)
+                case .aboveText:
+                    overImageDraws.append(draw)
                 }
             }
         }
@@ -2227,22 +2233,20 @@ final class MetalTerminalRenderer {
 
         if !lineInfo.kittyPlaceholders.isEmpty {
             for placeholder in lineInfo.kittyPlaceholders {
-                guard let records = snapshot.kitty.virtualPlacementsByImageId[placeholder.imageId] else {
-                    continue
-                }
-                guard let record = records.first(where: { record in
+                guard let record = snapshot.kitty.renderSnapshot.placements.first(where: { record in
+                    guard record.isVirtual, record.imageId == placeholder.imageId else { return false }
                     if placeholder.placementId != 0 && record.placementId != placeholder.placementId {
                         return false
                     }
-                    return record.cols > placeholder.placeholderCol &&
-                        record.rows > placeholder.placeholderRow &&
-                        record.cols > 0 &&
-                        record.rows > 0
+                    return record.geometry.columns > placeholder.placeholderCol &&
+                        record.geometry.rows > placeholder.placeholderRow &&
+                        record.geometry.columns > 0 &&
+                        record.geometry.rows > 0
                 }) else {
                     continue
                 }
                 guard let texture = kittyTexture(imageId: placeholder.imageId,
-                                                 kitty: snapshot.kitty) else {
+                                                 renderSnapshot: snapshot.kitty.renderSnapshot) else {
                     continue
                 }
 
@@ -2251,32 +2255,30 @@ final class MetalTerminalRenderer {
                 let offsetY = CGFloat(record.pixelOffsetY) / offsetScale
                 let placementOriginX = lineOrigin.x + CGFloat(placeholder.col - placeholder.placeholderCol) * cellWidth + offsetX
                 let placementTopY = lineOrigin.y + CGFloat(placeholder.placeholderRow) * cellHeight
-                let placementOriginY = placementTopY - CGFloat(record.rows - 1) * cellHeight + offsetY
+                let placementOriginY = placementTopY - CGFloat(record.geometry.rows - 1) * cellHeight + offsetY
                 let placementRect = CGRect(x: placementOriginX,
                                            y: placementOriginY,
-                                           width: CGFloat(record.cols) * cellWidth,
-                                           height: CGFloat(record.rows) * cellHeight)
+                                           width: CGFloat(record.geometry.columns) * cellWidth,
+                                           height: CGFloat(record.geometry.rows) * cellHeight)
                 if placementRect.width <= 0 || placementRect.height <= 0 {
                     continue
                 }
-                let imageSize = CGSize(width: CGFloat(texture.width) / scale, height: CGFloat(texture.height) / scale)
-                let imageRect = kittyAspectFitRect(imageSize: imageSize, in: placementRect)
                 let cellRect = CGRect(x: lineOrigin.x + CGFloat(placeholder.col) * cellWidth,
                                       y: lineOrigin.y,
                                       width: cellWidth,
                                       height: cellHeight)
-                let visible = imageRect.intersection(cellRect)
-                if visible.isEmpty {
+                guard let geometry = Self.kittyVirtualImageGeometry(
+                    source: record.visibleSource,
+                    textureWidth: texture.width,
+                    textureHeight: texture.height,
+                    placementRect: placementRect,
+                    cellRect: cellRect,
+                    scale: scale) else {
                     continue
                 }
-                let u0 = (visible.minX - imageRect.minX) / imageRect.width
-                let v0 = (visible.minY - imageRect.minY) / imageRect.height
-                let u1 = (visible.maxX - imageRect.minX) / imageRect.width
-                let v1 = (visible.maxY - imageRect.minY) / imageRect.height
-                let uvRect = CGRect(x: u0, y: v0, width: u1 - u0, height: v1 - v0)
                 if let draw = imageDraw(texture: texture,
-                                        rect: visible,
-                                        uvRect: uvRect,
+                                        rect: geometry.visibleRect,
+                                        uvRect: geometry.uvRect,
                                         renderMode: renderMode,
                                         clipRect: clipRect,
                                         pivotY: pivotY,
@@ -2291,6 +2293,7 @@ final class MetalTerminalRenderer {
                            glyphCellsGray: glyphCellsGray,
                            glyphCellsColor: glyphCellsColor,
                            decorationCells: decorationCells,
+                           belowBackgroundImageDraws: belowBackgroundImageDraws,
                            underImageDraws: underImageDraws,
                            placeholderImageDraws: placeholderImageDraws,
                            overImageDraws: overImageDraws,
@@ -3181,6 +3184,8 @@ final class MetalTerminalRenderer {
                               glyphColorCount: glyphColorCount,
                               decorationBuffer: decorationBuffer,
                               decorationCount: decorationCount,
+                              belowBackgroundImageBuffers: makeImageDrawBuffers(
+                                data.belowBackgroundImageDraws),
                               underImageBuffers: makeImageDrawBuffers(data.underImageDraws),
                               placeholderImageBuffers: makeImageDrawBuffers(data.placeholderImageDraws),
                               overImageBuffers: makeImageDrawBuffers(data.overImageDraws),
@@ -3207,6 +3212,8 @@ final class MetalTerminalRenderer {
     }
 
     private func drawFrameData(_ frame: FrameDrawData, encoder: MTLRenderCommandEncoder, viewport: SIMD2<Float>) {
+        drawImageBatches(frame.belowBackgroundImageDraws, encoder: encoder, viewport: viewport)
+
         drawCellBuffer(frame.backgroundCells,
                        pipeline: cellColorPipeline,
                        texture: nil,
@@ -3331,8 +3338,6 @@ final class MetalTerminalRenderer {
                                      scale: CGFloat,
                                      cellWidth: CGFloat,
                                      cellHeight: CGFloat,
-                                     lineDescent: CGFloat,
-                                     lineLeading: CGFloat,
                                      yDisp: Int,
                                      firstRow: Int,
                                      lastRow: Int) -> (colorVertices: [ColorVertex],
@@ -3480,7 +3485,7 @@ final class MetalTerminalRenderer {
         guard let runs = CTLineGetGlyphRuns(ctline) as? [CTRun] else {
             return (colorVertices, [], [])
         }
-        let yOffset = ceil(lineDescent + lineLeading)
+        let yOffset = context.baselineOffset
         let textColorSIMD = colorToSIMD(caretTextColor)
 
         for run in runs {
@@ -3607,43 +3612,34 @@ final class MetalTerminalRenderer {
         return texture
     }
 
-    private func kittyTexture(imageId: UInt32, kitty: SnapshotKitty) -> MTLTexture? {
-        guard let kittyImage = kitty.imagesById[imageId] else {
-            return nil
-        }
-        let signature = kittySignature(for: kittyImage.payload)
+    private func kittyTexture(
+        imageId: UInt32,
+        renderSnapshot: KittyGraphicsRenderSnapshot
+    ) -> MTLTexture? {
+        guard let image = renderSnapshot.imagesById[imageId] else { return nil }
+        let signature = KittyImageSignature(
+            kind: 2,
+            width: image.width,
+            height: image.height,
+            byteCount: image.rgba.count,
+            headHash: UInt32(truncatingIfNeeded: image.contentGeneration))
         if let cached = kittyTextureCache[imageId], cached.signature == signature {
             return cached.texture
         }
-        let texture: MTLTexture?
-        switch kittyImage.payload {
-        case .png(let data):
-            texture = try? textureLoader.newTexture(data: data, options: textureOptions())
-        case .rgba(let bytes, let width, let height):
-            texture = textureFromRGBA(bytes: bytes, width: width, height: height)
-        }
-        if let texture {
-            kittyTextureCache[imageId] = (signature, texture)
-        } else {
+        guard let texture = textureFromRGBA(
+            bytes: image.rgba, width: image.width, height: image.height) else {
 #if DEBUG
-            if !kittyTextureFailures.contains(imageId) {
-                kittyTextureFailures.insert(imageId)
-                print("Metal: failed to create texture for kitty image id=\(imageId)")
+            if kittyTextureFailures.insert(imageId).inserted {
+                print("Metal: failed to create Kitty texture id=\(imageId) size=\(image.width)x\(image.height) bytes=\(image.rgba.count)")
             }
 #endif
+            return nil
         }
+        kittyTextureCache[imageId] = (signature, texture)
+#if DEBUG
+        kittyTextureFailures.remove(imageId)
+#endif
         return texture
-    }
-
-    private func kittySignature(for payload: KittyGraphicsPayload) -> KittyImageSignature {
-        switch payload {
-        case .png(let data):
-            let headHash = hashBytes(data, limit: 64)
-            return KittyImageSignature(kind: 1, width: 0, height: 0, byteCount: data.count, headHash: headHash)
-        case .rgba(let bytes, let width, let height):
-            let headHash = hashBytes(Data(bytes), limit: 64)
-            return KittyImageSignature(kind: 2, width: width, height: height, byteCount: bytes.count, headHash: headHash)
-        }
     }
 
     private func hashBytes(_ data: Data, limit: Int) -> UInt32 {
@@ -3669,9 +3665,53 @@ final class MetalTerminalRenderer {
         guard let texture = device.makeTexture(descriptor: descriptor) else {
             return nil
         }
+        // Kitty RGBA rows start at the top of the image. The image textures
+        // loaded through MTKTextureLoader use a bottom-left origin, which is
+        // also what the terminal image quads expect. Reverse the Kitty rows so
+        // both texture paths have the same origin.
+        let premultiplied = Self.kittyPremultipliedRGBA(
+            bytes, width: width, height: height, flipVertically: true)
         let region = MTLRegionMake2D(0, 0, width, height)
-        texture.replace(region: region, mipmapLevel: 0, withBytes: bytes, bytesPerRow: width * 4)
+        texture.replace(
+            region: region,
+            mipmapLevel: 0,
+            withBytes: premultiplied,
+            bytesPerRow: width * 4)
         return texture
+    }
+
+    static func kittyPremultipliedRGBA(
+        _ bytes: [UInt8],
+        width: Int? = nil,
+        height: Int? = nil,
+        flipVertically: Bool = false
+    ) -> [UInt8] {
+        let flipWidth = width ?? 0
+        let flipHeight = height ?? 0
+        let canFlip = flipVertically && flipWidth > 0 && flipHeight > 1
+            && flipWidth * flipHeight * 4 == bytes.count
+        var result = canFlip
+            ? [UInt8](repeating: 0, count: bytes.count)
+            : bytes
+        var index = 0
+        let rowBytes = flipWidth * 4
+        while index + 3 < bytes.count {
+            let destination: Int
+            if canFlip {
+                let row = index / rowBytes
+                let columnByte = index % rowBytes
+                destination = (flipHeight - 1 - row) * rowBytes + columnByte
+            } else {
+                destination = index
+            }
+            let alpha = Int(bytes[index + 3])
+            result[destination] = UInt8((Int(bytes[index]) * alpha + 127) / 255)
+            result[destination + 1] = UInt8((Int(bytes[index + 1]) * alpha + 127) / 255)
+            result[destination + 2] = UInt8((Int(bytes[index + 2]) * alpha + 127) / 255)
+            result[destination + 3] = bytes[index + 3]
+            index += 4
+        }
+        return result
     }
 
     private func cgImage(from image: TTImage) -> CGImage? {
@@ -3800,7 +3840,46 @@ final class MetalTerminalRenderer {
         return (Float(minX), Float(minY), Float(maxX), Float(maxY))
     }
 
-    private func kittyAspectFitRect(imageSize: CGSize, in rect: CGRect) -> CGRect {
+    static func kittyVirtualImageGeometry(
+        source: KittyGraphicsPixelRect,
+        textureWidth: Int,
+        textureHeight: Int,
+        placementRect: CGRect,
+        cellRect: CGRect,
+        scale: CGFloat
+    ) -> (imageRect: CGRect, visibleRect: CGRect, uvRect: CGRect)? {
+        guard source.width > 0, source.height > 0,
+              textureWidth > 0, textureHeight > 0, scale > 0 else { return nil }
+        let imageSize = CGSize(
+            width: CGFloat(source.width) / scale,
+            height: CGFloat(source.height) / scale)
+        let imageRect = kittyAspectFitRect(imageSize: imageSize, in: placementRect)
+        let visible = imageRect.intersection(cellRect)
+        guard !visible.isEmpty, imageRect.width > 0, imageRect.height > 0 else { return nil }
+
+        let localU0 = (visible.minX - imageRect.minX) / imageRect.width
+        let localV0 = (visible.minY - imageRect.minY) / imageRect.height
+        let localU1 = (visible.maxX - imageRect.minX) / imageRect.width
+        let localV1 = (visible.maxY - imageRect.minY) / imageRect.height
+        let sourceWidth = CGFloat(source.width)
+        let sourceHeight = CGFloat(source.height)
+        let textureWidth = CGFloat(textureWidth)
+        let textureHeight = CGFloat(textureHeight)
+        let u0 = (CGFloat(source.x) + localU0 * sourceWidth) / textureWidth
+        // The upload reverses Kitty's top-first rows to the Metal texture's
+        // bottom-left origin. The bottom of the source crop is therefore the
+        // first V coordinate for the bottom of the placement rectangle.
+        let sourceBottom = textureHeight - CGFloat(source.y + source.height)
+        let v0 = (sourceBottom + localV0 * sourceHeight) / textureHeight
+        let u1 = (CGFloat(source.x) + localU1 * sourceWidth) / textureWidth
+        let v1 = (sourceBottom + localV1 * sourceHeight) / textureHeight
+        return (
+            imageRect,
+            visible,
+            CGRect(x: u0, y: v0, width: u1 - u0, height: v1 - v0))
+    }
+
+    private static func kittyAspectFitRect(imageSize: CGSize, in rect: CGRect) -> CGRect {
         guard imageSize.width > 0, imageSize.height > 0, rect.width > 0, rect.height > 0 else {
             return rect
         }
@@ -3989,8 +4068,13 @@ final class MetalTerminalRenderer {
         }
     }
 
+    @MainActor
+    func resetCursorBlinkAfterInput() {
+        cursorBlinkController.resetAfterInput()
+    }
+
     private func pruneKittyTextureCache(kitty: SnapshotKitty) {
-        let liveIds = kitty.imagesById
+        let liveIds = kitty.renderSnapshot.imagesById
         if kittyTextureCache.isEmpty {
             return
         }
@@ -4008,10 +4092,8 @@ final class MetalTerminalRenderer {
 
     /// Whether a shader library can be built here at all.
     ///
-    /// Exposed for tests: under `swift test` the SwiftTerm resource bundle is
-    /// not next to the test binary, so Metal cannot be enabled and any test
-    /// that needs it must skip rather than fail. Cheap and cached — building
-    /// the library once is the only honest way to answer this.
+    /// Exposed for tests that optionally exercise Metal. Cheap and cached —
+    /// building the library once is the only honest way to answer this.
     static let shaderLibraryIsAvailable: Bool = {
         guard let device = MTLCreateSystemDefaultDevice() else { return false }
         return (try? makeLibrary(device: device)) != nil
@@ -4122,6 +4204,16 @@ final class MetalTerminalRenderer {
         if let url = Bundle.main.bundleURL.appendingPathComponent(bundleName) as URL?,
            let resourceBundle = Bundle(url: url) {
             bundles.append(resourceBundle)
+        }
+        // SwiftPM puts resources beside the .xctest bundle, which may be
+        // loaded by a separate runner. Never search arbitrary app siblings.
+        for bundle in [Bundle.main, Bundle(for: MetalTerminalRenderer.self)]
+            where bundle.bundleURL.pathExtension == "xctest" {
+            let url = bundle.bundleURL.deletingLastPathComponent()
+                .appendingPathComponent(bundleName)
+            if let resourceBundle = Bundle(url: url) {
+                bundles.append(resourceBundle)
+            }
         }
         #endif
         bundles.append(Bundle(for: MetalTerminalRenderer.self))

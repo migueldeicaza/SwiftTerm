@@ -37,7 +37,7 @@ final class BufferRef {
 }
 
 public final class Buffer {
-    private var _lines: CircularBufferLineList
+    private let _lines: CircularBufferLineList
     /// Identifier space shared by every packed cell in this buffer.
     let cellArena: CellArena
 
@@ -235,8 +235,10 @@ public final class Buffer {
     
     var scrollback: Int?
     
+    /// Yields the line list without creating an owned result. Hot scroll paths
+    /// borrow the list for the duration of one operation.
     var lines : CircularBufferLineList {
-        get { return _lines }
+        _read { yield _lines }
     }
 
     /// Returns true if any lines in this buffer have images attached
@@ -263,26 +265,12 @@ public final class Buffer {
         }
     }
 
-    /// Removes inline images that normal terminal output replaces. Kitty
-    /// placements are independent graphics and stay until their protocol
-    /// delete command removes them.
+    /// Removes inline images that normal terminal output replaces.
+    /// Kitty placements are stored independently in the terminal core.
     func clearTextOverwrittenImagesFromLine(_ line: BufferLine) {
-        guard let images = line.images else { return }
-
-        let kept = images.filter { image in
-            guard let kittyImage = image as? KittyPlacementImage else {
-                return false
-            }
-            return kittyImage.kittyIsKitty
-        }
-        guard kept.count != images.count else { return }
-
-        if kept.isEmpty {
-            _linesWithImagesCount -= 1
-            line.images = nil
-        } else {
-            line.images = kept
-        }
+        guard line.images != nil else { return }
+        _linesWithImagesCount -= 1
+        line.images = nil
     }
 
     /// Recalculates the count of lines with images (used after reflow operations)
@@ -831,9 +819,11 @@ public final class Buffer {
         x = 0
         y = 0
 
-        _lines = CircularBufferLineList (maxLength: getCorrectBufferLength(rows))
-        setupLinesCallbacks()
-        _linesWithImagesCount = 0
+        // Reset in place: `_lines` is a `let` so the hot ring accesses can
+        // borrow it without ARC traffic. Owner and liveness survive the reset,
+        // and the live list reports every dropped line with images, so
+        // `_linesWithImagesCount` is already back to zero afterwards.
+        _lines.reset(maxLength: getCorrectBufferLength(rows))
         scrollTop = 0
         scrollBottom = rows - 1
         marginLeft = 0
@@ -1117,10 +1107,10 @@ public final class Buffer {
         return true
     }
     
-    func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil) -> String
+    func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil, textProvider: ((CharData) -> String)? = nil) -> String
     {
         let line = _lines [lineIndex]
-        return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol, skipNullCellsFollowingWide: skipNullCellsFollowingWide, characterProvider: characterProvider)
+        return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol, skipNullCellsFollowingWide: skipNullCellsFollowingWide, characterProvider: characterProvider, textProvider: textProvider)
     }
     
     func setupTabStops (index: Int = -1, tabStopWidth: Int)
@@ -1706,6 +1696,9 @@ public final class Buffer {
         }
     }
     
+    @inline(__always)
+    var allowsBulkInsert: Bool { !insertMode }
+
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
     /// Returns number of bytes consumed. Returns 0 if insert mode is active.
     func insertAsciiRun(_ bytes: ArraySlice<UInt8>, styleID: UInt16,
@@ -1777,6 +1770,49 @@ public final class Buffer {
         return consumed
     }
 
+    /// Bulk-inserts validated scalars of one width class.
+    /// Returns the number of scalars consumed.
+    func insertScalarRun(_ scalars: UnsafeBufferPointer<UInt32>, width: Int,
+                         styleID: UInt16, payloadCode: UInt16) -> Int {
+        guard !insertMode else { return 0 }
+        precondition(width == 1 || width == 2)
+        let semanticCode = CellArena.semanticContentCode(for: semanticContent)
+        let widthState: PackedCell.WidthState = width == 2 ? .wide : .narrow
+        let left = marginMode ? _marginLeft : 0
+        let right = marginMode ? _marginRight : _cols - 1
+        // The scalar fallback owns the behavior when the complete region
+        // cannot hold one glyph. Do not change the cursor before the fallback.
+        guard right - left + 1 >= width else { return 0 }
+        var consumed = 0
+
+        while consumed < scalars.count {
+            if _x + width - 1 > right {
+                guard wraparound else { break }
+                _x = left
+                if _y >= _scrollBottom {
+                    scroll(true)
+                } else {
+                    let paragraphBidiState = _lines[_y + _yBase].bidiState
+                    _y += 1
+                    _lines[_y + _yBase].isWrapped = true
+                    _lines[_y + _yBase].bidiState = paragraphBidiState
+                }
+            }
+            let available = (right - _x + 1) / width
+            let runLength = min(available, scalars.count - consumed)
+            guard runLength > 0 else { break }
+            let row = _lines[_y + _yBase]
+            clearTextOverwrittenImagesFromLine(row)
+            row.setPackedScalarRun(
+                scalars, sourceStart: consumed, count: runLength, at: _x,
+                widthState: widthState, styleID: styleID,
+                payloadCode: payloadCode, semanticContentCode: semanticCode)
+            _x += runLength * width
+            consumed += runLength
+        }
+        return consumed
+    }
+
     func insertCharacter(_ inputCell: PackedCell) {
         // D.1: stamp the OSC 133 role once, here at the insertion funnel, from
         // the buffer's own classification. No caller can forget to stamp, and
@@ -1828,12 +1864,6 @@ public final class Buffer {
             bufferRow.insertPackedCells(pos: _x, n: chWidth,
                                         rightMargin: marginMode ? _marginRight : _cols - 1,
                                         fill: empty)
-            // test last cell - since the last cell has only room for
-            // a halfwidth char any fullwidth shifted there is lost
-            // and will be set to eraseChar
-            if bufferRow.packedWidth(at: _cols - 1) == 2 {
-                bufferRow.setPackedCell(empty, at: _cols - 1)
-            }
         }
 
         // Write current char to buffer and advance cursor.
@@ -1841,6 +1871,7 @@ public final class Buffer {
             _x = _cols-1
         }
         clearTextOverwrittenImagesFromLine(bufferRow)
+        bufferRow.repairSeamsForWrite(at: _x, width: chWidth)
         bufferRow.setPackedCell(cell, at: _x)
         _x += 1
 

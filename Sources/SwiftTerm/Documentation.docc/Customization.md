@@ -206,7 +206,7 @@ Key options:
 | `initialBidiState` | implicit, autodetect, LTR | BiDi state for new paragraphs after startup or reset |
 | `maximumBidiParagraphRows` | `120` | Maximum rows processed as one BiDi paragraph |
 | `initialBidiArrowKeySwap` | `false` | Initial state for BiDi left/right arrow swapping |
-| `kittyImageCacheLimitBytes` | 320 MB | Memory limit for Kitty image cache |
+| `kittyGraphics` | 10 MB per screen, direct media only | Kitty storage and local-media policy |
 | `ansi256PaletteStrategy` | `.base16Lab` | 256-color palette generation strategy |
 
 The `.base16Lab` and `.base16LabHarmonious` strategies are based on the

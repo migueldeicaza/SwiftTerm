@@ -3,12 +3,13 @@ import Foundation
 @main
 struct BuildInfoGenerator {
     static func main() throws {
-        guard CommandLine.arguments.count == 3 else {
+        guard CommandLine.arguments.count == 4 else {
             throw GeneratorError.invalidArguments
         }
 
         let repositoryPath = CommandLine.arguments[1]
         let outputFile = URL(fileURLWithPath: CommandLine.arguments[2])
+        let terminfoOutputFile = URL(fileURLWithPath: CommandLine.arguments[3])
         let outputDirectory = outputFile.deletingLastPathComponent()
         let environment = ProcessInfo.processInfo.environment
         let repository = GitRepository(repositoryPath: repositoryPath)
@@ -32,14 +33,37 @@ struct BuildInfoGenerator {
             hasUncommittedChanges: hasUncommittedChanges
         )
 
+        let terminfoPath = URL(fileURLWithPath: repositoryPath, isDirectory: true)
+            .appendingPathComponent("swifterm-terminfo").path
+        let terminfoSource: String
+        do {
+            terminfoSource = try XtgettcapTableGenerator.sourceFile(
+                capabilities: TerminfoSource.capabilities(atPath: terminfoPath)
+            )
+        } catch let error as TerminfoSourceError {
+            FileHandle.standardError.write(Data("error: \(error.description)\n".utf8))
+            exit(1)
+        }
+
         try FileManager.default.createDirectory(
             at: outputDirectory,
             withIntermediateDirectories: true
         )
+        try FileManager.default.createDirectory(
+            at: terminfoOutputFile.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
 
-        let existingSource = try? String(contentsOf: outputFile, encoding: .utf8)
+        try write(source, to: outputFile)
+        try write(terminfoSource, to: terminfoOutputFile)
+    }
+
+    /// Writes only when the content changes, so an unchanged input does not
+    /// force the dependent target to rebuild.
+    private static func write(_ source: String, to file: URL) throws {
+        let existingSource = try? String(contentsOf: file, encoding: .utf8)
         if existingSource != source {
-            try source.write(to: outputFile, atomically: true, encoding: .utf8)
+            try source.write(to: file, atomically: true, encoding: .utf8)
         }
     }
 

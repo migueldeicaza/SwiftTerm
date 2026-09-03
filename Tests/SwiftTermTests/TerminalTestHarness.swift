@@ -40,6 +40,8 @@ final class TerminalTestDelegate: TerminalDelegate {
     private(set) var bufferActivatedCount = 0
     private(set) var terminalTitles: [String] = []
     var cellSizeInPixelsValue: (width: Int, height: Int)? = nil
+    var terminalControlBytesForPasteValue =
+        TerminalPasteControls.approximateTerminalControlBytes
 
     func showCursor(source: Terminal) {}
     func hideCursor(source: Terminal) {}
@@ -49,8 +51,6 @@ final class TerminalTestDelegate: TerminalDelegate {
     func setTerminalIconTitle(source: Terminal, title: String) {}
     func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? { return nil }
     func sizeChanged(source: Terminal) {}
-    func scrolled(source: Terminal, yDisp: Int) {}
-    func linefeed(source: Terminal) {}
     func bufferActivated(source: Terminal) { bufferActivatedCount += 1 }
     func bell(source: Terminal) {}
 
@@ -65,12 +65,32 @@ final class TerminalTestDelegate: TerminalDelegate {
     func cellSizeInPixels(source: Terminal) -> (width: Int, height: Int)? {
         return cellSizeInPixelsValue
     }
+
+    func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8> {
+        terminalControlBytesForPasteValue
+    }
 }
 
 enum TerminalTestHarness {
-    static func makeTerminal(cols: Int = 80, rows: Int = 24, scrollback: Int = 0) -> (terminal: Terminal, delegate: TerminalTestDelegate) {
+    static func makeTerminal(
+        cols: Int = 80,
+        rows: Int = 24,
+        scrollback: Int = 0,
+        kittyGraphics: KittyGraphicsConfiguration = .init()
+    ) -> (terminal: Terminal, delegate: TerminalTestDelegate) {
         let delegate = TerminalTestDelegate()
-        let options = TerminalOptions(cols: cols, rows: rows, scrollback: scrollback)
+        let options = TerminalOptions(
+            cols: cols,
+            rows: rows,
+            scrollback: scrollback,
+            kittyGraphics: kittyGraphics)
+        let terminal = Terminal(delegate: delegate, options: options)
+        return (terminal, delegate)
+    }
+
+    static func makeTerminal(termName: String) -> (terminal: Terminal, delegate: TerminalTestDelegate) {
+        let delegate = TerminalTestDelegate()
+        let options = TerminalOptions(termName: termName)
         let terminal = Terminal(delegate: delegate, options: options)
         return (terminal, delegate)
     }

@@ -10,6 +10,15 @@
 
 import Foundation
 
+/// The light/dark preference represented by the terminal's current color palette.
+///
+/// This is reported to applications through the color-scheme notification protocol:
+/// https://github.com/contour-terminal/contour/blob/master/docs/vt-extensions/color-palette-update-notifications.md
+public enum TerminalColorScheme: Equatable {
+    case dark
+    case light
+}
+
 /**
  * The terminal delegate is a protocol that must be implemented by a class
  * that would provide a user interface for the terminal, and it is used by the
@@ -75,14 +84,6 @@ public protocol TerminalDelegate: AnyObject {
     func send (source: Terminal, data: ArraySlice<UInt8>)
     
     // callbacks
-    
-    /// Callback - the window was scrolled, new yDisplay passed
-    /// The default implementation does nothing.
-    func scrolled (source: Terminal, yDisp: Int)
-    
-    /// Callback a newline was generated
-    /// The default implementation does nothing.
-    func linefeed (source: Terminal)
     
     /// This method is invoked when the buffer changes from Normal to Alternate, or Alternate to Normal
     /// The default implementation does nothing.
@@ -215,6 +216,64 @@ public protocol TerminalDelegate: AnyObject {
      * - Returns: the current clipboard contents, or `nil` to deny the request
      */
     func clipboardRead(source: Terminal) -> Data?
+
+    /**
+     * Returns the active terminal-driver special bytes that must become spaces
+     * during a text paste.
+     *
+     * SwiftTerm adds ``TerminalPasteControls/fixedDisallowedBytes`` separately.
+     * Return only enabled `termios.c_cc` values in the C0 or DEL range. This
+     * callback can run while `terminalLock` is held, so it must return quickly
+     * and must not call back into the terminal.
+     *
+     * The default returns
+     * ``TerminalPasteControls/approximateTerminalControlBytes``.
+     */
+    func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8>
+
+    /// Returns the OSC 5522 services that this host can serve completely.
+    func kittyClipboardCapabilities(source: Terminal) -> KittyClipboardCapabilities
+
+    /// Delivers one terminal-generated Kitty paste event.
+    func kittyClipboardSendPasteEvent(source: Terminal, data: ArraySlice<UInt8>) -> Bool
+
+    /// Requests the MIME types at one clipboard location.
+    @discardableResult
+    func kittyClipboardAvailableMimeTypes(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        completion: @escaping @Sendable ([String]?) -> Void
+    ) -> Bool
+
+    /// Reads one selected MIME representation on demand.
+    ///
+    /// The result distinguishes data, unavailable, denied, and busy. Empty
+    /// data is a valid representation.
+    @discardableResult
+    func kittyClipboardRead(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        mimeType: String,
+        completion: @escaping @Sendable (KittyClipboardReadResult) -> Void
+    ) -> Bool
+
+    /// Publishes every representation and alias of one write as one atomic
+    /// clipboard update. The host must publish all of it or none of it.
+    @discardableResult
+    func kittyClipboardWrite(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        content: KittyClipboardWriteContent,
+        completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
+    ) -> Bool
+
+    /// Requests user permission for a clipboard operation.
+    @discardableResult
+    func kittyClipboardRequestPermission(
+        source: Terminal,
+        request: KittyClipboardPermissionRequest,
+        completion: @escaping @Sendable (KittyClipboardPermissionResult) -> Void
+    ) -> Bool
     
     /**
      * Invoked when client application issues OSC 777 to show notification.
@@ -284,6 +343,13 @@ public protocol TerminalImage {
     
     /// Column where the image was attached
     var col: Int { get set }
+}
+
+struct SynchronizedOutputWatchdogCounters {
+    var armed = 0
+    var rearmed = 0
+    var cancelled = 0
+    var fired = 0
 }
 
 /**
@@ -460,6 +526,13 @@ open class Terminal {
         }
     }
 
+    private func repairWideCellsForColumnRestrictedShift (row: Int)
+    {
+        let line = buffer.lines [row]
+        line.repairWideSeam(at: buffer.marginLeft)
+        line.repairWideSeam(at: buffer.marginRight + 1)
+    }
+
     // The current buffers
     private let cellArena: CellArena
     var normalBuffer, altBuffer: Buffer
@@ -487,7 +560,10 @@ open class Terminal {
     /// fixed 1 s.
     var synchronizedOutputTimeoutSeconds: TimeInterval = 1.0
     public private(set) var synchronizedOutputActive: Bool = false
+    private(set) var synchronizedOutputGeneration: UInt64 = 0
+    private var synchronizedOutputWatchdogDirty = false
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
+    private(set) var synchronizedOutputWatchdogCounters = SynchronizedOutputWatchdogCounters()
 
     var displayBuffer: Buffer {
         buffer
@@ -543,7 +619,7 @@ open class Terminal {
     public var bidiRTLPreference: Bool { currentBidiState.fallbackDirection == .rightToLeft }
     public var bidiBoxMirroring: Bool { currentBidiState.boxMirroring }
 
-    private var savedBidiPrivateModes: [Int: Bool] = [:]
+    private var savedPrivateModes: [Int: Bool] = [:]
     var cursorHidden : Bool = false
     
     /// Controls the origin mode (DECOM), when set, the screen is limited to the top and bottom margins
@@ -587,6 +663,13 @@ open class Terminal {
     /// xterm's own default for this resource is false; we default to true here to match modern terminals
     /// (e.g. Ghostty) that enable it out of the box.
     public private(set) var alternateScrollMode: Bool = true
+    /// Whether the running application subscribed to unsolicited color-scheme updates with `CSI ? 2031 h`.
+    public private(set) var colorSchemeUpdatesEnabled: Bool = false
+
+    /// The light/dark preference represented by the current terminal palette, as reported to applications that
+    /// query it (`CSI ? 996 n`). Defaults to `.dark`; hosts should call `updateColorScheme(_:)` once the initial
+    /// palette is installed so a light terminal never reports the wrong preference.
+    public private(set) var colorScheme: TerminalColorScheme = .dark
     
     private var charset: [UInt8:String]? = nil
     private var gCharsets: [[UInt8:String]?] = [CharSets.defaultCharset, nil, nil, nil]
@@ -623,6 +706,21 @@ open class Terminal {
     /// To register a custom OSC handler, use ``registerOscHandler(code:handler:)``.
     private var parser: EscapeSequenceParser
 
+    /// The DCS handler that the parser has active, if a DCS sequence is open.
+    ///
+    /// This exists for tests that check which handler a DCS form selects.
+    var activeDcsHandlerForTesting: DcsHandler? {
+        parser.activeDcsHandler
+    }
+
+    /// Drops any sequence that the parser has only partly read.
+    ///
+    /// This exists for tests that check that an unfinished sequence releases
+    /// its storage without any of its side effects.
+    func resetParserForTesting() {
+        parser.reset(self)
+    }
+
     /// Owns copied OSC observations independently of parser storage.
     private let oscEventDispatcher = TerminalOscEventDispatcher()
 
@@ -634,7 +732,17 @@ open class Terminal {
     /// scrolled lines need only one delegate notification.
     private var hasPendingScrollNotification = false
     var kittyGraphicsState = KittyGraphicsState()
-    var kittyPlacementContext: KittyPlacementContext?
+    /// True while either screen holds at least one placement.
+    ///
+    /// The scrolling paths below run per scrolled line and would otherwise
+    /// pay for the placement-store accessor, a dictionary iteration and a
+    /// `Set` allocation on every line of every session, image or not. This is
+    /// a plain field so the guard is one load. It covers both screens, so it
+    /// stays correct when `scroll()` runs while the state points at the other
+    /// screen; `updateHasKittyPlacements()` refreshes it after every
+    /// insertion or removal in `placementsByKey`.
+    var hasKittyPlacements = false
+    var kittyAnimationTimerSerial: UInt64 = 0
     
     var refreshStart = Int.max
     var refreshEnd = -1
@@ -824,6 +932,19 @@ open class Terminal {
         let data: [UInt8] = cc.CSI + [reportedFocusState ? 0x49 : 0x4f]
         tdel?.send(source: self, data: data[0...])
     }
+
+    /// Records the terminal's effective visibility and reports a change to subscribed applications.
+    public func setTerminalVisibility(_ visibility: TerminalVisibility) {
+        let changed = reportedVisibility != visibility
+        reportedVisibility = visibility
+        if changed && visibilityReportsEnabled {
+            reportTerminalVisibility()
+        }
+    }
+
+    private func reportTerminalVisibility() {
+        sendResponse(cc.CSI, "?999;\(reportedVisibility.rawValue)n")
+    }
     
     ///
     /// Represents the mouse operation mode that the terminal is currently using and higher level
@@ -954,7 +1075,7 @@ open class Terminal {
         _currentBidiState = options.initialBidiState
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
         // This duplicates the setup above, but
-        parser = EscapeSequenceParser()
+        parser = EscapeSequenceParser (maximumOscBytes: options.maximumOscBytes)
         normalBuffer = Buffer(cols: _cols, rows: _rows, tabStopWidth: tabStopWidth,
                               scrollback: options.scrollback, bidiState: options.initialBidiState,
                               arena: cellArena)
@@ -977,6 +1098,7 @@ open class Terminal {
     }
 
     deinit {
+        kittyClipboardProtocol?.terminalDestroyed()
         TinyAtom.release(codes: payloadCodes)
     }
 
@@ -1060,6 +1182,13 @@ open class Terminal {
         }
         return getCharacter(for: charData)
     }
+
+    /// Returns all text in one cell, including a grapheme that the host Swift
+    /// runtime segments into multiple Characters.
+    public func getText(col: Int, row: Int) -> String?
+    {
+        getCharData(col: col, row: row)?.getText()
+    }
     
     public func resetNormalBuffer() {
         normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth,
@@ -1076,6 +1205,12 @@ open class Terminal {
             return
         }
         semanticNoteAlternateScreenSwitch()
+
+        // A full-screen program can sit over thousands of normal-buffer scrollback lines. While
+        // that alternate screen is active, window resizes update only what is visible and leave
+        // this buffer at its prior grid; otherwise every drag tick reflows hidden history. Pay
+        // that cost once, at the final grid, only when the normal buffer becomes visible again.
+        resizeNormalBufferToCurrentGridIfNeeded()
         normalBuffer.x = altBuffer.x
         normalBuffer.y = altBuffer.y
         
@@ -1088,6 +1223,8 @@ open class Terminal {
             altBuffer.clear ()
         }
         _buffer = normalBuffer
+        kittyGraphicsState.activeIsAlternate = false
+        kittyGraphicsDidActivateScreen()
     }
     
     private func activateAltBuffer(fillAttr: Attribute?) {
@@ -1103,7 +1240,19 @@ open class Terminal {
         
         altBuffer.fillViewportRows(attribute: fillAttr)
         _buffer = altBuffer
+        kittyGraphicsState.activeIsAlternate = true
         clearKittyImages(in: altBuffer, isAlternateBuffer: true)
+        kittyGraphicsDidActivateScreen()
+    }
+
+    private func resizeNormalBufferToCurrentGridIfNeeded() {
+        guard normalBuffer.cols != cols || normalBuffer.rows != rows else { return }
+
+        let oldCols = normalBuffer.cols
+        let dy = normalBuffer.savedY - normalBuffer.y
+        normalBuffer.resize(newCols: cols, newRows: rows)
+        normalBuffer.savedY = normalBuffer.y + dy
+        normalBuffer.setupTabStops(index: oldCols, tabStopWidth: tabStopWidth)
     }
     
     func setupTabStops (index: Int = -1)
@@ -1113,13 +1262,14 @@ open class Terminal {
     }
     
     func resizeBuffers(newColumns: Int, newRows: Int) {
-        // correct the savedY cursor to follow changes to y
-        let dy = normalBuffer.savedY - normalBuffer.y
-        normalBuffer.resize (newCols: newColumns, newRows: newRows)
-        normalBuffer.savedY = normalBuffer.y + dy
-        
+        if buffer !== altBuffer {
+            // Correct the savedY cursor to follow changes to y. When the alternate buffer is
+            // active, defer this potentially large normal-buffer reflow until it is visible.
+            let dy = normalBuffer.savedY - normalBuffer.y
+            normalBuffer.resize(newCols: newColumns, newRows: newRows)
+            normalBuffer.savedY = normalBuffer.y + dy
+        }
         altBuffer.resize (newCols: newColumns, newRows: newRows)
-
     }
     public func setup (isReset: Bool = false)
     {
@@ -1147,8 +1297,17 @@ open class Terminal {
         setMarginMode(false)
         setInsertMode(false)
         setWraparound(true)
-        bracketedPasteMode = false
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.bracketedPaste.rawValue, value: false)
         alternateScrollMode = true
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.synchronizedOutput.rawValue, value: false)
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.colorSchemeReports.rawValue, value: false)
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.visibilityReports.rawValue, value: false)
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.inBandSizeReports.rawValue, value: false)
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.kittyPasteEvents.rawValue, value: false)
+        if isReset {
+            savedPrivateModes.removeAll()
+            kittyClipboardProtocol?.clear()
+        }
 
         keyboardModeNormal = KeyboardModeState()
         keyboardModeAlt = KeyboardModeState()
@@ -1193,7 +1352,7 @@ open class Terminal {
         }
     }
 
-    private func handleKittyKeyboardProtocol(pars: [Int], collect: cstring) -> Bool {
+    private func handleKittyKeyboardProtocol(pars: CsiParameters, collect: cstring) -> Bool {
         guard collect.count == 1, let prefix = collect.first else {
             return false
         }
@@ -1253,7 +1412,7 @@ open class Terminal {
         }
     }
 
-    func cmdCsiU(_ pars: [Int], _ collect: cstring) {
+    func cmdCsiU(_ pars: CsiParameters, _ collect: cstring) {
         if handleKittyKeyboardProtocol(pars: pars, collect: collect) {
             return
         }
@@ -1264,6 +1423,143 @@ open class Terminal {
         }
     }
     
+    // DCS + q Pt ST
+    // XTGETTCAP - request terminfo capabilities.
+    //   The payload is a list of semicolon-separated, hex-encoded capability
+    //   names. Each known name gets its own reply; unknown and malformed names
+    //   get none, which is what xterm and Ghostty do.
+    // Response: DCS 1 + r <hex-name> [= <hex-value>] ST
+    class XTGETTCAP: DcsHandler {
+        /// Largest payload kept for one request. This limit matches Ghostty.
+        static let maximumRequestBytes = 1024 * 1024
+
+        /// The hex encoding of `TN`, the key that names the terminfo entry.
+        static let terminalNameKey = "544E"
+
+        /// Longest `TERM` value that gets a `TN` reply. This limit matches Ghostty.
+        static let maximumTerminalNameBytes = 128
+
+        private var data: [UInt8] = []
+
+        /// Set when the payload passes ``maximumRequestBytes``. The whole
+        /// request is then dropped rather than answered from a prefix.
+        private var isDiscarded = false
+
+        // Nested lifetime: this handler is created per XTGETTCAP sequence and
+        // held in the parser's `activeDcsHandler` for the duration of that one
+        // sequence, well inside the terminal's life.
+        unowned(unsafe) var terminal: Terminal
+
+        public init (terminal: Terminal)
+        {
+            self.terminal = terminal
+        }
+
+        func hook (collect: cstring, parameters: CsiParameters, flag: UInt8)
+        {
+            data = []
+            isDiscarded = false
+        }
+
+        func put (data: ArraySlice<UInt8>)
+        {
+            if isDiscarded {
+                return
+            }
+            if self.data.count + data.count > Self.maximumRequestBytes {
+                isDiscarded = true
+                self.data = []
+                return
+            }
+            self.data.append (contentsOf: data)
+        }
+
+        func unhook ()
+        {
+            let payload = data
+            let wasDiscarded = isDiscarded
+            data = []
+            isDiscarded = false
+            if wasDiscarded {
+                return
+            }
+
+            var start = payload.startIndex
+            while start <= payload.endIndex {
+                let end = payload[start...].firstIndex (of: UInt8 (ascii: ";")) ?? payload.endIndex
+                reply (to: payload [start..<end])
+                if end == payload.endIndex {
+                    break
+                }
+                start = payload.index (after: end)
+            }
+        }
+
+        /// Answers one request key, and stays silent for an unknown one.
+        private func reply (to token: ArraySlice<UInt8>)
+        {
+            guard let key = Self.normalizedKey (token) else {
+                return
+            }
+            if key == Self.terminalNameKey {
+                replyWithTerminalName ()
+                return
+            }
+            if let response = SwiftTermTerminfo.xtgettcapReplies [key] {
+                terminal.sendResponse (text: response)
+            }
+        }
+
+        /// The uppercase form of a request key, or `nil` when the key cannot
+        /// name a capability.
+        ///
+        /// An empty key, a key with an odd byte count, and a key with a
+        /// nonhexadecimal byte are all unknown. Only the key bytes are used, so
+        /// an unknown key is never copied into a reply.
+        static func normalizedKey (_ token: ArraySlice<UInt8>) -> String?
+        {
+            guard !token.isEmpty, token.count % 2 == 0 else {
+                return nil
+            }
+            var key: [UInt8] = []
+            key.reserveCapacity (token.count)
+            for byte in token {
+                switch byte {
+                case UInt8 (ascii: "0")...UInt8 (ascii: "9"),
+                     UInt8 (ascii: "A")...UInt8 (ascii: "F"):
+                    key.append (byte)
+                case UInt8 (ascii: "a")...UInt8 (ascii: "f"):
+                    key.append (byte - 0x20)
+                default:
+                    return nil
+                }
+            }
+            return String (decoding: key, as: UTF8.self)
+        }
+
+        /// Answers `TN` from the current terminal name.
+        ///
+        /// Only the host knows this value, so it is not in the static table. An
+        /// empty or over-long name gets no reply, which is what Ghostty does.
+        private func replyWithTerminalName ()
+        {
+            let name = Array (terminal.options.termName.utf8)
+            guard !name.isEmpty, name.count <= Self.maximumTerminalNameBytes else {
+                return
+            }
+
+            var response = "\u{1b}P1+r\(Self.terminalNameKey)="
+            response.reserveCapacity (response.count + name.count * 2 + 2)
+            let digits = Array ("0123456789ABCDEF")
+            for byte in name {
+                response.append (digits [Int (byte >> 4)])
+                response.append (digits [Int (byte & 0x0f)])
+            }
+            response += "\u{1b}\\"
+            terminal.sendResponse (text: response)
+        }
+    }
+
     // DCS $ q Pt ST
     // DECRQSS (https://vt100.net/docs/vt510-rm/DECRQSS.html)
     //   Request Status String (DECRQSS), VT420 and up.
@@ -1281,7 +1577,7 @@ open class Terminal {
             data = []
         }
 
-        func hook (collect: cstring, parameters: [Int],  flag: UInt8)
+        func hook (collect: cstring, parameters: CsiParameters,  flag: UInt8)
         {
             data = []
         }
@@ -1429,12 +1725,49 @@ open class Terminal {
         guard cell.width > 0 && cell.code != 0 else { return nil }
         return (y, x)
     }
+
+    /// Returns the combined terminal grapheme when the incoming scalar
+    /// continues the content stored in `cell`.
+    private func combinedGraphemeScalars(_ cell: PackedCellView,
+                                         appending scalar: Unicode.Scalar) -> [UInt32]?
+    {
+        let existingText = cell.getText()
+        var candidate = existingText
+        candidate.unicodeScalars.append(scalar)
+        if candidate.count == 1 {
+            return candidate.unicodeScalars.map(\.value)
+        }
+
+        let incomingBreak = UnicodeUtil.indicConjunctBreak(scalar.value)
+        if existingText.count > 1,
+           incomingBreak == .extend || incomingBreak == .linker {
+            return candidate.unicodeScalars.map(\.value)
+        }
+        guard incomingBreak == .consonant else {
+            return nil
+        }
+        var foundLinker = false
+        for value in cell.getScalarValues().reversed() {
+            switch UnicodeUtil.indicConjunctBreak(value) {
+            case .extend:
+                continue
+            case .linker:
+                foundLinker = true
+            case .consonant:
+                guard foundLinker else { return nil }
+                return candidate.unicodeScalars.map(\.value)
+            case .none:
+                return nil
+            }
+        }
+        return nil
+    }
     
     final func handlePrint (_ data: ArraySlice<UInt8>)
     {
         let buffer = self.buffer
         var pending = data
-        var previousGlyphEndsInZWJ: Bool?
+        var previousScalar: UInt32?
 
         // Fast path: the leading ASCII run, when there is no charset remapping
         // and no pending partial UTF-8. Only the prefix up to the first high
@@ -1449,7 +1782,7 @@ open class Terminal {
                                                      styleID: curStyleID,
                                                      payloadCode: resolveActiveHyperlinkPayloadCode())
                 if consumed > 0 {
-                    previousGlyphEndsInZWJ = false
+                    previousScalar = UnicodeUtil.graphemeNeutralScalar
                 }
                 updateRange(borrowing: buffer, buffer.y)
                 // A short consume means insertMode is active; the per-character
@@ -1463,7 +1796,7 @@ open class Terminal {
 
         handlePrintSlow(
             byteCount: pending.count,
-            previousGlyphEndsInZWJ: previousGlyphEndsInZWJ
+            previousScalar: previousScalar
         ) { index in
             pending[pending.startIndex + index]
         }
@@ -1472,9 +1805,13 @@ open class Terminal {
     /// Processes a borrowed printable run without making an owned batch copy.
     final func handlePrintBorrowed(_ data: Span<UInt8>)
     {
-        let buffer = self.buffer
+        handlePrintBorrowed(data, buffer: _buffer)
+    }
+
+    private func handlePrintBorrowed(_ data: Span<UInt8>, buffer: borrowing Buffer)
+    {
         var pendingStart = 0
-        var previousGlyphEndsInZWJ: Bool?
+        var previousScalar: UInt32?
 
         if charset == nil && readingBuffer.putbackBuffer.isEmpty {
             let end = ByteRunScanner.firstNonASCIIByte(in: data, from: pendingStart)
@@ -1484,7 +1821,7 @@ open class Terminal {
                     data.extracting(pendingStart..<end), styleID: curStyleID,
                     payloadCode: resolveActiveHyperlinkPayloadCode())
                 if consumed > 0 {
-                    previousGlyphEndsInZWJ = false
+                    previousScalar = UnicodeUtil.graphemeNeutralScalar
                 }
                 updateRange(borrowing: buffer, buffer.y)
                 pendingStart += consumed
@@ -1496,7 +1833,7 @@ open class Terminal {
 
         handlePrintSlow(
             byteCount: data.count - pendingStart,
-            previousGlyphEndsInZWJ: previousGlyphEndsInZWJ
+            previousScalar: previousScalar
         ) { index in
             data[pendingStart + index]
         }
@@ -1506,7 +1843,7 @@ open class Terminal {
     /// nonescaping, so it can read either an owned slice or a borrowed span.
     private func handlePrintSlow(
         byteCount: Int,
-        previousGlyphEndsInZWJ initialPreviousGlyphEndsInZWJ: Bool?,
+        previousScalar initialPreviousScalar: UInt32?,
         byteAt: (Int) -> UInt8
     )
     {
@@ -1515,8 +1852,12 @@ open class Terminal {
         let putbackCount = putback.count
         let totalCount = putbackCount + byteCount
         var inputIndex = 0
-        var previousGlyphEndsInZWJ = initialPreviousGlyphEndsInZWJ
+        // The last scalar of the cell that a combining scalar would attach to.
+        // `nil` means "not resolved yet" and zero means "no such cell", which
+        // no stored cell can be: `combiningTarget` rejects an empty cell.
+        var previousScalar = initialPreviousScalar
         let hyperlinkPayloadCode = resolveActiveHyperlinkPayloadCode()
+        var batchingEnabled = true
 
         @inline(__always)
         func hasNext() -> Bool {
@@ -1540,6 +1881,242 @@ open class Terminal {
             return result
         }
 
+        @inline(__always)
+        func byte(at index: Int) -> UInt8 {
+            if index < putbackCount {
+                return putback[index]
+            }
+            return byteAt(index - putbackCount)
+        }
+
+        /// Returns the last scalar of the cell that a combining scalar would
+        /// attach to, or zero when there is none. Every path that writes a
+        /// cell updates `previousScalar`, so this walks the buffer only once
+        /// per print run.
+        func resolvePreviousScalar() -> UInt32 {
+            if let previousScalar {
+                return previousScalar
+            }
+            var resolved: UInt32 = 0
+            if let target = combiningTarget(in: buffer) {
+                resolved = buffer.lines[target.y]
+                    .packedView(at: target.x).lastScalarValue() ?? 0
+            }
+            previousScalar = resolved
+            return resolved
+        }
+
+        /// Classifies the boundary between the cell before the cursor and an
+        /// incoming scalar. Only `.undecided` needs segmentation.
+        @inline(__always)
+        func joinWithPrevious(_ value: UInt32, properties: UInt8,
+                              width: Int) -> UnicodeUtil.GraphemeJoin {
+            let previous = resolvePreviousScalar()
+            guard previous != 0 else { return .breaks }
+            // UTS #51 defines an emoji modifier sequence as an emoji modifier
+            // base followed immediately by an emoji modifier. A standalone
+            // modifier must remain visible. Batchable scalars exclude emoji
+            // modifiers, so this tailoring stays on the scalar path. Keep the
+            // rule here so `graphemeJoinNonEmojiModifier` stays small enough to
+            // inline into both batch call sites.
+            if UnicodeUtil.isEmojiModifier(value) {
+                return UnicodeUtil.isEmojiModifierBase(previous) ? .joins : .breaks
+            }
+            return UnicodeUtil.graphemeJoinNonEmojiModifier(
+                previous: previous,
+                previousProperties: UnicodeUtil.graphemeProperties(previous),
+                incoming: value, incomingProperties: properties,
+                incomingWidth: width)
+        }
+
+        @inline(__always)
+        func batchableScalar(at index: Int)
+            -> (value: UInt32, size: Int, width: UInt8, properties: UInt8)? {
+            let firstByte = byte(at: index)
+            let size = UnicodeUtil.expectedSizeFromFirstByte(firstByte)
+            var value: UInt32
+            if size == 1 {
+                guard charset == nil else { return nil }
+                value = UInt32(firstByte)
+            } else {
+                guard size > 1, index + size <= totalCount else { return nil }
+                value = UInt32(firstByte) & (0x7F >> UInt32(size))
+                var wellFormed = true
+                for offset in 1..<size {
+                    let nextByte = byte(at: index + offset)
+                    if nextByte & 0xC0 != 0x80 {
+                        wellFormed = false
+                    }
+                    value = (value << 6) | (UInt32(nextByte) & 0x3F)
+                }
+                let minimum: UInt32 = size == 2 ? 0x80 :
+                    (size == 3 ? 0x800 : 0x10000)
+                guard wellFormed, value >= minimum else { return nil }
+            }
+            guard let scalar = Unicode.Scalar(value) else { return nil }
+            let width = UnicodeUtil.columnWidth(rune: scalar)
+            // The emoji-modifier exclusion is also the precondition for the
+            // `graphemeJoinNonEmojiModifier` calls in `insertScalarBatch`.
+            guard width == 1 || width == 2,
+                  value != 0x200D,
+                  !UnicodeUtil.isRegionalIndicator(scalar),
+                  !UnicodeUtil.isVariationSelector(value),
+                  !UnicodeUtil.isEmojiModifier(value) else {
+                return nil
+            }
+            // Hangul jamo, Indic consonants and Prepend scalars stay eligible.
+            // The batch loop breaks a run wherever two neighbours can join, so
+            // every batched scalar still starts its own cluster. Printable
+            // ASCII carries no break property, so it skips the second table.
+            let properties = value < 0x80 ? 0
+                : UnicodeUtil.graphemeProperties(value)
+            return (value, size, UInt8(width), properties)
+        }
+
+        func widenCombinedCell(lineIndex: Int, x: Int, cell: PackedCellView,
+                               scalars: [UInt32]) -> Bool {
+            let right = marginMode ? buffer.marginRight : cols - 1
+            guard let updated = cellArena.replacingContent(
+                of: cell.packed, with: scalars, widthState: .wide) else {
+                return false
+            }
+
+            if x + 1 <= right && x + 1 < cols {
+                let line = buffer.lines[lineIndex]
+                if insertMode {
+                    line.insertPackedCells(
+                        pos: x + 1, n: 1, rightMargin: right,
+                        fill: cell.packed.demotedToNarrowBlank())
+                }
+                line.repairWideSeam(at: x + 2)
+                line.setPackedCell(updated, at: x)
+                let tail = cellArena.pack(
+                    attribute: cell.attribute, scalar: 0,
+                    widthState: .spacerTail,
+                    payloadCode: cell.packed.payloadCode,
+                    semanticContentCode: cell.packed.semanticContentCode)!
+                line.setPackedCell(tail, at: x + 1)
+                buffer.x += 1
+                return true
+            }
+
+            guard wraparound, x == right,
+                  lineIndex == buffer.y + buffer.yBase else {
+                return false
+            }
+            let line = buffer.lines[lineIndex]
+            line.setPackedCell(cell.packed.demotedToNarrowBlank(), at: x)
+            buffer.x = x
+            buffer.insertCharacter(updated)
+            updateRange(borrowing: buffer, lineIndex)
+            updateRange(borrowing: buffer, buffer.y)
+            return true
+        }
+
+        /// Inserts a prefix of width-homogeneous subruns. Difficult scalars
+        /// stay on the existing path below.
+        func insertScalarBatch() -> Bool {
+            guard batchingEnabled, hasNext(), buffer.allowsBulkInsert else { return false }
+            guard let first = batchableScalar(at: inputIndex) else { return false }
+            guard joinWithPrevious(first.value, properties: first.properties,
+                                   width: Int(first.width)) == .breaks else {
+                return false
+            }
+            // One batchable scalar does not pay for the scratch buffers: the
+            // scalar path below inserts it without any allocation. Requiring a
+            // second one keeps base+combining-mark text (NFD Latin, Hebrew,
+            // Devanagari) off the bulk path, where every base character would
+            // otherwise set up a batch of one.
+            let secondIndex = inputIndex + first.size
+            guard secondIndex < totalCount,
+                  let second = batchableScalar(at: secondIndex),
+                  first.properties | second.properties == 0 ||
+                  UnicodeUtil.graphemeJoinNonEmojiModifier(
+                    previous: first.value, previousProperties: first.properties,
+                    incoming: second.value,
+                    incomingProperties: second.properties,
+                    incomingWidth: Int(second.width)) == .breaks else {
+                return false
+            }
+
+            let batchStart = inputIndex
+            let capacity = min(256, bytesLeft())
+            return withUnsafeTemporaryAllocation(of: UInt32.self, capacity: capacity) { scalars in
+                withUnsafeTemporaryAllocation(of: UInt8.self, capacity: capacity) { sizes in
+                    withUnsafeTemporaryAllocation(of: UInt8.self, capacity: capacity) { widths in
+                        scalars.baseAddress!.initialize(to: first.value)
+                        sizes.baseAddress!.initialize(to: UInt8(first.size))
+                        widths.baseAddress!.initialize(to: first.width)
+                        scalars.baseAddress!.advanced(by: 1).initialize(to: second.value)
+                        sizes.baseAddress!.advanced(by: 1).initialize(to: UInt8(second.size))
+                        widths.baseAddress!.advanced(by: 1).initialize(to: second.width)
+                        var scan = batchStart + first.size + second.size
+                        var count = 2
+                        var previousValue = second.value
+                        var previousProperties = second.properties
+                        while scan < totalCount && count < capacity {
+                            guard let next = batchableScalar(at: scan) else { break }
+                            // Every batched scalar is one or two columns wide
+                            // and is not a regional indicator or emoji modifier,
+                            // so a pair with no break property on either side
+                            // always breaks.
+                            if previousProperties | next.properties != 0,
+                               UnicodeUtil.graphemeJoinNonEmojiModifier(
+                                previous: previousValue,
+                                previousProperties: previousProperties,
+                                incoming: next.value,
+                                incomingProperties: next.properties,
+                                incomingWidth: Int(next.width)) != .breaks {
+                                break
+                            }
+                            previousValue = next.value
+                            previousProperties = next.properties
+                            scalars.baseAddress!.advanced(by: count).initialize(to: next.value)
+                            sizes.baseAddress!.advanced(by: count).initialize(to: UInt8(next.size))
+                            widths.baseAddress!.advanced(by: count).initialize(to: next.width)
+                            count += 1
+                            scan += next.size
+                        }
+                        defer {
+                            scalars.baseAddress!.deinitialize(count: count)
+                            sizes.baseAddress!.deinitialize(count: count)
+                            widths.baseAddress!.deinitialize(count: count)
+                        }
+                        var inserted = 0
+                        var consumedBytes = 0
+                        while inserted < count {
+                            let runWidth = widths[inserted]
+                            var runEnd = inserted + 1
+                            while runEnd < count, widths[runEnd] == runWidth {
+                                runEnd += 1
+                            }
+                            let source = UnsafeBufferPointer(
+                                start: scalars.baseAddress!.advanced(by: inserted),
+                                count: runEnd - inserted)
+                            let consumed = buffer.insertScalarRun(
+                                source, width: Int(runWidth), styleID: curStyleID,
+                                payloadCode: hyperlinkPayloadCode)
+                            if consumed > 0 {
+                                for index in inserted ..< (inserted + consumed) {
+                                    consumedBytes += Int(sizes[index])
+                                }
+                                inputIndex = batchStart + consumedBytes
+                                previousScalar = scalars[inserted + consumed - 1]
+                            }
+                            inserted += consumed
+                            if inserted < runEnd {
+                                // The scalar path must process the suffix. This
+                                // preserves no-wrap repeated-overwrite behavior.
+                                batchingEnabled = false
+                                break
+                            }
+                        }
+                        return inserted > 0
+                    }
+                }
+            }
+        }
+
         func putBack(_ code: UInt8) {
             var pending = [code]
             pending.reserveCapacity(bytesLeft() + 1)
@@ -1551,6 +2128,9 @@ open class Terminal {
 
         updateRange(borrowing: buffer, buffer.y)
         while hasNext() {
+            if insertScalarBatch() {
+                continue
+            }
             var ch: Character = " "
             var chWidth: Int = 0
             let code = getNext()
@@ -1577,7 +2157,7 @@ open class Terminal {
                                                               character: ch,
                                                               width: Int8(chWidth),
                                                               payloadCode: hyperlinkPayloadCode))
-                        previousGlyphEndsInZWJ = ch.unicodeScalars.last?.value == 0x200D
+                        previousScalar = ch.unicodeScalars.last?.value ?? 0
                         continue
                     }
                 }
@@ -1589,7 +2169,7 @@ open class Terminal {
                                                           scalar: rune,
                                                           width: Int8(chWidth),
                                                           payloadCode: hyperlinkPayloadCode))
-                    previousGlyphEndsInZWJ = false
+                    previousScalar = UInt32(code)
                 }
                 continue
             } else if bytesLeft() >= (n-1) {
@@ -1621,7 +2201,7 @@ open class Terminal {
                                                               scalar: rune,
                                                               width: Int8(chWidth),
                                                               payloadCode: hyperlinkPayloadCode))
-                        previousGlyphEndsInZWJ = false
+                        previousScalar = UInt32(code)
                     }
                     continue
                 }
@@ -1631,10 +2211,15 @@ open class Terminal {
                 if ch.unicodeScalars.count == 1 {
                     chWidth = UnicodeUtil.columnWidth(rune: ch.unicodeScalars.first!)
                 } else {
-                    // The cluster, not the scalars: several spacing marks in one
-                    // cluster are worth one column between them, so the decomposed
-                    // form of a character measures the same as the composed one.
-                    chWidth = UnicodeUtil.clusterWidth(ch)
+                    chWidth = 0
+                    for scalar in ch.unicodeScalars {
+                        let width = UnicodeUtil.columnWidth(rune: scalar)
+                        if width < 0 {
+                            chWidth = -1
+                            break
+                        }
+                        chWidth = max (chWidth, width)
+                    }
                 }
             } else {
                 putBack(code)
@@ -1681,147 +2266,108 @@ open class Terminal {
                 // testCombiningScalarsAreZeroWidth), so the chWidth test
                 // already covers UnicodeUtil.isCombining(firstScalarValue).
                 let firstScalarValue = firstScalar.value
-                //
-                // A spacing mark has to be here too. It is the one combining scalar
-                // that is *not* zero-width — it advances the cursor — but it still
-                // belongs to the cluster before it, and the `newStr.count == 1` test
-                // below is what decides whether it really does. Leave it out and
-                // `\u{0BC6}\u{0BBE}` takes two cells while the identical
-                // `\u{0BCA}` takes one.
-                var shouldTryCombine = chWidth == 0 ||
-                                       firstScalarValue == 0x200D ||  // ZWJ
-                                       UnicodeUtil.isVariationSelector(firstScalarValue) ||
-                                       UnicodeUtil.isEmojiModifier(firstScalarValue) ||
-                                       UnicodeUtil.isSpacingMark(rune: firstScalarValue)
-
-                // An unknown previous glyph can end in ZWJ. Once this loop
-                // knows that it does not, only regional indicators need the
-                // preceding glyph to form a pair.
-                let needsTarget = shouldTryCombine ||
-                                  previousGlyphEndsInZWJ != false ||
-                                  UnicodeUtil.isRegionalIndicator(firstScalar)
-                let target = needsTarget ? combiningTarget(in: buffer) : nil
-
-                // Also check if the previous character ends with ZWJ - if so, we should combine
-                if !shouldTryCombine, let target {
-                    let existingLine = buffer.lines[target.y]
-                    let lastCell = existingLine.packedView(at: target.x)
-                    let lastCode = lastCell.code
-                    let lastEndsInZWJ: Bool
-                    let lastSingleScalar: Unicode.Scalar?
-                    if lastCell.isSimpleRune, lastCode >= 0 {
-                        // The code is the cell's single scalar; test it
-                        // without materializing a Character.
-                        lastSingleScalar = Unicode.Scalar(UInt32(lastCode))
-                        lastEndsInZWJ = lastCode == 0x200D
+                let graphemeProperties = UnicodeUtil.graphemeProperties(firstScalarValue)
+                let indicBreak = UnicodeUtil.indicConjunctBreak(
+                    properties: graphemeProperties)
+                // Two table lookups rule out every pair that UAX #29 breaks
+                // unconditionally. Only a pair that survives them pays for
+                // combinedGraphemeScalars, which builds a String and asks the
+                // stdlib to segment it.
+                var target: (y: Int, x: Int)?
+                var combinedScalars: [UInt32]?
+                let join = joinWithPrevious(firstScalarValue,
+                                            properties: graphemeProperties,
+                                            width: chWidth)
+                if join != .breaks {
+                    target = combiningTarget(in: buffer)
+                    if let target {
+                        let lastCell = buffer.lines[target.y]
+                            .packedView(at: target.x)
+                        previousScalar = lastCell.lastScalarValue() ?? 0
+                        if join == .joins {
+                            combinedScalars = lastCell.getScalarValues(
+                                appending: firstScalarValue)
+                        } else {
+                            combinedScalars = combinedGraphemeScalars(
+                                lastCell, appending: firstScalar)
+                        }
                     } else {
-                        let scalars = lastCell.getCharacter().unicodeScalars
-                        lastSingleScalar = scalars.count == 1 ? scalars.first : nil
-                        lastEndsInZWJ = scalars.last?.value == 0x200D
-                    }
-                    previousGlyphEndsInZWJ = lastEndsInZWJ
-                    if lastEndsInZWJ {
-                        shouldTryCombine = true
-                    }
-                    // Regional indicator combining: pair two RIs into a flag emoji.
-                    else if UnicodeUtil.isRegionalIndicator(firstScalar),
-                            let lastScalar = lastSingleScalar,
-                            UnicodeUtil.isRegionalIndicator(lastScalar) {
-                        shouldTryCombine = true
+                        previousScalar = 0
                     }
                 }
 
-                if shouldTryCombine, let target {
+                if let target, let newScalars = combinedScalars {
                     // Fetch the glyph before the cursor, and attempt to combine it.
                     let existingLine = buffer.lines[target.y]
                     let lastx = target.x
                     let cell = existingLine.packedView(at: lastx)
 
-                    // Attempt the combination
-                    let newStr = String([cell.getCharacter(), ch])
-
-                    // If the resulting string is 1 grapheme cluster, then it combined properly
-                    if newStr.count == 1 {
-                        if let newCh = newStr.first {
-                            let oldSize = cell.width
-                            let isVs16 = firstScalar.value == 0xFE0F
-                            let isVs15 = firstScalar.value == 0xFE0E
-                            let needsEmojiVariationCheck = isVs16 || isVs15
-                            if needsEmojiVariationCheck {
-                                let baseScalar = cell.getCharacter().unicodeScalars.last
-                                if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
-                                    continue
-                                }
-                            }
-                            if isVs16 {
-                                if oldSize != 2 && lastx + 1 < cols {
-                                    let updated = cellArena.replacingContent(
-                                        of: cell.packed, with: newCh, widthState: .wide)!
-                                    existingLine.setPackedCell(updated, at: lastx)
-                                    let nextX = lastx + 1
-                                    let empty = cellArena.pack(
-                                        attribute: cell.attribute, scalar: 0,
-                                        widthState: .spacerTail,
-                                        payloadCode: cell.packed.payloadCode,
-                                        semanticContentCode: cell.packed.semanticContentCode)!
-                                    existingLine.setPackedCell(empty, at: nextX)
-                                    buffer.x += 1
-                                } else {
-                                    let state: PackedCell.WidthState = oldSize == 2 ? .wide : .narrow
-                                    let updated = cellArena.replacingContent(
-                                        of: cell.packed, with: newCh, widthState: state)!
-                                    existingLine.setPackedCell(updated, at: lastx)
-                                }
-                            } else if isVs15 {
-                                let updated = cellArena.replacingContent(
-                                    of: cell.packed, with: newCh, widthState: .narrow)!
-                                existingLine.setPackedCell(updated, at: lastx)
-                                if oldSize == 2 && buffer.x > 0 {
-                                    buffer.x -= 1
-                                }
-                            } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) && oldSize == 1 && lastx + 1 < cols {
-                                // In narrow mode, two width-1 RIs combine into a width-2 flag.
-                                let updated = cellArena.replacingContent(
-                                    of: cell.packed, with: newCh, widthState: .wide)!
-                                existingLine.setPackedCell(updated, at: lastx)
-                                let empty = cellArena.pack(
-                                    attribute: cell.attribute, scalar: 0,
-                                    widthState: .spacerTail,
-                                    payloadCode: cell.packed.payloadCode,
-                                    semanticContentCode: cell.packed.semanticContentCode)!
-                                existingLine.setPackedCell(empty, at: lastx + 1)
-                                buffer.x += 1
-                            } else if UnicodeUtil.isSpacingMark(rune: firstScalarValue),
-                                      oldSize == 1,
-                                      UnicodeUtil.clusterWidth(newCh) == 2,
-                                      lastx + 1 < cols {
-                                // A consonant that has just taken its vowel sign. The
-                                // cluster is one glyph and needs two columns, so the
-                                // cell widens rather than a second cell appearing —
-                                // and it widens once, however many spacing marks
-                                // follow, because the cluster is only worth one column
-                                // for all of them together.
-                                let updated = cellArena.replacingContent(
-                                    of: cell.packed, with: newCh, widthState: .wide)!
-                                existingLine.setPackedCell(updated, at: lastx)
-                                let empty = cellArena.pack(
-                                    attribute: cell.attribute, scalar: 0,
-                                    widthState: .spacerTail,
-                                    payloadCode: cell.packed.payloadCode,
-                                    semanticContentCode: cell.packed.semanticContentCode)!
-                                existingLine.setPackedCell(empty, at: lastx + 1)
-                                buffer.x += 1
-                            } else {
-                                let state: PackedCell.WidthState = oldSize == 2 ? .wide : .narrow
-                                let updated = cellArena.replacingContent(
-                                    of: cell.packed, with: newCh, widthState: state)!
-                                existingLine.setPackedCell(updated, at: lastx)
-                            }
-                            previousGlyphEndsInZWJ = newCh.unicodeScalars.last?.value == 0x200D
-                            updateRange(borrowing: buffer, target.y)
+                    let oldSize = cell.width
+                    let isVs16 = firstScalar.value == 0xFE0F
+                    let isVs15 = firstScalar.value == 0xFE0E
+                    let needsEmojiVariationCheck = isVs16 || isVs15
+                    if needsEmojiVariationCheck {
+                        let baseScalar = cell.lastScalarValue().flatMap(Unicode.Scalar.init)
+                        if baseScalar == nil || !UnicodeUtil.isEmojiVs16Base(rune: baseScalar!) {
                             continue
                         }
                     }
+                    if isVs16 {
+                        if oldSize == 2 {
+                            let updated = cellArena.replacingContent(
+                                of: cell.packed, with: newScalars, widthState: .wide)!
+                            existingLine.setPackedCell(updated, at: lastx)
+                        } else if !widenCombinedCell(
+                                lineIndex: target.y, x: lastx, cell: cell,
+                                scalars: newScalars) {
+                            let updated = cellArena.replacingContent(
+                                of: cell.packed, with: newScalars, widthState: .narrow)!
+                            existingLine.setPackedCell(updated, at: lastx)
+                        }
+                    } else if isVs15 {
+                        let updated = cellArena.replacingContent(
+                            of: cell.packed, with: newScalars, widthState: .narrow)!
+                        existingLine.setPackedCell(updated, at: lastx)
+                        if oldSize == 2 {
+                            let tail = existingLine.packedCell(at: lastx + 1)
+                            existingLine.setPackedCell(tail.demotedToNarrowBlank(), at: lastx + 1)
+                        }
+                        if oldSize == 2 && buffer.x > 0 {
+                            buffer.x -= 1
+                        }
+                    } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) &&
+                              oldSize == 1 {
+                        // In narrow mode, two width-1 RIs combine into a width-2 flag.
+                        if !widenCombinedCell(
+                            lineIndex: target.y, x: lastx, cell: cell,
+                            scalars: newScalars) {
+                            let updated = cellArena.replacingContent(
+                                of: cell.packed, with: newScalars,
+                                widthState: .narrow)!
+                            existingLine.setPackedCell(updated, at: lastx)
+                        }
+                    } else if (chWidth > 0 ||
+                               (UnicodeUtil.isSpacingMarkWidth(firstScalarValue) &&
+                                indicBreak != .linker &&
+                                !UnicodeUtil.isVirama(firstScalarValue))) &&
+                              oldSize != 2 {
+                        if !widenCombinedCell(
+                            lineIndex: target.y, x: lastx, cell: cell,
+                            scalars: newScalars) {
+                            let updated = cellArena.replacingContent(
+                                of: cell.packed, with: newScalars,
+                                widthState: .narrow)!
+                            existingLine.setPackedCell(updated, at: lastx)
+                        }
+                    } else {
+                        let state: PackedCell.WidthState = oldSize == 2 ? .wide : .narrow
+                        let updated = cellArena.replacingContent(
+                            of: cell.packed, with: newScalars, widthState: state)!
+                        existingLine.setPackedCell(updated, at: lastx)
+                    }
+                    previousScalar = newScalars.last ?? 0
+                    updateRange(borrowing: buffer, target.y)
+                    continue
                 }
                 if chWidth == 0 {
                     continue
@@ -1835,7 +2381,7 @@ open class Terminal {
                                                       scalar: firstScalar,
                                                       width: Int8(chWidth),
                                                       payloadCode: hyperlinkPayloadCode))
-                previousGlyphEndsInZWJ = false
+                previousScalar = firstScalarValue
             }
         }
         updateRange(borrowing: buffer, buffer.y)
@@ -1845,6 +2391,11 @@ open class Terminal {
     public func getCharacter (for charData: CharData) -> Character
     {
         charData.getCharacter()
+    }
+
+    public func getText(for charData: CharData) -> String
+    {
+        charData.getText()
     }
 
     public func makeCharData (attribute: Attribute, code: Int32, size: Int8 = 1) -> CharData
@@ -1990,42 +2541,51 @@ open class Terminal {
 //        }
 //    }
 
-    func cmdLineFeed ()
+    final func cmdLineFeed ()
     {
         cmdLineFeedBasic ()
     }
     
-    func cmdLineFeedBasic ()
+    final func cmdLineFeedBasic ()
     {
-        let buffer = self.buffer
+        // Start the borrow from the stored property. The public `buffer`
+        // getter returns an owned reference and adds ARC work to each line feed.
+        cmdLineFeedBasic(buffer: _buffer)
+    }
+
+    private func cmdLineFeedBasic (buffer: borrowing Buffer)
+    {
         let by = buffer.y
         var movedToNextLine = false
         
         let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
         if by == buffer.scrollBottom {
             if canScroll {
-                scroll(isWrapped: false)
+                scroll(buffer: buffer, isWrapped: false)
                 movedToNextLine = true
             }
-        } else if by == rows - 1 {
+        } else if by == _rows - 1 {
         } else {
             buffer.y = by + 1
             movedToNextLine = true
             let line = buffer.lines[buffer.yBase + buffer.y]
             if !line.isWrapped {
-                line.bidiState = currentBidiState
+                line.bidiState = _currentBidiState
             }
         }
         
         // If the end of the line is hit, prevent this action from wrapping around to the next line.
-        if buffer.x >= cols {
+        if buffer.x >= _cols {
             buffer.x -= 1
         }
 
-        finishSemanticLineAdvance(movedToNextLine: movedToNextLine)
+        finishSemanticLineAdvance(buffer: buffer, movedToNextLine: movedToNextLine)
+
+        // Do not notify the delegate for each line feed. Built-in owners use
+        // range changes and the combined scroll notification. A callback here
+        // also loads the weak delegate for each line, which is a large cost for
+        // scrolling workloads.
         
-        // This event is emitted whenever the terminal outputs a LF or NL.
-        emitLineFeed()
         if lineFeedMode {
             buffer.x = usingMargins() ? buffer.marginLeft : 0
         }
@@ -2041,17 +2601,18 @@ open class Terminal {
     /// after submission. The user's submission (R4) normally precedes the
     /// pty's echoed CRLF, so echoed-Enter and pre-`C` output rows (PS0, DEBUG
     /// traps) land in the `.submitted` state and are never stamped.
-    private func finishSemanticLineAdvance(movedToNextLine: Bool) {
+    private func finishSemanticLineAdvance(buffer: borrowing Buffer, movedToNextLine: Bool) {
         guard movedToNextLine else { return }
-        let row = buffer.yBase + buffer.y
-        guard row >= 0, row < buffer.lines.count else { return }
         // E.4 / R1: stamp only, never write nil. An LF while submitted must not
         // clear a dead group's epoch (that is a destruction path outside R1's
-        // list), so a non-stamping advance leaves the row untouched.
+        // list), so a non-stamping advance leaves the row untouched. This is
+        // the common case, so test it before any row lookup.
         switch buffer.semanticInput {
         case .prompt, .armed: break
         case .idle, .submitted: return
         }
+        let row = buffer.yBase + buffer.y
+        guard row >= 0, row < buffer.lines.count else { return }
         let line = buffer.lines[row]
         let active = buffer.activeSemanticGroupID
         if let existing = line.semanticHardContinuationGroup, existing != active {
@@ -2851,7 +3412,7 @@ open class Terminal {
     
     func resetColor (_ number: Int)
     {
-        if number > 255 {
+        guard ansiColors.indices.contains(number), defaultAnsiColors.indices.contains(number) else {
             return
         }
         ansiColors [number] = defaultAnsiColors [number]
@@ -2866,7 +3427,8 @@ open class Terminal {
             if let param = String (bytes: data, encoding: .ascii) {
                 let colors = param.split(separator: ";")
                 for color in colors {
-                    resetColor (Int (color) ?? 0)
+                    guard let n = Int (color) else { continue }
+                    resetColor (n)
                 }
             }
         }
@@ -2997,6 +3559,51 @@ open class Terminal {
             }
             tdel?.clipboardCopy(source: self, content: content)
         }
+    }
+
+    /// Delivers a clipboard paste event or a text paste according to modes 5522 and 2004.
+    @discardableResult
+    public func paste(
+        _ request: TerminalPasteRequest,
+        allowUnsafe: Bool = false
+    ) -> TerminalPasteResult {
+        getKittyClipboardProtocol().paste(request, allowUnsafe: allowUnsafe)
+    }
+
+    /// Re-reads the host's OSC 5522 capability set.
+    ///
+    /// A host that changes its clipboard services must call this. Loss of the
+    /// complete standard-clipboard service resets mode 5522, revokes every
+    /// grant and paste token, and aborts an active write with `ENOSYS`.
+    public func refreshKittyClipboardCapabilities() {
+        getKittyClipboardProtocol().refreshCapabilities()
+    }
+
+    /// Whether a user paste at `location` sends a mode 5522 event.
+    ///
+    /// A host can skip building a clipboard snapshot when this is `false`.
+    func kittyPasteEventPossible(location: KittyClipboardLocation) -> Bool {
+        getKittyClipboardProtocol().canSendPasteEvent(location: location)
+    }
+
+    /// Clears mode 5522 after the host lost its clipboard services.
+    func clearKittyPasteEvents() {
+        _ = applyDECPrivateMode(SpecialDECPrivateMode.kittyPasteEvents.rawValue, value: false)
+        // XTRESTORE must not bring the mode back.
+        savedPrivateModes.removeValue(forKey: SpecialDECPrivateMode.kittyPasteEvents.rawValue)
+    }
+
+    func oscKittyClipboard(_ data: ArraySlice<UInt8>) {
+        getKittyClipboardProtocol().handle(data)
+    }
+
+    private func getKittyClipboardProtocol() -> KittyClipboardProtocol {
+        if let kittyClipboardProtocol {
+            return kittyClipboardProtocol
+        }
+        let value = KittyClipboardProtocol(terminal: self)
+        kittyClipboardProtocol = value
+        return value
     }
     
     // Notifications:
@@ -3205,6 +3812,33 @@ open class Terminal {
     func reportColor (oscCode: Int, color: Color) {
         sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())", cc.ST)
     }
+
+    private func reportColorScheme () {
+        let value = colorScheme == .dark ? 1 : 2
+        sendResponse(cc.CSI, "?997;\(value)n")
+    }
+
+    /// Updates the palette's light/dark preference and, when `notify` is set, notifies the running application if
+    /// it subscribed with `CSI ? 2031 h`. Call this after installing the new colors so an application can immediately
+    /// re-query OSC 10/11 and receive the updated foreground and background values.
+    ///
+    /// Pass `notify: false` to record the preference without announcing it: queries (`CSI ? 996 n`, `DECRQM 2031`)
+    /// then answer with the new value right away while the host defers the notification with `notifyColorScheme()`.
+    public func updateColorScheme (_ colorScheme: TerminalColorScheme, notify: Bool = true) {
+        self.colorScheme = colorScheme
+        if notify {
+            notifyColorScheme()
+        }
+    }
+
+    /// Sends the current light/dark preference to the running application if it subscribed with `CSI ? 2031 h`.
+    /// Safe to repeat: applications treat the notification as a cue to re-query OSC 10/11, so a second one only
+    /// costs a round trip and rescues a query that timed out the first time.
+    public func notifyColorScheme () {
+        if colorSchemeUpdatesEnabled {
+            reportColorScheme()
+        }
+    }
     
     // This handles both setting the foreground, but spill into background and cursor color
     // if more parameters are provided (ie, sending OSC 10 with #ffffff,#000000,#ff0000
@@ -3314,7 +3948,7 @@ open class Terminal {
     // CSI Ps @
     // Insert Ps (Blank) Character(s) (default = 1) (ICH).
     //
-    func cmdInsertChars (_ pars: [Int], _ collect: cstring)
+    func cmdInsertChars (_ pars: CsiParameters, _ collect: cstring)
     {
         // Do nothing if we are outside the margin
         if marginMode && (buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight) {
@@ -3334,7 +3968,7 @@ open class Terminal {
     // CSI Ps A
     // Cursor Up Ps Times (default = 1) (CUU).
     //
-    func cmdCursorUp (_ pars: [Int], _ collect: cstring)
+    func cmdCursorUp (_ pars: CsiParameters, _ collect: cstring)
     {
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
         let buffer = self.buffer
@@ -3354,7 +3988,7 @@ open class Terminal {
     // CSI Ps B
     // Cursor Down Ps Times (default = 1) (CUD).
     //
-    func cmdCursorDown (_ pars: [Int], _ collect: cstring)
+    func cmdCursorDown (_ pars: CsiParameters, _ collect: cstring)
     {
         let buffer = self.buffer
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
@@ -3382,7 +4016,7 @@ open class Terminal {
     // CSI Ps B
     // Cursor Forward Ps Times (default = 1) (CUF).
     //
-    func cmdCursorForward (_ pars: [Int], _ collect: cstring)
+    func cmdCursorForward (_ pars: CsiParameters, _ collect: cstring)
     {
         cursorForward(count: pars.count > 0 ? pars [0] : 1)
     }
@@ -3405,7 +4039,7 @@ open class Terminal {
     // CSI Ps D
     // Cursor Backward Ps Times (default = 1) (CUB).
     //
-    func cmdCursorBackward (_ pars: [Int], _ collect: cstring)
+    func cmdCursorBackward (_ pars: CsiParameters, _ collect: cstring)
     {
         cursorBackward(count: pars.count > 0 ? pars [0] : 1)
     }
@@ -3433,7 +4067,7 @@ open class Terminal {
     // CSI Ps I
     //   Cursor Forward Tabulation Ps tab stops (default = 1) (CHT).
     //
-    func cmdCursorForwardTab (_ pars: [Int], _ collect: cstring)
+    func cmdCursorForwardTab (_ pars: CsiParameters, _ collect: cstring)
     {
         let param = min (cols-1, max (pars.count > 0 ? pars [0] : 1, 1))
         for _ in 0..<param {
@@ -3460,7 +4094,7 @@ open class Terminal {
     // CSI Ps ; Ps H
     // Cursor Position [row;column] (default = [1,1]) (CUP).
     //
-    func cmdCursorPosition (_ pars: [Int], _ collect: cstring)
+    func cmdCursorPosition (_ pars: CsiParameters, _ collect: cstring)
     {
         setCursor (col: pars.count >= 2 ? (max (1, pars [1])-1) : 0, row: pars.count >= 1 ? (max (1, pars [0]) - 1) : 0)
     }
@@ -3484,7 +4118,7 @@ open class Terminal {
     // Cursor Next Line Ps Times (default = 1) (CNL).
     // same as CSI Ps B?
     //
-    func cmdCursorNextLine (_ pars: [Int], _ collect: cstring)
+    func cmdCursorNextLine (_ pars: CsiParameters, _ collect: cstring)
     {
         cmdCursorDown(pars, collect)
         buffer.x = buffer.marginLeft
@@ -3518,7 +4152,7 @@ open class Terminal {
     // Cursor Preceding Line Ps Times (default = 1) (CPL).
     // reuse CSI Ps A ?
     //
-    func cmdCursorPrecedingLine (_ pars: [Int], _ collect: cstring)
+    func cmdCursorPrecedingLine (_ pars: CsiParameters, _ collect: cstring)
     {
         cmdCursorUp(pars, collect)
         buffer.x = buffer.marginLeft
@@ -3542,7 +4176,7 @@ open class Terminal {
     // CSI Ps G
     // Cursor Character Absolute  [column] (default = [row,1]) (CHA).
     //
-    func cmdCursorCharAbsolute (_ pars: [Int], _ collect: cstring)
+    func cmdCursorCharAbsolute (_ pars: CsiParameters, _ collect: cstring)
     {
         let buffer = self.buffer
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
@@ -3561,7 +4195,7 @@ open class Terminal {
     //     Ps = 1  -> Selective Erase to Left.
     //     Ps = 2  -> Selective Erase All.
     //
-    func cmdEraseInLine (_ pars: [Int], _ collect: cstring)
+    func cmdEraseInLine (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = pars.count == 0 ? 0 : pars [0]
         
@@ -3590,7 +4224,7 @@ open class Terminal {
     //     Ps = 1  -> Selective Erase Above.
     //     Ps = 2  -> Selective Erase All.
     //
-    func cmdEraseInDisplay (_ pars: [Int], _ collect: cstring)
+    func cmdEraseInDisplay (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = pars.count == 0 ? 0 : pars [0]
         var j: Int
@@ -3657,6 +4291,8 @@ open class Terminal {
         if clearImages {
             buffer.clearImagesFromLine(at: buffer.yBase + y)
         }
+        line.repairWideSeam(at: start)
+        line.repairWideSeam(at: end)
         line.replacePackedCells(start: start, end: end,
                                 fill: currentEraseBlankCell)
         if clearWrap {
@@ -3671,7 +4307,7 @@ open class Terminal {
     // CSI Ps L
     // Insert Ps Line(s) (default = 1) (IL).
     //
-    func cmdInsertLines (_ pars: [Int], _ collect: cstring)
+    func cmdInsertLines (_ pars: CsiParameters, _ collect: cstring)
     {
         let buffer = self.buffer
         if buffer.y < buffer.scrollTop || buffer.y > buffer.scrollBottom {
@@ -3690,6 +4326,9 @@ open class Terminal {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
                 let rowCount = buffer.scrollBottom-buffer.scrollTop
+                for i in 0...rowCount {
+                    repairWideCellsForColumnRestrictedShift(row: row + i)
+                }
                 for _ in 0..<p {
                     for i in (0..<rowCount).reversed() {
                         let src = buffer.lines [row+i]
@@ -3763,7 +4402,11 @@ open class Terminal {
         var ch: UInt8
         var charset: [UInt8:String]?
         
-        if let mappedCharset = CharSets.all[p[1]] {
+        // An empty mapping table (the US-ASCII set, `ESC ( B`) is the identity
+        // transform. Store it as `nil` so the printable fast paths, which are
+        // disabled whenever a charset is designated, stay available: `ESC ( B`
+        // is emitted constantly by full-screen applications.
+        if let mappedCharset = CharSets.all[p[1]], !mappedCharset.isEmpty {
             charset = mappedCharset
         } else {
             charset = nil
@@ -3841,7 +4484,7 @@ open class Terminal {
         setCursor(col: 0, row: 0)
     }
 
-    func cmdRestoreCursor (_ pars: [Int], _ collect: cstring)
+    func cmdRestoreCursor (_ pars: CsiParameters, _ collect: cstring)
     {
         // CSI u (no intermediates) = DECRC (Restore Cursor)
         // CSI > Ps u / CSI < u / CSI = Ps u = Kitty keyboard protocol (not cursor commands)
@@ -3864,7 +4507,9 @@ open class Terminal {
     // escape sequences and returns validated top, left, bottom, right in our 0-based
     // internal coordinates
     //
-    func getRectangleFromRequest (_ pars: ArraySlice<Int>) -> (top: Int, left: Int, bottom: Int, right: Int)?
+    func getRectangleFromRequest<Parameters: RandomAccessCollection>(_ pars: Parameters)
+        -> (top: Int, left: Int, bottom: Int, right: Int)?
+        where Parameters.Element == Int, Parameters.Index == Int
     {
         let buffer = self.buffer
         let b = pars.startIndex
@@ -3908,7 +4553,7 @@ open class Terminal {
     //  Pps denotes the source page.
     //  Ptd ; Pld denotes the target location.
     //  Ppd denotes the target page.
-    func csiCopyRectangularArea (_ ipars: [Int], _ collect: cstring)
+    func csiCopyRectangularArea (_ ipars: CsiParameters, _ collect: cstring)
     {
         if collect.count > 0 && collect == [36] {
             var pars: [Int] = []
@@ -3964,7 +4609,7 @@ open class Terminal {
     // CSI Ps x  Request Terminal Parameters (DECREQTPARM).
     // CSI Ps * x Select Attribute Change Extent (DECSACE), VT420 and up.
     // CSI Pc ; Pt ; Pl ; Pb ; Pr $ x Fill Rectangular Area (DECFRA), VT420 and up.
-    func csiX (_ pars: [Int], _ collect: cstring)
+    func csiX (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect.count > 0 && collect == [UInt8 (ascii: "$")] {
             // DECFRA
@@ -3991,7 +4636,7 @@ open class Terminal {
     // CSI Pm ' }
     //           Insert Ps Column(s) (default = 1) (DECIC), VT420 and up.
     //
-    func csiCloseBrace (_ pars: [Int], _ collect: cstring)
+    func csiCloseBrace (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect.count > 0 && collect == [39 /* ' */] {
              // DECIC - Insert Column
@@ -4025,7 +4670,7 @@ open class Terminal {
     //   Pg is the page number.
     //   Pt ; Pl ; Pb ; Pr denotes the rectangle.
     //   The x's are hexadecimal digits 0-9 and A-F.
-    func cmdDECRQCRA (_ pars: [Int], _ collect: cstring)
+    func cmdDECRQCRA (_ pars: CsiParameters, _ collect: cstring)
     {
         var checksum: UInt32 = 0
         let rid = pars.count > 0 ? pars [0] : 1
@@ -4037,9 +4682,9 @@ open class Terminal {
                     let line = buffer.lines [row+buffer.yBase]
                     for col in left...right {
                         let cell = line.packedView(at: col)
-                        let ch = cell.code == 0 ? " " : cell.getCharacter()
+                        let text = cell.code == 0 ? " " : cell.getText()
                         
-                        for scalar in ch.unicodeScalars {
+                        for scalar in text.unicodeScalars {
                             checksum += scalar.value
                         }
                     }
@@ -4051,7 +4696,7 @@ open class Terminal {
     }
 
     // Dispatcher for CSI .* z commands
-    func csiZ (_ pars: [Int], _ collect: cstring)
+    func csiZ (_ pars: CsiParameters, _ collect: cstring)
     {
         switch collect {
         case [UInt8 (ascii: "$")]:
@@ -4076,7 +4721,7 @@ open class Terminal {
     
     // DECERA - Erase Rectangular Area
     // CSI Pt ; Pl ; Pb ; Pr ; $ z
-    func cmdDECERA (_ pars: [Int])
+    func cmdDECERA (_ pars: CsiParameters)
     {
         if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...]) {
             let fillData = makePackedCell(styleID: curStyleID, character: " ", width: 1)
@@ -4090,7 +4735,7 @@ open class Terminal {
     }
 
     // Dispatches to DECSERA or XTPUSHSGR
-    func csiOpenBrace (_ pars: [Int], _ collect: cstring)
+    func csiOpenBrace (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect.count > 0 && collect == [UInt8 (ascii: "$")] {
             cmdSelectiveEraseRectangularArea (pars)
@@ -4100,14 +4745,14 @@ open class Terminal {
     }
     
     // Push video attributes onto stack (XTPUSHSGR), xterm.
-    func cmdPushSg (_ pars: [Int])
+    func cmdPushSg (_ pars: CsiParameters)
     {
         
     }
     
     // DECSERA - Selective Erase Rectangular Area
     // CSI Pt ; Pl ; Pb ; Pr ; $ {
-    func cmdSelectiveEraseRectangularArea (_ pars: [Int])
+    func cmdSelectiveEraseRectangularArea (_ pars: CsiParameters)
     {
         if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...]) {
             for row in top...bottom {
@@ -4181,7 +4826,7 @@ open class Terminal {
     }
 
     // Dispatches to
-    func csit (_ pars: [Int], _ collect: cstring)
+    func csit (_ pars: CsiParameters, _ collect: cstring)
     {
         switch collect {
         case []:
@@ -4193,7 +4838,7 @@ open class Terminal {
         }
     }
     
-    func cmdXtermTitleModeSet (_ pars: [Int])
+    func cmdXtermTitleModeSet (_ pars: CsiParameters)
     {
         // Use the windowTextEncoding type
         for par in pars {
@@ -4220,7 +4865,7 @@ open class Terminal {
         }
     }
     
-    func cmdXtermTitleModeReset (_ pars: [Int])
+    func cmdXtermTitleModeReset (_ pars: CsiParameters)
     {
         // Use the windowTextEncoding type
         for par in pars {
@@ -4251,7 +4896,7 @@ open class Terminal {
     // CSI Ps ; Ps ; Ps t - Various window manipulations and reports (xterm)
     // See https://invisible-island.net/xterm/ctlseqs/ctlseqs.html for a full
     // list of commans for this escape sequence
-    func cmdWindowOptions (_ pars: [Int])
+    func cmdWindowOptions (_ pars: CsiParameters)
     {
         guard let tdel = self.tdel else {
             return
@@ -4291,14 +4936,14 @@ open class Terminal {
             if let r = tdel.windowCommand(source: self, command: .reportTextAreaPixelDimension) {
                 sendResponse(r)
             } else {
-                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                let cellSize = windowReportCellSize(delegate: tdel)
                 sendResponse(cc.CSI, "4;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [14, 2]:
             if let r = tdel.windowCommand(source: self, command: .reportTerminalWindowPixelDimension) {
                 sendResponse(r)
             } else {
-                let cellSize = tdel.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+                let cellSize = windowReportCellSize(delegate: tdel)
                 sendResponse(cc.CSI, "4;\(rows * cellSize.height);\(cols * cellSize.width)t")
             }
         case [15]: // Report size in pixels
@@ -4313,10 +4958,9 @@ open class Terminal {
             // TODO: should surface that to the UI, should not do this here
             if let r = tdel.windowCommand(source: self, command: .reportCellSizeInPixels) {
                 sendResponse(r)
-            } else if let cellSize = tdel.cellSizeInPixels(source: self) {
-                sendResponse(cc.CSI, "6;\(cellSize.height);\(cellSize.width)t")
             } else {
-                sendResponse (cc.CSI, "6;16;10t")
+                let cellSize = windowReportCellSize(delegate: tdel)
+                sendResponse(cc.CSI, "6;\(cellSize.height);\(cellSize.width)t")
             }
         case [18]:
             if let r = tdel.windowCommand(source: self, command: .reportTextAreaCharacters) {
@@ -4371,7 +5015,16 @@ open class Terminal {
         }
     }
 
-    func cmdSetMargins (_ pars: [Int], _ collect: cstring)
+    private func windowReportCellSize(
+        delegate: TerminalDelegate
+    ) -> (width: Int, height: Int) {
+        if let pixelGeometry {
+            return (pixelGeometry.cellWidth, pixelGeometry.cellHeight)
+        }
+        return delegate.cellSizeInPixels(source: self) ?? (width: 10, height: 16)
+    }
+
+    func cmdSetMargins (_ pars: CsiParameters, _ collect: cstring)
     {
         guard collect.isEmpty else { return }
 
@@ -4388,7 +5041,7 @@ open class Terminal {
     //  ESC 7
     //   Save cursor (ANSI.SYS).
     //
-    func cmdSaveCursor (_ pars: [Int], _ collect: cstring)
+    func cmdSaveCursor (_ pars: CsiParameters, _ collect: cstring)
     {
         // CSI s (no intermediates) = ANSI Save Cursor
         // Sequences with intermediates (e.g. CSI > s) are not cursor commands
@@ -4409,7 +5062,7 @@ open class Terminal {
     //   Set Scrolling Region [top;bottom] (default = full size of window) (DECSTBM).
     // CSI ? Pm r
     //
-    func cmdSetScrollRegion (_ pars: [Int], _ collect: cstring)
+    func cmdSetScrollRegion (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect != [] {
             return
@@ -4453,7 +5106,7 @@ open class Terminal {
     //   Ps = 5  -> blinking bar (xterm).
     //   Ps = 6  -> steady bar (xterm).
     //
-    func cmdSetCursorStyle (_ pars: [Int], _ collect: cstring)
+    func cmdSetCursorStyle (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect.count == 0 || collect != [32] { /* space */
             return
@@ -4479,7 +5132,7 @@ open class Terminal {
         }
     }
 
-    func cmdXTVERSION(_ pars: [Int], _ collect: cstring) {
+    func cmdXTVERSION(_ pars: CsiParameters, _ collect: cstring) {
         guard collect == [UInt8(ascii: ">")], pars == [0] else { return }
         let identity = Terminal.xtVersionIdentity(tag: SwiftTermBuildInfo.tag,
                                                   branch: SwiftTermBuildInfo.branch,
@@ -4597,7 +5250,7 @@ open class Terminal {
 
     // SCP - Select Character Path: CSI Ps SP k. Ps 1 selects LTR, Ps 2
     // selects RTL, and Ps 0 selects the configured default.
-    func cmdSelectCharacterPath(_ pars: [Int], _ collect: cstring) {
+    func cmdSelectCharacterPath(_ pars: CsiParameters, _ collect: cstring) {
         let direction: BidiDirection
         switch pars.first ?? 0 {
         case 0:
@@ -4616,7 +5269,7 @@ open class Terminal {
 
     // SPD is accepted as a compatibility alias for the original patch.
     // CSI 0 SP S selects LTR and CSI 3 SP S selects RTL.
-    func cmdSelectPresentationDirection (_ pars: [Int], _ collect: cstring)
+    func cmdSelectPresentationDirection (_ pars: CsiParameters, _ collect: cstring)
     {
         let direction: BidiDirection
         switch pars.first ?? 0 {
@@ -4632,50 +5285,139 @@ open class Terminal {
         }
     }
 
-    func cmdSavePrivateModes(_ pars: [Int]) {
+    func cmdSavePrivateModes(_ pars: CsiParameters) {
         for mode in pars {
-            switch mode {
-            case 1243:
-                savedBidiPrivateModes[mode] = bidiArrowKeySwap
-            case 2500:
-                savedBidiPrivateModes[mode] = currentBidiState.boxMirroring
-            case 2501:
-                savedBidiPrivateModes[mode] = currentBidiState.autodetectDirection
-            default:
-                break
+            if let value = readDECPrivateMode(mode) {
+                savedPrivateModes[mode] = value
             }
         }
     }
 
-    func cmdRestorePrivateModes(_ pars: [Int]) {
-        var state = currentBidiState
-        var stateChanged = false
-        var restoredProperties: Set<BidiStateProperty> = []
+    func cmdRestorePrivateModes(_ pars: CsiParameters) {
         for mode in pars {
-            guard let value = savedBidiPrivateModes[mode] else {
-                continue
-            }
-            switch mode {
-            case 1243:
-                bidiArrowKeySwap = value
-            case 2500:
-                state.boxMirroring = value
-                stateChanged = true
-                restoredProperties.insert(.boxMirroring)
-            case 2501:
-                state.autodetectDirection = value
-                stateChanged = true
-                restoredProperties.insert(.autodetectDirection)
-            default:
-                break
-            }
-        }
-        if stateChanged {
-            setCurrentBidiState(state, applying: restoredProperties)
+            guard let initialValue = defaultDECPrivateModeValue(mode) else { continue }
+            _ = applyDECPrivateMode(
+                mode,
+                value: savedPrivateModes[mode] ?? initialValue)
         }
     }
 
-    func cmdDecRqm (_ pars: [Int], decMode: Bool) {
+    private func readDECPrivateMode(_ mode: Int) -> Bool? {
+        switch mode {
+        case SpecialDECPrivateMode.bracketedPaste.rawValue:
+            return bracketedPasteMode
+        case SpecialDECPrivateMode.synchronizedOutput.rawValue:
+            return synchronizedOutputActive
+        case SpecialDECPrivateMode.colorSchemeReports.rawValue:
+            return colorSchemeUpdatesEnabled
+        case SpecialDECPrivateMode.visibilityReports.rawValue:
+            return visibilityReportsEnabled
+        case SpecialDECPrivateMode.inBandSizeReports.rawValue:
+            return inBandSizeReportsEnabled
+        case SpecialDECPrivateMode.kittyPasteEvents.rawValue:
+            return kittyPasteEventsEnabled
+        case 1243:
+            return bidiArrowKeySwap
+        case 2500:
+            return currentBidiState.boxMirroring
+        case 2501:
+            return currentBidiState.autodetectDirection
+        default:
+            return nil
+        }
+    }
+
+    private func defaultDECPrivateModeValue(_ mode: Int) -> Bool? {
+        switch mode {
+        case SpecialDECPrivateMode.bracketedPaste.rawValue,
+             SpecialDECPrivateMode.synchronizedOutput.rawValue,
+             SpecialDECPrivateMode.colorSchemeReports.rawValue,
+             SpecialDECPrivateMode.visibilityReports.rawValue,
+             SpecialDECPrivateMode.inBandSizeReports.rawValue,
+             SpecialDECPrivateMode.kittyPasteEvents.rawValue:
+            return false
+        case 1243:
+            return options.initialBidiArrowKeySwap
+        case 2500:
+            return options.initialBidiState.boxMirroring
+        case 2501:
+            return options.initialBidiState.autodetectDirection
+        default:
+            return nil
+        }
+    }
+
+    @discardableResult
+    private func applyDECPrivateMode(_ mode: Int, value: Bool) -> Bool {
+        switch mode {
+        case 117:
+            break
+        case SpecialDECPrivateMode.bracketedPaste.rawValue:
+            bracketedPasteMode = value
+        case SpecialDECPrivateMode.synchronizedOutput.rawValue:
+            if value {
+                beginSynchronizedOutput()
+            } else {
+                endSynchronizedOutput()
+            }
+        case SpecialDECPrivateMode.graphemeClustering.rawValue:
+            // SwiftTerm always uses grapheme handling. DECSET and DECRST are
+            // no-ops.
+            break
+        case SpecialDECPrivateMode.colorSchemeReports.rawValue:
+            colorSchemeUpdatesEnabled = value
+        case SpecialDECPrivateMode.visibilityReports.rawValue:
+            visibilityReportsEnabled = value
+            if value {
+                reportTerminalVisibility()
+            }
+        case SpecialDECPrivateMode.inBandSizeReports.rawValue:
+            inBandSizeReportsEnabled = value
+            if value {
+                reportInBandSizeIfAvailable()
+            }
+        case SpecialDECPrivateMode.kittyPasteEvents.rawValue:
+            if value {
+                // Observe any host capability change first, so that the stored
+                // bit describes the support state at DECSET time. This also
+                // creates the protocol object, which from then on detects a
+                // later loss of support and resets the mode. The object is not
+                // created before it is needed: its weak reference moves the
+                // terminal onto the side-table refcount path.
+                getKittyClipboardProtocol().refreshCapabilities()
+            }
+            kittyPasteEventsEnabled = value
+        case 1243:
+            bidiArrowKeySwap = value
+        case 2500:
+            updateCurrentBidiState(property: .boxMirroring) { $0.boxMirroring = value }
+        case 2501:
+            updateCurrentBidiState(property: .autodetectDirection) { $0.autodetectDirection = value }
+        default:
+            return false
+        }
+        return true
+    }
+
+    private func decPrivateModeReportState(_ mode: Int) -> DECModeReportState? {
+        if mode == 117 {
+            return .permanentlyReset
+        }
+        if mode == SpecialDECPrivateMode.graphemeClustering.rawValue {
+            return .permanentlySet
+        }
+        if mode == SpecialDECPrivateMode.kittyPasteEvents.rawValue,
+           !getKittyClipboardProtocol().isModeSupported()
+        {
+            return .notRecognized
+        }
+        guard let value = readDECPrivateMode(mode) else {
+            return nil
+        }
+        return value ? .set : .reset
+    }
+
+    func cmdDecRqm (_ pars: CsiParameters, decMode: Bool) {
         let modeUnknown = 0
         let modeSet = 1
         let modeReset = 2
@@ -4778,18 +5520,8 @@ open class Terminal {
                 // 1047 - what does this even do?
                 // 1048, 1049,
                 // keyboard emulation mode: 1050, 1051, 1052, 1053, 1060, 1061
-            case 2004:
-                res = bracketedPasteMode ? modeSet : modeReset
-            case 2026:
-                res = synchronizedOutputActive ? modeSet : modeReset
-            case 2500: // box drawing mirroring (terminal-wg)
-                res = bidiBoxMirroring ? modeSet : modeReset
-            case 2501: // autodetect paragraph direction (terminal-wg)
-                res = bidiAutodetectDirection ? modeSet : modeReset
-            case 1243: // swap left and right arrow keys on RTL paragraphs
-                res = bidiArrowKeySwap ? modeSet : modeReset
             default:
-                break
+                res = decPrivateModeReportState(mode)?.rawValue ?? modeUnknown
             }
         } else {
             switch mode {
@@ -4843,7 +5575,7 @@ open class Terminal {
     
     //
     // Proxy for various CSI .* p commands
-    func csiPHandler (_ pars: [Int], _ collect: cstring)
+    func csiPHandler (_ pars: CsiParameters, _ collect: cstring)
     {
         switch collect {
         case [UInt8 (ascii: "!")]:
@@ -4871,7 +5603,7 @@ open class Terminal {
     
     // CSI Pl ; Pc " p
     // Set conformance level (DECSCL), VT220 and up
-    func cmdSetConformanceLevel (_ pars: [Int], _ collect: cstring)
+    func cmdSetConformanceLevel (_ pars: CsiParameters, _ collect: cstring)
     {
         if pars.count > 0 {
             let level = pars [0]
@@ -4911,7 +5643,9 @@ open class Terminal {
     {
         setCurrentBidiState(options.initialBidiState)
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
-        savedBidiPrivateModes.removeAll()
+        for mode in [1243, 2500, 2501] {
+            savedPrivateModes.removeValue(forKey: mode)
+        }
         cursorHidden = false
         insertMode = false
         originMode = false
@@ -4969,7 +5703,7 @@ open class Terminal {
     //   CSI ? 5 3  n  Locator available, if compiled-in, or
     //   CSI ? 5 0  n  No Locator, if not.
     //
-    func cmdDeviceStatus (_ pars: [Int], _ collect: cstring)
+    func cmdDeviceStatus (_ pars: CsiParameters, _ collect: cstring)
     {
         let buffer = self.buffer
         if collect.count == 0 {
@@ -5034,6 +5768,11 @@ open class Terminal {
             case 85:
                 // Multiple session status, we reply single session
                 sendResponse (cc.CSI, "?83n")
+            case 996:
+                // Report the current dark/light palette preference.
+                reportColorScheme()
+            case 998:
+                reportTerminalVisibility()
             default:
                 break
             }
@@ -5107,7 +5846,7 @@ open class Terminal {
     //     Ps = 4 8  ; 5  ; Ps -> Set background color to the second
     //     Ps.
     //
-    func cmdCsiM (_ pars: [Int], _ collect: cstring)
+    func cmdCsiM (_ pars: CsiParameters, _ collect: cstring)
     {
         switch collect.count {
         case 0:
@@ -5124,7 +5863,7 @@ open class Terminal {
     }
 
     @inline(__always)
-    private func cmdCharAttributes(_ pars: [Int]) {
+    private func cmdCharAttributes(_ pars: CsiParameters) {
         // Optimize a single SGR0.
         if pars.count == 1 && pars [0] == 0 {
             setCurrentAttribute(CharData.defaultAttr)
@@ -5143,26 +5882,13 @@ open class Terminal {
         var i = 0
         
         assert(EscapeSequenceParser.maximumParameterCount <= 64)
-        var sepPresent: UInt64 = 0
-        var sepIsColon: UInt64 = 0
-        var separatorIndex = 0
-        let separatorLimit = max(0, pars.count - 1)
-        for value in parser._parsTxt where value == 0x3b || value == 0x3a {
-            guard separatorIndex < separatorLimit else { break }
-            let bit = UInt64(1) << UInt64(separatorIndex)
-            sepPresent |= bit
-            if value == 0x3a {
-                sepIsColon |= bit
-            }
-            separatorIndex += 1
-        }
+        let sepIsColon = parser._parsColonMask
 
         func separator(after index: Int) -> UInt8? {
             guard index >= 0 && index < 64 else {
                 return nil
             }
             let bit = UInt64(1) << UInt64(index)
-            guard sepPresent & bit != 0 else { return nil }
             return sepIsColon & bit != 0 ? 0x3a : 0x3b
         }
 
@@ -5392,7 +6118,7 @@ open class Terminal {
                 underlineColor = nil
                 
             default:
-                print ("Unknown SGR attribute: \(p) \(pars)")
+                log ("Unknown SGR attribute: \(p) \(pars)")
             }
             i += 1
         }
@@ -5487,7 +6213,7 @@ open class Terminal {
     //    Ps = 1 0 6 1  -> Reset keyboard emulation to Sun/PC style.
     //    Ps = 2 0 0 4  -> Reset bracketed paste mode.
     //
-    func cmdResetMode (_ pars: [Int], _ collect: cstring)
+    func cmdResetMode (_ pars: CsiParameters, _ collect: cstring)
     {
         if pars.count == 0 {
             return
@@ -5523,6 +6249,9 @@ open class Terminal {
                 break
             }
         } else if collect == [UInt8 (ascii: "?")] {
+            if applyDECPrivateMode(par, value: false) {
+                return
+            }
             switch (par) {
             case 1:
                 applicationCursor = false
@@ -5574,12 +6303,6 @@ open class Terminal {
                 sendFocus = false
             case 1007: // alternate scroll mode (xterm's alternateScroll resource)
                 alternateScrollMode = false
-            case 2500: // box drawing mirroring off
-                updateCurrentBidiState(property: .boxMirroring) { $0.boxMirroring = false }
-            case 2501: // autodetect off: use the SPD-selected direction
-                updateCurrentBidiState(property: .autodetectDirection) { $0.autodetectDirection = false }
-            case 1243:
-                bidiArrowKeySwap = false
             case 1005: // utf8 ext mode mouse
                 // Resets the coordinate encoding only: 1005/1006/1015/1016 select how mouse
                 // events are encoded, independent of the tracking modes (9/1000-1003). xterm
@@ -5596,7 +6319,7 @@ open class Terminal {
             case 25: // hide cursor
                 hideCursor ()
             case 1048: // alt screen cursor
-                cmdRestoreCursor ([], [])
+                cmdRestoreCursor (.empty, [])
             case 1034:
                 // Terminal.app ignores this request, and keeps sending ESC+letter
                 break
@@ -5608,18 +6331,13 @@ open class Terminal {
                    // Ensure the selection manager has the correct buffer
                 activateNormalBuffer(clearAlt: par == 1047 || par == 1049)
                 if (par == 1049){
-                    cmdRestoreCursor ([], [])
+                    cmdRestoreCursor (.empty, [])
                 }
                 refresh (startRow: 0, endRow: rows - 1)
                 syncScrollArea ()
                 showCursor ()
                 tdel?.bufferActivated(source: self)
                 
-            case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
-                bracketedPasteMode = false
-                break
-            case 2026: // synchronized output (https://github.com/contour-terminal/vt-extensions)
-                endSynchronizedOutput ()
             default:
                 log ("Unhandled DEC Private Mode Reset (DECRST) with \(par)")
                 break
@@ -5715,7 +6433,7 @@ open class Terminal {
     // Modes:
     //   http: *vt100.net/docs/vt220-rm/chapter4.html
     //
-    func cmdSetMode (_ pars: [Int], _ collect: cstring)
+    func cmdSetMode (_ pars: CsiParameters, _ collect: cstring)
     {
         if pars.count == 0 {
             return
@@ -5757,6 +6475,9 @@ open class Terminal {
                 break
             }
         } else if collect == [UInt8 (ascii: "?")] {
+            if applyDECPrivateMode(par, value: true) {
+                return
+            }
             switch par {
             case 1:
                 applicationCursor = true
@@ -5827,12 +6548,6 @@ open class Terminal {
                 sendFocusReport()
             case 1007: // alternate scroll mode (xterm's alternateScroll resource)
                 alternateScrollMode = true
-            case 2500: // box drawing mirroring (terminal-wg)
-                updateCurrentBidiState(property: .boxMirroring) { $0.boxMirroring = true }
-            case 2501: // autodetect paragraph direction (terminal-wg)
-                updateCurrentBidiState(property: .autodetectDirection) { $0.autodetectDirection = true }
-            case 1243:
-                bidiArrowKeySwap = true
             case 1005:
                 // utf8 ext mode mouse
                 mouseProtocol = .utf8
@@ -5853,9 +6568,9 @@ open class Terminal {
                 // Given our UTF8 world, I do not think this is a worth encoding
                 break
             case 1048: // alt screen cursor
-                cmdSaveCursor ([], [])
+                cmdSaveCursor (.empty, [])
             case 1049: // alt screen buffer cursor
-                cmdSaveCursor ([], [])
+                cmdSaveCursor (.empty, [])
                 // FALL-THROUGH
                 fallthrough
             case 47: // alt screen buffer
@@ -5867,11 +6582,6 @@ open class Terminal {
                 showCursor ()
                 tdel?.bufferActivated(source: self)
                 
-            case 2004: // bracketed paste mode (https://cirw.in/blog/bracketed-paste)
-                // TODO: must implement bracketed paste mode
-                bracketedPasteMode = true
-            case 2026: // synchronized output (https://github.com/contour-terminal/vt-extensions)
-                beginSynchronizedOutput ()
             default:
                 log ("Unhandled DEC Private Mode Set (DECSET) with \(par)")
                 break;
@@ -5891,7 +6601,7 @@ open class Terminal {
     //   Ps = 2  -> Clear Stops on Line.
     //   http://vt100.net/annarbor/aaa-ug/section6.html
     //
-    func cmdTabClear (_ pars: [Int], _ collect: cstring)
+    func cmdTabClear (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = pars.count == 0 ? 0 : pars [0]
         if p == 0 {
@@ -5907,7 +6617,7 @@ open class Terminal {
     //   Horizontal and Vertical Position [row;column] (default =
     //   [1,1]) (HVP).
     //
-    func cmdHVPosition (_ pars: [Int], _ collect: cstring)
+    func cmdHVPosition (_ pars: CsiParameters, _ collect: cstring)
     {
         var p = 1
         var q = 1
@@ -5934,7 +6644,7 @@ open class Terminal {
     //   [rows] (default = [row+1,column])
     // reuse CSI Ps B ?
     //
-    func cmdVPositionRelative (_ pars: [Int], _ collect: cstring)
+    func cmdVPositionRelative (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         let newY = buffer.y + p
@@ -5956,7 +6666,7 @@ open class Terminal {
     // CSI Pm d  Vertical Position Absolute (VPA)
     //   [row] (default = [1,column])
     //
-    func cmdLinePosAbsolute (_ pars: [Int], _ collect: cstring)
+    func cmdLinePosAbsolute (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
@@ -6005,7 +6715,7 @@ open class Terminal {
     //   xterm/charproc.c - line 2012, for more information.
     //   vim responds with ^[[?0c or ^[[?1c after the terminal's response (?)
     //
-    func cmdSendDeviceAttributes (_ pars: [Int], _ collect: cstring)
+    func cmdSendDeviceAttributes (_ pars: CsiParameters, _ collect: cstring)
     {
         if pars.count > 0 && pars [0] > 0 {
             let safe = String(decoding: collect.prefix { $0 != 0 }, as: UTF8.self)
@@ -6069,7 +6779,7 @@ open class Terminal {
     //
     // CSI Ps b  Repeat the preceding graphic character Ps times (REP).
     //
-    func cmdRepeatPrecedingCharacter (_ pars: [Int], _ collect: cstring)
+    func cmdRepeatPrecedingCharacter (_ pars: CsiParameters, _ collect: cstring)
     {
         // Maximum repeat, to avoid a denial of service
         let maxRepeat = cols*rows*2
@@ -6087,7 +6797,7 @@ open class Terminal {
     //  [columns] (default = [row,col+1]) (HPR)
     //reuse CSI Ps C ?
     //
-    func cmdHPositionRelative (_ pars: [Int], _ collect: cstring)
+    func cmdHPositionRelative (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         
@@ -6101,7 +6811,7 @@ open class Terminal {
     // CSI Pm `  Character Position Absolute
     //   [column] (default = [row,1]) (HPA).
     //
-    func cmdCharPosAbsolute (_ pars: [Int], _ collect: cstring)
+    func cmdCharPosAbsolute (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
@@ -6114,7 +6824,7 @@ open class Terminal {
     //
     //CSI Ps Z  Cursor Backward Tabulation Ps tab stops (default = 1) (CBT).
     //
-    func cmdCursorBackwardTab (_ pars: [Int], _ collect: cstring)
+    func cmdCursorBackwardTab (_ pars: CsiParameters, _ collect: cstring)
     {
         if buffer.x > cols {
             return
@@ -6130,17 +6840,20 @@ open class Terminal {
     // CSI Ps X
     // Erase Ps Character(s) (default = 1) (ECH).
     //
-    func cmdEraseChars (_ pars: [Int], _ collect: cstring)
+    func cmdEraseChars (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
-        buffer.lines[buffer.y + buffer.yBase].replacePackedCells(
+        let line = buffer.lines[buffer.y + buffer.yBase]
+        line.repairWideSeam(at: buffer.x)
+        line.repairWideSeam(at: buffer.x + p)
+        line.replacePackedCells(
             start: buffer.x,
             end: buffer.x + p,
             fill: currentEraseBlankCell)
     }
 
-    func csiT (_ pars: [Int], _ collect: cstring)
+    func csiT (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect.count == 0 {
             cmdScrollDown(pars)
@@ -6151,7 +6864,7 @@ open class Terminal {
     //
     // CSI Ps T  Scroll down Ps lines (default = 1) (SD).
     //
-    func cmdScrollDown (_ pars: [Int])
+    func cmdScrollDown (_ pars: CsiParameters)
     {
         let p = min (max (pars.count == 0 ? 1 : pars [0], 1), rows)
         let defaultBlank = PackedCell()
@@ -6161,6 +6874,9 @@ open class Terminal {
 
             let columnCount = buffer.marginRight-buffer.marginLeft+1
             let rowCount = buffer.scrollBottom-buffer.scrollTop
+            for i in 0...rowCount {
+                repairWideCellsForColumnRestrictedShift(row: row + i)
+            }
             for _ in 0..<p {
                 for i in (0..<rowCount).reversed() {
                     let src = buffer.lines [row+i]
@@ -6187,6 +6903,14 @@ open class Terminal {
             let bottom = buffer.yBase + buffer.scrollBottom
             selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: -p)
         }
+        if hasKittyPlacements {
+            scrollKittyPlacementsInMargins(
+                top: buffer.yBase + buffer.scrollTop,
+                bottom: buffer.yBase + buffer.scrollBottom,
+                left: marginMode ? buffer.marginLeft : 0,
+                right: marginMode ? buffer.marginRight : cols - 1,
+                delta: p)
+        }
         hardenBidiScrollBoundaries(insertedAtTop: true, count: p)
         // this.maxRange();
         refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
@@ -6195,7 +6919,7 @@ open class Terminal {
     //
     // CSI Ps S  Scroll up Ps lines (default = 1) (SU).
     //
-    func cmdScrollUp (_ pars: [Int], _ collect: cstring)
+    func cmdScrollUp (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = min (rows*2, max (pars.count == 0 ? 1 : pars [0], 1))
         let defaultBlank = PackedCell()
@@ -6205,6 +6929,9 @@ open class Terminal {
 
             let columnCount = buffer.marginRight-buffer.marginLeft+1
             let rowCount = buffer.scrollBottom-buffer.scrollTop
+            for i in 0...rowCount {
+                repairWideCellsForColumnRestrictedShift(row: row + i)
+            }
             for _ in 0..<p {
                 for i in 0..<(rowCount) {
                     let src = buffer.lines [row+i+1]
@@ -6230,6 +6957,14 @@ open class Terminal {
             let top = buffer.yBase + buffer.scrollTop
             let bottom = buffer.yBase + buffer.scrollBottom
             selectionsAdjustForInPlaceScroll (top: top, bottom: bottom, lines: p)
+        }
+        if hasKittyPlacements {
+            scrollKittyPlacementsInMargins(
+                top: buffer.yBase + buffer.scrollTop,
+                bottom: buffer.yBase + buffer.scrollBottom,
+                left: marginMode ? buffer.marginLeft : 0,
+                right: marginMode ? buffer.marginRight : cols - 1,
+                delta: -p)
         }
         hardenBidiScrollBoundaries(insertedAtTop: false, count: p)
         // this.maxRange();
@@ -6277,7 +7012,7 @@ open class Terminal {
     // CSI Ps P
     // Delete Ps Character(s) (default = 1) (DCH).
     //
-    func cmdDeleteChars (_ pars: [Int], _ collect: cstring)
+    func cmdDeleteChars (_ pars: CsiParameters, _ collect: cstring)
     {
         let buffer = self.buffer
         var p = max (pars.count == 0 ? 1 : pars [0], 1)
@@ -6306,7 +7041,7 @@ open class Terminal {
     // CSI Ps M
     // Delete Ps Line(s) (default = 1) (DL).
     //
-    func cmdDeleteLines (_ pars: [Int], _ collect: cstring)
+    func cmdDeleteLines (_ pars: CsiParameters, _ collect: cstring)
     {
         restrictCursor()
         let buffer = self.buffer
@@ -6322,6 +7057,9 @@ open class Terminal {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
                 let rowCount = buffer.scrollBottom-buffer.scrollTop
+                for i in 0...rowCount {
+                    repairWideCellsForColumnRestrictedShift(row: row + i)
+                }
                 for _ in 0..<p {
                     for i in 0..<(rowCount) {
                         let src = buffer.lines [row+i+1]
@@ -6374,7 +7112,7 @@ open class Terminal {
     // moving content to the left. Blank columns are added at the right margin.
     // DECDC has no effect outside the scrolling margins.
 
-    func cmdDeleteColumns (_ pars: [Int], _ collect: cstring)
+    func cmdDeleteColumns (_ pars: CsiParameters, _ collect: cstring)
     {
         let buffer = self.buffer
         if buffer.y > buffer.scrollBottom || buffer.y < buffer.scrollTop {
@@ -6510,16 +7248,6 @@ open class Terminal {
         parseBorrowed(bytes)
     }
 
-    /// Runs a feed that an owner, such as TerminalView or HeadlessTerminal,
-    /// controls. Terminal keeps the normal delegate behavior. Internal
-    /// subclasses can remove callbacks that their owners handle at the batch
-    /// boundary.
-    @inline(__always)
-    func withManagedFeed<T> (_ body: () throws -> T) rethrows -> T
-    {
-        return try body()
-    }
-
     /**
      * Processes the provided byte-array coming from the host, interprets them and
      * updates the screen state accordingly. The caller synchronizes via
@@ -6532,6 +7260,7 @@ open class Terminal {
             parseDepth -= 1
             if parseDepth == 0 {
                 deliverPendingScrollNotification()
+                reconcileSynchronizedOutputWatchdog()
             }
         }
         parser.parse(data: buffer, self)
@@ -6545,6 +7274,7 @@ open class Terminal {
             parseDepth -= 1
             if parseDepth == 0 {
                 deliverPendingScrollNotification()
+                reconcileSynchronizedOutputWatchdog()
             }
         }
         parser.parseBorrowed(bytes, self)
@@ -6565,7 +7295,13 @@ open class Terminal {
     {
         guard hasPendingScrollNotification else { return }
         hasPendingScrollNotification = false
-        tdel?.scrolled(source: self, yDisp: buffer.yDisp)
+        scrollPositionChanged()
+    }
+
+    /// Reports a combined scroll event to an internal terminal owner.
+    /// Plain terminals have no view owner and do not need this event.
+    func scrollPositionChanged ()
+    {
     }
      
     /**
@@ -6578,10 +7314,10 @@ open class Terminal {
      * Scrolling tells if this was just issued as part of scrolling which we don't register for the
      * scroll-invariant update ranges.
      */
-    func updateRange (_ y: Int, scrolling: Bool = false)
+    final func updateRange (_ y: Int, scrolling: Bool = false)
     {        
         if !scrolling {
-            let effectiveY = buffer._yDisp + y
+            let effectiveY = _buffer._yDisp + y
             if effectiveY >= 0 {
                 if effectiveY < scrollInvariantRefreshStart {
                     scrollInvariantRefreshStart = effectiveY
@@ -6602,7 +7338,9 @@ open class Terminal {
         }
     }
 
-    func updateRange (borrowing buffer: borrowing Buffer, _ y: Int, scrolling: Bool = false)
+    // Called several times per printed line and per scroll; keep it inlined.
+    @inline(__always)
+    final func updateRange (borrowing buffer: borrowing Buffer, _ y: Int, scrolling: Bool = false)
     {
         if !scrolling {
             let effectiveY = buffer._yDisp + y
@@ -6626,10 +7364,19 @@ open class Terminal {
         }
     }
 
-    func updateRange (startLine: Int, endLine: Int, scrolling: Bool = false)
+    final func updateRange (startLine: Int, endLine: Int, scrolling: Bool = false)
     {
         updateRange (startLine, scrolling: scrolling)
         updateRange (endLine, scrolling: scrolling)
+    }
+
+    // Called several times per printed line and per scroll; keep it inlined.
+    @inline(__always)
+    final func updateRange (borrowing buffer: borrowing Buffer, startLine: Int,
+                      endLine: Int, scrolling: Bool = false)
+    {
+        updateRange(borrowing: buffer, startLine, scrolling: scrolling)
+        updateRange(borrowing: buffer, endLine, scrolling: scrolling)
     }
     
     public func updateFullScreen ()
@@ -6747,8 +7494,6 @@ open class Terminal {
     {
         setCurrentBidiState(options.initialBidiState)
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
-        savedBidiPrivateModes.removeAll()
-        endSynchronizedOutput ()
         options.rows = rows
         options.cols = cols
         let savedCursorHidden = cursorHidden
@@ -6842,7 +7587,7 @@ open class Terminal {
         if buffer.x > cols {
             buffer.x -= 1
         }
-        finishSemanticLineAdvance(movedToNextLine: movedToNextLine)
+        finishSemanticLineAdvance(buffer: _buffer, movedToNextLine: movedToNextLine)
     }
     
     /// Flag the scrolled region dirty. The CoreGraphics renderer now clears any
@@ -6855,22 +7600,100 @@ open class Terminal {
         }
     }
 
-    public func scroll (isWrapped: Bool = false)
+    /// Scrolls the active buffer after a terminal operation.
+    /// View clients use the public view scrolling API.
+    final func scroll (isWrapped: Bool = false)
     {
-        let buffer = self.buffer
-        let lines = buffer.lines
+        // Start the borrow from storage. A computed getter would return an
+        // owned reference before the borrowed helper receives it.
+        scroll(buffer: _buffer, isWrapped: isWrapped)
+    }
+
+    private func scroll (buffer: borrowing Buffer, isWrapped: Bool)
+    {
+        scroll(buffer: buffer, lines: buffer.lines, isWrapped: isWrapped)
+    }
+
+    /// Keep this ownership boundary out of line. It lets the caller lend the
+    /// active buffer and line list for the complete scroll operation. Inlining
+    /// this method can make the optimizer add the ARC traffic again.
+    @inline(never)
+    private func scroll (buffer: borrowing Buffer,
+                         lines: borrowing CircularBufferLineList,
+                         isWrapped: Bool)
+    {
+        // The steady-state normal-screen case only rotates one full scrollback
+        // ring and clears the recycled row. Keep it out of the general region
+        // path below, which also handles margins, selections, images, viewport
+        // anchoring, and a growing line list. Ghostty likewise gives this
+        // full-screen operation a dedicated path.
+        if !marginMode,
+           buffer.hasScrollback,
+           buffer.scrollTop == 0,
+           buffer.scrollBottom == _rows - 1,
+           lines.isFull,
+           buffer.yBase + buffer.scrollBottom == lines.count - 1,
+           activeSelectionCount == 0,
+           !hasKittyPlacements,
+           !userScrolling
+        {
+            let newLineState = isWrapped
+                ? lines[lines.count - 1].bidiState
+                : currentBidiState
+            lines.recycle(clearCell: currentEraseBlankCell,
+                          isWrapped: isWrapped,
+                          bidiState: newLineState)
+            buffer.linesTop += 1
+            buffer.yDisp = buffer.yBase
+            updateRange(borrowing: buffer, startLine: 0, endLine: _rows - 1,
+                        scrolling: true)
+            recordScrollNotification()
+            return
+        }
+
         let scrollTop = buffer.scrollTop
         let scrollBottom = buffer.scrollBottom
+        let topRow = buffer.yBase + scrollTop
+        let bottomRow = buffer.yBase + scrollBottom
+
+        if !marginMode,
+           activeSelectionCount == 0,
+           !hasKittyPlacements,
+           !userScrolling,
+           !(scrollTop == 0 && (bottomRow == lines.count - 1 || buffer.hasScrollback)),
+           bottomRow < lines.count
+        {
+            scrollInPlaceRegionFast(buffer: buffer, lines: lines,
+                                    scrollTop: scrollTop, scrollBottom: scrollBottom,
+                                    topRow: topRow, bottomRow: bottomRow,
+                                    isWrapped: isWrapped)
+            return
+        }
+
+        scrollGeneral(buffer: buffer, lines: lines, isWrapped: isWrapped,
+                      scrollTop: scrollTop, scrollBottom: scrollBottom,
+                      topRow: topRow, bottomRow: bottomRow)
+    }
+
+    /// Cold and exceptional scroll cases stay out of the two steady-state
+    /// workers so their ownership and instruction footprints remain small.
+    @inline(never)
+    private func scrollGeneral(buffer: borrowing Buffer,
+                               lines: borrowing CircularBufferLineList,
+                               isWrapped: Bool,
+                               scrollTop: Int, scrollBottom: Int,
+                               topRow: Int, bottomRow: Int)
+    {
         let bMarginLeft = buffer.marginLeft
         let bMarginRight = buffer.marginRight
         let hasScrollback = buffer.hasScrollback
-        let topRow = buffer.yBase + scrollTop
-        let bottomRow = buffer.yBase + scrollBottom
+        var kittyInPlaceScroll = false
+        var kittyTrimmedScrollback = false
         let newLineState: BidiPresentationState
         if isWrapped, bottomRow >= 0, bottomRow < lines.count {
             newLineState = lines[bottomRow].bidiState
         } else {
-            newLineState = currentBidiState
+            newLineState = _currentBidiState
         }
 
         let eraseBlank = currentEraseBlankCell
@@ -6879,8 +7702,9 @@ open class Terminal {
         // we cannot use scrollback (can't push partial lines), so we do in-place scrolling
         // within the margin columns only. This path is unconditional when narrow margins are
         // active, regardless of cursor position, to ensure consistent behavior.
-        let hasNarrowMargins = marginMode && (bMarginLeft > 0 || bMarginRight < cols - 1)
+        let hasNarrowMargins = marginMode && (bMarginLeft > 0 || bMarginRight < _cols - 1)
         if hasNarrowMargins {
+            kittyInPlaceScroll = true
             let scrollRegionHeight = bottomRow - topRow + 1
             let columnCount = bMarginRight - bMarginLeft + 1
             // Shift content up within the margin columns only.
@@ -6911,7 +7735,7 @@ open class Terminal {
             bottomLine.fill(with: eraseBlank,
                             atCol: bMarginLeft, len: columnCount)
             bottomLine.isWrapped = false
-            bottomLine.bidiState = currentBidiState
+            bottomLine.bidiState = _currentBidiState
             buffer.clearImagesFromLine(at: bottomRow)
             bottomLine.renderMode = .single
 
@@ -6949,6 +7773,7 @@ open class Terminal {
                     buffer.yDisp += 1
                 }
             } else {
+                kittyTrimmedScrollback = true
                 if hasScrollback {
                     buffer.linesTop += 1
                 }
@@ -6964,6 +7789,7 @@ open class Terminal {
                 }
             }
         } else {
+            kittyInPlaceScroll = true
             // This region does not add a line to scrollback. Shift it in place.
 
             // Ensure the indices are within bounds to prevent crash (related to issue #256)
@@ -6991,15 +7817,28 @@ open class Terminal {
             buffer.yDisp = buffer.yBase
         }
 
+        if hasKittyPlacements {
+            if kittyTrimmedScrollback {
+                trimKittyPlacementRows()
+            } else if kittyInPlaceScroll {
+                scrollKittyPlacementsInMargins(
+                    top: topRow,
+                    bottom: bottomRow,
+                    left: marginMode ? bMarginLeft : 0,
+                    right: marginMode ? bMarginRight : _cols - 1,
+                    delta: -1)
+            }
+        }
+
         //buffer.dump ()
-        // Flag rows that need updating
-        updateRange (scrollTop, scrolling: true)
-        updateRange (scrollBottom, scrolling: true)
-
-        refreshScrolledRegion(top: scrollTop, bottom: scrollBottom, canBlit: hasScrollback)
-
-        if buffer.hasAnyImages {
-            updateKittyRelativePlacementsForCurrentBuffer()
+        // A partial or non-blittable region needs ordinary dirty tracking.
+        // That tracking also includes the refresh range, so do not register
+        // the same endpoints first as scrolling-only updates.
+        if scrollTop != 0 || scrollBottom != _rows - 1 || !hasScrollback {
+            updateRange(borrowing: buffer, startLine: scrollTop, endLine: scrollBottom)
+        } else {
+            updateRange(borrowing: buffer, scrollTop, scrolling: true)
+            updateRange(borrowing: buffer, scrollBottom, scrolling: true)
         }
 
         /**
@@ -7010,12 +7849,30 @@ open class Terminal {
          */
         recordScrollNotification()
     }
-        
-    public func emitLineFeed ()
+
+    /// Kept out of line so the caller's ownership-free guard stays small and
+    /// the region-only operations do not inflate the general scroll function.
+    @inline(never)
+    private func scrollInPlaceRegionFast(buffer: borrowing Buffer,
+                                         lines: borrowing CircularBufferLineList,
+                                         scrollTop: Int, scrollBottom: Int,
+                                         topRow: Int, bottomRow: Int,
+                                         isWrapped: Bool)
     {
-        tdel?.linefeed(source: self)
+        let newLineState = isWrapped
+            ? lines[bottomRow].bidiState
+            : _currentBidiState
+        if !lines.shiftUpAndRecycle(top: topRow, bottom: bottomRow,
+                                    clearCell: currentEraseBlankCell,
+                                    isWrapped: isWrapped,
+                                    bidiState: newLineState) {
+            print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
+        }
+        buffer.yDisp = buffer.yBase
+        updateRange(borrowing: buffer, startLine: scrollTop, endLine: scrollBottom)
+        recordScrollNotification()
     }
-    
+        
     //
     // ESC n
     // ESC o
@@ -7099,23 +7956,110 @@ open class Terminal {
         }
     }
     
-    public func resize (cols: Int, rows: Int)
-    {
+    public func resize (cols: Int, rows: Int) {
+        resize(cols: cols, rows: rows, committedCellSize: nil)
+    }
+
+    func resize(cols: Int, rows: Int, cellWidth: Int, cellHeight: Int) {
+        resize(
+            cols: cols,
+            rows: rows,
+            committedCellSize: validCellSize(width: cellWidth, height: cellHeight))
+    }
+
+    private func resize(
+        cols: Int,
+        rows: Int,
+        committedCellSize: (width: Int, height: Int)?
+    ) {
         let newCols = max (cols, MINIMUM_COLS)
         let newRows = max (rows, MINIMUM_ROWS)
-        if newCols == self.cols && newRows == self.rows {
+        endSynchronizedOutput ()
+        if newCols != self.cols || newRows != self.rows {
+            let oldCols = self.cols
+            resizeBuffers(newColumns: newCols, newRows: newRows)
+            self._cols = newCols
+            self._rows = newRows
+            options.cols = newCols
+            options.rows = newRows
+            if normalBuffer.cols == newCols {
+                normalBuffer.setupTabStops(index: oldCols, tabStopWidth: tabStopWidth)
+            }
+            altBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
+            refresh (startRow: 0, endRow: self.rows - 1)
+        }
+
+        if let committedCellSize {
+            pixelGeometry = TerminalPixelGeometry(
+                rows: newRows,
+                columns: newCols,
+                cellWidth: committedCellSize.width,
+                cellHeight: committedCellSize.height)
+        } else if let geometry = pixelGeometry {
+            pixelGeometry = TerminalPixelGeometry(
+                rows: newRows,
+                columns: newCols,
+                cellWidth: geometry.cellWidth,
+                cellHeight: geometry.cellHeight)
+        }
+        if inBandSizeReportsEnabled {
+            reportInBandSizeIfAvailable()
+        }
+    }
+
+    /// Commits a new cell size in device pixels for the current terminal grid.
+    public func updatePixelGeometry(cellWidth: Int, cellHeight: Int) {
+        guard let cellSize = validCellSize(width: cellWidth, height: cellHeight) else {
             return
         }
-        endSynchronizedOutput ()
-        let oldCols = self.cols
-        resizeBuffers(newColumns: newCols, newRows: newRows)
-        self._cols = newCols
-        self._rows = newRows
-        options.cols = newCols
-        options.rows = newRows
-        normalBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
-        altBuffer.setupTabStops (index: oldCols, tabStopWidth: tabStopWidth)
-        refresh (startRow: 0, endRow: self.rows - 1)
+        let geometry = TerminalPixelGeometry(
+            rows: rows,
+            columns: cols,
+            cellWidth: cellSize.width,
+            cellHeight: cellSize.height)
+        guard geometry != pixelGeometry else { return }
+        endSynchronizedOutput()
+        pixelGeometry = geometry
+        if inBandSizeReportsEnabled {
+            reportInBandSizeIfAvailable()
+        }
+    }
+
+    private func validCellSize(width: Int, height: Int) -> (width: Int, height: Int)? {
+        guard width > 0, height > 0 else { return nil }
+        return (width, height)
+    }
+
+    private func currentPixelGeometry() -> TerminalPixelGeometry? {
+        if let pixelGeometry {
+            return pixelGeometry
+        }
+        guard let cellSize = tdel?.cellSizeInPixels(source: self),
+              let validSize = validCellSize(width: cellSize.width, height: cellSize.height)
+        else {
+            return nil
+        }
+        let geometry = TerminalPixelGeometry(
+            rows: rows,
+            columns: cols,
+            cellWidth: validSize.width,
+            cellHeight: validSize.height)
+        pixelGeometry = geometry
+        return geometry
+    }
+
+    private func reportInBandSizeIfAvailable() {
+        guard let geometry = currentPixelGeometry() else { return }
+        let height = saturatingProduct(geometry.rows, geometry.cellHeight)
+        let width = saturatingProduct(geometry.columns, geometry.cellWidth)
+        sendResponse(
+            cc.CSI,
+            "48;\(geometry.rows);\(geometry.columns);\(height);\(width)t")
+    }
+
+    private func saturatingProduct(_ lhs: Int, _ rhs: Int) -> Int {
+        let result = lhs.multipliedReportingOverflow(by: rhs)
+        return result.overflow ? Int.max : result.partialValue
     }
 
     /**
@@ -7162,16 +8106,20 @@ open class Terminal {
         // This should call the viewport sync-scroll-area
     }
 
-    // Mirrors ghostty: flip a flag and arm a safety timer. The view layer pauses
-    // rendering while the flag is set (see updateDisplay's early-return). The
-    // live buffer is mutated normally; no snapshot is taken.
+    // Mirrors ghostty: flip a flag and record a watchdog update. The view layer
+    // pauses rendering while the flag is set (see updateDisplay's early-return).
+    // The live buffer is mutated normally; no snapshot is taken.
     private func beginSynchronizedOutput ()
     {
         let wasActive = synchronizedOutputActive
         synchronizedOutputActive = true
-        scheduleSynchronizedOutputTimeout()
+        synchronizedOutputGeneration &+= 1
+        synchronizedOutputWatchdogDirty = true
         if !wasActive {
             tdel?.synchronizedOutputChanged(source: self, active: true)
+        }
+        if parseDepth == 0 {
+            reconcileSynchronizedOutputWatchdog()
         }
     }
 
@@ -7181,15 +8129,38 @@ open class Terminal {
             return
         }
         synchronizedOutputActive = false
-        synchronizedOutputTimeoutItem?.cancel()
-        synchronizedOutputTimeoutItem = nil
+        synchronizedOutputWatchdogDirty = true
         refresh (startRow: 0, endRow: rows - 1)
         tdel?.synchronizedOutputChanged(source: self, active: false)
+        if parseDepth == 0 {
+            reconcileSynchronizedOutputWatchdog()
+        }
     }
 
-    private func scheduleSynchronizedOutputTimeout ()
-    {
-        synchronizedOutputTimeoutItem?.cancel()
+    func reconcileSynchronizedOutputWatchdog () {
+        guard synchronizedOutputWatchdogDirty else { return }
+        synchronizedOutputWatchdogDirty = false
+        applySynchronizedOutputWatchdog(
+            active: synchronizedOutputActive,
+            generation: synchronizedOutputGeneration)
+    }
+
+    func applySynchronizedOutputWatchdog(active: Bool, generation: UInt64) {
+        guard active else {
+            if let synchronizedOutputTimeoutItem {
+                synchronizedOutputTimeoutItem.cancel()
+                self.synchronizedOutputTimeoutItem = nil
+                synchronizedOutputWatchdogCounters.cancelled += 1
+            }
+            return
+        }
+
+        if synchronizedOutputTimeoutItem == nil {
+            synchronizedOutputWatchdogCounters.armed += 1
+        } else {
+            synchronizedOutputTimeoutItem?.cancel()
+            synchronizedOutputWatchdogCounters.rearmed += 1
+        }
         // Captures `self` strongly, on purpose. `[weak self]` here would be the
         // only remaining weak reference to a Terminal, and one is enough to move
         // it onto the runtime's side-table refcount path for life — roughly 9x
@@ -7203,12 +8174,7 @@ open class Terminal {
         // any unowned scheme, this cannot race teardown.
         // See Docs/io-cpu-profile.md §3.1.
         let workItem = DispatchWorkItem {
-            self.terminalLock.withLock {
-                guard self.synchronizedOutputActive else {
-                    return
-                }
-                self.endSynchronizedOutput()
-            }
+            self.synchronizedOutputWatchdogFired(generation: generation)
         }
         synchronizedOutputTimeoutItem = workItem
         // Not the main queue: this is the valve that unfreezes a display an
@@ -7217,6 +8183,19 @@ open class Terminal {
         // handler already takes the terminal lock, so it is safe anywhere.
         IOTimerQueue.shared.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds,
                                        execute: workItem)
+    }
+
+    func synchronizedOutputWatchdogFired(generation: UInt64) {
+        terminalLock.withLock {
+            guard synchronizedOutputActive,
+                  generation == synchronizedOutputGeneration
+            else {
+                return
+            }
+            synchronizedOutputWatchdogCounters.fired += 1
+            synchronizedOutputTimeoutItem = nil
+            endSynchronizedOutput()
+        }
     }
 
     func setViewYDisp (_ newValue: Int)
@@ -7273,7 +8252,7 @@ open class Terminal {
     }
     
     // XTSHIFTESCAPE (CSI > Ps s)
-    func cmdSetShiftEscape (_ pars: [Int]) {
+    func cmdSetShiftEscape (_ pars: CsiParameters) {
         let ps = pars.isEmpty ? 0 : pars[0]
         switch ps {
         case 0:
@@ -7464,6 +8443,14 @@ open class Terminal {
 
                     // Lines moved down in place; translate selections with them.
                     selectionsAdjustForInPlaceScroll (top: topRow, bottom: bottomRow, lines: -1)
+                }
+                if hasKittyPlacements {
+                    scrollKittyPlacementsInMargins(
+                        top: topRow,
+                        bottom: bottomRow,
+                        left: marginMode ? buffer.marginLeft : 0,
+                        right: marginMode ? buffer.marginRight : cols - 1,
+                        delta: 1)
                 }
                 refreshScrolledRegion(top: buffer.scrollTop, bottom: buffer.scrollBottom, canBlit: false)
             }
@@ -8362,34 +9349,66 @@ open class Terminal {
     
     func translateBufferLineToString (buffer: Buffer, line: Int, start: Int, end: Int) -> String
     {
-        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, characterProvider: { self.getCharacter(for: $0) }).replacingOccurrences(of: "\u{0}", with: " ")
+        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, textProvider: { self.getText(for: $0) }).replacingOccurrences(of: "\u{0}", with: " ")
+    }
+
+    // Stored properties added after the hot fields are declared last, so that
+    // they do not move the offsets the parse and render paths touch.
+
+    /// Whether the running application subscribed to terminal visibility reports.
+    public private(set) var visibilityReportsEnabled: Bool = false
+
+    /// The host-owned visibility state. RIS preserves this value.
+    public private(set) var reportedVisibility: TerminalVisibility = .potentiallyVisible
+
+    /// Whether the running application subscribed to in-band size reports.
+    public private(set) var inBandSizeReportsEnabled: Bool = false
+
+    /// Whether DEC private mode 5522 is stored as set.
+    public private(set) var kittyPasteEventsEnabled: Bool = false
+
+    /// The last complete pixel layout committed by the host. RIS preserves this value.
+    public private(set) var pixelGeometry: TerminalPixelGeometry?
+
+    private var kittyClipboardProtocol: KittyClipboardProtocol?
+
+    /// Paste-token source. Tests replace it to model an entropy failure.
+    var kittyClipboardTokenGenerator: @Sendable () -> String? = {
+        KittyClipboardTokenGenerator.generate()
+    }
+
+    /// Monotonic nanosecond clock used for paste-token expiry. Tests replace it.
+    var kittyClipboardClock: @Sendable () -> UInt64 = {
+        DispatchTime.now().uptimeNanoseconds
     }
 }
 
-/// Terminal used by the built-in owners. These owners prepare their state once
-/// before each feed, so a line-feed callback for each parsed line is redundant.
-final class ManagedFeedTerminal: Terminal {
-    private var managedFeedDepth = 0
+/// Terminal used by the built-in Apple views.
+///
+/// The public delegate does not expose view-only scroll events. This subclass
+/// sends one combined event to its owner after each feed.
+final class ViewTerminal: Terminal {
+    private let scrollHandler: (Terminal) -> Void
+    private let synchronizedOutputWatchdogHandler: @Sendable (Bool, UInt64) -> Void
 
-    @inline(__always)
-    override func withManagedFeed<T> (_ body: () throws -> T) rethrows -> T
-    {
-        managedFeedDepth += 1
-        defer { managedFeedDepth -= 1 }
-        return try body()
+    init (
+        delegate: TerminalDelegate,
+        options: TerminalOptions = TerminalOptions.default,
+        synchronizedOutputWatchdogHandler: @escaping @Sendable (Bool, UInt64) -> Void,
+        scrollHandler: @escaping (Terminal) -> Void
+    ) {
+        self.synchronizedOutputWatchdogHandler = synchronizedOutputWatchdogHandler
+        self.scrollHandler = scrollHandler
+        super.init(delegate: delegate, options: options)
     }
 
-    @inline(__always)
-    override public func emitLineFeed ()
-    {
-        guard managedFeedDepth == 0 else { return }
-        emitUnmanagedLineFeed()
+    override func applySynchronizedOutputWatchdog(active: Bool, generation: UInt64) {
+        synchronizedOutputWatchdogHandler(active, generation)
     }
 
-    @inline(never)
-    private func emitUnmanagedLineFeed ()
+    override func scrollPositionChanged ()
     {
-        super.emitLineFeed()
+        scrollHandler(self)
     }
 }
 
@@ -8405,14 +9424,6 @@ public extension TerminalDelegate {
     }
 
     func setTerminalIconTitle (source: Terminal, title: String) {
-        // nothing
-    }
-    
-    func scrolled(source: Terminal, yDisp: Int) {
-        // nothing
-    }
-    
-    func linefeed(source: Terminal) {
         // nothing
     }
     
@@ -8498,6 +9509,57 @@ public extension TerminalDelegate {
     
     func clipboardRead(source: Terminal) -> Data? {
         return nil
+    }
+
+    func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8> {
+        TerminalPasteControls.approximateTerminalControlBytes
+    }
+
+    func kittyClipboardCapabilities(source: Terminal) -> KittyClipboardCapabilities {
+        []
+    }
+
+    func kittyClipboardSendPasteEvent(source: Terminal, data: ArraySlice<UInt8>) -> Bool {
+        send(source: source, data: data)
+        return true
+    }
+
+    @discardableResult
+    func kittyClipboardAvailableMimeTypes(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        completion: @escaping @Sendable ([String]?) -> Void
+    ) -> Bool {
+        false
+    }
+
+    @discardableResult
+    func kittyClipboardRead(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        mimeType: String,
+        completion: @escaping @Sendable (KittyClipboardReadResult) -> Void
+    ) -> Bool {
+        false
+    }
+
+    @discardableResult
+    func kittyClipboardWrite(
+        source: Terminal,
+        location: KittyClipboardLocation,
+        content: KittyClipboardWriteContent,
+        completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
+    ) -> Bool {
+        false
+    }
+
+    @discardableResult
+    func kittyClipboardRequestPermission(
+        source: Terminal,
+        request: KittyClipboardPermissionRequest,
+        completion: @escaping @Sendable (KittyClipboardPermissionResult) -> Void
+    ) -> Bool {
+        false
     }
     
     func notify(source: Terminal, title: String, body: String) {

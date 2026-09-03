@@ -14,46 +14,18 @@ final class SnapshotImage: TerminalImage {
     let pixelWidth: Int
     let pixelHeight: Int
     var col: Int
-    let kittyIsKitty: Bool
-    let kittyImageId: UInt32?
-    let kittyImageNumber: UInt32?
-    let kittyPlacementId: UInt32?
-    let kittyZIndex: Int
-    let kittyCol: Int
-    let kittyRow: Int
-    let kittyCols: Int
-    let kittyRows: Int
-    let kittyPixelOffsetX: Int
-    let kittyPixelOffsetY: Int
 
     init (_ source: TerminalView.AppleImage) {
         image = source.image
         pixelWidth = source.pixelWidth
         pixelHeight = source.pixelHeight
         col = source.col
-        kittyIsKitty = source.kittyIsKitty
-        kittyImageId = source.kittyImageId
-        kittyImageNumber = source.kittyImageNumber
-        kittyPlacementId = source.kittyPlacementId
-        kittyZIndex = source.kittyZIndex
-        kittyCol = source.kittyCol
-        kittyRow = source.kittyRow
-        kittyCols = source.kittyCols
-        kittyRows = source.kittyRows
-        kittyPixelOffsetX = source.kittyPixelOffsetX
-        kittyPixelOffsetY = source.kittyPixelOffsetY
     }
 
     func hasSameValue (as other: SnapshotImage) -> Bool {
         image === other.image &&
             pixelWidth == other.pixelWidth && pixelHeight == other.pixelHeight &&
-            col == other.col && kittyIsKitty == other.kittyIsKitty &&
-            kittyImageId == other.kittyImageId && kittyImageNumber == other.kittyImageNumber &&
-            kittyPlacementId == other.kittyPlacementId && kittyZIndex == other.kittyZIndex &&
-            kittyCol == other.kittyCol && kittyRow == other.kittyRow &&
-            kittyCols == other.kittyCols && kittyRows == other.kittyRows &&
-            kittyPixelOffsetX == other.kittyPixelOffsetX &&
-            kittyPixelOffsetY == other.kittyPixelOffsetY
+            col == other.col
     }
 }
 
@@ -125,9 +97,10 @@ private extension LinkHighlightMode {
 }
 
 struct SnapshotKitty {
-    var placementsByKey: [KittyPlacementKey: KittyPlacementRecord] = [:]
-    var imagesById: [UInt32: KittyGraphicsImage] = [:]
-    var virtualPlacementsByImageId: [UInt32: [KittyPlacementRecord]] = [:]
+    var renderSnapshot = KittyGraphicsRenderSnapshot(
+        storageGeneration: 0,
+        imagesById: [:],
+        placements: [])
 }
 
 struct CaretRenderData {
@@ -176,6 +149,7 @@ final class TerminalSnapshot {
         var bidiLayout: BidiRowLayout?
         var needsDirectionOverride: Bool
         var resolvedCharacters: [Int: Character]
+        var resolvedText: [Int: String]
         var images: [SnapshotImage]
         var revision: UInt64
 
@@ -193,6 +167,7 @@ final class TerminalSnapshot {
             bidiLayout = nil
             needsDirectionOverride = false
             resolvedCharacters = [:]
+            resolvedText = [:]
             images = []
             revision = 0
         }
@@ -214,6 +189,16 @@ final class TerminalSnapshot {
                 return "\u{fffd}"
             }
             return Character(scalar)
+        }
+
+        func text(at column: Int, cell: PackedCellView) -> String {
+            if cell.code == 0 {
+                return " "
+            }
+            if let resolved = resolvedText[column] {
+                return resolved
+            }
+            return String(character(at: column, cell: cell))
         }
     }
 
@@ -438,12 +423,15 @@ final class TerminalSnapshot {
                 destination.line.copyForSnapshot(from: source, arena: snapshotArena)
                 destination.recordSource(source)
                 destination.resolvedCharacters.removeAll(keepingCapacity: true)
+                destination.resolvedText.removeAll(keepingCapacity: true)
                 var col = 0
                 let limit = min(cols, source.count)
                 while col < limit {
                     let cell = source.packedView(at: col)
                     if !cell.isSimpleRune {
-                        destination.resolvedCharacters[col] = cell.getCharacter()
+                        let text = cell.getText()
+                        destination.resolvedCharacters[col] = text.first
+                        destination.resolvedText[col] = text
                     }
                     col += max(1, Int(cell.width))
                 }
@@ -501,15 +489,7 @@ final class TerminalSnapshot {
             }
         }
 
-        let state = terminal.kittyGraphicsState
-        var virtual: [UInt32: [KittyPlacementRecord]] = [:]
-        for record in state.placementsByKey.values
-            where record.isVirtual && record.isAlternateBuffer == isAltBuffer {
-            virtual[record.imageId, default: []].append(record)
-        }
-        kitty = SnapshotKitty(placementsByKey: state.placementsByKey,
-                              imagesById: state.imagesById,
-                              virtualPlacementsByImageId: virtual)
+        kitty = SnapshotKitty(renderSnapshot: terminal.kittyGraphicsRenderSnapshot())
 
         // Built here rather than by the caller: the caret's attributes need it,
         // and everything it reads — style, palette, cols — is final by this

@@ -64,8 +64,8 @@ struct GlyphMetricsParityTests {
             metrics: metrics,
             columnWidth: columnWidth,
             cellDimension: cellDimension,
-            baselineFromBottom: ceil(CTFontGetDescent(normalFont) +
-                                     CTFontGetLeading(normalFont)),
+            baselineFromBottom: CellGeometry.baselineOffset(normalFont: normalFont,
+                                                            cellHeight: cellDimension.height),
             renderingScale: renderingScale)
     }
 

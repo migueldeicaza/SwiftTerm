@@ -163,8 +163,8 @@ final class TerminalIOPipelineTests {
         process.startProcess(executable: "/bin/cat", args: [path])
 
         #expect(capture.waitForCallbackReturn(timeout: 5))
+        #expect(capture.waitForTermination(timeout: 5))
         #expect(!process.running)
-        process.terminate()
     }
 
     @Test func integrityAndOrdering() throws {
@@ -283,12 +283,90 @@ final class TerminalIOPipelineTests {
         #expect(!capture.didReachEOF)
     }
 
+    @Test func boundedDrainReadsPendingPTYBytesBeforeShutdown() throws {
+        let payload = Self.countingPattern(byteCount: 512 * 1024)
+        let pty = try Self.makeRawPty()
+        let capture = PipelineCapture(delayPerBatch: 0.005)
+        let pipeline = TerminalIOPipeline(fd: pty.master, delegate: capture)
+        pipeline.start()
+
+        let writer = PtyWriter(
+            fd: pty.slave,
+            payload: payload,
+            chunkSizes: [65_536],
+            closeWhenDone: false)
+        writer.start()
+        #expect(writer.waitUntilDone(timeout: 10))
+
+        #expect(pipeline.drainAvailableAndShutdown(timeout: 2))
+
+        #expect(capture.receivedData() == payload)
+        #expect(!capture.didReachEOF)
+        #expect(pipeline.waitUntilStopped(timeout: 1))
+        writer.closeFd()
+    }
+
+    @Test func boundedDrainReturnsWhenDelegateIsBlocked() throws {
+        let payload = Array("blocked delegate".utf8)
+        let pty = try Self.makeRawPty()
+        let capture = BlockingPipelineCapture()
+        let pipeline = TerminalIOPipeline(fd: pty.master, delegate: capture)
+        pipeline.start()
+
+        let written = payload.withUnsafeBytes { bytes in
+            write(pty.slave, bytes.baseAddress, bytes.count)
+        }
+        #expect(written == payload.count)
+        #expect(capture.waitUntilEntered(timeout: 1))
+
+        let drainResult = Locked<Bool?>(nil)
+        let drainReturned = DispatchSemaphore(value: 0)
+        let drainThread = Thread {
+            let stopped = pipeline.drainAvailableAndShutdown(timeout: 0.05)
+            drainResult.withLock { $0 = stopped }
+            drainReturned.signal()
+        }
+        drainThread.name = "swiftterm-test-bounded-drain"
+        drainThread.start()
+
+        #expect(drainReturned.wait(timeout: .now() + 1) == .success)
+        #expect(drainResult.withLock { $0 } == false)
+        capture.release()
+        #expect(pipeline.waitUntilStopped(timeout: 1))
+        close(pty.slave)
+    }
+
+    @Test func drainAfterEOFReturnsImmediately() throws {
+        let payload = Array("last output before eof".utf8)
+        let pty = try Self.makeRawPty()
+        let capture = PipelineCapture()
+        let pipeline = TerminalIOPipeline(fd: pty.master, delegate: capture)
+        pipeline.start()
+
+        let writer = PtyWriter(
+            fd: pty.slave,
+            payload: payload,
+            chunkSizes: [payload.count])
+        writer.start()
+
+        #expect(capture.waitForEOF(timeout: 3))
+        #expect(writer.waitUntilDone(timeout: 1))
+        #expect(capture.receivedData() == payload)
+
+        let start = ContinuousClock.now
+        #expect(pipeline.drainAvailableAndShutdown(timeout: 2))
+        let elapsed = start.duration(to: .now)
+
+        #expect(elapsed < .milliseconds(200))
+        #expect(pipeline.waitUntilStopped(timeout: 1))
+    }
+
     @Test func releasingOwnerStopsIdleWorkers() throws {
         let pty = try Self.makeRawPty()
         let capture = PipelineCapture()
         weak var releasedPipeline: TerminalIOPipeline?
 
-        autoreleasepool {
+        do {
             var pipeline: TerminalIOPipeline? = TerminalIOPipeline(
                 fd: pty.master,
                 delegate: capture)
@@ -525,12 +603,18 @@ private final class TerminatingLocalProcessCapture: LocalProcessDelegate {
     private let process = Locked(WeakTestLocalProcessReference())
     private let condition = NSCondition()
     private var callbackReturned = false
+    private var terminated = false
 
     func attach(_ process: LocalProcess) {
         self.process.withLock { $0.value = process }
     }
 
-    func processTerminated(_ source: LocalProcess, exitCode: Int32?) {}
+    func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        condition.lock()
+        terminated = true
+        condition.broadcast()
+        condition.unlock()
+    }
 
     func dataReceived(slice: ArraySlice<UInt8>) {
         let process = process.withLock { $0.value }
@@ -547,9 +631,17 @@ private final class TerminatingLocalProcessCapture: LocalProcessDelegate {
     }
 
     func waitForCallbackReturn(timeout: TimeInterval) -> Bool {
+        wait(timeout: timeout) { callbackReturned }
+    }
+
+    func waitForTermination(timeout: TimeInterval) -> Bool {
+        wait(timeout: timeout) { terminated }
+    }
+
+    private func wait(timeout: TimeInterval, predicate: () -> Bool) -> Bool {
         let limit = Date().addingTimeInterval(timeout)
         condition.lock()
-        while !callbackReturned {
+        while !predicate() {
             if !condition.wait(until: limit) {
                 condition.unlock()
                 return false
@@ -657,6 +749,26 @@ private final class PipelineCapture: TerminalIOPipelineDelegate {
         }
         condition.unlock()
         return true
+    }
+}
+
+private final class BlockingPipelineCapture: TerminalIOPipelineDelegate {
+    private let entered = DispatchSemaphore(value: 0)
+    private let resume = DispatchSemaphore(value: 0)
+
+    func pipeline(_ pipeline: TerminalIOPipeline, received data: Span<UInt8>) {
+        entered.signal()
+        resume.wait()
+    }
+
+    func pipelineDidReachEOF(_ pipeline: TerminalIOPipeline) {}
+
+    func waitUntilEntered(timeout: TimeInterval) -> Bool {
+        entered.wait(timeout: .now() + timeout) == .success
+    }
+
+    func release() {
+        resume.signal()
     }
 }
 

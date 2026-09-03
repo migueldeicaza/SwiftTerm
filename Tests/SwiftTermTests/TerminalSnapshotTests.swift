@@ -30,7 +30,7 @@ struct TerminalSnapshotTests {
         var column = 0
         while column < min(cols, row.line.count) {
             let cell = row.line.packedView(at: column)
-            result.append(row.character(at: column, cell: cell))
+            result.append(contentsOf: row.text(at: column, cell: cell))
             column += max(1, Int(cell.width))
         }
         return result
@@ -62,11 +62,74 @@ struct TerminalSnapshotTests {
 
         owner.withSnapshotForDrawing(viewState: FrameViewState(view: view)) { _, _ in
             DispatchQueue.global(qos: .userInitiated).async {
-                _ = owner.feed(text: "x", allowMouseReporting: false)
+                _ = owner.feed(text: "x")
                 completed.signal()
             }
 
             #expect(completed.wait(timeout: .now() + 1) == .success)
+        }
+    }
+
+    @Test func outputPreservesSelectionWhileSelectedRowsRemainBuffered() {
+        let view = makeView()
+        view.feed(text: "selected\r\none\r\ntwo\r\nthree")
+        view.withTerminal { _ in
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 8, row: 0))
+        }
+
+        // Move the selected row into scrollback. Its buffer position stays valid.
+        view.feed(text: "\r\nfour")
+
+        view.withTerminal { _ in
+            #expect(view.selection.active)
+            #expect(view.selection.start == Position(col: 0, row: 0))
+            #expect(view.selection.end == Position(col: 8, row: 0))
+            #expect(view.selection.getSelectedText() == "selected")
+        }
+    }
+
+    @Test(arguments: [
+        "\u{1b}[?1049h",
+        "\u{1b}[2J",
+        "\u{1b}[1;1Hoverwrite",
+    ])
+    func outputClearsSelectionWhenSelectedContentChanges(_ output: String) {
+        let view = makeView()
+        view.feed(text: "selected\r\none\r\ntwo\r\nthree")
+        view.withTerminal { _ in
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 8, row: 0))
+        }
+
+        view.feed(text: output)
+
+        view.withTerminal { _ in
+            #expect(view.selection.active == false)
+        }
+    }
+
+    @Test func outputPreservesSelectionWhenAnInPlaceScrollMovesItsContent() {
+        let view = makeView(cols: 12, rows: 5)
+        view.feed(text: "\u{1b}[?1049h")
+        for row in 1...5 {
+            view.feed(text: "\u{1b}[\(row);1HLINE_\(row)")
+        }
+        view.withTerminal { _ in
+            view.selection.setSelection(
+                start: Position(col: 0, row: 2),
+                end: Position(col: 6, row: 2))
+        }
+
+        view.feed(text: "\u{1b}[2;5r\u{1b}[5;1H\r\n\u{1b}[1;5r")
+
+        view.withTerminal { _ in
+            #expect(view.selection.active)
+            #expect(view.selection.start.row == 1)
+            #expect(view.selection.end.row == 1)
+            #expect(view.selection.getSelectedText() == "LINE_3")
         }
     }
 
@@ -130,6 +193,50 @@ struct TerminalSnapshotTests {
                                                   context: context)
         #expect(rendered.segments.map { $0.attributedString.string }.joined()
             .hasPrefix(String(grapheme)))
+    }
+
+    @Test func gb9cGraphemePreservesAllTextInSnapshot() throws {
+        let view = makeView()
+        let grapheme = "\u{A98F}\u{A9C0}\u{A994}\u{A9B8}"
+        view.feed(text: grapheme)
+        let snapshot = TerminalSnapshot()
+        #expect(refresh(snapshot, from: view) == .refreshed)
+
+        let row = try #require(snapshot.rows.first)
+        #expect(row.resolvedText[0] == grapheme)
+        let context = SnapshotRenderContext(viewState: FrameViewState(view: view),
+                                            snapshot: snapshot)
+        let rendered = view.textBuilder.buildAttributedString(
+            row: row, absoluteRow: snapshot.firstRow, context: context)
+        #expect(rendered.segments.map { $0.attributedString.string }.joined()
+            .hasPrefix(grapheme))
+    }
+
+    @Test func multiCharacterCellUsesFullScalarCountForBidiIsolation() throws {
+        let view = makeView()
+        view.feed(text: "אxx")
+        view.withTerminal { terminal in
+            let scalars: [UInt32] = [0x61, 0x62]
+            let cell = terminal.buffer.cellArena.pack(
+                styleID: 0, scalars: scalars, widthState: .narrow)!
+            terminal.buffer.lines[terminal.buffer.yBase].setPackedCell(cell, at: 1)
+        }
+
+        let snapshot = TerminalSnapshot()
+        #expect(refresh(snapshot, from: view) == .refreshed)
+        let row = try #require(snapshot.rows.first)
+        #expect(row.bidiLayout != nil)
+        #expect(row.resolvedText[1] == "ab")
+
+        let context = SnapshotRenderContext(viewState: FrameViewState(view: view),
+                                            snapshot: snapshot)
+        let rendered = view.textBuilder.buildAttributedString(
+            row: row, absoluteRow: snapshot.firstRow, context: context)
+        let isolated = try #require(rendered.segments.first {
+            $0.attributedString.string == "ab"
+        })
+        #expect(isolated.columnWidth == 1)
+        #expect(isolated.characterCount == 1)
     }
 
     @Test func middleWrappedRtlEditRefreshesDependentRows() throws {

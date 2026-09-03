@@ -36,18 +36,27 @@ struct MouseTrackingTests {
     private let esc = "\u{1b}"
 
 #if os(macOS)
-    @MainActor private func waitForSemanticClick() async {
-        await withCheckedContinuation { continuation in
-            let timer = Timer(timeInterval: 0.03, repeats: false) { _ in
-                continuation.resume()
-            }
-            RunLoop.main.add(timer, forMode: .common)
+    // The deadline must exceed the longest deliberate main-queue block in the
+    // suite: the synchronized-output tests hold the main queue for up to two
+    // seconds while they prove the watchdog fires off-main.
+    @MainActor private func waitForSemanticClick(in view: TerminalView) async {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while view.semanticClickPendingForTesting, ContinuousClock.now < deadline {
+            await Task.yield()
         }
+        #expect(!view.semanticClickPendingForTesting, "The semantic click did not finish")
     }
 
     @MainActor private func waitForTerminalViewCallbacks() async {
         await withCheckedContinuation { continuation in
             DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+
+    @MainActor private func waitForSentData(from delegate: MouseMotionCapturingDelegate) async {
+        let deadline = ContinuousClock.now + .seconds(5)
+        while delegate.sentData.isEmpty, ContinuousClock.now < deadline {
+            await Task.yield()
         }
     }
 
@@ -194,7 +203,7 @@ struct MouseTrackingTests {
 
         view.mouseDown(with: down)
         view.mouseUp(with: up)
-        await waitForSemanticClick()
+        await waitForSemanticClick(in: view)
         await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
@@ -282,7 +291,7 @@ struct MouseTrackingTests {
 
         view.mouseDown(with: down)
         view.mouseUp(with: up)
-        await waitForSemanticClick()
+        await waitForSemanticClick(in: view)
         await waitForTerminalViewCallbacks()
 
         #expect(!view.withTerminal { _ in view.selection.active })
@@ -333,7 +342,7 @@ struct MouseTrackingTests {
 
         view.mouseDown(with: down)
         view.mouseUp(with: up)
-        await waitForSemanticClick()
+        await waitForSemanticClick(in: view)
         await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
@@ -363,7 +372,7 @@ struct MouseTrackingTests {
 
         view.mouseDown(with: down)
         view.mouseUp(with: up)
-        await waitForSemanticClick()
+        await waitForSemanticClick(in: view)
 
         #expect(!view.withTerminal { _ in view.selection.active })
         #expect(delegate.sentData.isEmpty)
@@ -393,7 +402,7 @@ struct MouseTrackingTests {
 
             view.mouseDown(with: down)
             view.mouseUp(with: up)
-            await waitForSemanticClick()
+            await waitForSemanticClick(in: view)
 
             #expect(delegate.sentData.isEmpty)
         }
@@ -466,7 +475,7 @@ struct MouseTrackingTests {
         )!
         view.mouseDown(with: promptDown)
         view.mouseUp(with: promptUp)
-        await waitForSemanticClick()
+        await waitForSemanticClick(in: view)
         await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
@@ -498,7 +507,7 @@ struct MouseTrackingTests {
             view.mouseDown(with: down)
             view.mouseUp(with: up)
         }
-        await waitForSemanticClick()
+        await waitForSemanticClick(in: view)
 
         #expect(delegate.sentData.isEmpty)
         #expect(view.withTerminal { _ in view.selection.active })
@@ -528,7 +537,7 @@ struct MouseTrackingTests {
         view.mouseDown(with: down)
         view.mouseUp(with: up)
         #expect(delegate.sentData.isEmpty)
-        await waitForSemanticClick()
+        await waitForSemanticClick(in: view)
         await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
@@ -557,7 +566,7 @@ struct MouseTrackingTests {
         view.mouseDown(with: down)
         view.feed(text: "\(esc)[?1000h\(esc)[?1006h")
         view.mouseUp(with: up)
-        await waitForSemanticClick()
+        await waitForSentData(from: delegate)
 
         let sent = delegate.sentData.map { String(bytes: $0, encoding: .utf8) ?? "" }
         #expect(sent.count == 1)
@@ -588,7 +597,7 @@ struct MouseTrackingTests {
 
         view.mouseDown(with: down)
         view.mouseUp(with: up)
-        await waitForSemanticClick()
+        await waitForSentData(from: delegate)
 
         let sent = delegate.sentData.map { String(bytes: $0, encoding: .utf8) ?? "" }
         #expect(sent.count == 1)
@@ -622,7 +631,7 @@ struct MouseTrackingTests {
         delegate.sentData.removeAll()
         view.feed(text: "\(esc)[?1000l")
         view.mouseUp(with: up)
-        await waitForSemanticClick()
+        await waitForSemanticClick(in: view)
         await waitForTerminalViewCallbacks()
 
         #expect(delegate.sentData.isEmpty)

@@ -33,6 +33,15 @@ private actor InputLatencyPendingFrame {
     }
 }
 
+/// Shows how a local-process host can replace SwiftTerm's portable paste
+/// approximation with the active PTY settings.
+private final class SampleLocalProcessTerminalView: LocalProcessTerminalView {
+    nonisolated override func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8> {
+        process?.terminalControlBytesForPaste()
+            ?? TerminalPasteControls.approximateTerminalControlBytes
+    }
+}
+
 class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDelegate, NSUserInterfaceValidations {
     @IBOutlet var loggingMenuItem: NSMenuItem?
 
@@ -83,6 +92,45 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
         updateWindowTitle()
     }
     
+    // MARK: - Kitty clipboard protocol, OSC 5522
+    //
+    // The library denies clipboard access by default. A host opts in by
+    // stating which services it can serve and by setting the terminal policy
+    // in its `TerminalOptions`. This app owns `NSPasteboard.general`, so it
+    // offers the complete standard-clipboard service, which is what makes
+    // DEC private mode 5522 report as supported.
+
+    func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
+        // macOS has no primary selection, so only the standard clipboard.
+        [.standardRead, .standardWrite]
+    }
+
+    func kittyClipboardRequestPermission(
+        source: TerminalView,
+        request: KittyClipboardPermissionRequest
+    ) -> KittyClipboardPermissionResult {
+        let verb = request.direction == .read ? "read" : "write"
+        let who = request.name.isEmpty ? "An unnamed program" : request.name
+        let alert = NSAlert()
+        alert.messageText = "Allow the program to \(verb) the clipboard?"
+        // The name and the MIME list come from the program in the terminal.
+        // Show them as data, never as instructions.
+        alert.informativeText =
+            "\(who) asks to \(verb) these clipboard types:\n\n"
+            + request.mimeTypes.joined(separator: ", ")
+        alert.addButton(withTitle: "Allow")
+        alert.addButton(withTitle: "Deny")
+        if request.canRememberPassword {
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "Remember for this session"
+        }
+        guard alert.runModal() == .alertFirstButtonReturn else {
+            return .deny
+        }
+        let remember = request.canRememberPassword && alert.suppressionButton?.state == .on
+        return .allow(rememberPassword: remember)
+    }
+
     func processTerminated(source: TerminalView, exitCode: Int32?) {
         view.window?.close()
         if let e = exitCode {
@@ -139,7 +187,23 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        terminal = LocalProcessTerminalView(frame: view.frame)
+        let options = TerminalOptions(
+            kittyGraphics: KittyGraphicsConfiguration(
+                storageLimitBytesPerScreen: 320_000_000,
+                localMediaPolicy: [.regularFiles]),
+            // iTerm2 feature report for TERM_FEATURES and OSC 1337
+            // Capabilities. The library default is nil, which suppresses
+            // the reply, because parts of it depend on the host: T3 both
+            // 24-bit color forms, Cw writable clipboard, Lr left and right
+            // margins, M SGR mouse, Sc7 cursor styles 0 through 6, U and
+            // Uw17 Unicode with Unicode 17 widths, Ts3 title stacks, B
+            // bracketed paste, F focus reporting, Gs strikethrough, Sy
+            // synchronized output, H hyperlinks, Sx Sixel, P progress.
+            featureReport: "T3CwLrMSc7UUw17Ts3BFGsSyHSxP",
+            // The library default is empty. This app serves both directions,
+            // each one still behind the permission prompt above.
+            kittyClipboardPolicy: .all)
+        terminal = SampleLocalProcessTerminalView(frame: view.frame, options: options)
         terminal.bellStyle = .none
         // Overridable for measurement: SWIFTTERM_BUFFERING=perRowPersistent
         terminal.metalBufferingMode =
@@ -190,14 +254,19 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
         logging = NSUserDefaultsController.shared.defaults.bool(forKey: "LogHostOutput")
         updateLogging ()
 
-        // Support --cmd "command" launch argument for automation/profiling
+        // A command value in a separate argv entry is interpreted as a document
+        // path by NSDocument before this controller loads. Use the environment
+        // or a single option token so AppKit never sees a bare command string.
         let args = ProcessInfo.processInfo.arguments
+        let environmentCommand = ProcessInfo.processInfo.environment["SWIFTTERM_COMMAND"]
+        let argumentCommand = args
+            .first { $0.hasPrefix("--cmd=") }
+            .map { String($0.dropFirst("--cmd=".count)) }
         // Same one-window rule as the baselines: two restored documents would
         // otherwise both type the command and both run the load.
-        if let idx = args.firstIndex(of: "--cmd"), idx + 1 < args.count,
-           !ViewController.commandClaimed {
+        if let command = environmentCommand ?? argumentCommand,
+           !command.isEmpty, !ViewController.commandClaimed {
             ViewController.commandClaimed = true
-            let command = args[idx + 1]
             // Wait for the shell to print its prompt rather than typing after a
             // fixed delay: a command sent before the shell is listening is
             // simply lost, which shows up as a window that opens and does

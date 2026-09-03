@@ -2,6 +2,25 @@ import Foundation
 import Testing
 @testable import SwiftTerm
 
+#if os(iOS) || os(visionOS)
+@MainActor
+private final class ContentSizeAdjustingTerminalView: TerminalView {
+    var adjustsContentOffset = false
+    var didAdjustContentOffset = false
+
+    override var contentSize: CGSize {
+        didSet {
+            guard adjustsContentOffset else { return }
+            didAdjustContentOffset = true
+            contentOffset = CGPoint(
+                x: 0,
+                y: max(0, contentSize.height - bounds.height + adjustedContentInset.bottom)
+            )
+        }
+    }
+}
+#endif
+
 final class TerminalLockingTests {
     private final class TestDelegate: TerminalDelegate {
         func showCursor(source: Terminal) {}
@@ -11,8 +30,6 @@ final class TerminalLockingTests {
         func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? { nil }
         func sizeChanged(source: Terminal) {}
         func send(source: Terminal, data: ArraySlice<UInt8>) {}
-        func scrolled(source: Terminal, yDisp: Int) {}
-        func linefeed(source: Terminal) {}
         func bufferActivated(source: Terminal) {}
         func synchronizedOutputChanged(source: Terminal, active: Bool) {}
         func bell(source: Terminal) {}
@@ -231,6 +248,21 @@ final class TerminalLockingTests {
             return terminal.getDisplayText(start: Position(col: 0, row: row), end: Position(col: 10, row: row))
         }
         #expect(finalText.hasPrefix("VIEW-FINAL"))
+    }
+#endif
+
+#if os(iOS) || os(visionOS)
+    @MainActor
+    @Test func contentSizeAdjustmentDoesNotReenterTerminalLock() {
+        let view = ContentSizeAdjustingTerminalView(
+            frame: CGRect(origin: .zero, size: .init(width: 640, height: 320))
+        )
+        view.adjustsContentOffset = true
+
+        view.updateScroller()
+
+        #expect(view.didAdjustContentOffset)
+        #expect(!view.terminal.terminalLock.isLockedByCurrentThread)
     }
 #endif
 }
