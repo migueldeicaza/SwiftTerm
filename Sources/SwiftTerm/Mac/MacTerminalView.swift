@@ -1921,8 +1921,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if keyboardEnhancementFlags.contains(.reportAllKeys),
            !kittyIsComposing,
            let modifierKey = kittyModifierKey(from: event.keyCode),
-           let modifierFlag = modifierFlag(for: modifierKey) {
-            let isDown = event.modifierFlags.contains(modifierFlag)
+           let isDown = kittyModifierIsPressed(modifierKey, in: event) {
             let eventType: KittyKeyboardEventType = isDown ? .press : .release
             if eventType == .release && !keyboardEnhancementFlags.contains(.reportEvents) {
                 super.flagsChanged(with: event)
@@ -1968,6 +1967,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     private var pendingKittyKeyEvent: PendingKittyKeyEvent?
     private var kittyIsComposing = false
+    private var kittyKeysWithoutReportedPress: Set<UInt16> = []
     
     //
     // We capture a handful of keydown events and pre-process those, and then let
@@ -1982,6 +1982,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     // of those keys.
     //
     public override func keyDown(with event: NSEvent) {
+        if !event.isARepeat {
+            kittyKeysWithoutReportedPress.remove(event.keyCode)
+        }
         withTerminal { _ in
             selection.active = false
         }
@@ -2038,6 +2041,16 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             let wantsAllKeys = keyboardEnhancementFlags.contains(.reportAllKeys)
             let repeatEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents) ? .repeatPress : .press
             let textEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents && wantsAllKeys) ? .repeatPress : .press
+
+            // A key event during preedit belongs to the input method. AppKit can
+            // commit text or issue a command while it interprets this event. Do
+            // not send the physical key as a second event.
+            if kittyIsComposing {
+                kittyKeysWithoutReportedPress.insert(event.keyCode)
+                interpretKeyEvents([event])
+                return
+            }
+
             if let functionKey = kittyFunctionalKey(from: event) {
                 let kittyEvent = KittyKeyEvent(key: .functional(functionKey),
                                                modifiers: kittyModifiers(from: event, includeOption: optionAsMetaKey),
@@ -2191,6 +2204,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     public override func keyUp(with event: NSEvent) {
+        if kittyKeysWithoutReportedPress.remove(event.keyCode) != nil {
+            super.keyUp(with: event)
+            return
+        }
         let flags = withTerminal { $0.keyboardEnhancementFlags }
         if flags.contains(.reportEvents) {
             let hasAltOrCtrl = event.modifierFlags.contains(.control) || (optionAsMetaKey && event.modifierFlags.contains(.option))
@@ -2209,7 +2226,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     public override func doCommand(by selector: Selector) {
-        if !withTerminal({ $0.keyboardEnhancementFlags }).isEmpty || !kittyIsComposing {
+        let keyboardEnhancementFlags = withTerminal { $0.keyboardEnhancementFlags }
+        if !keyboardEnhancementFlags.isEmpty && kittyIsComposing {
+            pendingKittyKeyEvent = nil
+            return
+        }
+        if !keyboardEnhancementFlags.isEmpty || !kittyIsComposing {
             let mods: KittyKeyboardModifiers
             if let pending = pendingKittyKeyEvent {
                 mods = kittyModifiers(from: pending.event, includeOption: optionAsMetaKey)
@@ -2330,6 +2352,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
+        let wasComposing = kittyIsComposing
         markedTextStorage = nil
         markedSelectedRange = NSRange(location: NSNotFound, length: 0)
         updateMarkedTextOverlay()
@@ -2348,6 +2371,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 kittyIsComposing = false
                 let text = str as String
 
+                // Control input that ends a preedit is an IME command. It is
+                // not committed text for the terminal.
+                if wasComposing && isSingleControlCharacter(text) {
+                    return
+                }
+
                 // Option acting as a compose/AltGr layer (e.g. on the Czech
                 // layout Option+2 produces "@" while the bare key is "ě"). When
                 // optionAsMetaKey is off, Option is not Meta, so the keypress
@@ -2365,6 +2394,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                    !pendingEvent.event.modifierFlags.contains(.control),
                    !pendingEvent.event.modifierFlags.contains(.command),
                    isPlainPrintableText(text) {
+                    kittyKeysWithoutReportedPress.insert(pendingEvent.event.keyCode)
                     send(txt: text)
                     return
                 }
@@ -2399,8 +2429,21 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         return true
     }
 
+    private func isSingleControlCharacter(_ text: String) -> Bool {
+        let scalars = text.unicodeScalars
+        guard let scalar = scalars.first,
+              scalars.index(after: scalars.startIndex) == scalars.endIndex else {
+            return false
+        }
+        return scalar.value < 0x20 || scalar.value == 0x7f
+    }
+
     // NSTextInputClient protocol implementation
     open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        if let pendingKittyKeyEvent {
+            kittyKeysWithoutReportedPress.insert(pendingKittyKeyEvent.event.keyCode)
+            self.pendingKittyKeyEvent = nil
+        }
         switch string {
         case let attributed as NSAttributedString:
             markedTextStorage = attributed.length > 0 ? attributed : nil
@@ -2754,6 +2797,51 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    /// Returns the state of the specific modifier key that produced the event.
+    /// The standard AppKit flags combine the left and right keys. The device
+    /// flags keep the side information when both keys are down.
+    private func kittyModifierIsPressed(_ key: KittyFunctionalKey, in event: NSEvent) -> Bool? {
+        let keyMask: UInt
+        let familyMask: UInt
+        switch key {
+        case .leftShift:
+            keyMask = UInt(NX_DEVICELSHIFTKEYMASK)
+            familyMask = keyMask | UInt(NX_DEVICERSHIFTKEYMASK)
+        case .rightShift:
+            keyMask = UInt(NX_DEVICERSHIFTKEYMASK)
+            familyMask = UInt(NX_DEVICELSHIFTKEYMASK) | keyMask
+        case .leftControl:
+            keyMask = UInt(NX_DEVICELCTLKEYMASK)
+            familyMask = keyMask | UInt(NX_DEVICERCTLKEYMASK)
+        case .rightControl:
+            keyMask = UInt(NX_DEVICERCTLKEYMASK)
+            familyMask = UInt(NX_DEVICELCTLKEYMASK) | keyMask
+        case .leftAlt:
+            keyMask = UInt(NX_DEVICELALTKEYMASK)
+            familyMask = keyMask | UInt(NX_DEVICERALTKEYMASK)
+        case .rightAlt:
+            keyMask = UInt(NX_DEVICERALTKEYMASK)
+            familyMask = UInt(NX_DEVICELALTKEYMASK) | keyMask
+        case .leftSuper:
+            keyMask = UInt(NX_DEVICELCMDKEYMASK)
+            familyMask = keyMask | UInt(NX_DEVICERCMDKEYMASK)
+        case .rightSuper:
+            keyMask = UInt(NX_DEVICERCMDKEYMASK)
+            familyMask = UInt(NX_DEVICELCMDKEYMASK) | keyMask
+        case .capsLock:
+            return event.modifierFlags.contains(.capsLock)
+        default:
+            return nil
+        }
+
+        let rawFlags = event.modifierFlags.rawValue
+        if rawFlags & familyMask != 0 {
+            return rawFlags & keyMask != 0
+        }
+        guard let flag = modifierFlag(for: key) else { return nil }
+        return event.modifierFlags.contains(flag)
+    }
+
     private static let kittyBaseLayoutKeyMap: [UInt16: UnicodeScalar] = {
         func scalar(_ char: Character) -> UnicodeScalar {
             char.unicodeScalars.first!
@@ -2817,14 +2905,22 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private func kittyTextEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
         let isControlSpace = event.modifierFlags.contains(.control)
             && event.keyCode == UInt16(kVK_Space)
-        let reportedScalar = event.charactersIgnoringModifiers?.unicodeScalars.first
+        // Request the current-layout value with no modifiers. Unlike
+        // charactersIgnoringModifiers, this does not retain Control's text
+        // translation on macOS.
+        let reportedScalar = event.characters(byApplyingModifiers: [])?.unicodeScalars.first
+            ?? event.charactersIgnoringModifiers?.unicodeScalars.first
         guard let scalar = isControlSpace ? UnicodeScalar(0x20) : reportedScalar else {
             return nil
         }
         let baseScalar = String(scalar).lowercased().unicodeScalars.first ?? scalar
-        let shiftedScalar = event.modifierFlags.contains(.shift) && !isControlSpace
-            ? event.characters?.unicodeScalars.first
-            : nil
+        let shiftedScalar: UnicodeScalar?
+        if event.modifierFlags.contains(.shift) && !isControlSpace {
+            shiftedScalar = event.characters(byApplyingModifiers: [.shift])?.unicodeScalars.first
+                ?? event.characters?.unicodeScalars.first
+        } else {
+            shiftedScalar = nil
+        }
         let baseLayout = kittyBaseLayoutKey(from: event)
         let baseLayoutKey = baseLayout == baseScalar ? nil : baseLayout
         let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
