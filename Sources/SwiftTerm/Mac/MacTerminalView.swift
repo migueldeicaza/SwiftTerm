@@ -2107,7 +2107,33 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                         break
                     }
                 }
-                send (applyControlToEventCharacters (ch))
+                var controlBytes = applyControlToEventCharacters(ch)
+
+                // Non-Latin layouts can map an ASCII key to a Unicode
+                // character. In that case, use the key's standard PC-101
+                // position for the legacy Control mapping. Keep the layout
+                // character for ASCII layouts such as Dvorak.
+                if controlBytes.isEmpty,
+                   ch.unicodeScalars.count == 1,
+                   let scalar = ch.unicodeScalars.first,
+                   scalar.value > 0x7f,
+                   let baseLayoutKey = kittyBaseLayoutKey(from: event) {
+                    controlBytes = applyControlToEventCharacters(String(baseLayoutKey))
+                }
+
+                // Some input methods supply the final C0 value directly.
+                // Use it if neither layout mapping produced a value.
+                if controlBytes.isEmpty,
+                   let characters = event.characters,
+                   characters.unicodeScalars.count == 1,
+                   let scalar = characters.unicodeScalars.first,
+                   scalar.value < 0x20 || scalar.value == 0x7f {
+                    controlBytes = [UInt8(scalar.value)]
+                }
+
+                if !controlBytes.isEmpty {
+                    send(controlBytes)
+                }
                 return
             }
         } else if eventFlags.contains (.function) {

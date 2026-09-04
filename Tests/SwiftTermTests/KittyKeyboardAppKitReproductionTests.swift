@@ -38,6 +38,7 @@ final class KittyKeyboardAppKitReproductionTests {
     }
 
     private func press(flags: Int,
+                       modifiers: NSEvent.ModifierFlags = [.shift],
                        characters: String,
                        charactersIgnoringModifiers: String,
                        keyCode: UInt16) -> [UInt8] {
@@ -59,7 +60,7 @@ final class KittyKeyboardAppKitReproductionTests {
         let event = NSEvent.keyEvent(
             with: .keyDown,
             location: .zero,
-            modifierFlags: [.shift],
+            modifierFlags: modifiers,
             timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: window.windowNumber,
             context: nil,
@@ -70,6 +71,48 @@ final class KittyKeyboardAppKitReproductionTests {
         )!
         view.keyDown(with: event)
         return capture.sent
+    }
+
+    @Test func legacyControlCUsesBaseLayoutForNonLatinInputSources() {
+        let nonLatinCharacters = ["ㅊ", "с", "ذ", "ψ"]
+
+        for character in nonLatinCharacters {
+            #expect(press(flags: 0,
+                          modifiers: [.control],
+                          characters: "",
+                          charactersIgnoringModifiers: character,
+                          keyCode: 8) == [3])
+        }
+    }
+
+    @Test func legacyControlUsesTheAsciiLayoutBeforeTheBaseLayout() {
+        #expect(press(flags: 0,
+                      modifiers: [.control],
+                      characters: "\n",
+                      charactersIgnoringModifiers: "j",
+                      keyCode: 8) == [10])
+    }
+
+    @Test func legacyControlUsesTheC0CharacterAsTheFinalFallback() {
+        #expect(press(flags: 0,
+                      modifiers: [.control],
+                      characters: "\u{03}",
+                      charactersIgnoringModifiers: "ㅊ",
+                      keyCode: 10) == [3])
+    }
+
+    @Test func kittyControlCPreservesTheLayoutAndBaseLayoutKeys() {
+        #expect(press(flags: 1,
+                      modifiers: [.control],
+                      characters: "\u{03}",
+                      charactersIgnoringModifiers: "ㅊ",
+                      keyCode: 8) == Array("\u{1b}[12618;5u".utf8))
+
+        #expect(press(flags: 5,
+                      modifiers: [.control],
+                      characters: "\u{03}",
+                      charactersIgnoringModifiers: "ㅊ",
+                      keyCode: 8) == Array("\u{1b}[12618::99;5u".utf8))
     }
 
     @Test func reportAlternatesDoesNotConvertTextProducingKeysToCSIU() {
