@@ -911,9 +911,9 @@ public final class Buffer {
             // Resize rows in both directions as needed
             var addToY = 0
             if rows < newRows {
-                for y in rows..<newRows {
+                for _ in rows..<newRows {
                     if lines.count < newRows + yBase {
-                        if yBase > 0 && lines.count <= yBase + y + addToY + 1 {
+                        if yBase > 0 && lines.count <= yBase + self.y + addToY + 1 {
                             // There is room above the buffer and there are no empty elements below the line,
                             // scroll up
                             yBase -= 1
