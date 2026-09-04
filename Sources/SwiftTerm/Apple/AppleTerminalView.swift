@@ -4469,6 +4469,7 @@ extension TerminalView {
     /// reports. Unlike keyboard input, mouse responses do not register an
     /// OSC 133 semantic submission. Delivery is synchronous on the main actor,
     /// after releasing the terminal lock.
+    @MainActor
     public func sendMouseEvent(button: Int, release: Bool,
                                shift: Bool = false, meta: Bool = false,
                                control: Bool = false, col: Int, row: Int,
