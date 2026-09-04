@@ -815,20 +815,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// Inserts the Metal view into the view hierarchy with the correct
     /// z-order: below the caret (which is hidden while Metal owns the
     /// cursor), with the scroller and the progress bar above it. When there
-    /// is no caret view and `replacing` is non-nil, the new view takes the
-    /// old one's z-position instead. Actually removing the old view is the
+    /// is no attached caret view and `replacing` is non-nil, the new view takes
+    /// the old one's z-position instead. Actually removing the old view is the
     /// caller's responsibility — the rebind path defers removal until after
     /// the new view has drawn its first frame so the hierarchy is never empty.
-    private func insertMetalView(_ newView: NSView, replacing oldView: NSView?) {
-        if let caretView = caretView {
+    func insertMetalView(_ newView: NSView, replacing oldView: NSView?) {
+        if let caretView = caretView, caretView.superview === self {
             addSubview(newView, positioned: .below, relativeTo: caretView)
-            caretView.disableAnimations()
-            caretView.isHidden = true
         } else if let oldView = oldView {
             addSubview(newView, positioned: .above, relativeTo: oldView)
         } else {
             addSubview(newView, positioned: .below, relativeTo: nil)
         }
+        caretView?.disableAnimations()
+        caretView?.isHidden = true
         if let scroller = scroller {
             addSubview(scroller, positioned: .above, relativeTo: newView)
             addSubview(overlayScrollerIndicator, positioned: .above, relativeTo: scroller)
@@ -1739,6 +1739,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             caretView.disableAnimations()
             hasFocus = false
             withTerminal { $0.setTerminalFocus(false) }
+            // Key-up events for keys held across a focus change do not
+            // arrive. Do not let their entries suppress a later release.
+            kittyKeysWithoutReportedPress.removeAll()
         }
         return response
     }
@@ -1921,8 +1924,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if keyboardEnhancementFlags.contains(.reportAllKeys),
            !kittyIsComposing,
            let modifierKey = kittyModifierKey(from: event.keyCode),
-           let modifierFlag = modifierFlag(for: modifierKey) {
-            let isDown = event.modifierFlags.contains(modifierFlag)
+           let isDown = kittyModifierIsPressed(modifierKey, in: event) {
             let eventType: KittyKeyboardEventType = isDown ? .press : .release
             if eventType == .release && !keyboardEnhancementFlags.contains(.reportEvents) {
                 super.flagsChanged(with: event)
@@ -1968,7 +1970,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     private var pendingKittyKeyEvent: PendingKittyKeyEvent?
     private var kittyIsComposing = false
-    
+    private var kittyKeysWithoutReportedPress: Set<UInt16> = []
+    /// The key code of the last key that the input method interpreted
+    /// during a preedit. Cleared by the next key down or by its key up.
+    private var kittyComposingKeyCode: UInt16?
+
     //
     // We capture a handful of keydown events and pre-process those, and then let
     // interpretKeyEvents do the rest of the work, that includes text-insertion, and
@@ -1982,6 +1988,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     // of those keys.
     //
     public override func keyDown(with event: NSEvent) {
+        kittyComposingKeyCode = nil
+        if !event.isARepeat {
+            kittyKeysWithoutReportedPress.remove(event.keyCode)
+        }
         withTerminal { _ in
             selection.active = false
         }
@@ -2031,6 +2041,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             pendingKittyKeyEvent = nil
             if eventFlags.contains([.option, .command]), event.charactersIgnoringModifiers == "o" {
                 optionAsMetaKey.toggle()
+                // No press was reported for this key, so its release must
+                // not be reported either.
+                kittyKeysWithoutReportedPress.insert(event.keyCode)
                 return
             }
 
@@ -2038,6 +2051,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             let wantsAllKeys = keyboardEnhancementFlags.contains(.reportAllKeys)
             let repeatEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents) ? .repeatPress : .press
             let textEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents && wantsAllKeys) ? .repeatPress : .press
+
+            // A key event during preedit belongs to the input method. AppKit can
+            // commit text or issue a command while it interprets this event. Do
+            // not send the physical key as a second event.
+            if kittyIsComposing {
+                kittyKeysWithoutReportedPress.insert(event.keyCode)
+                kittyComposingKeyCode = event.keyCode
+                interpretKeyEvents([event])
+                return
+            }
+
             if let functionKey = kittyFunctionalKey(from: event) {
                 let kittyEvent = KittyKeyEvent(key: .functional(functionKey),
                                                modifiers: kittyModifiers(from: event, includeOption: optionAsMetaKey),
@@ -2087,6 +2111,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         } else if eventFlags.contains (.control) {
             // Sends the control sequence
+            // AppKit can report Control-Space with no character, or with NUL,
+            // instead of the unmodified space. Use the physical Space key so
+            // that the terminal always sends the NUL byte expected for C-SPC.
+            if event.keyCode == UInt16(kVK_Space) {
+                send ([0])
+                return
+            }
             if let ch = event.charactersIgnoringModifiers {
                 if let fs = ch.unicodeScalars.first {
                     switch Int (fs.value) {
@@ -2100,7 +2131,39 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                         break
                     }
                 }
-                send (applyControlToEventCharacters (ch))
+                var controlBytes = applyControlToEventCharacters(ch)
+
+                // AppKit supplies the final C0 value for many layouts and
+                // input methods. On Latin ISO layouts its table is letter
+                // based rather than positional, so honor it before the
+                // PC-101 position guess below.
+                if controlBytes.isEmpty,
+                   let characters = event.characters,
+                   let scalar = singleControlScalar(in: characters) {
+                    if scalar.value == 0x7f {
+                        // Control-Backspace follows the same setting as Backspace.
+                        controlBytes = [backspaceSendsControlH ? 8 : 0x7f]
+                    } else {
+                        controlBytes = [UInt8(scalar.value)]
+                    }
+                }
+
+                // Non-Latin layouts can map an ASCII key to a Unicode
+                // character with no Control translation. In that case, use
+                // the key's standard PC-101 position for the legacy Control
+                // mapping. Keep the layout character for ASCII layouts such
+                // as Dvorak.
+                if controlBytes.isEmpty,
+                   ch.unicodeScalars.count == 1,
+                   let scalar = ch.unicodeScalars.first,
+                   scalar.value > 0x7f,
+                   let baseLayoutKey = kittyBaseLayoutKey(from: event) {
+                    controlBytes = applyControlToEventCharacters(String(baseLayoutKey))
+                }
+
+                if !controlBytes.isEmpty {
+                    send(controlBytes)
+                }
                 return
             }
         } else if eventFlags.contains (.function) {
@@ -2158,25 +2221,37 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     public override func keyUp(with event: NSEvent) {
+        if kittyComposingKeyCode == event.keyCode {
+            kittyComposingKeyCode = nil
+        }
+        if kittyKeysWithoutReportedPress.remove(event.keyCode) != nil {
+            super.keyUp(with: event)
+            return
+        }
         let flags = withTerminal { $0.keyboardEnhancementFlags }
-        if flags.contains(.reportEvents) {
-            let hasAltOrCtrl = event.modifierFlags.contains(.control) || (optionAsMetaKey && event.modifierFlags.contains(.option))
-            let shouldHandle = flags.contains(.reportAllKeys) || hasAltOrCtrl || kittyFunctionalKey(from: event) != nil
-            if shouldHandle, let kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
-                if !flags.contains(.reportAllKeys),
-                   case .unicode(let codepoint) = kittyEvent.key,
-                   codepoint == 9 || codepoint == 13 || codepoint == 127 {
-                    // Enter/Tab/Backspace only report release events in report-all-keys mode.
-                } else {
-                    _ = sendKittyEvent(kittyEvent)
-                }
+        // Every key whose press reached the application gets a release,
+        // including plain text keys. Keys that sent no press are in
+        // kittyKeysWithoutReportedPress and returned above.
+        if flags.contains(.reportEvents),
+           let kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
+            if !flags.contains(.reportAllKeys),
+               case .unicode(let codepoint) = kittyEvent.key,
+               codepoint == 9 || codepoint == 13 || codepoint == 127 {
+                // Enter/Tab/Backspace only report release events in report-all-keys mode.
+            } else {
+                _ = sendKittyEvent(kittyEvent)
             }
         }
         super.keyUp(with: event)
     }
     
     public override func doCommand(by selector: Selector) {
-        if !withTerminal({ $0.keyboardEnhancementFlags }).isEmpty || !kittyIsComposing {
+        let keyboardEnhancementFlags = withTerminal { $0.keyboardEnhancementFlags }
+        if !keyboardEnhancementFlags.isEmpty && kittyIsComposing {
+            pendingKittyKeyEvent = nil
+            return
+        }
+        if !kittyIsComposing {
             let mods: KittyKeyboardModifiers
             if let pending = pendingKittyKeyEvent {
                 mods = kittyModifiers(from: pending.event, includeOption: optionAsMetaKey)
@@ -2287,6 +2362,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         case #selector(moveToRightEndOfLine(_:)):
             send (EscapeSequences.emacsForward)
         default:
+            // Nothing is sent for this key. Under the kitty protocol its
+            // release must not be reported without a press.
+            if let pending = pendingKittyKeyEvent {
+                kittyKeysWithoutReportedPress.insert(pending.event.keyCode)
+                pendingKittyKeyEvent = nil
+            }
             print ("Unhandle selector \(selector)")
         }
     }
@@ -2297,17 +2378,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
+        // A commit ends the preedit in every mode. AppKit does not call
+        // unmarkText after a commit, so clear the state here.
+        let wasComposing = kittyIsComposing
+        kittyIsComposing = false
         markedTextStorage = nil
         markedSelectedRange = NSRange(location: NSNotFound, length: 0)
         updateMarkedTextOverlay()
         if let str = string as? NSString {
             if isPaste {
                 pendingKittyKeyEvent = nil
-                let request = TerminalPasteRequest(source: .text, text: str as String)
-                var result = withTerminal { $0.paste(request) }
-                if result == .unsafePayload {
-                    result = withTerminal { $0.paste(request, allowUnsafe: true) }
-                }
+                pasteText(str as String)
                 return
             }
             let terminalState = withTerminal { terminal in
@@ -2316,8 +2397,14 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             if !terminalState.isEmpty {
                 let pendingEvent = pendingKittyKeyEvent
                 pendingKittyKeyEvent = nil
-                kittyIsComposing = false
                 let text = str as String
+
+                // Backspace or Delete that ends a preedit is an IME edit
+                // command. It is not committed text for the terminal. Other
+                // control input, such as Ctrl+C, is a real key press.
+                if wasComposing && isPreeditEditCharacter(text) {
+                    return
+                }
 
                 // Option acting as a compose/AltGr layer (e.g. on the Czech
                 // layout Option+2 produces "@" while the bare key is "ě"). When
@@ -2336,6 +2423,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                    !pendingEvent.event.modifierFlags.contains(.control),
                    !pendingEvent.event.modifierFlags.contains(.command),
                    isPlainPrintableText(text) {
+                    kittyKeysWithoutReportedPress.insert(pendingEvent.event.keyCode)
                     send(txt: text)
                     return
                 }
@@ -2370,8 +2458,28 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         return true
     }
 
+    /// Returns the single scalar of `text` when it is a C0 control or DEL.
+    private func singleControlScalar(in text: String) -> UnicodeScalar? {
+        let scalars = text.unicodeScalars
+        guard let scalar = scalars.first,
+              scalars.index(after: scalars.startIndex) == scalars.endIndex,
+              scalar.value < 0x20 || scalar.value == 0x7f else {
+            return nil
+        }
+        return scalar
+    }
+
+    private func isPreeditEditCharacter(_ text: String) -> Bool {
+        guard let scalar = singleControlScalar(in: text) else { return false }
+        return scalar.value == 0x08 || scalar.value == 0x7f
+    }
+
     // NSTextInputClient protocol implementation
     open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        if let pendingKittyKeyEvent {
+            kittyKeysWithoutReportedPress.insert(pendingKittyKeyEvent.event.keyCode)
+            self.pendingKittyKeyEvent = nil
+        }
         switch string {
         case let attributed as NSAttributedString:
             markedTextStorage = attributed.length > 0 ? attributed : nil
@@ -2381,7 +2489,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             markedTextStorage = nil
         }
         markedSelectedRange = selectedRange
-        kittyIsComposing = true
+        // An empty marked string ends the preedit. hasMarkedText() reports
+        // the same state to AppKit.
+        kittyIsComposing = markedTextStorage != nil
         updateMarkedTextOverlay()
     }
 
@@ -2725,6 +2835,51 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    /// Returns the state of the specific modifier key that produced the event.
+    /// The standard AppKit flags combine the left and right keys. The device
+    /// flags keep the side information when both keys are down.
+    private func kittyModifierIsPressed(_ key: KittyFunctionalKey, in event: NSEvent) -> Bool? {
+        let keyMask: UInt
+        let familyMask: UInt
+        switch key {
+        case .leftShift:
+            keyMask = UInt(NX_DEVICELSHIFTKEYMASK)
+            familyMask = keyMask | UInt(NX_DEVICERSHIFTKEYMASK)
+        case .rightShift:
+            keyMask = UInt(NX_DEVICERSHIFTKEYMASK)
+            familyMask = UInt(NX_DEVICELSHIFTKEYMASK) | keyMask
+        case .leftControl:
+            keyMask = UInt(NX_DEVICELCTLKEYMASK)
+            familyMask = keyMask | UInt(NX_DEVICERCTLKEYMASK)
+        case .rightControl:
+            keyMask = UInt(NX_DEVICERCTLKEYMASK)
+            familyMask = UInt(NX_DEVICELCTLKEYMASK) | keyMask
+        case .leftAlt:
+            keyMask = UInt(NX_DEVICELALTKEYMASK)
+            familyMask = keyMask | UInt(NX_DEVICERALTKEYMASK)
+        case .rightAlt:
+            keyMask = UInt(NX_DEVICERALTKEYMASK)
+            familyMask = UInt(NX_DEVICELALTKEYMASK) | keyMask
+        case .leftSuper:
+            keyMask = UInt(NX_DEVICELCMDKEYMASK)
+            familyMask = keyMask | UInt(NX_DEVICERCMDKEYMASK)
+        case .rightSuper:
+            keyMask = UInt(NX_DEVICERCMDKEYMASK)
+            familyMask = UInt(NX_DEVICELCMDKEYMASK) | keyMask
+        case .capsLock:
+            return event.modifierFlags.contains(.capsLock)
+        default:
+            return nil
+        }
+
+        let rawFlags = event.modifierFlags.rawValue
+        if rawFlags & familyMask != 0 {
+            return rawFlags & keyMask != 0
+        }
+        guard let flag = modifierFlag(for: key) else { return nil }
+        return event.modifierFlags.contains(flag)
+    }
+
     private static let kittyBaseLayoutKeyMap: [UInt16: UnicodeScalar] = {
         func scalar(_ char: Character) -> UnicodeScalar {
             char.unicodeScalars.first!
@@ -2786,12 +2941,35 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     private func kittyTextEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
-        guard let chars = event.charactersIgnoringModifiers,
-              let scalar = chars.unicodeScalars.first else {
+        let isControlSpace = event.modifierFlags.contains(.control)
+            && event.keyCode == UInt16(kVK_Space)
+        // With Control held, charactersIgnoringModifiers retains Control's
+        // text translation on macOS (Ctrl+C gives U+0003). Translate the key
+        // code against the layout only in that case: the translation uses
+        // the key code, which synthesized events do not set correctly.
+        let hasControl = event.modifierFlags.contains(.control)
+        let reportedScalar: UnicodeScalar?
+        if hasControl {
+            reportedScalar = event.characters(byApplyingModifiers: [])?.unicodeScalars.first
+                ?? event.charactersIgnoringModifiers?.unicodeScalars.first
+        } else {
+            reportedScalar = event.charactersIgnoringModifiers?.unicodeScalars.first
+        }
+        guard let scalar = isControlSpace ? UnicodeScalar(0x20) : reportedScalar else {
             return nil
         }
         let baseScalar = String(scalar).lowercased().unicodeScalars.first ?? scalar
-        let shiftedScalar = event.modifierFlags.contains(.shift) ? event.characters?.unicodeScalars.first : nil
+        let shiftedScalar: UnicodeScalar?
+        if event.modifierFlags.contains(.shift) && !isControlSpace {
+            if hasControl {
+                shiftedScalar = event.characters(byApplyingModifiers: [.shift])?.unicodeScalars.first
+                    ?? event.characters?.unicodeScalars.first
+            } else {
+                shiftedScalar = event.characters?.unicodeScalars.first
+            }
+        } else {
+            shiftedScalar = nil
+        }
         let baseLayout = kittyBaseLayoutKey(from: event)
         let baseLayoutKey = baseLayout == baseScalar ? nil : baseLayout
         let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
@@ -2844,7 +3022,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                                   shiftedKey: nil,
                                   baseLayoutKey: nil,
                                   composing: kittyIsComposing)
-        return sendKittyEvent(event)
+        guard sendKittyEvent(event) else { return false }
+        // The input method forwarded the key that ended the preedit as a
+        // command. Its press is now reported, so its release must be too.
+        if let composingKeyCode = kittyComposingKeyCode {
+            kittyKeysWithoutReportedPress.remove(composingKeyCode)
+        }
+        return true
     }
     
     // NSTextInputClient protocol implementation
@@ -3140,54 +3324,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     @objc
     open func paste(_ sender: Any)
     {
-        refreshKittyClipboardCapabilities()
-        let clipboard = NSPasteboard.general
-        let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: clipboard) : []
-        let result = withTerminal {
-            $0.paste(TerminalPasteRequest(
-                source: .clipboard(.standard),
-                mimeTypes: mimeTypes,
-                readMimeType: { [weak self] mimeType, completion in
-                    guard let self else { return false }
-                    self.onMain {
-                        let pasteboard = NSPasteboard.general
-                        completion(pasteboard.data(
-                            forType: self.kittyPasteboardType(for: mimeType, on: pasteboard)))
-                    }
-                    return true
-                }))
-        }
-        if result.needsTextFallback {
-            let text = clipboard.string(forType: .string)
-            insertText(text ?? "", replacementRange: NSRange(location: 0, length: 0), isPaste: true)
-        }
+        pasteClipboard(.standard)
     }
 
     /// Pastes the platform primary selection when the host provides one.
     public func pastePrimarySelection() {
-        refreshKittyClipboardCapabilities()
-        let clipboard = kittyPasteboard(.primary)
-        let mimeTypes = kittyPasteEventPossible() ? kittyMimeTypes(on: clipboard) : []
-        let result = withTerminal {
-            $0.paste(TerminalPasteRequest(
-                source: .clipboard(.primary),
-                mimeTypes: mimeTypes,
-                readMimeType: { [weak self] mimeType, completion in
-                    guard let self else { return false }
-                    self.onMain {
-                        let pasteboard = self.kittyPasteboard(.primary)
-                        completion(pasteboard.data(
-                            forType: self.kittyPasteboardType(for: mimeType, on: pasteboard)))
-                    }
-                    return true
-                }))
-        }
-        if result.needsTextFallback {
-            insertText(
-                clipboard.string(forType: .string) ?? "",
-                replacementRange: NSRange(location: 0, length: 0),
-                isPaste: true)
-        }
+        pasteClipboard(.primary)
+    }
+
+    private func pasteClipboard(_ location: KittyClipboardLocation) {
+        guard !sendKittyPasteEvent(location: location) else { return }
+        insertText(
+            kittyPasteboard(location).string(forType: .string) ?? "",
+            replacementRange: NSRange(location: 0, length: 0),
+            isPaste: true)
     }
     
     @objc
@@ -3815,8 +3965,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     /// Leftover fractional trackpad scroll (in points) carried between events so
-    /// sub-cell precise deltas accumulate instead of being dropped.
-    private var scrollAccumulator: CGFloat = 0
+    /// sub-cell precise deltas accumulate instead of being dropped. The bank belongs to one
+    /// route: travel that was reported to the application never scrolls locally when Option
+    /// arrives, and locally scrolled travel never becomes a report when Option lifts.
+    private var scrollAccumulator = WheelDistanceAccumulator<WheelRoute>()
+    private var wheelReportBudget = WheelReportBudget()
+
+    /// Why this wheel event belongs to SwiftTerm. Keeping bypass and alternate-scroll decisions
+    /// distinct prevents a modifier intended for local handling from becoming cursor-key input.
+    private enum WheelRoute: String {
+        case mouse
+        case cursorKeys
+        case localScrollback
+        case none
+    }
 
     /// Multiplier applied to wheel/trackpad scroll deltas. `1.0` scrolls at the
     /// system's native rate; values below `1.0` slow scrolling down, above speed
@@ -3840,27 +4002,27 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
 
-        let scrollRouting = withTerminal { terminal in
-            let reportsMouse = allowMouseReporting &&
-                !shiftBypassesMouseReportingLocked(for: event) &&
-                terminal.mouseMode != .off
-            return (
-                reportsMouse: reportsMouse,
-                isAlternate: terminal.isDisplayBufferAlternate,
-                alternateScrollMode: terminal.alternateScrollMode
-            )
+        let scrollRoute = withTerminal { terminal -> WheelRoute in
+            let requestsLocalHandling =
+                shiftBypassesMouseReportingLocked(for: event) ||
+                event.modifierFlags.contains(.option)
+            if requestsLocalHandling {
+                return terminal.isDisplayBufferAlternate ? .none : .localScrollback
+            }
+            if allowMouseReporting && terminal.mouseMode != .off {
+                return .mouse
+            }
+            if terminal.isDisplayBufferAlternate {
+                return terminal.alternateScrollMode ? .cursorKeys : .none
+            }
+            return .localScrollback
         }
 
-        // Alternate Scroll Mode (DECSET 1007): while the alternate screen is
-        // active and the application is not tracking the mouse, the wheel is
-        // translated into cursor keys below. With the mode reset the wheel
-        // produces nothing at all — the alternate buffer has no scrollback to
-        // move either. Decided here, before the accumulator is touched, so that
-        // suppressed motion is not banked and then handed to the first event
-        // after the mode comes back.
-        if !scrollRouting.reportsMouse && scrollRouting.isAlternate &&
-            !scrollRouting.alternateScrollMode {
-            scrollAccumulator = 0
+        // A suppressed event must not bank a partial trackpad row and hand it to a later route.
+        // This includes Alternate Scroll Mode being reset and a local-handling modifier being
+        // held over the alternate buffer, which has no local scrollback.
+        if scrollRoute == .none {
+            scrollAccumulator.reset()
             return
         }
 
@@ -3874,11 +4036,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let scaledDelta = event.scrollingDeltaY * scrollSensitivity
         let lines: Int
         if event.hasPreciseScrollingDeltas {
-            scrollAccumulator += scaledDelta
-            lines = Int(scrollAccumulator / cellHeight)
-            scrollAccumulator -= CGFloat(lines) * cellHeight
+            lines = scrollAccumulator.takeWholeLines(
+                distance: scaledDelta,
+                cellHeight: cellHeight,
+                route: scrollRoute)
         } else {
-            scrollAccumulator = 0
+            scrollAccumulator.reset()
             // A non-precise wheel notch must always move at least one line, even
             // when a low sensitivity would otherwise round it away to zero.
             let rounded = Int(scaledDelta.rounded())
@@ -3890,16 +4053,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                       event.deltaY, event.scrollingDeltaY,
                       event.hasPreciseScrollingDeltas.description,
                       event.isDirectionInvertedFromDevice.description,
-                      scrollAccumulator,
-                      scrollRouting.reportsMouse ? "mouse" :
-                        (scrollRouting.isAlternate ? "alternate" : "scrollback"))
+                      scrollAccumulator.remainder,
+                      scrollRoute.rawValue)
             }
             return
         }
         let scrollingUp = lines > 0
         let magnitude = abs(lines)
 
-        if scrollRouting.reportsMouse {
+        if scrollRoute == .mouse {
             let hit = calculateMouseHit(with: event)
             // AppKit has already applied the system scroll-direction setting to
             // scrollingDeltaY. Preserve that sign, as Ghostty does, when the
@@ -3912,7 +4074,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                       event.deltaY, event.scrollingDeltaY,
                       event.hasPreciseScrollingDeltas.description,
                       event.isDirectionInvertedFromDevice.description,
-                      scrollAccumulator, lines, button)
+                      scrollAccumulator.remainder, lines, button)
             }
             let flags = event.modifierFlags
             withTerminal { terminal in
@@ -3920,20 +4082,28 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 let screenRow = max(0, min(displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
                 let buttonFlags = terminal.encodeButton(button: button, release: false,
                                                         shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
-                for _ in 0..<magnitude {
+                let wantedReports = WheelReportBudget.requestedReports(
+                    lineCount: lines,
+                    isPrecise: event.hasPreciseScrollingDeltas)
+                let reports = wheelReportBudget.grant(wantedReports)
+                for _ in 0..<reports {
                     terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow,
                                        pixelX: hit.pixels.col, pixelY: hit.pixels.row)
                 }
             }
-        } else if scrollRouting.isAlternate {
+        } else if scrollRoute == .cursorKeys {
             if Self.logsMouseInput {
                 NSLog("SwiftTerm mouse scroll: deltaY=%g scrollingDeltaY=%g precise=%@ inverted=%@ accumulated=%g lines=%ld route=alternate key=%@",
                       event.deltaY, event.scrollingDeltaY,
                       event.hasPreciseScrollingDeltas.description,
                       event.isDirectionInvertedFromDevice.description,
-                      scrollAccumulator, lines, scrollingUp ? "up" : "down")
+                      scrollAccumulator.remainder, lines, scrollingUp ? "up" : "down")
             }
-            for _ in 0..<magnitude {
+            // A full-screen application executes each arrow key on its own, so a flick that
+            // banked a hundred lines must not become a hundred keystrokes in one event.
+            let keys = wheelReportBudget.grant(
+                WheelReportBudget.requestedKeys(lineCount: lines))
+            for _ in 0..<keys {
                 if scrollingUp {
                     sendKeyUp()
                 } else {
@@ -3946,7 +4116,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                       event.deltaY, event.scrollingDeltaY,
                       event.hasPreciseScrollingDeltas.description,
                       event.isDirectionInvertedFromDevice.description,
-                      scrollAccumulator, lines, scrollingUp ? "up" : "down")
+                      scrollAccumulator.remainder, lines, scrollingUp ? "up" : "down")
             }
             if scrollingUp {
                 scrollUp(lines: magnitude)
@@ -4313,39 +4483,34 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             : .general
     }
 
+    /// The platform type identifiers at one location, or `nil` when the
+    /// location has no pasteboard.
     @MainActor
-    private func kittyMimeTypes(on pasteboard: NSPasteboard) -> [String] {
-        (pasteboard.types ?? []).map { type in
-            UTType(type.rawValue)?.preferredMIMEType ?? type.rawValue
-        }
+    func kittyPlatformTypeIdentifiers(location: KittyClipboardLocation) -> [String]? {
+        (kittyPasteboard(location).types ?? []).map(\.rawValue)
     }
 
+    /// The pasteboard change counter used to detect clipboard replacement.
     @MainActor
-    func kittyClipboardPlatformAvailableMimeTypes(
-        location: KittyClipboardLocation
-    ) -> [String]? {
-        kittyMimeTypes(on: kittyPasteboard(location))
+    func kittyPlatformChangeCount(location: KittyClipboardLocation) -> UInt64 {
+        UInt64(bitPattern: Int64(kittyPasteboard(location).changeCount))
     }
 
+    /// The data stored under one platform type identifier.
     @MainActor
-    func kittyClipboardPlatformRead(
+    func kittyPlatformData(location: KittyClipboardLocation, identifier: String) -> Data? {
+        kittyPasteboard(location).data(forType: NSPasteboard.PasteboardType(identifier))
+    }
+
+    /// Publishes every entry as one `NSPasteboardItem` with one `writeObjects` call.
+    @MainActor
+    func kittyPlatformPublish(
         location: KittyClipboardLocation,
-        mimeType: String
-    ) -> Data? {
-        let pasteboard = kittyPasteboard(location)
-        return pasteboard.data(forType: kittyPasteboardType(for: mimeType, on: pasteboard))
-    }
-
-    @MainActor
-    func kittyClipboardPlatformWrite(
-        location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation]
+        items: [(identifier: String, data: Data)]
     ) -> KittyClipboardWriteResult {
         let item = NSPasteboardItem()
-        for representation in representations {
-            guard item.setData(
-                representation.data,
-                forType: kittyPasteboardType(for: representation.mimeType, on: nil))
+        for entry in items {
+            guard item.setData(entry.data, forType: NSPasteboard.PasteboardType(entry.identifier))
             else {
                 return .ioError
             }
@@ -4353,19 +4518,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let pasteboard = kittyPasteboard(location)
         pasteboard.clearContents()
         return pasteboard.writeObjects([item]) ? .success : .ioError
-    }
-
-    @MainActor
-    private func kittyPasteboardType(
-        for mimeType: String,
-        on pasteboard: NSPasteboard?
-    ) -> NSPasteboard.PasteboardType {
-        if let existing = pasteboard?.types?.first(where: {
-            UTType($0.rawValue)?.preferredMIMEType == mimeType || $0.rawValue == mimeType
-        }) {
-            return existing
-        }
-        return NSPasteboard.PasteboardType(UTType(mimeType: mimeType)?.identifier ?? mimeType)
     }
 
     // Keep new stored properties at the end of the class. Moving the existing

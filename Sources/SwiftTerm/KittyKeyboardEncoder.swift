@@ -125,6 +125,28 @@ enum KittyFunctionalKey {
     case isoLevel5Shift
 }
 
+extension KittyFunctionalKey {
+    /// A modifier key in the sense of the kitty keyboard protocol. These
+    /// keys are reported only in report-all-keys mode. Caps Lock and Num
+    /// Lock are modifiers; Scroll Lock is a regular functional key. This
+    /// matches the reference table used by kitty and Ghostty.
+    var isKittyModifierKey: Bool {
+        switch self {
+        case .leftShift, .rightShift,
+             .leftControl, .rightControl,
+             .leftAlt, .rightAlt,
+             .leftSuper, .rightSuper,
+             .leftHyper, .rightHyper,
+             .leftMeta, .rightMeta,
+             .isoLevel3Shift, .isoLevel5Shift,
+             .capsLock, .numLock:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 struct KittyKeyEvent {
     var key: KittyKey
     var modifiers: KittyKeyboardModifiers
@@ -179,6 +201,29 @@ struct KittyKeyboardEncoder {
             return nil
         }
 
+        // A key-less event contains committed text, such as text from an IME.
+        // The protocol has no key code for it, so send the UTF-8 text as is.
+        // A single character with a text-preventing modifier (for example the
+        // iOS Meta accessory) is a real key press: encode it as that key so
+        // the modifier is not lost.
+        if case .none = event.key {
+            guard event.eventType != .release,
+                  let text = event.text,
+                  !text.isEmpty else {
+                return nil
+            }
+            let scalars = text.unicodeScalars
+            if modifiersPreventText(event.modifiers),
+               let scalar = scalars.first,
+               scalars.index(after: scalars.startIndex) == scalars.endIndex {
+                var keyed = event
+                keyed.key = .unicode(scalar.value)
+                keyed.text = nil
+                return encode(keyed)
+            }
+            return [UInt8](text.utf8)
+        }
+
         // During IME/dead-key commit flows, Enter may carry committed text while
         // Backspace is used to edit preedit state.
         if let text = event.text, !text.isEmpty,
@@ -209,26 +254,31 @@ struct KittyKeyboardEncoder {
                                            includeEventType: wantsEvents,
                                            includeAlternates: wantsAlternates,
                                            includeLocks: true)
-            case .unicode, .none:
+            case .unicode:
                 return encodeCsiU(event: event,
                                   includeText: includeAssociatedText,
                                   includeAlternates: wantsAlternates,
                                   includeEventType: wantsEvents,
                                   includeLocks: true)
+            case .none:
+                return nil
             }
         }
 
         if let text = event.text, !text.isEmpty {
             switch event.key {
-            case .unicode, .none:
+            case .unicode:
                 let hasAltOrCtrl = event.modifiers.contains(.alt) || event.modifiers.contains(.ctrl)
-                if !wantsDisambiguate || !hasAltOrCtrl {
+                let mustReportModifiedRepeat = wantsEvents &&
+                    event.eventType == .repeatPress && hasAltOrCtrl
+                if (!wantsDisambiguate || !hasAltOrCtrl) &&
+                    !mustReportModifiedRepeat {
                     if event.eventType != .release {
                         return [UInt8](text.utf8)
                     }
                     return nil
                 }
-            case .functional:
+            case .functional, .none:
                 break
             }
         }
@@ -249,10 +299,13 @@ struct KittyKeyboardEncoder {
                                includeLocks: Bool) -> [UInt8]? {
         switch event.key {
         case .none:
-            return encodeCsiU(event: event, includeText: false, includeAlternates: includeAlternates, includeEventType: includeEventType, includeLocks: includeLocks)
+            // Key-less events are handled in encode().
+            return nil
         case .unicode(let codepoint):
             if !disambiguate {
-                if let legacy = legacyTextKeySequence(event: event) {
+                let mustReportEvent = includeEventType && event.eventType != .press
+                if !mustReportEvent,
+                   let legacy = legacyTextKeySequence(event: event) {
                     return legacy
                 }
                 var updated = event
@@ -372,9 +425,9 @@ struct KittyKeyboardEncoder {
         let includeModifiersField = includeType || modifiers != 0
 
         var body = "\(keyCode)"
-        if includeAlternates {
-            let shifted = event.modifiers.contains(.shift) ? event.shiftedKey : nil
-            let base = event.baseLayoutKey
+        if includeAlternates && !isControlCodepoint(keyCode) {
+            let shifted = validShiftedKey(for: event, primaryKeyCode: keyCode)
+            let base = validBaseLayoutKey(for: event, primaryKeyCode: keyCode)
             if shifted != nil || base != nil {
                 if let shifted {
                     body += ":\(shifted.value)"
@@ -406,6 +459,37 @@ struct KittyKeyboardEncoder {
         }
 
         return buildCsi("\(body)u")
+    }
+
+    private func validShiftedKey(for event: KittyKeyEvent,
+                                 primaryKeyCode: Int) -> UnicodeScalar? {
+        guard event.modifiers.contains(.shift),
+              let shifted = event.shiftedKey,
+              shifted.value != primaryKeyCode else {
+            return nil
+        }
+        return shifted
+    }
+
+    private func validBaseLayoutKey(for event: KittyKeyEvent,
+                                    primaryKeyCode: Int) -> UnicodeScalar? {
+        guard let base = event.baseLayoutKey,
+              base.value != primaryKeyCode else {
+            return nil
+        }
+
+        if let text = event.text, let first = text.unicodeScalars.first {
+            let scalars = text.unicodeScalars
+            guard scalars.index(after: scalars.startIndex) == scalars.endIndex,
+                  first != base else {
+                return nil
+            }
+        }
+        return base
+    }
+
+    private func isControlCodepoint(_ codepoint: Int) -> Bool {
+        codepoint < 0x20 || codepoint == 0x7f
     }
 
     private func buildCsi(_ payload: String) -> [UInt8] {
@@ -851,18 +935,7 @@ struct KittyKeyboardEncoder {
     }
 
     private func isModifierFunctionalKey(_ key: KittyFunctionalKey) -> Bool {
-        switch key {
-        case .leftShift, .rightShift,
-             .leftControl, .rightControl,
-             .leftAlt, .rightAlt,
-             .leftSuper, .rightSuper,
-             .leftHyper, .rightHyper,
-             .leftMeta, .rightMeta,
-             .isoLevel3Shift, .isoLevel5Shift:
-            return true
-        default:
-            return false
-        }
+        key.isKittyModifierKey
     }
 
     private enum FunctionalEncoding {

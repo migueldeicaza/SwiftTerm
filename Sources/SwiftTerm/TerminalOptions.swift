@@ -179,9 +179,34 @@ public struct TerminalOptions: Sendable {
     /// Lower this limit to reduce memory exposure to untrusted OSC 1337 or OSC 52 payloads.
     public var maximumOscBytes: Int
     /// Host policy for the Kitty clipboard protocol. Capabilities are still explicit.
+    ///
+    /// The default is empty, so a host must opt in. Mode 5522 is reported as
+    /// supported only when this contains both ``KittyClipboardPolicy/read`` and
+    /// ``KittyClipboardPolicy/write`` and the host offers the matching services.
     public var kittyClipboardPolicy: KittyClipboardPolicy
     /// Maximum decoded bytes in one Kitty clipboard write transaction.
-    public var kittyClipboardWriteLimitBytes: Int
+    ///
+    /// The protocol requires at least 64 MiB, so a smaller value reads back
+    /// as 64 MiB. The floor applies to assignment as well as to the initializer.
+    public var kittyClipboardWriteLimitBytes: Int {
+        get { max(Self.minimumKittyClipboardWriteLimitBytes, storedKittyClipboardWriteLimitBytes) }
+        set { storedKittyClipboardWriteLimitBytes = newValue }
+    }
+    /// Maximum representations in one Kitty clipboard write transaction.
+    /// Exceeding it answers `EFBIG` and discards the transaction. The floor is 1.
+    public var kittyClipboardMaximumRepresentations: Int {
+        get { max(1, storedKittyClipboardMaximumRepresentations) }
+        set { storedKittyClipboardMaximumRepresentations = newValue }
+    }
+    /// Maximum aliases in one Kitty clipboard write transaction.
+    /// Exceeding it answers `EFBIG` and discards the transaction. The floor is 0.
+    public var kittyClipboardMaximumAliases: Int {
+        get { max(0, storedKittyClipboardMaximumAliases) }
+        set { storedKittyClipboardMaximumAliases = newValue }
+    }
+    private var storedKittyClipboardWriteLimitBytes: Int
+    private var storedKittyClipboardMaximumRepresentations: Int
+    private var storedKittyClipboardMaximumAliases: Int
 
     /// Default options
     public static let `default` = TerminalOptions.init(cols: 80,
@@ -201,8 +226,13 @@ public struct TerminalOptions: Sendable {
                                                        initialBidiArrowKeySwap: false,
                                                        featureReport: nil,
                                                        maximumOscBytes: 65 * 1024 * 1024,
-                                                       kittyClipboardPolicy: .all,
-                                                       kittyClipboardWriteLimitBytes: 64 * 1024 * 1024)
+                                                       kittyClipboardPolicy: [],
+                                                       kittyClipboardWriteLimitBytes: TerminalOptions.minimumKittyClipboardWriteLimitBytes,
+                                                       kittyClipboardMaximumRepresentations: 256,
+                                                       kittyClipboardMaximumAliases: 256)
+
+    /// The smallest decoded write-transaction limit that the protocol permits.
+    public static let minimumKittyClipboardWriteLimitBytes = 64 * 1024 * 1024
 
   public init(cols: Int = Self.default.cols, rows: Int = Self.default.rows, convertEol: Bool = Self.default.convertEol, termName: String = Self.default.termName, cursorStyle: CursorStyle = Self.default.cursorStyle, screenReaderMode: Bool = Self.default.screenReaderMode, scrollback: Int = Self.default.scrollback, tabStopWidth: Int = Self.default.tabStopWidth,
               enableSixelReported: Bool = Self.default.enableSixelReported, kittyGraphics: KittyGraphicsConfiguration = Self.default.kittyGraphics, ansi256PaletteStrategy: Ansi256PaletteStrategy = Self.default.ansi256PaletteStrategy,
@@ -213,7 +243,9 @@ public struct TerminalOptions: Sendable {
               featureReport: String? = Self.default.featureReport,
               maximumOscBytes: Int = Self.default.maximumOscBytes,
               kittyClipboardPolicy: KittyClipboardPolicy = Self.default.kittyClipboardPolicy,
-              kittyClipboardWriteLimitBytes: Int = Self.default.kittyClipboardWriteLimitBytes) {
+              kittyClipboardWriteLimitBytes: Int = Self.default.kittyClipboardWriteLimitBytes,
+              kittyClipboardMaximumRepresentations: Int = Self.default.kittyClipboardMaximumRepresentations,
+              kittyClipboardMaximumAliases: Int = Self.default.kittyClipboardMaximumAliases) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol
@@ -232,7 +264,10 @@ public struct TerminalOptions: Sendable {
         self.featureReport = featureReport
         self.maximumOscBytes = maximumOscBytes
         self.kittyClipboardPolicy = kittyClipboardPolicy
-        self.kittyClipboardWriteLimitBytes = max(0, kittyClipboardWriteLimitBytes)
+        // The accessors apply the floors, so one rule covers init and assignment.
+        self.storedKittyClipboardWriteLimitBytes = kittyClipboardWriteLimitBytes
+        self.storedKittyClipboardMaximumRepresentations = kittyClipboardMaximumRepresentations
+        self.storedKittyClipboardMaximumAliases = kittyClipboardMaximumAliases
     }
 }
 

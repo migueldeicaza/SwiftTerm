@@ -33,11 +33,12 @@ final class KittyOptionComposeTests {
         func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
     }
 
-    private func optionKeyEvent(characters: String,
+    private func optionKeyEvent(type: NSEvent.EventType = .keyDown,
+                                characters: String,
                                 charactersIgnoringModifiers: String,
                                 keyCode: UInt16) -> NSEvent {
         NSEvent.keyEvent(
-            with: .keyDown,
+            with: type,
             location: .zero,
             modifierFlags: .option,
             timestamp: 0,
@@ -50,7 +51,7 @@ final class KittyOptionComposeTests {
     }
 
     /// Czech Option+2 produces "@" while the bare key produces "ě". With the
-    /// kitty protocol active (disambiguate + reportAlternates + reportAllKeys,
+    /// kitty protocol active (disambiguate + reportEvents + reportAlternates + reportAllKeys,
     /// the Bubble Tea default that OpenCode uses) and Option not acting as Meta,
     /// the PTY must receive the composed "@", not the base-layout key.
     @Test func testOptionComposedCharacterSendsComposedText() {
@@ -59,8 +60,8 @@ final class KittyOptionComposeTests {
         view.terminalDelegate = delegate
         view.optionAsMetaKey = false
 
-        // Push kitty flags 11 = disambiguate(1) + reportAlternates(2) + reportAllKeys(8).
-        view.feed(text: "\u{1b}[>11u")
+        // Push all flags except reportText.
+        view.feed(text: "\u{1b}[>15u")
 
         // kVK_ANSI_2 == 19. Bare key on the Czech layout yields "ě"; Option composes "@".
         let event = optionKeyEvent(characters: "@", charactersIgnoringModifiers: "ě", keyCode: 19)
@@ -74,6 +75,12 @@ final class KittyOptionComposeTests {
         if delegate.sent.isEmpty {
             view.insertText("@", replacementRange: NSRange(location: NSNotFound, length: 0))
         }
+
+        let release = optionKeyEvent(type: .keyUp,
+                                     characters: "@",
+                                     charactersIgnoringModifiers: "ě",
+                                     keyCode: 19)
+        view.keyUp(with: release)
 
         #expect(delegate.sent == Array("@".utf8))
     }

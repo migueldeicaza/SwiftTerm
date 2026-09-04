@@ -127,24 +127,35 @@ public protocol TerminalViewDelegate: AnyObject {
     /// Returns the Kitty clipboard services that this host explicitly supports.
     func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities
 
-    /// Returns available MIME types for an OSC 5522 read.
+    /// Returns available MIME types for an OSC 5522 read or a paste event.
+    ///
+    /// Return `nil` to use the platform pasteboard. A non-nil list makes the
+    /// host the clipboard source for the paste snapshot as well, so the event
+    /// and a later read describe the same clipboard.
     func kittyClipboardAvailableMimeTypes(
         source: TerminalView,
         location: KittyClipboardLocation
     ) -> [String]?
 
-    /// Reads one MIME representation for an OSC 5522 read.
+    /// Reads one MIME representation for an OSC 5522 read or a paste event.
+    ///
+    /// Return `nil` to use the platform pasteboard. The result distinguishes
+    /// data, unavailable, denied, and busy; empty data is a valid
+    /// representation.
     func kittyClipboardRead(
         source: TerminalView,
         location: KittyClipboardLocation,
         mimeType: String
-    ) -> Data?
+    ) -> KittyClipboardReadResult?
 
-    /// Writes all OSC 5522 representations atomically.
+    /// Publishes every OSC 5522 representation and alias as one atomic update.
+    ///
+    /// Return ``KittyClipboardWriteResult/unsupported`` to use the platform
+    /// pasteboard.
     func kittyClipboardWrite(
         source: TerminalView,
         location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation]
+        content: KittyClipboardWriteContent
     ) -> KittyClipboardWriteResult
 
     /// Requests user permission for an OSC 5522 operation.
