@@ -187,6 +187,160 @@ final class LinkLookupTests: TerminalDelegate {
         #expect(nextRowLink == nil)
     }
 
+    @Test func testQuotedPathWithSpaces() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "'/Users/me/Screenshot 2026-07-15 at 09.58.24.png'")
+
+        let link = terminal.link(at: .buffer(Position(col: 25, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/Users/me/Screenshot 2026-07-15 at 09.58.24.png")
+    }
+
+    @Test func testDoubleQuotedPathWithSpaces() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 40, rows: 1))
+        terminal.feed(text: "saved to \"/tmp/my file.txt\" ok")
+
+        let link = terminal.link(at: .buffer(Position(col: 16, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/tmp/my file.txt")
+    }
+
+    @Test func testQuotedTildePathWithSpaces() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 40, rows: 1))
+        terminal.feed(text: "'~/Documents/my notes.md'")
+
+        let link = terminal.link(at: .buffer(Position(col: 5, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "~/Documents/my notes.md")
+    }
+
+    @Test func testNestedQuotedPathResolvesInnermost() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "\"'/Users/me/Screenshot 2026-07-15.png'\"")
+
+        let link = terminal.link(at: .buffer(Position(col: 10, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/Users/me/Screenshot 2026-07-15.png")
+    }
+
+    @Test func testQuotedPathAcrossWrappedLines() {
+        let path = "/tmp/dir with space/file.txt"
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 12, rows: 4))
+        terminal.feed(text: "'" + path + "'")
+
+        let topRowLink = terminal.link(at: .buffer(Position(col: 4, row: 0)), mode: .explicitAndImplicit)
+        #expect(topRowLink == path)
+
+        let wrappedRowLink = terminal.link(at: .buffer(Position(col: 3, row: 1)), mode: .explicitAndImplicit)
+        #expect(wrappedRowLink == path)
+    }
+
+    @Test func testUnquotedSpacePathKeepsExtension() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 1))
+        terminal.feed(text: "/Users/me/Assets.xcassets/face.imageset/face cropped.png")
+
+        let link = terminal.link(at: .buffer(Position(col: 10, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/Users/me/Assets.xcassets/face.imageset/face cropped.png")
+    }
+
+    @Test func testUnquotedSpacePathDoesNotAbsorbProse() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "see /tmp/foo.txt and more")
+
+        let link = terminal.link(at: .buffer(Position(col: 8, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/tmp/foo.txt")
+    }
+
+    // The quote-pair cases below all use "/tmp/dir.d with prose.txt" and click
+    // inside "with". A space-joined segment counts as part of an unquoted path
+    // only when it carries a "/" or "." of its own, so "with" ends the unquoted
+    // match at "/tmp/dir.d" and a full match can only come from the quote pair
+    // — see testUnquotedPathStopsAtProseSegment right below.
+
+    @Test func testUnquotedPathStopsAtProseSegment() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "saved /tmp/dir.d with prose.txt ok")
+
+        let link = terminal.link(at: .buffer(Position(col: 20, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == nil)
+    }
+
+    /// GNU tools quote as `like this'.
+    @Test func testGnuStyleQuotedPathWithSpaces() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "cannot stat `/tmp/dir.d with prose.txt': No such file")
+
+        let link = terminal.link(at: .buffer(Position(col: 25, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/tmp/dir.d with prose.txt")
+    }
+
+    /// Markdown-flavored output (and the AI agents that emit it) uses `like this`.
+    @Test func testBacktickPairQuotedPathWithSpaces() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "wrote `/tmp/dir.d with prose.txt` to disk")
+
+        let link = terminal.link(at: .buffer(Position(col: 19, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/tmp/dir.d with prose.txt")
+    }
+
+    /// Typographic single quotes, as produced by smart-quote substitution.
+    @Test func testCurlySingleQuotedPathWithSpaces() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "saved \u{2018}/tmp/dir.d with prose.txt\u{2019} ok")
+
+        let link = terminal.link(at: .buffer(Position(col: 20, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/tmp/dir.d with prose.txt")
+    }
+
+    /// Typographic double quotes.
+    @Test func testCurlyDoubleQuotedPathWithSpaces() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "saved \u{201C}/tmp/dir.d with prose.txt\u{201D} ok")
+
+        let link = terminal.link(at: .buffer(Position(col: 20, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/tmp/dir.d with prose.txt")
+    }
+
+    /// An opener pairs only with its own closer, so a mismatched pair is not a
+    /// boundary and the spaced path stays undetected.
+    @Test func testMismatchedQuotePairDoesNotMatch() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "saved \u{2018}/tmp/dir.d with prose.txt\u{201D} ok")
+
+        let link = terminal.link(at: .buffer(Position(col: 20, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == nil)
+    }
+
+    /// Typographic apostrophes in prose are closers without an opener, so they
+    /// must not start a match of their own.
+    @Test func testCurlyApostropheInProseDoesNotBreakPathDetection() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "don\u{2019}t miss '/tmp/dir.d with prose.txt' it\u{2019}s here")
+
+        let link = terminal.link(at: .buffer(Position(col: 24, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/tmp/dir.d with prose.txt")
+    }
+
+    @Test func testQuotedNonPathDoesNotMatch() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 30, rows: 1))
+        terminal.feed(text: "'hello world'")
+
+        let link = terminal.link(at: .buffer(Position(col: 4, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == nil)
+    }
+
+    @Test func testApostrophesInProseDoNotBreakPathDetection() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 1))
+        terminal.feed(text: "don't miss '/tmp/a b.png' it's here")
+
+        let link = terminal.link(at: .buffer(Position(col: 18, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == "/tmp/a b.png")
+    }
+
+    @Test func testClickOutsideQuotedPathDoesNotMatch() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 40, rows: 1))
+        terminal.feed(text: "see '/tmp/a b.png' now")
+
+        let link = terminal.link(at: .buffer(Position(col: 20, row: 0)), mode: .explicitAndImplicit)
+        #expect(link == nil)
+    }
+
     @Test func testImplicitBareDomainDoesNotMatch() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 30, rows: 1))
         terminal.feed(text: "example.com")
