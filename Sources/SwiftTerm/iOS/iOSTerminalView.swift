@@ -11,6 +11,63 @@
 //  Created by Miguel de Icaza on 3/4/20.
 //
 
+struct IOSKittyInputPolicy {
+    static func isModifierKey(_ key: KittyFunctionalKey) -> Bool {
+        switch key {
+        case .leftShift, .rightShift,
+             .leftControl, .rightControl,
+             .leftAlt, .rightAlt,
+             .leftSuper, .rightSuper,
+             .capsLock, .numLock, .scrollLock,
+             .isoLevel3Shift, .isoLevel5Shift:
+            return true
+        default:
+            return false
+        }
+    }
+
+    static func shouldReportModifierDuringComposition(
+        key: KittyFunctionalKey,
+        flags: KittyKeyboardFlags
+    ) -> Bool {
+        flags.contains(.reportAllKeys) && isModifierKey(key)
+    }
+
+    static func shouldScrollPageLocally(key: KittyFunctionalKey,
+                                        modifiers: KittyKeyboardModifiers,
+                                        applicationCursor: Bool) -> Bool {
+        guard key == .pageUp || key == .pageDown, !applicationCursor else {
+            return false
+        }
+        return modifiers.intersection([.shift, .alt, .ctrl, .super]).isEmpty
+    }
+
+    static func repeatEvent(from event: KittyKeyEvent,
+                            eventType: KittyKeyboardEventType,
+                            composing: Bool) -> KittyKeyEvent {
+        var result = event
+        result.eventType = eventType
+        result.composing = composing
+        return result
+    }
+}
+
+struct IOSKittyReportedPresses<Key: Hashable> {
+    private var keys: Set<Key> = []
+
+    mutating func record(_ key: Key) {
+        keys.insert(key)
+    }
+
+    mutating func finish(_ key: Key) -> Bool {
+        keys.remove(key) != nil
+    }
+
+    mutating func removeAll() {
+        keys.removeAll()
+    }
+}
+
 #if os(iOS) || os(visionOS)
 import Foundation
 import UIKit
@@ -2504,17 +2561,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     private func isKittyModifierKey(_ key: KittyFunctionalKey) -> Bool {
-        switch key {
-        case .leftShift, .rightShift,
-             .leftControl, .rightControl,
-             .leftAlt, .rightAlt,
-             .leftSuper, .rightSuper,
-             .capsLock, .numLock, .scrollLock,
-             .isoLevel3Shift, .isoLevel5Shift:
-            return true
-        default:
-            return false
-        }
+        IOSKittyInputPolicy.isModifierKey(key)
     }
 
     private var kittyIsComposing: Bool {
@@ -2633,15 +2680,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
 
         let event: KittyKeyEvent
+        let reportedKeyCode: UIKeyboardHIDUsage?
         if text.unicodeScalars.count == 1,
            let pendingEvent,
            let kittyEvent = kittyTextEvent(from: pendingEvent.key, eventType: pendingEvent.eventType, text: text) {
             event = kittyEvent
+            reportedKeyCode = pendingEvent.key.keyCode
         } else {
             let modifiers: KittyKeyboardModifiers = metaActive ? [.alt] : []
             event = kittyTextEventFromText(text, modifiers: modifiers, eventType: .press)
+            reportedKeyCode = nil
         }
-        _ = sendKittyEvent(event)
+        if sendKittyEvent(event),
+           flags.contains(.reportEvents),
+           let reportedKeyCode {
+            reportedKittyPresses.record(reportedKeyCode)
+        }
     }
 
     private func sendBackspaceKey() {
@@ -2891,14 +2945,32 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 #if canImport(MetalKit)
             frameDriver.markDirty()
 #endif
-            keyRepeat?.invalidate()
-            keyRepeat = nil
+            stopAllKeyRepeats()
+            reportedKittyPresses.removeAll()
             
             terminalAccessory?.cancelTimer()
         }
         return code
     }
-    var keyRepeat: Timer?
+    private var keyRepeats: [UIKeyboardHIDUsage: Timer] = [:]
+    private var reportedKittyPresses = IOSKittyReportedPresses<UIKeyboardHIDUsage>()
+
+    private func installKeyRepeat(_ timer: Timer, for keyCode: UIKeyboardHIDUsage) {
+        keyRepeats.removeValue(forKey: keyCode)?.invalidate()
+        keyRepeats[keyCode] = timer
+        RunLoop.current.add(timer, forMode: .default)
+    }
+
+    private func stopKeyRepeat(for keyCode: UIKeyboardHIDUsage) {
+        keyRepeats.removeValue(forKey: keyCode)?.invalidate()
+    }
+
+    private func stopAllKeyRepeats() {
+        for timer in keyRepeats.values {
+            timer.invalidate()
+        }
+        keyRepeats.removeAll()
+    }
 
     private struct PendingKittyKeyEvent {
         let key: UIKey
@@ -2921,6 +2993,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         if _markedTextRange != nil {
             pendingKittyKeyEvent = nil
+            for press in presses {
+                guard let key = press.key,
+                      let functionKey = kittyFunctionalKey(for: key.keyCode),
+                      IOSKittyInputPolicy.shouldReportModifierDuringComposition(
+                        key: functionKey,
+                        flags: kittyFlags),
+                      let kittyEvent = kittyKeyEvent(from: key, eventType: .press),
+                      sendKittyEvent(kittyEvent) else {
+                    continue
+                }
+                if kittyFlags.contains(.reportEvents) {
+                    reportedKittyPresses.record(key.keyCode)
+                }
+            }
             super.pressesBegan(presses, with: event)
             return
         }
@@ -2948,9 +3034,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                let functionKey = kittyFunctionalKey(for: key.keyCode),
                !isKittyModifierKey(functionKey) {
                 let modifiers = kittyModifiers(from: key, includeOption: optionAsMetaKey)
-                let isUnmodifiedPageKey = (functionKey == .pageUp || functionKey == .pageDown)
-                    && modifiers.intersection([.shift, .alt, .ctrl]).isEmpty
-                    && !terminalState.1
+                let isUnmodifiedPageKey = IOSKittyInputPolicy.shouldScrollPageLocally(
+                    key: functionKey,
+                    modifiers: modifiers,
+                    applicationCursor: terminalState.1)
                 if isUnmodifiedPageKey {
                     if functionKey == .pageUp {
                         pageUp()
@@ -2970,23 +3057,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                                composing: kittyIsComposing)
                 if sendKittyEvent(pressEvent) {
                     didHandleEvent = true
-                    keyRepeat?.invalidate()
-                    keyRepeat = Timer(fire: Date(timeInterval: 0.4, since: Date()),
+                    let timer = Timer(fire: Date(timeInterval: 0.4, since: Date()),
                                       interval: 0.1,
                                       repeats: true) { [weak self] _ in
                         MainActor.assumeIsolated {
                             guard let self else { return }
-                            let repeatEvent = KittyKeyEvent(key: .functional(functionKey),
-                                                            modifiers: modifiers,
-                                                            eventType: .repeatPress,
-                                                            text: functionKeyText,
-                                                            shiftedKey: nil,
-                                                            baseLayoutKey: nil,
-                                                            composing: self.kittyIsComposing)
+                            let repeatEvent = IOSKittyInputPolicy.repeatEvent(
+                                from: pressEvent,
+                                eventType: .repeatPress,
+                                composing: self.kittyIsComposing)
                             _ = self.sendKittyEvent(repeatEvent)
                         }
                     }
-                    RunLoop.current.add(keyRepeat!, forMode: .default)
+                    installKeyRepeat(timer, for: key.keyCode)
                 }
                 continue
             }
@@ -3002,7 +3085,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     if isModifierKey && !kittyFlags.contains(.reportAllKeys) {
                         continue
                     }
-                    if (functionKey == .pageUp || functionKey == .pageDown) && !withTerminal({ $0.applicationCursor }) {
+                    let includeOption = optionAsMetaKey || functionKey == .leftAlt || functionKey == .rightAlt
+                    let modifiers = kittyModifiers(from: key, includeOption: includeOption)
+                    if IOSKittyInputPolicy.shouldScrollPageLocally(
+                        key: functionKey,
+                        modifiers: modifiers,
+                        applicationCursor: terminalState.1) {
                         if functionKey == .pageUp {
                             pageUp()
                         } else {
@@ -3011,8 +3099,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                         didHandleEvent = true
                         continue
                     }
-                    let includeOption = optionAsMetaKey || functionKey == .leftAlt || functionKey == .rightAlt
-                    let modifiers = kittyModifiers(from: key, includeOption: includeOption)
                     let functionKeyText = kittyTextForFunctionalKey(functionKey, uiKey: key)
                     let pressEvent = KittyKeyEvent(key: .functional(functionKey),
                                                    modifiers: modifiers,
@@ -3023,24 +3109,23 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                                                    composing: kittyIsComposing)
                     if sendKittyEvent(pressEvent) {
                         didHandleEvent = true
-                        keyRepeat?.invalidate()
+                        if kittyFlags.contains(.reportEvents) {
+                            reportedKittyPresses.record(key.keyCode)
+                        }
                         if !isModifierKey {
-                            keyRepeat = Timer(fire: Date(timeInterval: 0.4, since: Date()),
+                            let timer = Timer(fire: Date(timeInterval: 0.4, since: Date()),
                                               interval: 0.1,
                                               repeats: true) { [weak self] _ in
                                 MainActor.assumeIsolated {
                                     guard let self else { return }
-                                    let repeatEvent = KittyKeyEvent(key: .functional(functionKey),
-                                                                    modifiers: modifiers,
-                                                                    eventType: repeatEventType,
-                                                                    text: functionKeyText,
-                                                                    shiftedKey: nil,
-                                                                    baseLayoutKey: nil,
-                                                                    composing: self.kittyIsComposing)
+                                    let repeatEvent = IOSKittyInputPolicy.repeatEvent(
+                                        from: pressEvent,
+                                        eventType: repeatEventType,
+                                        composing: self.kittyIsComposing)
                                     _ = self.sendKittyEvent(repeatEvent)
                                 }
                             }
-                            RunLoop.current.add(keyRepeat!, forMode: .default)
+                            installKeyRepeat(timer, for: key.keyCode)
                         }
                     }
                     continue
@@ -3049,24 +3134,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     if let kittyEvent = kittyTextEvent(from: key, eventType: .press),
                        sendKittyEvent(kittyEvent) {
                         didHandleEvent = true
-                        let modifiers = kittyEvent.modifiers
-                        keyRepeat?.invalidate()
-                        keyRepeat = Timer(fire: Date(timeInterval: 0.4, since: Date()),
+                        if kittyFlags.contains(.reportEvents) {
+                            reportedKittyPresses.record(key.keyCode)
+                        }
+                        let timer = Timer(fire: Date(timeInterval: 0.4, since: Date()),
                                           interval: 0.1,
                                           repeats: true) { [weak self] _ in
                             MainActor.assumeIsolated {
                                 guard let self else { return }
-                                let repeatEvent = KittyKeyEvent(key: kittyEvent.key,
-                                                                modifiers: modifiers,
-                                                                eventType: repeatEventType,
-                                                                text: nil,
-                                                                shiftedKey: kittyEvent.shiftedKey,
-                                                                baseLayoutKey: nil,
-                                                                composing: self.kittyIsComposing)
+                                let repeatEvent = IOSKittyInputPolicy.repeatEvent(
+                                    from: kittyEvent,
+                                    eventType: repeatEventType,
+                                    composing: self.kittyIsComposing)
                                 _ = self.sendKittyEvent(repeatEvent)
                             }
                         }
-                        RunLoop.current.add(keyRepeat!, forMode: .default)
+                        installKeyRepeat(timer, for: key.keyCode)
                         continue
                     }
                 }
@@ -3179,7 +3262,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             case .keyboardF9:
                 data = .bytes (EscapeSequences.cmdF [8])
             case .keyboardF10:
-                data = .bytes (EscapeSequences.cmdF [8])
+                data = .bytes (EscapeSequences.cmdF [9])
             case .keyboardF11:
                 data = .bytes (EscapeSequences.cmdF [10])
             case .keyboardF12, .keyboardF13, .keyboardF14, .keyboardF15, .keyboardF16,
@@ -3204,15 +3287,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
             if let sendableData = data {
                 didHandleEvent = true
-                keyRepeat?.invalidate()
-                keyRepeat = Timer (fire: Date(timeInterval: 0.4, since: Date()),
+                let timer = Timer (fire: Date(timeInterval: 0.4, since: Date()),
                                    interval: 0.1,
                                    repeats: true) { [weak self] _ in
                     MainActor.assumeIsolated {
                         self?.sendData(data: sendableData)
                     }
                 }
-                RunLoop.current.add(keyRepeat!, forMode: .default)
+                installKeyRepeat(timer, for: key.keyCode)
                 sendData (data: sendableData)
             }
         }
@@ -3234,11 +3316,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     public override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        keyRepeat?.invalidate()
-        keyRepeat = nil
         let wasCommandActive = commandActive
         for press in presses {
             guard let key = press.key else { continue }
+            stopKeyRepeat(for: key.keyCode)
             switch key.keyCode {
             case .keyboardLeftGUI, .keyboardRightGUI:
                 activeCommandKeys.remove(key.keyCode)
@@ -3264,26 +3345,45 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
         }
         let flags = withTerminal { $0.keyboardEnhancementFlags }
-        if flags.contains(.reportEvents) {
-            for press in presses {
-                guard let key = press.key else { continue }
-                let hasAltOrCtrl = key.modifierFlags.contains(.control) || (optionAsMetaKey && key.modifierFlags.contains(.alternate))
-                let functionKey = kittyFunctionalKey(for: key.keyCode)
-                if let functionKey, isKittyModifierKey(functionKey) && !flags.contains(.reportAllKeys) {
-                    continue
-                }
-                if let functionKey,
-                   !flags.contains(.reportAllKeys),
-                   (functionKey == .tab || functionKey == .enter || functionKey == .backspace) {
-                    continue
-                }
-                let shouldHandle = flags.contains(.reportAllKeys) || hasAltOrCtrl || functionKey != nil
-                if shouldHandle, let kittyEvent = kittyKeyEvent(from: key, eventType: .release, text: nil) {
-                    _ = sendKittyEvent(kittyEvent)
-                }
+        for press in presses {
+            guard let key = press.key else { continue }
+            let wasReported = reportedKittyPresses.finish(key.keyCode)
+            if flags.contains(.reportEvents),
+               wasReported,
+               var kittyEvent = kittyKeyEvent(from: key, eventType: .release, text: nil) {
+                // A composition can start after this key's press. The matching
+                // release must still reach the application.
+                kittyEvent.composing = false
+                _ = sendKittyEvent(kittyEvent)
             }
         }
         super.pressesEnded(presses, with: event)
+    }
+
+    public override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let flags = withTerminal { $0.keyboardEnhancementFlags }
+        for press in presses {
+            guard let key = press.key else {
+                stopAllKeyRepeats()
+                reportedKittyPresses.removeAll()
+                activeCommandKeys.removeAll()
+                commandActive = false
+                continue
+            }
+            stopKeyRepeat(for: key.keyCode)
+            let wasReported = reportedKittyPresses.finish(key.keyCode)
+            if flags.contains(.reportEvents),
+               wasReported,
+               var kittyEvent = kittyKeyEvent(from: key, eventType: .release, text: nil) {
+                kittyEvent.composing = false
+                _ = sendKittyEvent(kittyEvent)
+            }
+            if key.keyCode == .keyboardLeftGUI || key.keyCode == .keyboardRightGUI {
+                activeCommandKeys.remove(key.keyCode)
+            }
+        }
+        commandActive = !activeCommandKeys.isEmpty
+        super.pressesCancelled(presses, with: event)
     }
     
     nonisolated let selectionChangePending = Locked(false)
