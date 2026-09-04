@@ -52,6 +52,85 @@ final class KittyKeyboardEncoderTests: XCTestCase {
         assertEncode(event, flags: [.disambiguate], expected: "a")
     }
 
+    func testReportEventsCtrlPressPreservesLegacyEncoding() {
+        let event = KittyKeyEvent(key: .unicode(99),
+                                  modifiers: [.ctrl],
+                                  eventType: .press,
+                                  text: "\u{3}",
+                                  shiftedKey: nil,
+                                  baseLayoutKey: nil)
+        XCTAssertEqual(encode(event, flags: [.reportEvents]), [3])
+    }
+
+    func testReportEventsCtrlRepeatUsesCsiU() {
+        let event = KittyKeyEvent(key: .unicode(99),
+                                  modifiers: [.ctrl],
+                                  eventType: .repeatPress,
+                                  text: "\u{3}",
+                                  shiftedKey: nil,
+                                  baseLayoutKey: nil)
+        assertEncode(event,
+                     flags: [.reportEvents],
+                     expected: "\u{1b}[99;5:2u")
+    }
+
+    func testReportEventsCtrlRepeatWithoutTextUsesCsiU() {
+        let event = KittyKeyEvent(key: .unicode(99),
+                                  modifiers: [.ctrl],
+                                  eventType: .repeatPress,
+                                  text: nil,
+                                  shiftedKey: nil,
+                                  baseLayoutKey: nil)
+        assertEncode(event,
+                     flags: [.reportEvents],
+                     expected: "\u{1b}[99;5:2u")
+    }
+
+    func testPureTextWithReportAllAndReportTextUsesKeyZero() {
+        let event = KittyKeyEvent(key: .none,
+                                  modifiers: [],
+                                  eventType: .press,
+                                  text: "é",
+                                  shiftedKey: nil,
+                                  baseLayoutKey: nil)
+        assertEncode(event,
+                     flags: [.reportAllKeys, .reportText],
+                     expected: "\u{1b}[0;;233u")
+    }
+
+    func testPureTextWithReportAllWithoutReportTextStaysUtf8() {
+        let event = KittyKeyEvent(key: .none,
+                                  modifiers: [],
+                                  eventType: .press,
+                                  text: "é",
+                                  shiftedKey: nil,
+                                  baseLayoutKey: nil)
+        assertEncode(event, flags: [.reportAllKeys], expected: "é")
+    }
+
+    func testPureTextWithTextPreventingModifierStaysUtf8() {
+        let event = KittyKeyEvent(key: .none,
+                                  modifiers: [.ctrl],
+                                  eventType: .press,
+                                  text: "é",
+                                  shiftedKey: nil,
+                                  baseLayoutKey: nil)
+        assertEncode(event,
+                     flags: [.reportAllKeys, .reportText],
+                     expected: "é")
+    }
+
+    func testKeylessEventWithoutTextIsSuppressed() {
+        let event = KittyKeyEvent(key: .none,
+                                  modifiers: [],
+                                  eventType: .press,
+                                  text: nil,
+                                  shiftedKey: nil,
+                                  baseLayoutKey: nil)
+        assertNoEncode(event,
+                       flags: [.reportAllKeys, .reportText, .reportEvents])
+    }
+
     func testEnterBackspaceTabWithDisambiguate() {
         assertEncode(KittyKeyEvent(key: .functional(.enter),
                                    modifiers: [],
@@ -223,6 +302,50 @@ final class KittyKeyboardEncoderTests: XCTestCase {
                                    baseLayoutKey: baseLayout),
                      flags: [.disambiguate, .reportAlternates],
                      expected: "\u{1b}[97::99u")
+    }
+
+    func testReportAlternatesOmittedForControlPrimaryKey() {
+        assertEncode(KittyKeyEvent(key: .unicode(13),
+                                   modifiers: [.shift],
+                                   eventType: .press,
+                                   text: nil,
+                                   shiftedKey: "A".unicodeScalars.first,
+                                   baseLayoutKey: "a".unicodeScalars.first),
+                     flags: [.disambiguate, .reportAlternates],
+                     expected: "\u{1b}[13;2u")
+    }
+
+    func testReportAlternatesOmitPrimaryKeyDuplicates() {
+        assertEncode(KittyKeyEvent(key: .unicode(97),
+                                   modifiers: [.shift],
+                                   eventType: .press,
+                                   text: nil,
+                                   shiftedKey: "a".unicodeScalars.first,
+                                   baseLayoutKey: "a".unicodeScalars.first),
+                     flags: [.disambiguate, .reportAlternates],
+                     expected: "\u{1b}[97;2u")
+    }
+
+    func testReportAlternatesOmitBaseEqualToSingleTextScalar() {
+        assertEncode(KittyKeyEvent(key: .unicode(233),
+                                   modifiers: [],
+                                   eventType: .press,
+                                   text: "a",
+                                   shiftedKey: nil,
+                                   baseLayoutKey: "a".unicodeScalars.first),
+                     flags: [.reportAllKeys, .reportAlternates, .reportText],
+                     expected: "\u{1b}[233;;97u")
+    }
+
+    func testReportAlternatesOmitBaseForMultiScalarText() {
+        assertEncode(KittyKeyEvent(key: .unicode(233),
+                                   modifiers: [],
+                                   eventType: .press,
+                                   text: "e\u{301}",
+                                   shiftedKey: nil,
+                                   baseLayoutKey: "e".unicodeScalars.first),
+                     flags: [.reportAllKeys, .reportAlternates, .reportText],
+                     expected: "\u{1b}[233;;101:769u")
     }
 
     func testEnterWithAllFlagsUsesCsiU() {

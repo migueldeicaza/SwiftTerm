@@ -179,6 +179,25 @@ struct KittyKeyboardEncoder {
             return nil
         }
 
+        // A key-less event contains committed text, such as text from an IME.
+        // Report the text as associated text only when that mode is enabled.
+        // Otherwise, preserve the committed UTF-8 text.
+        if case .none = event.key {
+            guard event.eventType != .release,
+                  let text = event.text,
+                  !text.isEmpty else {
+                return nil
+            }
+            if includeAssociatedText {
+                return encodeCsiU(event: event,
+                                  includeText: true,
+                                  includeAlternates: false,
+                                  includeEventType: wantsEvents,
+                                  includeLocks: true)
+            }
+            return [UInt8](text.utf8)
+        }
+
         // During IME/dead-key commit flows, Enter may carry committed text while
         // Backspace is used to edit preedit state.
         if let text = event.text, !text.isEmpty,
@@ -222,7 +241,10 @@ struct KittyKeyboardEncoder {
             switch event.key {
             case .unicode, .none:
                 let hasAltOrCtrl = event.modifiers.contains(.alt) || event.modifiers.contains(.ctrl)
-                if !wantsDisambiguate || !hasAltOrCtrl {
+                let mustReportModifiedRepeat = wantsEvents &&
+                    event.eventType == .repeatPress && hasAltOrCtrl
+                if (!wantsDisambiguate || !hasAltOrCtrl) &&
+                    !mustReportModifiedRepeat {
                     if event.eventType != .release {
                         return [UInt8](text.utf8)
                     }
@@ -252,7 +274,9 @@ struct KittyKeyboardEncoder {
             return encodeCsiU(event: event, includeText: false, includeAlternates: includeAlternates, includeEventType: includeEventType, includeLocks: includeLocks)
         case .unicode(let codepoint):
             if !disambiguate {
-                if let legacy = legacyTextKeySequence(event: event) {
+                let mustReportEvent = includeEventType && event.eventType != .press
+                if !mustReportEvent,
+                   let legacy = legacyTextKeySequence(event: event) {
                     return legacy
                 }
                 var updated = event
@@ -372,9 +396,9 @@ struct KittyKeyboardEncoder {
         let includeModifiersField = includeType || modifiers != 0
 
         var body = "\(keyCode)"
-        if includeAlternates {
-            let shifted = event.modifiers.contains(.shift) ? event.shiftedKey : nil
-            let base = event.baseLayoutKey
+        if includeAlternates && !isControlCodepoint(keyCode) {
+            let shifted = validShiftedKey(for: event, primaryKeyCode: keyCode)
+            let base = validBaseLayoutKey(for: event, primaryKeyCode: keyCode)
             if shifted != nil || base != nil {
                 if let shifted {
                     body += ":\(shifted.value)"
@@ -406,6 +430,36 @@ struct KittyKeyboardEncoder {
         }
 
         return buildCsi("\(body)u")
+    }
+
+    private func validShiftedKey(for event: KittyKeyEvent,
+                                 primaryKeyCode: Int) -> UnicodeScalar? {
+        guard event.modifiers.contains(.shift),
+              let shifted = event.shiftedKey,
+              shifted.value != primaryKeyCode else {
+            return nil
+        }
+        return shifted
+    }
+
+    private func validBaseLayoutKey(for event: KittyKeyEvent,
+                                    primaryKeyCode: Int) -> UnicodeScalar? {
+        guard let base = event.baseLayoutKey,
+              base.value != primaryKeyCode else {
+            return nil
+        }
+
+        if let text = event.text, !text.isEmpty {
+            let scalars = text.unicodeScalars
+            guard scalars.count == 1, scalars.first != base else {
+                return nil
+            }
+        }
+        return base
+    }
+
+    private func isControlCodepoint(_ codepoint: Int) -> Bool {
+        codepoint < 0x20 || codepoint == 0x7f
     }
 
     private func buildCsi(_ payload: String) -> [UInt8] {
