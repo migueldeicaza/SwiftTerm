@@ -86,7 +86,9 @@ final class KittyKeyboardEncoderTests: XCTestCase {
                      expected: "\u{1b}[99;5:2u")
     }
 
-    func testPureTextWithReportAllAndReportTextUsesKeyZero() {
+    func testPureTextWithReportAllAndReportTextStaysUtf8() {
+        // The protocol has no key code for committed text. Ghostty and kitty
+        // send it as UTF-8 in every mode.
         let event = KittyKeyEvent(key: .none,
                                   modifiers: [],
                                   eventType: .press,
@@ -95,7 +97,19 @@ final class KittyKeyboardEncoderTests: XCTestCase {
                                   baseLayoutKey: nil)
         assertEncode(event,
                      flags: [.reportAllKeys, .reportText],
-                     expected: "\u{1b}[0;;233u")
+                     expected: "é")
+    }
+
+    func testPureMultiScalarTextWithReportAllAndReportTextStaysUtf8() {
+        let event = KittyKeyEvent(key: .none,
+                                  modifiers: [],
+                                  eventType: .press,
+                                  text: "한글",
+                                  shiftedKey: nil,
+                                  baseLayoutKey: nil)
+        assertEncode(event,
+                     flags: [.reportAllKeys, .reportText, .reportEvents],
+                     expected: "한글")
     }
 
     func testPureTextWithReportAllWithoutReportTextStaysUtf8() {
@@ -108,16 +122,37 @@ final class KittyKeyboardEncoderTests: XCTestCase {
         assertEncode(event, flags: [.reportAllKeys], expected: "é")
     }
 
-    func testPureTextWithTextPreventingModifierStaysUtf8() {
+    func testSingleScalarTextWithTextPreventingModifierEncodesAsKey() {
+        // A single character with Alt or Ctrl is a real key press, such as
+        // the iOS Meta accessory. Keep the modifier.
+        let ctrlEvent = KittyKeyEvent(key: .none,
+                                      modifiers: [.ctrl],
+                                      eventType: .press,
+                                      text: "é",
+                                      shiftedKey: nil,
+                                      baseLayoutKey: nil)
+        assertEncode(ctrlEvent,
+                     flags: [.reportAllKeys, .reportText],
+                     expected: "\u{1b}[233;5u")
+
+        let altEvent = KittyKeyEvent(key: .none,
+                                     modifiers: [.alt],
+                                     eventType: .press,
+                                     text: "x",
+                                     shiftedKey: nil,
+                                     baseLayoutKey: nil)
+        assertEncode(altEvent, flags: [.disambiguate], expected: "\u{1b}[120;3u")
+        assertEncode(altEvent, flags: [.reportEvents], expected: "\u{1b}x")
+    }
+
+    func testMultiScalarTextWithTextPreventingModifierStaysUtf8() {
         let event = KittyKeyEvent(key: .none,
-                                  modifiers: [.ctrl],
+                                  modifiers: [.alt],
                                   eventType: .press,
-                                  text: "é",
+                                  text: "한글",
                                   shiftedKey: nil,
                                   baseLayoutKey: nil)
-        assertEncode(event,
-                     flags: [.reportAllKeys, .reportText],
-                     expected: "é")
+        assertEncode(event, flags: [.disambiguate], expected: "한글")
     }
 
     func testKeylessEventWithoutTextIsSuppressed() {
@@ -400,6 +435,36 @@ final class KittyKeyboardEncoderTests: XCTestCase {
                                      shiftedKey: nil,
                                      baseLayoutKey: nil),
                        flags: [.disambiguate, .reportAlternates])
+    }
+
+    func testLockKeysFollowTheModifierRule() {
+        // Caps Lock and Num Lock are modifiers: report-all-keys only.
+        for key: KittyFunctionalKey in [.capsLock, .numLock] {
+            assertNoEncode(KittyKeyEvent(key: .functional(key),
+                                         modifiers: [],
+                                         eventType: .press,
+                                         text: nil,
+                                         shiftedKey: nil,
+                                         baseLayoutKey: nil),
+                           flags: [.disambiguate])
+        }
+        assertEncode(KittyKeyEvent(key: .functional(.capsLock),
+                                   modifiers: [],
+                                   eventType: .press,
+                                   text: nil,
+                                   shiftedKey: nil,
+                                   baseLayoutKey: nil),
+                     flags: [.disambiguate, .reportAllKeys],
+                     expected: "\u{1b}[57358u")
+        // Scroll Lock is a regular functional key.
+        assertEncode(KittyKeyEvent(key: .functional(.scrollLock),
+                                   modifiers: [],
+                                   eventType: .press,
+                                   text: nil,
+                                   shiftedKey: nil,
+                                   baseLayoutKey: nil),
+                     flags: [.disambiguate],
+                     expected: "\u{1b}[57359u")
     }
 
     func testComposingWithNoModifierIsSuppressed() {

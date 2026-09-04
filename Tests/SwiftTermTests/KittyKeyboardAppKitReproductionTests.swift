@@ -116,6 +116,72 @@ final class KittyKeyboardAppKitReproductionTests {
                       keyCode: 10) == [3])
     }
 
+    @Test func legacyControlPrefersAppKitTranslationOverTheBaseLayout() {
+        // German ISO layout: Ctrl+ü sits on the PC-101 "[" position, but
+        // AppKit translates it to GS, which is what Terminal.app sends.
+        #expect(press(flags: 0,
+                      modifiers: [.control],
+                      characters: "\u{1d}",
+                      charactersIgnoringModifiers: "ü",
+                      keyCode: 33) == [0x1d])
+    }
+
+    @Test func legacyControlBackspaceFollowsBackspaceSendsControlH() {
+        let (view, capture, _) = configuredView(flags: 0)
+        view.backspaceSendsControlH = true
+        view.keyDown(with: keyEvent(modifiers: [.control],
+                                    characters: "\u{7f}",
+                                    charactersIgnoringModifiers: "\u{7f}",
+                                    keyCode: 51))
+        #expect(capture.sent == [8])
+    }
+
+    @Test func plainTextKeyReportsItsReleaseWithoutReportAllKeys() {
+        let (view, capture, _) = configuredView(flags: 3) // disambiguate + reportEvents
+        view.keyDown(with: keyEvent(modifiers: [],
+                                    characters: "a",
+                                    charactersIgnoringModifiers: "a",
+                                    keyCode: 0))
+        #expect(capture.sent == Array("a".utf8))
+
+        capture.sent.removeAll()
+        view.keyUp(with: keyEvent(type: .keyUp,
+                                  modifiers: [],
+                                  characters: "a",
+                                  charactersIgnoringModifiers: "a",
+                                  keyCode: 0))
+        #expect(capture.sent == Array("\u{1b}[97;1:3u".utf8))
+    }
+
+    @Test func optionAsMetaToggleDoesNotReportARelease() {
+        let (view, capture, _) = configuredView(flags: 10) // reportEvents + reportAllKeys
+        let modifiers: NSEvent.ModifierFlags = [.option, .command]
+        view.keyDown(with: keyEvent(modifiers: modifiers,
+                                    characters: "ø",
+                                    charactersIgnoringModifiers: "o",
+                                    keyCode: 31))
+        view.keyUp(with: keyEvent(type: .keyUp,
+                                  modifiers: modifiers,
+                                  characters: "ø",
+                                  charactersIgnoringModifiers: "o",
+                                  keyCode: 31))
+        #expect(capture.sent.isEmpty)
+    }
+
+    @Test func unhandledCommandKeyDoesNotReportARelease() {
+        let (view, capture, _) = configuredView(flags: 10) // reportEvents + reportAllKeys
+        view.keyDown(with: keyEvent(modifiers: [.command],
+                                    characters: "k",
+                                    charactersIgnoringModifiers: "k",
+                                    keyCode: 40))
+        view.keyUp(with: keyEvent(type: .keyUp,
+                                  modifiers: [.command],
+                                  characters: "k",
+                                  charactersIgnoringModifiers: "k",
+                                  keyCode: 40))
+        #expect(capture.sent.isEmpty)
+    }
+
     @Test func kittyControlCUsesTheLayoutWithoutControlTranslation() {
         let translatedEvent = keyEvent(modifiers: [.control],
                                        characters: "\u{03}",
@@ -202,6 +268,60 @@ final class KittyKeyboardAppKitReproductionTests {
         view.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
 
         #expect(capture.sent == [0x7f])
+    }
+
+    @Test func legacyCommitClearsComposingStateForKittyMode() {
+        // A legacy-mode dead-key commit must not leave the view composing:
+        // once an app enables the protocol, commands must still be sent.
+        let (view, capture, _) = configuredView(flags: 0)
+        view.setMarkedText("´",
+                           selectedRange: NSRange(location: 1, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+        view.insertText("é", replacementRange: NSRange(location: NSNotFound, length: 0))
+        capture.sent.removeAll()
+
+        view.feed(text: "\u{1b}[>9u") // disambiguate + reportAllKeys
+        view.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+
+        #expect(capture.sent == Array("\u{1b}[13u".utf8))
+    }
+
+    @Test func emptyMarkedTextEndsComposition() {
+        let (view, capture, _) = configuredView(flags: 9) // disambiguate + reportAllKeys
+        view.setMarkedText("ㅎ",
+                           selectedRange: NSRange(location: 1, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+        view.setMarkedText("",
+                           selectedRange: NSRange(location: 0, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+
+        view.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
+
+        #expect(capture.sent == Array("\u{1b}[127u".utf8))
+    }
+
+    @Test func commandThatEndsCompositionReportsPressAndRelease() {
+        // Korean input methods commit on Return and forward the key as a
+        // command. The press is reported, so the release must be too.
+        let (view, capture, _) = configuredView(flags: 10) // reportEvents + reportAllKeys
+        view.setMarkedText("한",
+                           selectedRange: NSRange(location: 1, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+        view.keyDown(with: keyEvent(modifiers: [],
+                                    characters: "\r",
+                                    charactersIgnoringModifiers: "\r",
+                                    keyCode: 36))
+        // Drive the commit and the forwarded command as the input method
+        // does from within interpretKeyEvents.
+        view.insertText("한", replacementRange: NSRange(location: NSNotFound, length: 0))
+        view.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        view.keyUp(with: keyEvent(type: .keyUp,
+                                  modifiers: [],
+                                  characters: "\r",
+                                  charactersIgnoringModifiers: "\r",
+                                  keyCode: 36))
+
+        #expect(capture.sent == Array("한\u{1b}[13u\u{1b}[13;1:3u".utf8))
     }
 
     @Test func committedImeTextIsSentOnceWithoutAKeyRelease() {

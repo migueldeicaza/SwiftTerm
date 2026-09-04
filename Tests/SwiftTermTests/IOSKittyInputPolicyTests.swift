@@ -15,6 +15,16 @@ struct IOSKittyInputPolicyTests {
             flags: [.disambiguate, .reportAllKeys]))
     }
 
+    @Test func modifierKeysMatchTheEncoder() {
+        for key: KittyFunctionalKey in [.leftShift, .rightSuper, .leftHyper, .rightMeta,
+                                        .isoLevel3Shift, .capsLock, .numLock] {
+            #expect(IOSKittyInputPolicy.isModifierKey(key))
+        }
+        for key: KittyFunctionalKey in [.scrollLock, .pageUp, .f1, .enter] {
+            #expect(!IOSKittyInputPolicy.isModifierKey(key))
+        }
+    }
+
     @Test func onlyPlainPageKeysScrollLocally() {
         #expect(IOSKittyInputPolicy.shouldScrollPageLocally(
             key: .pageUp, modifiers: [], applicationCursor: false))

@@ -1739,6 +1739,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             caretView.disableAnimations()
             hasFocus = false
             withTerminal { $0.setTerminalFocus(false) }
+            // Key-up events for keys held across a focus change do not
+            // arrive. Do not let their entries suppress a later release.
+            kittyKeysWithoutReportedPress.removeAll()
         }
         return response
     }
@@ -1968,7 +1971,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var pendingKittyKeyEvent: PendingKittyKeyEvent?
     private var kittyIsComposing = false
     private var kittyKeysWithoutReportedPress: Set<UInt16> = []
-    
+    /// The key code of the last key that the input method interpreted
+    /// during a preedit. Cleared by the next key down or by its key up.
+    private var kittyComposingKeyCode: UInt16?
+
     //
     // We capture a handful of keydown events and pre-process those, and then let
     // interpretKeyEvents do the rest of the work, that includes text-insertion, and
@@ -1982,6 +1988,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     // of those keys.
     //
     public override func keyDown(with event: NSEvent) {
+        kittyComposingKeyCode = nil
         if !event.isARepeat {
             kittyKeysWithoutReportedPress.remove(event.keyCode)
         }
@@ -2034,6 +2041,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             pendingKittyKeyEvent = nil
             if eventFlags.contains([.option, .command]), event.charactersIgnoringModifiers == "o" {
                 optionAsMetaKey.toggle()
+                // No press was reported for this key, so its release must
+                // not be reported either.
+                kittyKeysWithoutReportedPress.insert(event.keyCode)
                 return
             }
 
@@ -2047,6 +2057,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             // not send the physical key as a second event.
             if kittyIsComposing {
                 kittyKeysWithoutReportedPress.insert(event.keyCode)
+                kittyComposingKeyCode = event.keyCode
                 interpretKeyEvents([event])
                 return
             }
@@ -2122,26 +2133,32 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 }
                 var controlBytes = applyControlToEventCharacters(ch)
 
+                // AppKit supplies the final C0 value for many layouts and
+                // input methods. On Latin ISO layouts its table is letter
+                // based rather than positional, so honor it before the
+                // PC-101 position guess below.
+                if controlBytes.isEmpty,
+                   let characters = event.characters,
+                   let scalar = singleControlScalar(in: characters) {
+                    if scalar.value == 0x7f {
+                        // Control-Backspace follows the same setting as Backspace.
+                        controlBytes = [backspaceSendsControlH ? 8 : 0x7f]
+                    } else {
+                        controlBytes = [UInt8(scalar.value)]
+                    }
+                }
+
                 // Non-Latin layouts can map an ASCII key to a Unicode
-                // character. In that case, use the key's standard PC-101
-                // position for the legacy Control mapping. Keep the layout
-                // character for ASCII layouts such as Dvorak.
+                // character with no Control translation. In that case, use
+                // the key's standard PC-101 position for the legacy Control
+                // mapping. Keep the layout character for ASCII layouts such
+                // as Dvorak.
                 if controlBytes.isEmpty,
                    ch.unicodeScalars.count == 1,
                    let scalar = ch.unicodeScalars.first,
                    scalar.value > 0x7f,
                    let baseLayoutKey = kittyBaseLayoutKey(from: event) {
                     controlBytes = applyControlToEventCharacters(String(baseLayoutKey))
-                }
-
-                // Some input methods supply the final C0 value directly.
-                // Use it if neither layout mapping produced a value.
-                if controlBytes.isEmpty,
-                   let characters = event.characters,
-                   characters.unicodeScalars.count == 1,
-                   let scalar = characters.unicodeScalars.first,
-                   scalar.value < 0x20 || scalar.value == 0x7f {
-                    controlBytes = [UInt8(scalar.value)]
                 }
 
                 if !controlBytes.isEmpty {
@@ -2204,22 +2221,25 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     public override func keyUp(with event: NSEvent) {
+        if kittyComposingKeyCode == event.keyCode {
+            kittyComposingKeyCode = nil
+        }
         if kittyKeysWithoutReportedPress.remove(event.keyCode) != nil {
             super.keyUp(with: event)
             return
         }
         let flags = withTerminal { $0.keyboardEnhancementFlags }
-        if flags.contains(.reportEvents) {
-            let hasAltOrCtrl = event.modifierFlags.contains(.control) || (optionAsMetaKey && event.modifierFlags.contains(.option))
-            let shouldHandle = flags.contains(.reportAllKeys) || hasAltOrCtrl || kittyFunctionalKey(from: event) != nil
-            if shouldHandle, let kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
-                if !flags.contains(.reportAllKeys),
-                   case .unicode(let codepoint) = kittyEvent.key,
-                   codepoint == 9 || codepoint == 13 || codepoint == 127 {
-                    // Enter/Tab/Backspace only report release events in report-all-keys mode.
-                } else {
-                    _ = sendKittyEvent(kittyEvent)
-                }
+        // Every key whose press reached the application gets a release,
+        // including plain text keys. Keys that sent no press are in
+        // kittyKeysWithoutReportedPress and returned above.
+        if flags.contains(.reportEvents),
+           let kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
+            if !flags.contains(.reportAllKeys),
+               case .unicode(let codepoint) = kittyEvent.key,
+               codepoint == 9 || codepoint == 13 || codepoint == 127 {
+                // Enter/Tab/Backspace only report release events in report-all-keys mode.
+            } else {
+                _ = sendKittyEvent(kittyEvent)
             }
         }
         super.keyUp(with: event)
@@ -2231,7 +2251,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             pendingKittyKeyEvent = nil
             return
         }
-        if !keyboardEnhancementFlags.isEmpty || !kittyIsComposing {
+        if !kittyIsComposing {
             let mods: KittyKeyboardModifiers
             if let pending = pendingKittyKeyEvent {
                 mods = kittyModifiers(from: pending.event, includeOption: optionAsMetaKey)
@@ -2342,6 +2362,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         case #selector(moveToRightEndOfLine(_:)):
             send (EscapeSequences.emacsForward)
         default:
+            // Nothing is sent for this key. Under the kitty protocol its
+            // release must not be reported without a press.
+            if let pending = pendingKittyKeyEvent {
+                kittyKeysWithoutReportedPress.insert(pending.event.keyCode)
+                pendingKittyKeyEvent = nil
+            }
             print ("Unhandle selector \(selector)")
         }
     }
@@ -2352,7 +2378,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
+        // A commit ends the preedit in every mode. AppKit does not call
+        // unmarkText after a commit, so clear the state here.
         let wasComposing = kittyIsComposing
+        kittyIsComposing = false
         markedTextStorage = nil
         markedSelectedRange = NSRange(location: NSNotFound, length: 0)
         updateMarkedTextOverlay()
@@ -2368,12 +2397,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             if !terminalState.isEmpty {
                 let pendingEvent = pendingKittyKeyEvent
                 pendingKittyKeyEvent = nil
-                kittyIsComposing = false
                 let text = str as String
 
-                // Control input that ends a preedit is an IME command. It is
-                // not committed text for the terminal.
-                if wasComposing && isSingleControlCharacter(text) {
+                // Backspace or Delete that ends a preedit is an IME edit
+                // command. It is not committed text for the terminal. Other
+                // control input, such as Ctrl+C, is a real key press.
+                if wasComposing && isPreeditEditCharacter(text) {
                     return
                 }
 
@@ -2429,13 +2458,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         return true
     }
 
-    private func isSingleControlCharacter(_ text: String) -> Bool {
+    /// Returns the single scalar of `text` when it is a C0 control or DEL.
+    private func singleControlScalar(in text: String) -> UnicodeScalar? {
         let scalars = text.unicodeScalars
         guard let scalar = scalars.first,
-              scalars.index(after: scalars.startIndex) == scalars.endIndex else {
-            return false
+              scalars.index(after: scalars.startIndex) == scalars.endIndex,
+              scalar.value < 0x20 || scalar.value == 0x7f else {
+            return nil
         }
-        return scalar.value < 0x20 || scalar.value == 0x7f
+        return scalar
+    }
+
+    private func isPreeditEditCharacter(_ text: String) -> Bool {
+        guard let scalar = singleControlScalar(in: text) else { return false }
+        return scalar.value == 0x08 || scalar.value == 0x7f
     }
 
     // NSTextInputClient protocol implementation
@@ -2453,7 +2489,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             markedTextStorage = nil
         }
         markedSelectedRange = selectedRange
-        kittyIsComposing = true
+        // An empty marked string ends the preedit. hasMarkedText() reports
+        // the same state to AppKit.
+        kittyIsComposing = markedTextStorage != nil
         updateMarkedTextOverlay()
     }
 
@@ -2905,19 +2943,30 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private func kittyTextEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
         let isControlSpace = event.modifierFlags.contains(.control)
             && event.keyCode == UInt16(kVK_Space)
-        // Request the current-layout value with no modifiers. Unlike
-        // charactersIgnoringModifiers, this does not retain Control's text
-        // translation on macOS.
-        let reportedScalar = event.characters(byApplyingModifiers: [])?.unicodeScalars.first
-            ?? event.charactersIgnoringModifiers?.unicodeScalars.first
+        // With Control held, charactersIgnoringModifiers retains Control's
+        // text translation on macOS (Ctrl+C gives U+0003). Translate the key
+        // code against the layout only in that case: the translation uses
+        // the key code, which synthesized events do not set correctly.
+        let hasControl = event.modifierFlags.contains(.control)
+        let reportedScalar: UnicodeScalar?
+        if hasControl {
+            reportedScalar = event.characters(byApplyingModifiers: [])?.unicodeScalars.first
+                ?? event.charactersIgnoringModifiers?.unicodeScalars.first
+        } else {
+            reportedScalar = event.charactersIgnoringModifiers?.unicodeScalars.first
+        }
         guard let scalar = isControlSpace ? UnicodeScalar(0x20) : reportedScalar else {
             return nil
         }
         let baseScalar = String(scalar).lowercased().unicodeScalars.first ?? scalar
         let shiftedScalar: UnicodeScalar?
         if event.modifierFlags.contains(.shift) && !isControlSpace {
-            shiftedScalar = event.characters(byApplyingModifiers: [.shift])?.unicodeScalars.first
-                ?? event.characters?.unicodeScalars.first
+            if hasControl {
+                shiftedScalar = event.characters(byApplyingModifiers: [.shift])?.unicodeScalars.first
+                    ?? event.characters?.unicodeScalars.first
+            } else {
+                shiftedScalar = event.characters?.unicodeScalars.first
+            }
         } else {
             shiftedScalar = nil
         }
@@ -2973,7 +3022,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                                   shiftedKey: nil,
                                   baseLayoutKey: nil,
                                   composing: kittyIsComposing)
-        return sendKittyEvent(event)
+        guard sendKittyEvent(event) else { return false }
+        // The input method forwarded the key that ended the preedit as a
+        // command. Its press is now reported, so its release must be too.
+        if let composingKeyCode = kittyComposingKeyCode {
+            kittyKeysWithoutReportedPress.remove(composingKeyCode)
+        }
+        return true
     }
     
     // NSTextInputClient protocol implementation
