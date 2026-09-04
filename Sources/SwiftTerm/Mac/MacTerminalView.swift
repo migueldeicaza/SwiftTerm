@@ -2087,6 +2087,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         } else if eventFlags.contains (.control) {
             // Sends the control sequence
+            // AppKit can report Control-Space with no character, or with NUL,
+            // instead of the unmodified space. Use the physical Space key so
+            // that the terminal always sends the NUL byte expected for C-SPC.
+            if event.keyCode == UInt16(kVK_Space) {
+                send ([0])
+                return
+            }
             if let ch = event.charactersIgnoringModifiers {
                 if let fs = ch.unicodeScalars.first {
                     switch Int (fs.value) {
@@ -2782,12 +2789,16 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     private func kittyTextEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
-        guard let chars = event.charactersIgnoringModifiers,
-              let scalar = chars.unicodeScalars.first else {
+        let isControlSpace = event.modifierFlags.contains(.control)
+            && event.keyCode == UInt16(kVK_Space)
+        let reportedScalar = event.charactersIgnoringModifiers?.unicodeScalars.first
+        guard let scalar = isControlSpace ? UnicodeScalar(0x20) : reportedScalar else {
             return nil
         }
         let baseScalar = String(scalar).lowercased().unicodeScalars.first ?? scalar
-        let shiftedScalar = event.modifierFlags.contains(.shift) ? event.characters?.unicodeScalars.first : nil
+        let shiftedScalar = event.modifierFlags.contains(.shift) && !isControlSpace
+            ? event.characters?.unicodeScalars.first
+            : nil
         let baseLayout = kittyBaseLayoutKey(from: event)
         let baseLayoutKey = baseLayout == baseScalar ? nil : baseLayout
         let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
