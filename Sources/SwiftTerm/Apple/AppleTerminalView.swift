@@ -1613,6 +1613,21 @@ extension TerminalView {
         renderOwner.stateSnapshot()
     }
 
+    /// Copies input modes and dimensions without copying any rows.
+    /// Returns nil when no terminal session is attached.
+    public nonisolated func terminalInputStateSnapshot() -> TerminalInputStateSnapshot? {
+        renderOwner.inputStateSnapshot()
+    }
+
+    /// Copies a bounded region and its input state in one transaction.
+    /// Returns nil when no terminal session is attached. The returned values
+    /// remain valid after later feeds, resizes, scrolls, and history trimming.
+    public nonisolated func terminalContentSnapshot(
+        region: TerminalContentRegion
+    ) -> TerminalContentSnapshot? {
+        renderOwner.contentSnapshot(region: region)
+    }
+
     /// Copies terminal buffer contents without exposing the mutable terminal.
     public nonisolated func getBufferAsData(
         kind: Terminal.BufferKind = .active,
