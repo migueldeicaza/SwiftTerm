@@ -308,8 +308,27 @@ extension Terminal {
         }
     }
 
+    /// Answers a support query (`a=q`).
+    ///
+    /// This has to honour the transmission medium in `t=`. It used to always decode
+    /// the payload as direct (`t=d`) pixel data, which made every query for a
+    /// file-based medium fail: clients probe with `a=q,t=f,f=32,s=1,v=1` whose
+    /// payload is a *file path*, so checking its length against the `1 x 1 x 4`
+    /// bytes implied by `f=32,s=1,v=1` rejected it as `EINVAL: bad payload`.
+    /// Clients read that as "this terminal cannot do file transfers" and fall back
+    /// to sending every frame inline through the pty - orders of magnitude more
+    /// data, all of it parsed and decompressed on the thread that feeds the
+    /// terminal.
+    ///
+    /// The query must not consume the client's resource: `a=q` asks whether a medium
+    /// works, it does not transfer anything (see `loadKittyPayload`).
     private func handleKittyQuery(control: KittyGraphicsControl, base64Payload: [UInt8]) {
-        guard decodeKittyPayload(control: control, base64Payload: base64Payload) != nil else {
+        let result = loadKittyPayload(control: control, base64Payload: base64Payload, consumeSource: false)
+        if let errorMessage = result.errorMessage {
+            sendKittyError(control: control, message: errorMessage)
+            return
+        }
+        guard result.payload != nil else {
             sendKittyError(control: control, message: "EINVAL: bad payload")
             return
         }
@@ -627,7 +646,16 @@ extension Terminal {
         restrictCursor()
     }
 
-    private func loadKittyPayload(control: KittyGraphicsControl, base64Payload: [UInt8]) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
+    /// Loads the payload for a graphics command, dispatching on the transmission
+    /// medium (`t=`).
+    ///
+    /// - Parameter consumeSource: whether the client's resource may be destroyed
+    ///   after reading. The `t` (temporary file) and `s` (shared memory) mediums are
+    ///   defined as "the terminal takes ownership and deletes it", but that must only
+    ///   happen for a real transmission. A query (`a=q`) merely asks whether a medium
+    ///   is supported, so it has to leave the resource alone - otherwise probing for
+    ///   support destroys the very file the client was about to send.
+    private func loadKittyPayload(control: KittyGraphicsControl, base64Payload: [UInt8], consumeSource: Bool = true) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
         switch control.transmission {
         case "d":
             guard let payload = decodeKittyPayload(control: control, base64Payload: base64Payload) else {
@@ -635,11 +663,11 @@ extension Terminal {
             }
             return (payload, nil)
         case "f":
-            return loadKittyFilePayload(control: control, base64Payload: base64Payload, temporary: false)
+            return loadKittyFilePayload(control: control, base64Payload: base64Payload, temporary: false, consumeSource: consumeSource)
         case "t":
-            return loadKittyFilePayload(control: control, base64Payload: base64Payload, temporary: true)
+            return loadKittyFilePayload(control: control, base64Payload: base64Payload, temporary: true, consumeSource: consumeSource)
         case "s":
-            return loadKittySharedMemoryPayload(control: control, base64Payload: base64Payload)
+            return loadKittySharedMemoryPayload(control: control, base64Payload: base64Payload, consumeSource: consumeSource)
         default:
             return (nil, "ENOTSUP: unsupported transmission")
         }
@@ -739,7 +767,7 @@ extension Terminal {
         #endif
     }
 
-    private func loadKittyFilePayload(control: KittyGraphicsControl, base64Payload: [UInt8], temporary: Bool) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
+    private func loadKittyFilePayload(control: KittyGraphicsControl, base64Payload: [UInt8], temporary: Bool, consumeSource: Bool = true) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
         #if os(Windows)
         return (nil, "ENOTSUP: unsupported transmission")
         #else
@@ -768,7 +796,7 @@ extension Terminal {
         guard let data = readKittyFileData(path: resolved,
                                            offset: control.dataOffset,
                                            size: control.dataSize,
-                                           deleteAfterRead: temporary) else {
+                                           deleteAfterRead: temporary && consumeSource) else {
             return (nil, "EINVAL: bad payload")
         }
 
@@ -783,7 +811,7 @@ extension Terminal {
         #endif
     }
 
-    private func loadKittySharedMemoryPayload(control: KittyGraphicsControl, base64Payload: [UInt8]) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
+    private func loadKittySharedMemoryPayload(control: KittyGraphicsControl, base64Payload: [UInt8], consumeSource: Bool = true) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
         #if os(Windows)
         return (nil, "ENOTSUP: unsupported transmission")
         #else
@@ -803,6 +831,7 @@ extension Terminal {
         }
 
         guard let data = readKittySharedMemory(name: name,
+                                               unlinkAfterRead: consumeSource,
                                                expectedSize: expectedSize,
                                                offset: control.dataOffset,
                                                size: control.dataSize) else {
@@ -953,7 +982,10 @@ extension Terminal {
     #endif
 
     #if !os(Windows)
-    private func readKittySharedMemory(name: String, expectedSize: Int?, offset: Int, size: Int) -> Data? {
+    /// - Parameter unlinkAfterRead: the shared memory object is owned by the terminal
+    ///   once transmitted, so it is normally unlinked here. A support query (`a=q`)
+    ///   transfers nothing, so it must leave the client's object in place.
+    private func readKittySharedMemory(name: String, unlinkAfterRead: Bool = true, expectedSize: Int?, offset: Int, size: Int) -> Data? {
         guard offset >= 0, size >= 0 else {
             return nil
         }
@@ -965,7 +997,9 @@ extension Terminal {
         }
         defer {
             close(fd)
-            _ = name.withCString { shm_unlink($0) }
+            if unlinkAfterRead {
+                _ = name.withCString { shm_unlink($0) }
+            }
         }
 
         var st = stat()
