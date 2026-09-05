@@ -123,10 +123,16 @@ extension TerminalView {
         return !result.needsTextFallback
     }
 
-    /// Sends `text` as a text paste. A paste that the safety policy rejected
-    /// is sent again with the policy relaxed.
+    /// Sends `text` as a text paste, using the same path as a clipboard paste.
+    ///
+    /// The text is bracketed when the running application enabled bracketed
+    /// paste mode, and sanitized the same way clipboard text is, so a host
+    /// can feed the terminal content that did not come from the pasteboard -
+    /// a dropped file's path, for instance - without it being seen as typed
+    /// input. A paste that the safety policy rejected is sent again with the
+    /// policy relaxed.
     @MainActor
-    func pasteText(_ text: String) {
+    public func pasteText(_ text: String) {
         ensureCaretIsVisible()
         let request = TerminalPasteRequest(text: text)
         var result = withTerminal { $0.paste(request) }
