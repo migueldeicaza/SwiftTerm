@@ -41,3 +41,31 @@ private final class EmbeddedTerminalDelegate: TerminalDelegate {
     terminal.expireSynchronizedOutput()
     #expect(!terminal.synchronizedOutputActive)
 }
+
+@Test func embeddedCorePreservesGraphemeScalars() {
+    let delegate = EmbeddedTerminalDelegate()
+    let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 8, rows: 2, scrollback: 0))
+    defer { terminal.close() }
+    let text = "\u{0915}\u{094d}\u{0915}"
+    terminal.feed(text: text)
+    #expect(terminal.getCharData(col: 0, row: 0)?.getText() == text)
+}
+
+@Test func embeddedCoreScrollsRegionAndResets() {
+    let delegate = EmbeddedTerminalDelegate()
+    let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 8, rows: 3, scrollback: 0))
+    defer { terminal.close() }
+    terminal.feed(text: "top\r\nmiddle\r\nbottom\u{1b}[2;3r\u{1b}[3;1H\n")
+    #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == "top\nbottom\n\n")
+    terminal.feed(text: "\u{1b}c")
+    #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == "\n\n\n")
+}
+
+@Test func embeddedCoreDoesNotAdvertiseKittyClipboardTransport() {
+    let delegate = EmbeddedTerminalDelegate()
+    let terminal = Terminal(delegate: delegate)
+    defer { terminal.close() }
+    terminal.feed(text: "\u{1b}[?5522h\u{1b}[?5522$p")
+    #expect(!terminal.kittyPasteEventsEnabled)
+    #expect(String(decoding: delegate.sentBytes, as: UTF8.self) == "\u{1b}[?5522;0$y")
+}

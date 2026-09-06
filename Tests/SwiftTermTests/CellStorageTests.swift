@@ -27,6 +27,23 @@ struct CellStorageTests {
         #expect(line.packedCell(at: 4).content == 0)
     }
 
+    @Test func packedAsciiSpanRunWritesTheSelectedRange() {
+        let line = BufferLine(cols: 6)
+        let backing = Array("xABCDEy".utf8)
+        let source = backing[...]
+
+        line.setPackedAsciiRun(source.span, sourceStart: 2, count: 3, at: 1,
+                               styleID: 0, semanticContentCode: 5)
+
+        #expect(line.packedCell(at: 0).content == 0)
+        #expect((1...3).map { line.packedCell(at: $0).content }
+                == Array("BCD".utf8).map(UInt32.init))
+        #expect((1...3).allSatisfy {
+            line.packedCell(at: $0).semanticContentCode == 5
+        })
+        #expect(line.packedCell(at: 4).content == 0)
+    }
+
     @Test func packedScalarRunsWriteNarrowAndWideCells() {
         let narrowLine = BufferLine(cols: 4)
         let narrowScalars: [UInt32] = [0x03B1, 0x0416, 0x0645]
@@ -426,6 +443,20 @@ struct CellStorageTests {
         #expect(second.contentTag == .codepoint)
         #expect(arena.character(for: second) == "b")
         #expect(arena.graphemeCount == 1)
+    }
+
+    @Test func invalidGraphemeIdentifierDecodesAsSpace() {
+        let arena = CellArena()
+        let cell = PackedCell.makeUnchecked(
+            contentTag: .grapheme, content: 1, styleID: 0,
+            widthState: .narrow, isProtected: false, payloadCode: 0,
+            semanticContentCode: 0)
+
+        #expect(arena.grapheme(for: 1) == nil)
+        #expect(arena.text(for: cell) == " ")
+        #expect(arena.character(for: cell) == " ")
+        #expect(arena.scalarValues(for: cell).isEmpty)
+        #expect(arena.logicalCode(for: cell) == 0)
     }
 
     @Test func packedAccessorsClampNarrowAndEmptyLines() {

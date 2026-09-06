@@ -30,8 +30,6 @@ final class TerminalLockingTests {
         func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? { nil }
         func sizeChanged(source: Terminal) {}
         func send(source: Terminal, data: ArraySlice<UInt8>) {}
-        func scrolled(source: Terminal, yDisp: Int) {}
-        func linefeed(source: Terminal) {}
         func bufferActivated(source: Terminal) {}
         func synchronizedOutputChanged(source: Terminal, active: Bool) {}
         func bell(source: Terminal) {}

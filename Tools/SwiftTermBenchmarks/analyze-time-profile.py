@@ -57,6 +57,12 @@ def main():
         except ValueError:
             continue
 
+        # Newer xctrace exports nest the frames in a <backtrace> child of
+        # <tagged-backtrace>, itself possibly a reference. Older exports put
+        # the frames directly under <tagged-backtrace>.
+        nested = backtrace.find("backtrace")
+        if nested is not None:
+            backtrace = referenced(nested, definitions)
         names = [frame_name(frame, definitions) for frame in backtrace.findall("frame")]
         if not names or (options.root and not any(options.root in name for name in names)):
             continue

@@ -93,6 +93,7 @@ testing, and screen-scraping terminal output.
 - <doc:GraphicsSupport>
 - <doc:KittyGraphicsIntegration>
 - <doc:KittyGraphicsProtocol>
+- <doc:KittyClipboardProtocol>
 - <doc:SSHIntegration>
 
 ### Terminal Delegate
@@ -153,6 +154,18 @@ testing, and screen-scraping terminal output.
 - ``KittyGraphicsCellGeometry``
 - ``ImageSizeRequest``
 - ``TerminalImage``
+
+### Clipboard
+
+- <doc:KittyClipboardProtocol>
+- ``KittyClipboardPolicy``
+- ``KittyClipboardCapabilities``
+- ``KittyClipboardLocation``
+- ``TerminalClipboardSnapshot``
+- ``TerminalPasteRequest``
+- ``TerminalPasteResult``
+- ``KittyClipboardWriteContent``
+- ``KittyClipboardReadResult``
 
 ### Compatibility and Verification
 

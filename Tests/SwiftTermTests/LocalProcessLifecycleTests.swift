@@ -321,7 +321,7 @@ final class LocalProcessLifecycleTests: XCTestCase {
         weak var releasedProcess: LocalProcess?
         var pid: pid_t = 0
 
-        autoreleasepool {
+        func startAndReleaseProcess() {
             let process = LocalProcess(
                 delegate: delegate,
                 dispatchQueue: DispatchQueue(label: "SwiftTerm.LocalProcessLifecycle.deinit"))
@@ -333,6 +333,11 @@ final class LocalProcessLifecycleTests: XCTestCase {
             pid = process.shellPid
             releasedProcess = process
         }
+#if canImport(ObjectiveC)
+        autoreleasepool(invoking: startAndReleaseProcess)
+#else
+        startAndReleaseProcess()
+#endif
 
         XCTAssertNil(releasedProcess)
         XCTAssertTrue(waitUntil(timeout: 5, interval: 0.01) {

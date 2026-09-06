@@ -340,7 +340,16 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
     
     public override init (frame: CGRect)
     {
-        super.init (frame: frame)
+        let options = TerminalOptions(
+            // iTerm2 feature report for OSC 1337 Capabilities. The library
+            // default is nil, which suppresses the reply, because parts of
+            // the report depend on the host. See the MacTerminal sample for
+            // the meaning of each flag.
+            featureReport: "T3CwLrMSc7UUw17Ts3BFGsSyHSxP",
+            // The library default is empty. This app serves both clipboard
+            // directions; see kittyClipboardRequestPermission below.
+            kittyClipboardPolicy: .all)
+        super.init (frame: frame, font: nil, options: options)
         terminalDelegate = self
     }
 
@@ -415,7 +424,28 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
     }
     
     public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
-        
+
+    }
+
+    // MARK: Kitty clipboard protocol, OSC 5522
+    //
+    // The library denies clipboard access by default. Stating the complete
+    // standard-clipboard service here, with the policy in the options above,
+    // is what makes DEC private mode 5522 report as supported.
+
+    public func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
+        // iOS has no primary selection, so only the standard clipboard.
+        [.standardRead, .standardWrite]
+    }
+
+    public func kittyClipboardRequestPermission(
+        source: TerminalView,
+        request: KittyClipboardPermissionRequest
+    ) -> KittyClipboardPermissionResult {
+        // This hook is synchronous and UIKit has no modal alert, so this
+        // sample allows the request. A shipping app should keep the answer
+        // for a program in its own settings and deny unknown programs.
+        .allow(rememberPassword: false)
     }
 
     public func requestOpenLink (source: TerminalView, link: String, params: [String:String])

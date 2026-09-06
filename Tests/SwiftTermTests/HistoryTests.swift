@@ -18,8 +18,6 @@ final class HistoryTests {
         func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? { return nil }
         func sizeChanged(source: Terminal) {}
         func send(source: Terminal, data: ArraySlice<UInt8>) {}
-        func scrolled(source: Terminal, yDisp: Int) {}
-        func linefeed(source: Terminal) {}
         func bufferActivated(source: Terminal) {}
         func bell(source: Terminal) {}
     }

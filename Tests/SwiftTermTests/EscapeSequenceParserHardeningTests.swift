@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import SwiftTerm
 
@@ -8,7 +9,7 @@ final class EscapeSequenceParserHardeningTests {
         let (parser, terminal) = makeParser()
         var dispatched: [[Int]] = []
         parser.dcsHandlerFactory = { _, _, pars in
-            dispatched.append(pars)
+            dispatched.append(Array(pars))
             return RecordingDcsHandler()
         }
 
@@ -110,6 +111,59 @@ final class EscapeSequenceParserHardeningTests {
         #expect(handlerCallCount == 1)
     }
 
+    @Test func oversizedOscTreatsC1StAsPayloadAndRecovers() {
+        let prefix = Array("\(esc)]77;abcdef".utf8)
+        let suffix = [UInt8(0xc5), 0x9c] + Array("[5CX".utf8) + [ControlCodes.BEL]
+        let chunkings = [
+            [prefix + suffix],
+            [prefix + [0xc5], Array(suffix.dropFirst())],
+            [prefix, suffix],
+        ]
+
+        for chunks in chunkings {
+            let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 10, rows: 1)
+            terminal.silentLog = true
+            let parser = EscapeSequenceParser(maximumOscBytes: 8)
+            var received: [String] = []
+            parser.oscHandlers[77] = { received.append(String(decoding: $0, as: UTF8.self)) }
+
+            for chunk in chunks {
+                feed(parser, terminal, chunk)
+            }
+            feed(parser, terminal, "\(esc)]77;ok\u{7}")
+
+            #expect(received == ["ok"])
+            #expect(terminal.buffer.x == 0)
+            TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "")
+        }
+    }
+
+    @Test func bareEscapeDispatchesTitleOscBeforeStartingCsi() {
+        let delegate = BareEscapeOscDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 10, rows: 2, scrollback: 0))
+        terminal.feed(text: "\(esc)[2;4H")
+
+        terminal.feed(text: "\(esc)]0;Title\(esc)[H")
+
+        #expect(delegate.titles == ["Title"])
+        TerminalTestHarness.assertCursor(terminal.buffer, col: 0, row: 0)
+    }
+
+    @Test func bareEscapeDispatchesClipboardOscBeforeStartingCsi() {
+        let delegate = BareEscapeOscDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 10, rows: 2, scrollback: 0))
+        terminal.feed(text: "\(esc)[2;4H")
+
+        terminal.feed(text: "\(esc)]52;c;aGVsbG8=\(esc)[H")
+
+        #expect(delegate.clipboardContent == Data("hello".utf8))
+        TerminalTestHarness.assertCursor(terminal.buffer, col: 0, row: 0)
+    }
+
     @Test func transitionTableIsSharedAndReadOnlyAfterConstruction() {
         let first = EscapeSequenceParser()
         let second = EscapeSequenceParser()
@@ -136,7 +190,7 @@ final class EscapeSequenceParserHardeningTests {
         let (parser, terminal) = makeParser()
         var dispatched: [[Int]] = []
         parser.dcsHandlerFactory = { _, _, pars in
-            dispatched.append(pars)
+            dispatched.append(Array(pars))
             return RecordingDcsHandler()
         }
 
@@ -205,6 +259,10 @@ final class EscapeSequenceParserHardeningTests {
         parser.parse(data: bytes[...], terminal)
     }
 
+    private func feed(_ parser: EscapeSequenceParser, _ terminal: Terminal, _ bytes: [UInt8]) {
+        parser.parse(data: bytes[...], terminal)
+    }
+
     private func csi(parameterCount: Int) -> String {
         "\(esc)[\(Array(repeating: "1", count: parameterCount).joined(separator: ";"))C"
     }
@@ -212,6 +270,21 @@ final class EscapeSequenceParserHardeningTests {
     private func dcs(parameterCount: Int) -> String {
         "\(esc)P\(Array(repeating: "1", count: parameterCount).joined(separator: ";"))p"
     }
+}
+
+private final class BareEscapeOscDelegate: TerminalDelegate {
+    private(set) var clipboardContent: Data?
+    private(set) var titles: [String] = []
+
+    func clipboardCopy(source: Terminal, content: Data) {
+        clipboardContent = content
+    }
+
+    func setTerminalTitle(source: Terminal, title: String) {
+        titles.append(title)
+    }
+
+    func send(source: Terminal, data: ArraySlice<UInt8>) {}
 }
 
 private final class RecordingDcsHandler: DcsHandler {
@@ -223,8 +296,8 @@ private final class RecordingDcsHandler: DcsHandler {
 
     var hooks: [Hook] = []
 
-    func hook(collect: cstring, parameters: [Int], flag: UInt8) {
-        hooks.append(Hook(collect: collect, parameters: parameters, flag: flag))
+    func hook(collect: cstring, parameters: CsiParameters, flag: UInt8) {
+        hooks.append(Hook(collect: collect, parameters: Array(parameters), flag: flag))
     }
 
     func put(data: ArraySlice<UInt8>) {}

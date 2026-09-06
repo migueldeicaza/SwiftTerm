@@ -43,7 +43,7 @@ final class BufferRef {
 }
 
 public final class Buffer {
-    private var _lines: CircularBufferLineList
+    private let _lines: CircularBufferLineList
     /// Identifier space shared by every packed cell in this buffer.
     let cellArena: CellArena
 
@@ -241,8 +241,10 @@ public final class Buffer {
     
     var scrollback: Int?
     
+    /// Yields the line list without creating an owned result. Hot scroll paths
+    /// borrow the list for the duration of one operation.
     var lines : CircularBufferLineList {
-        get { return _lines }
+        _read { yield _lines }
     }
 
     /// Returns true if any lines in this buffer have images attached
@@ -839,9 +841,11 @@ public final class Buffer {
         x = 0
         y = 0
 
-        _lines = CircularBufferLineList (maxLength: getCorrectBufferLength(rows))
-        setupLinesCallbacks()
-        _linesWithImagesCount = 0
+        // Reset in place: `_lines` is a `let` so the hot ring accesses can
+        // borrow it without ARC traffic. Owner and liveness survive the reset,
+        // and the live list reports every dropped line with images, so
+        // `_linesWithImagesCount` is already back to zero afterwards.
+        _lines.reset(maxLength: getCorrectBufferLength(rows))
         scrollTop = 0
         scrollBottom = rows - 1
         marginLeft = 0
@@ -929,9 +933,9 @@ public final class Buffer {
             // Resize rows in both directions as needed
             var addToY = 0
             if rows < newRows {
-                for y in rows..<newRows {
+                for _ in rows..<newRows {
                     if lines.count < newRows + yBase {
-                        if yBase > 0 && lines.count <= yBase + y + addToY + 1 {
+                        if yBase > 0 && lines.count <= yBase + self.y + addToY + 1 {
                             // There is room above the buffer and there are no empty elements below the line,
                             // scroll up
                             yBase -= 1
@@ -1125,10 +1129,10 @@ public final class Buffer {
         return true
     }
     
-    func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil) -> String
+    func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil, textProvider: ((CharData) -> String)? = nil) -> String
     {
         let line = _lines [lineIndex]
-        return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol, skipNullCellsFollowingWide: skipNullCellsFollowingWide, characterProvider: characterProvider)
+        return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol, skipNullCellsFollowingWide: skipNullCellsFollowingWide, characterProvider: characterProvider, textProvider: textProvider)
     }
     
     func setupTabStops (index: Int = -1, tabStopWidth: Int)
