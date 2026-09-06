@@ -675,7 +675,17 @@ public final class Buffer {
     /// Scrolls the terminal that owns this buffer.
     @inline(__always)
     func scroll (_ isWrapped: Bool) {
+#if SWIFTTERM_EMBEDDED
+        // Embedded uses a breakable optional back-reference so `Terminal.close()`
+        // can release its object graph.
         terminal?.scroll (isWrapped: isWrapped)
+#else
+        // This is a row-level hot path. Keep the normal-build back-reference
+        // direct: using the Embedded optional dispatch here caused a measurable
+        // scrolling regression. The buffer is owned by its terminal, so the
+        // `unowned(unsafe)` reference above is valid for this build.
+        terminal.scroll (isWrapped: isWrapped)
+#endif
     }
 
 

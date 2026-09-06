@@ -290,6 +290,12 @@ internal final class CircularBufferLineList {
     unowned(unsafe) var owner: Buffer! = nil
 #endif
 
+    // Embedded needs a breakable optional owner to release its object graph.
+    // Normal builds use the non-optional `unowned(unsafe)` owner above. Keep
+    // the callbacks below direct in that configuration: they run for every
+    // attached or recycled row, and using `owner?.` for both builds caused a
+    // measurable scrolling regression.
+
     /// True only for a buffer's live line list.
     ///
     /// Reflow builds scratch lists to stage a rearrangement. Those need `owner`
@@ -325,19 +331,31 @@ internal final class CircularBufferLineList {
         _read {
             let idx = getCyclicIndex(index)
             if array[idx] == nil {
+#if SWIFTTERM_EMBEDDED
                 array[idx] = owner!.makeEmptyLine(idx)
+#else
+                array[idx] = owner.makeEmptyLine(idx)
+#endif
             }
             yield array[idx]!
         }
         set (newValue){
             array [getCyclicIndex(index)] = newValue
+#if SWIFTTERM_EMBEDDED
             if isLive { owner?.lineAttached(newValue) }
+#else
+            if isLive { owner.lineAttached(newValue) }
+#endif
       }
     }
 
     func push (_ value: BufferLine)
     {
+#if SWIFTTERM_EMBEDDED
         if isLive { owner?.lineAttached(value) }
+#else
+        if isLive { owner.lineAttached(value) }
+#endif
         array [getCyclicIndex(count)] = value
         if count == array.count {
             startIndex = startIndex + 1
@@ -347,7 +365,11 @@ internal final class CircularBufferLineList {
         } else {
             count = count + 1
         }
+#if SWIFTTERM_EMBEDDED
         if isLive { owner?.lineDidPush(hasImages: value.images != nil) }
+#else
+        if isLive { owner.lineDidPush(hasImages: value.images != nil) }
+#endif
     }
 
     /// Recycles a row with state that already belongs to the owner's arena.
@@ -370,7 +392,11 @@ internal final class CircularBufferLineList {
         // metadata with one generation change.
         let hadImages = line.recycle(with: clearCell, isWrapped: isWrapped,
                                      bidiState: bidiState)
+#if SWIFTTERM_EMBEDDED
         if isLive { owner?.lineWillRecycle(hadImages: hadImages) }
+#else
+        if isLive { owner.lineWillRecycle(hadImages: hadImages) }
+#endif
     }
 
     @discardableResult
@@ -405,7 +431,11 @@ internal final class CircularBufferLineList {
         }
         for i in 0..<ic {
             change(start + i)
+#if SWIFTTERM_EMBEDDED
             if isLive { owner?.lineAttached(items [i]) }
+#else
+            if isLive { owner.lineAttached(items [i]) }
+#endif
             array [getCyclicIndex(start + i)] = items [i]
         }
 
@@ -551,7 +581,11 @@ internal final class CircularBufferLineList {
         recycledLine.recycle(with: clearCell, isWrapped: isWrapped,
                              bidiState: bidiState)
         if isLive {
+#if SWIFTTERM_EMBEDDED
             owner?.lineWillRecycle(hadImages: hadImages)
+#else
+            owner.lineWillRecycle(hadImages: hadImages)
+#endif
         }
         return true
     }
@@ -569,7 +603,11 @@ internal final class CircularBufferLineList {
     func reset(maxLength newMaxLength: Int) {
         if isLive {
             for line in array where line?.images != nil {
+#if SWIFTTERM_EMBEDDED
                 owner?.lineWillRecycle(hadImages: true)
+#else
+                owner.lineWillRecycle(hadImages: true)
+#endif
             }
         }
         _count = 0
