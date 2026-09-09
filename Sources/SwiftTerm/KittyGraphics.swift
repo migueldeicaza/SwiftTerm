@@ -487,14 +487,28 @@ extension Terminal {
         }
     }
 
+    /// Answers a support query (`a=q`).
+    ///
+    /// This has to honour the transmission medium in `t=`. It used to always decode
+    /// the payload as direct (`t=d`) pixel data, which made every query for a
+    /// file-based medium fail: clients probe with `a=q,t=f,f=32,s=1,v=1` whose
+    /// payload is a *file path*, so checking its length against the `1 x 1 x 4`
+    /// bytes implied by `f=32,s=1,v=1` rejected it as `EINVAL: bad payload`.
+    /// Clients read that as "this terminal cannot do file transfers" and fall back
+    /// to sending every frame inline through the pty - orders of magnitude more
+    /// data, all of it parsed and decompressed on the thread that feeds the
+    /// terminal.
+    ///
+    /// A query loads the image without storing it. Temporary files and shared
+    /// memory must still be removed after reading, as required by `t=`.
     private func handleKittyQuery(control: KittyGraphicsControl, base64Payload: [UInt8]) {
         guard control.imageId != nil else {
             sendKittyError(control: control, message: "EINVAL: image ID required")
             return
         }
-        let decoded = decodeKittyPayloadDetailed(control: control, base64Payload: base64Payload)
-        guard decoded.payload != nil else {
-            sendKittyError(control: control, message: decoded.errorMessage ?? "EINVAL: invalid data")
+        let result = loadKittyPayload(control: control, base64Payload: base64Payload)
+        guard result.payload != nil else {
+            sendKittyError(control: control, message: result.errorMessage ?? "EINVAL: invalid data")
             return
         }
         sendKittyOk(control: control, imageId: control.imageId, imageNumber: control.imageNumber, placementId: control.placementId)
