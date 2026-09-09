@@ -1974,15 +1974,15 @@ extension TerminalView {
                 midx = ansi > 7 ? (Int (ansi) - 8) : Int(ansi)
             }
             if let c = colors [midx] {
-                return c
+                return isFg ? c : cellBackground (c)
             }
             let tcolor = terminal.ansiColors [midx]
             let newColor = TTColor.make (color: tcolor)
             colors [midx] = newColor
-            return newColor
+            return isFg ? newColor : cellBackground (newColor)
         case .trueColor(let r, let g, let b):
             if let tc = trueColors [color] {
-                return tc
+                return isFg ? tc : cellBackground (tc)
             }
             let newColor = TTColor.make(red: CGFloat (r) / 255.0,
                                         green: CGFloat (g) / 255.0,
@@ -1994,11 +1994,21 @@ extension TerminalView {
                 trueColors.removeAll(keepingCapacity: true)
             }
             trueColors [color] = newColor
-            return newColor
+            return isFg ? newColor : cellBackground (newColor)
         }
     }
 
 
+    /// An explicit cell background, carrying `backgroundOpacity` when
+    /// `translucentCellBackgrounds` is on (the palette caches stay opaque; the
+    /// alpha is applied on the way out so foreground uses of the same entry
+    /// are untouched).
+    func cellBackground (_ color: TTColor) -> TTColor
+    {
+        guard translucentCellBackgrounds else { return color }
+        let alpha = backgroundOpacity
+        return alpha < 1 ? color.withAlphaComponent (alpha) : color
+    }
 
     // Clears the cached state for colors and triggers a full display
     func colorsChanged ()

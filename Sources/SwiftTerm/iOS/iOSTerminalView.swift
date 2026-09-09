@@ -3442,6 +3442,25 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    /**
+     * Whether cells with an explicit background color (ANSI, 256-color, truecolor)
+     * share the default background's `backgroundOpacity`.
+     *
+     * `false` (the default) keeps them fully opaque, the way Terminal.app draws
+     * them. `true` applies the same alpha to every cell background, the way iTerm2
+     * does by default, so colored rows (diffs, prompts, TUI chrome) read as part
+     * of one translucent surface instead of solid blocks over it. Reverse-video
+     * highlights stay opaque either way, and this has no effect while
+     * `backgroundOpacity` is 1.
+     */
+    public var translucentCellBackgrounds: Bool = false {
+        didSet {
+            if translucentCellBackgrounds != oldValue {
+                colorsChanged ()
+            }
+        }
+    }
+
     /// Controls how this view responds to the bell character; `.sound`
     /// preserves the historical behavior of invoking the delegate's `bell`
     public var bellStyle: BellStyle = .sound {
