@@ -3,7 +3,9 @@
 //  SwiftTerm
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 #if canImport(CoreGraphics)
 import CoreGraphics
 #endif
@@ -114,7 +116,16 @@ enum KittyPlaceholderDecoder {
     }
 }
 
-#if canImport(CoreGraphics)
+struct KittyPlaceholderSize: Equatable, Sendable {
+    let width: Double
+    let height: Double
+
+    init(width: Double, height: Double) {
+        self.width = width
+        self.height = height
+    }
+}
+
 struct KittyPlaceholderRenderPlacement: Equatable {
     let offsetX: Int
     let offsetY: Int
@@ -125,10 +136,10 @@ struct KittyPlaceholderRenderPlacement: Equatable {
     let destWidth: Int
     let destHeight: Int
 
-    static func compute(imageSize: CGSize,
+    static func compute(imageSize: KittyPlaceholderSize,
                         placementCols: Int,
                         placementRows: Int,
-                        cellSize: CGSize,
+                        cellSize: KittyPlaceholderSize,
                         col: Int,
                         row: Int,
                         width: Int,
@@ -142,18 +153,18 @@ struct KittyPlaceholderRenderPlacement: Equatable {
             return nil
         }
 
-        let placementWidth = CGFloat(placementCols) * cellSize.width
-        let placementHeight = CGFloat(placementRows) * cellSize.height
+        let placementWidth = Double(placementCols) * cellSize.width
+        let placementHeight = Double(placementRows) * cellSize.height
         let scale = min(placementWidth / imageSize.width, placementHeight / imageSize.height)
         let scaledWidth = imageSize.width * scale
         let scaledHeight = imageSize.height * scale
         let imageOffsetX = (placementWidth - scaledWidth) / 2
         let imageOffsetY = (placementHeight - scaledHeight) / 2
 
-        let runX = CGFloat(col) * cellSize.width
-        let runY = CGFloat(row) * cellSize.height
-        let runWidth = CGFloat(width) * cellSize.width
-        let runHeight = CGFloat(height) * cellSize.height
+        let runX = Double(col) * cellSize.width
+        let runY = Double(row) * cellSize.height
+        let runWidth = Double(width) * cellSize.width
+        let runHeight = Double(height) * cellSize.height
 
         let destLeft = max(runX, imageOffsetX)
         let destTop = max(runY, imageOffsetY)
@@ -173,7 +184,7 @@ struct KittyPlaceholderRenderPlacement: Equatable {
         let sourceWidth = destWidth / scale
         let sourceHeight = destHeight / scale
 
-        func roundInt(_ value: CGFloat) -> Int {
+        func roundInt(_ value: Double) -> Int {
             Int(value.rounded())
         }
 
@@ -187,7 +198,6 @@ struct KittyPlaceholderRenderPlacement: Equatable {
                                                destHeight: roundInt(destHeight))
     }
 }
-#endif
 
 enum KittyPlaceholder {
     static let baseScalar: UInt32 = 0x10EEEE

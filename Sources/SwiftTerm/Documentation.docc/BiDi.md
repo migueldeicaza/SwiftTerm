@@ -129,7 +129,7 @@ printf '\e[8l'
   new paragraphs receive at startup and after a reset. The default enables
   implicit mode with autodetection and an LTR fallback.
 - ``TerminalOptions/maximumBidiParagraphRows`` — the largest number of
-  soft-wrapped rows the renderer treats as one paragraph (default 500).
+  soft-wrapped rows the renderer treats as one paragraph (default 120).
   Paragraphs beyond the cap fall back to row-local processing, which bounds
   the cost of pathological output such as an endless wrapped line.
 - ``TerminalOptions/initialBidiArrowKeySwap`` — the initial value for

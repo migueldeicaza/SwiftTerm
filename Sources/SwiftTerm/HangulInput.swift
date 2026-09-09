@@ -1,4 +1,6 @@
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 enum HangulInput {
     struct ResyllabificationEdit: Equatable {

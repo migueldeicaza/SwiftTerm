@@ -1,10 +1,11 @@
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 /// Controls how the Metal renderer builds and caches GPU buffers each frame.
 ///
 /// The buffering mode affects the trade-off between memory usage and redraw
 /// performance. You can change this at any time via
 /// ``TerminalView/metalBufferingMode``.
-public enum MetalBufferingMode {
+public enum MetalBufferingMode: Sendable {
     /// Each terminal row's vertex data is cached independently and reused across
     /// frames. Only rows marked dirty are rebuilt, making this the best choice
     /// for typical interactive use where only a few rows change per frame.
@@ -17,3 +18,5 @@ public enum MetalBufferingMode {
     case perFrameAggregated
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

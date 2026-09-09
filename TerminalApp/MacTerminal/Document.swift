@@ -35,7 +35,7 @@ class Document: NSDocument {
         guard let vc = wc.contentViewController as? ViewController else {
             throw NSError(domain: NSOSStatusErrorDomain, code: controlErr, userInfo: nil)
         }
-        return vc.terminal.getTerminal().getBufferAsData ()
+        return vc.terminal.getBufferAsData()
    }
 
    //override func read(from data: Data, ofType typeName: String) throws {
@@ -47,4 +47,3 @@ class Document: NSDocument {
 
 
 }
-

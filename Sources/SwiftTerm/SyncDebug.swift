@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 /// Opt-in trace for synchronized-output (DEC 2026) flow and display scheduling.
@@ -16,3 +17,5 @@ enum SyncDebug {
         FileHandle.standardError.write(Data(line.utf8))
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

@@ -5,6 +5,7 @@
 //  Ported from xterm.js search addon infrastructure.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 typealias LineCacheEntry = (lineAsString: String, lineOffsets: [Int])
@@ -75,13 +76,13 @@ final class SearchLineCache {
                 startCol: 0,
                 endCol: -1,
                 skipNullCellsFollowingWide: true,
-                characterProvider: { self.terminal.getCharacter(for: $0) }
+                textProvider: { self.terminal.getText(for: $0) }
             ).replacingOccurrences(of: "\u{0}", with: " ")
 
             if lineWrapsToNext, let nextLine {
                 let lastIndex = max(line.count - 1, 0)
-                let lastCell = line[lastIndex]
-                let lastCellIsNull = lastCell.code == 0 && lastCell.width <= 1
+                let lastCellIsNull = line.packedCode(at: lastIndex) == 0 &&
+                    line.packedWidth(at: lastIndex) <= 1
                 if lastCellIsNull && nextLine.getWidth(index: 0) == 2 {
                     if !string.isEmpty {
                         string.removeLast()
@@ -103,3 +104,5 @@ final class SearchLineCache {
         return (strings.joined(), lineOffsets)
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

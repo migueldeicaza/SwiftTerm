@@ -4,11 +4,13 @@
 //
 //  Created by Miguel de Icaza on 4/15/20.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(iOS) || os(visionOS) || os(macOS)
 import Foundation
 
 /// Delegate used by ``TerminalView`` to notify the user of events happening
 /// in it.
+@MainActor
 public protocol TerminalViewDelegate: AnyObject {
     /**
      * The client code sending commands to the terminal has requested a new size for the terminal
@@ -17,6 +19,40 @@ public protocol TerminalViewDelegate: AnyObject {
      *
      * This is needed for the rare cases where the remote client request 80 or 132 column displays,
      * it is a rare feature and you most likely can ignore this request.
+     *
+     * ### If you resize a window here, do not animate it
+     *
+     * Resizing the window in response to this callback is a feedback loop: the
+     * new frame resizes the terminal, which calls this method again. It settles
+     * immediately when the frame you set is the one the terminal already wants.
+     *
+     * Animating that resize does not settle. `NSWindow.setFrame(_:display:animate:)`
+     * with `animate: true` emits a stream of intermediate frames, each of which
+     * resizes the terminal and calls back here, and each callback starts another
+     * animation. Measured on a resize under load, main-thread stall p99 was
+     * 14–35 ms animated against 6–17 ms not — before anything else was changed.
+     *
+     * Guard the callback by comparing frames rather than with a re-entrancy
+     * flag. A `changingSize`-style flag only stops the loop while the callback
+     * re-enters inside the same call stack, and SwiftTerm does not promise that:
+     * during a live drag this notification is coalesced to one per display
+     * frame and arrives after your flag has been cleared.
+     *
+     * ```swift
+     * func sizeChanged (source: TerminalView, newCols: Int, newRows: Int) {
+     *     guard let window = view.window else { return }
+     *     let optimal = terminal.getOptimalFrameSize()
+     *     let target = CGRect(x: window.frame.minX, y: window.frame.minY,
+     *                         width: optimal.width,
+     *                         height: window.frame.height - view.frame.height + optimal.height)
+     *     // Idempotent: nothing to do when the window is already the right size.
+     *     if abs(target.width - window.frame.width) < 0.5,
+     *        abs(target.height - window.frame.height) < 0.5 { return }
+     *     window.setFrame(target, display: true, animate: false)
+     * }
+     * ```
+     *
+     * See <doc:Embedding> for more information.
      */
     func sizeChanged (source: TerminalView, newCols: Int, newRows: Int)
   
@@ -88,6 +124,46 @@ public protocol TerminalViewDelegate: AnyObject {
      * - Returns: the current clipboard contents, or `nil` to deny the request
      */
     func clipboardRead(source: TerminalView) -> Data?
+
+    /// Returns the Kitty clipboard services that this host explicitly supports.
+    func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities
+
+    /// Returns available MIME types for an OSC 5522 read or a paste event.
+    ///
+    /// Return `nil` to use the platform pasteboard. A non-nil list makes the
+    /// host the clipboard source for the paste snapshot as well, so the event
+    /// and a later read describe the same clipboard.
+    func kittyClipboardAvailableMimeTypes(
+        source: TerminalView,
+        location: KittyClipboardLocation
+    ) -> [String]?
+
+    /// Reads one MIME representation for an OSC 5522 read or a paste event.
+    ///
+    /// Return `nil` to use the platform pasteboard. The result distinguishes
+    /// data, unavailable, denied, and busy; empty data is a valid
+    /// representation.
+    func kittyClipboardRead(
+        source: TerminalView,
+        location: KittyClipboardLocation,
+        mimeType: String
+    ) -> KittyClipboardReadResult?
+
+    /// Publishes every OSC 5522 representation and alias as one atomic update.
+    ///
+    /// Return ``KittyClipboardWriteResult/unsupported`` to use the platform
+    /// pasteboard.
+    func kittyClipboardWrite(
+        source: TerminalView,
+        location: KittyClipboardLocation,
+        content: KittyClipboardWriteContent
+    ) -> KittyClipboardWriteResult
+
+    /// Requests user permission for an OSC 5522 operation.
+    func kittyClipboardRequestPermission(
+        source: TerminalView,
+        request: KittyClipboardPermissionRequest
+    ) -> KittyClipboardPermissionResult
     
     /**
      * This method is invoked when the client application (iTerm2) has issued a OSC 1337 and
@@ -105,3 +181,5 @@ public protocol TerminalViewDelegate: AnyObject {
 
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

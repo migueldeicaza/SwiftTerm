@@ -1,0 +1,31 @@
+vtebench-derived material
+=========================
+
+The workload definitions, Swift workload generators, and captured Vim session
+resources in this directory are based on vtebench:
+
+    https://github.com/alacritty/vtebench
+    revision ead80032e57dee2e75f0b51f2ea67528647d9944
+
+vtebench authors include:
+
+    Christian Duerr <contact@christianduerr.com>
+    Joe Wilm <joe@jwilm.com>
+    vtebench contributors
+
+vtebench offers its work under either of these licenses, at your option:
+
+    Apache License, Version 2.0
+    MIT License
+
+The complete license texts are included in:
+
+    Licenses/LICENSE-APACHE
+    Licenses/LICENSE-MIT
+
+The Swift files are ports and contain modifications from the original shell
+workload generators. The captured Vim session resources are unmodified copies.
+See VTEBENCH-NOTICE.md for resource checksums.
+
+This notice applies to the vtebench-derived material. The main SwiftTerm
+repository license applies to other SwiftTerm material.

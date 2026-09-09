@@ -35,8 +35,7 @@ class TermcastPlayer {
             // Handle different event types
             switch event.eventType {
             case .output:
-                print(event.eventData, terminator: "")
-                fflush(stdout)
+                writeToStandardOutput(event.eventData)
             case .resize:
                 handleResize(event.eventData)
             case .input, .marker:
@@ -48,14 +47,13 @@ class TermcastPlayer {
             lastTime = event.time
         }
         
-        print() // Final newline
+        writeToStandardOutput("\n")
     }
     
     private func setTerminalSize(width: Int, height: Int) {
         // Try to set the terminal size using ANSI escape codes
         // This may not work in all terminals, but it's worth trying
-        print("\u{001B}[8;\(height);\(width)t", terminator: "")
-        fflush(stdout)
+        writeToStandardOutput("\u{001B}[8;\(height);\(width)t")
     }
     
     private func handleResize(_ data: String) {
@@ -68,6 +66,10 @@ class TermcastPlayer {
         }
         
         setTerminalSize(width: width, height: height)
+    }
+
+    private func writeToStandardOutput(_ string: String) {
+        FileHandle.standardOutput.write(Data(string.utf8))
     }
 }
 

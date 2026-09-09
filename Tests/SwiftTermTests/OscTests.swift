@@ -28,9 +28,14 @@ final class SwiftTermOsc {
 
     private final class TitleDelegate: TerminalDelegate {
         private(set) var titles: [String] = []
+        private(set) var iconTitles: [String] = []
 
         func setTerminalTitle(source: Terminal, title: String) {
             titles.append(title)
+        }
+
+        func setTerminalIconTitle(source: Terminal, title: String) {
+            iconTitles.append(title)
         }
 
         func send(source: Terminal, data: ArraySlice<UInt8>) {}
@@ -44,6 +49,41 @@ final class SwiftTermOsc {
         }
 
         func send(source: Terminal, data: ArraySlice<UInt8>) {}
+    }
+
+    private final class ResponseDelegate: TerminalDelegate {
+        private(set) var responses: [[UInt8]] = []
+
+        func send(source: Terminal, data: ArraySlice<UInt8>) {
+            responses.append(Array(data))
+        }
+    }
+
+    @Test func testOscITerm2CapabilitiesReport() {
+        let delegate = ResponseDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(featureReport: "T3CwUw17")
+        )
+
+        terminal.feed(text: "\u{1b}]1337;Capabilities\u{1b}\\")
+
+        #expect(delegate.responses == [Array("\u{1b}]1337;Capabilities=T3CwUw17\u{1b}\\".utf8)])
+    }
+
+    @Test func testOscITerm2CapabilitiesReportIsOptInAndValidated() {
+        let disabledDelegate = ResponseDelegate()
+        let disabled = Terminal(delegate: disabledDelegate)
+        disabled.feed(text: "\u{1b}]1337;Capabilities\u{07}")
+        #expect(disabledDelegate.responses.isEmpty)
+
+        let invalidDelegate = ResponseDelegate()
+        let invalid = Terminal(
+            delegate: invalidDelegate,
+            options: TerminalOptions(featureReport: "T3;unsafe")
+        )
+        invalid.feed(text: "\u{1b}]1337;Capabilities\u{07}")
+        #expect(invalidDelegate.responses.isEmpty)
     }
 
     @Test func testOscTitleBelTerminator() {
@@ -68,6 +108,22 @@ final class SwiftTermOsc {
         terminal.feed(text: "\u{1b}]2;def\u{1b}\\")
 
         #expect(delegate.titles.last == "def")
+    }
+
+    @Test func testIndividualTitleStacksRestoreMatchingTitles() {
+        let delegate = TitleDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+        )
+
+        terminal.feed(text: "\u{1b}]1;old-icon\u{1b}\\\u{1b}[22;1t")
+        terminal.feed(text: "\u{1b}]2;old-window\u{1b}\\\u{1b}[22;2t")
+        terminal.feed(text: "\u{1b}]1;new-icon\u{1b}\\\u{1b}]2;new-window\u{1b}\\")
+        terminal.feed(text: "\u{1b}[23;1t\u{1b}[23;2t")
+
+        #expect(delegate.iconTitles.last == "old-icon")
+        #expect(delegate.titles.last == "old-window")
     }
     
     @Test func testOscTerminalTitle() {
@@ -1568,13 +1624,16 @@ final class SwiftTermOsc {
     @Test func testHeadlessSendRunsSubmissionHeuristic() {
         let queue = DispatchQueue(label: "test.osc133.headless")
         let headless = HeadlessTerminal(queue: queue) { _ in }
-        headless.terminal.feed(text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd")
-        #expect(headless.terminal.buffer.semanticInput == .armed)
+        let terminal = headless.terminal!
+        terminal.terminalLock.withLock {
+            terminal.feed(text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd")
+        }
+        #expect(terminal.terminalLock.withLock { terminal.buffer.semanticInput } == .armed)
 
         headless.send(data: [0x0d][...])
         queue.sync { }   // drain the registration
 
-        #expect(headless.terminal.buffer.semanticInput == .submitted)
+        #expect(terminal.terminalLock.withLock { terminal.buffer.semanticInput } == .submitted)
     }
 
     // B.4 exit criterion: the headless `send` marshals `registerUserInput`
@@ -1582,22 +1641,20 @@ final class SwiftTermOsc {
     // state mutation is serialized even when `send` is called from arbitrary
     // threads. This reproduces that pattern for the thread sanitizer.
     // F.3: the E.3 fix is the nil-queue fallback. Constructed with the default
-    // (nil-queue) init, `send` from a background thread must still reach the
-    // submission heuristic, marshaled onto `.main`. Deleting the hop leaves the
-    // buffer armed → this goes red.
-    @Test func testHeadlessNilQueueSendRunsSubmissionHeuristic() async {
-        let headless = HeadlessTerminal { _ in }   // nil queue -> effective .main
-        headless.terminal.feed(text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd")
-        #expect(headless.terminal.buffer.semanticInput == .armed)
-
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            DispatchQueue.global().async {
-                headless.send(data: [0x0d][...])
-                // The resume lands on .main after the send's registration (FIFO).
-                DispatchQueue.main.async { cont.resume() }
-            }
+    // init, `send` must reach the submission heuristic on the same private
+    // serial queue that LocalProcess uses for queued process output. Deleting
+    // the hop leaves the buffer armed → this goes red.
+    @Test func testHeadlessNilQueueSendRunsSubmissionHeuristic() {
+        let headless = HeadlessTerminal { _ in }
+        let terminal = headless.terminal!
+        terminal.terminalLock.withLock {
+            terminal.feed(text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd")
         }
-        #expect(headless.terminal.buffer.semanticInput == .submitted)
+        #expect(terminal.terminalLock.withLock { terminal.buffer.semanticInput } == .armed)
+
+        headless.send(data: [0x0d][...])
+        headless.deliveryQueue.sync { }
+        #expect(terminal.terminalLock.withLock { terminal.buffer.semanticInput } == .submitted)
     }
 
     // F.3: the TSan stress drives the real `HeadlessTerminal.send` (marshaling
@@ -1606,25 +1663,30 @@ final class SwiftTermOsc {
     @Test func testHeadlessConcurrentSendFeedIsSerialized() {
         let queue = DispatchQueue(label: "test.osc133.headless.stress")
         let headless = HeadlessTerminal(queue: queue) { _ in }
+        let terminal = headless.terminal!
+        let inputAccess = HeadlessInputTestAccess(headless)
+        let terminalAccess = LockedTerminalTestAccess(terminal)
         let group = DispatchGroup()
         for i in 0..<300 {
             group.enter()
             DispatchQueue.global().async {
-                headless.send(data: [0x0d][...])   // marshals onto `queue`
+                inputAccess.send([0x0d][...])   // marshals onto `queue`
                 group.leave()
             }
             group.enter()
             DispatchQueue.global().async {
                 queue.async {
-                    headless.terminal.feed(
-                        text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd-\(i)\r\n")
+                    terminalAccess.withLock { terminal in
+                        terminal.feed(
+                            text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd-\(i)\r\n")
+                    }
                 }
                 group.leave()
             }
         }
         group.wait()
         queue.sync { }   // drain
-        #expect(headless.terminal.buffer.semanticPromptInvariantsHold())
+        #expect(terminal.terminalLock.withLock { terminal.buffer.semanticPromptInvariantsHold() })
     }
 
     // F exit criterion: the invariant checker passes on every healthy flow
@@ -1849,27 +1911,22 @@ final class SwiftTermOsc {
         #expect(String(bytes: delegate.sentData, encoding: .utf8) == "\u{1b}[<0;2;2M")
     }
 
-    // B.3: an owner leaked from a cross-buffer template (the `blankLine` cache)
-    // corrupts the liveness dedup. After the alt screen refreshes the cache
-    // with the alt buffer as owner, a normal-buffer scroll clones it; the clone
-    // must be stamped with the normal buffer at attach time, not inherit the
-    // alt owner — the ownership invariant catches the leak.
-    @Test func testOscClonedLineOwnerIsSetAtAttachAfterAltScreen() {
+    // B.3: a new or recycled line must get the active buffer as its owner after
+    // an alternate-screen transition. A stale owner corrupts liveness dedup.
+    @Test func testOscLineOwnerIsSetAtAttachAfterAltScreen() {
         let terminal = Terminal(delegate: SemanticDelegate(),
                                 options: TerminalOptions(cols: 8, rows: 3, scrollback: 4))
         terminal.feed(text: "\u{1b}]133;A\u{07}>\u{1b}]133;B\u{07}cmd")
-        // Enter the alt screen and scroll it so `blankLine` is refreshed with
-        // the alt buffer as its owner.
+        // Enter the alternate screen and scroll it to allocate and recycle
+        // lines owned by the alternate buffer.
         terminal.feed(text: "\u{1b}[?1049h")
         for i in 0..<5 { terminal.feed(text: "alt-\(i)\r\n") }
         terminal.feed(text: "\u{1b}[?1049l")
-        // Scroll the normal buffer: it clones the alt-owned cached blank line.
+        // Return to the normal screen and scroll it to allocate and recycle
+        // lines owned by the normal buffer.
         for i in 0..<5 { terminal.feed(text: "norm-\(i)\r\n") }
 
-        // Every line attached to the normal buffer is owned by it — a clone
-        // stamped at attach, never carrying the alt template's owner or left
-        // unowned. Neutering the attach hook leaves a clone unowned and fails
-        // this.
+        // Every line attached to the normal buffer is owned by that buffer.
         for row in 0..<terminal.buffer.lines.count {
             #expect(terminal.buffer.lines[row].owningBuffer === terminal.buffer)
         }

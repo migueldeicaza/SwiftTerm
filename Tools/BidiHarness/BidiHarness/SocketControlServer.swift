@@ -2,7 +2,13 @@ import Darwin
 import Foundation
 
 final class SocketControlServer {
-    typealias Handler = (HarnessCommand) throws -> Any
+    typealias Handler = @MainActor @Sendable (HarnessCommand) throws -> Any
+
+    private struct ControlRequest: Decodable, Sendable {
+        var id: JSONValue?
+        var command: String
+        var arguments: [String: JSONValue] = [:]
+    }
 
     private let path: String
     private let handler: Handler
@@ -80,12 +86,13 @@ final class SocketControlServer {
     private func acceptConnection() {
         let connection = Darwin.accept(listener, nil, nil)
         guard connection >= 0 else { return }
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.serve(connection)
+        let handler = handler
+        DispatchQueue.global(qos: .userInitiated).async {
+            Self.serve(connection, handler: handler)
         }
     }
 
-    private func serve(_ connection: Int32) {
+    private static func serve(_ connection: Int32, handler: Handler) {
         defer { close(connection) }
         var framer = JSONLineFramer()
         var buffer = [UInt8](repeating: 0, count: 16_384)
@@ -95,64 +102,89 @@ final class SocketControlServer {
             do {
                 let messages = try framer.append(Data(buffer[0..<count]))
                 for message in messages {
-                    let response = process(message)
-                    guard writeResponse(response, to: connection) else { return }
+                    guard let response = process(message, handler: handler),
+                          writeResponse(response, to: connection) else { return }
                 }
             } catch {
-                writeResponse(errorResponse(id: NSNull(), code: "messageTooLarge", message: String(describing: error)), to: connection)
+                if let response = Self.encodedErrorResponse(
+                    id: .null,
+                    code: "messageTooLarge",
+                    message: String(describing: error)) {
+                    writeResponse(response, to: connection)
+                }
                 return
             }
         }
     }
 
-    private func process(_ data: Data) -> [String: Any] {
-        var requestID: Any = NSNull()
+    private static func process(_ data: Data, handler: Handler) -> Data? {
+        var requestID = JSONValue.null
         do {
-            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                throw HarnessError.invalidArgument("The request must be a JSON object")
-            }
-            requestID = object["id"] ?? NSNull()
-            guard let commandName = object["command"] as? String, !commandName.isEmpty else {
+            let request = try JSONDecoder().decode(ControlRequest.self, from: data)
+            requestID = request.id ?? .null
+            guard !request.command.isEmpty else {
                 throw HarnessError.invalidArgument("The request requires command")
             }
-            let rawArguments = object["arguments"] as? [String: Any] ?? [:]
-            let commandData = try JSONSerialization.data(withJSONObject: ["command": commandName, "arguments": rawArguments])
-            let command = try JSONDecoder().decode(HarnessCommand.self, from: commandData)
+            let command = HarnessCommand(
+                command: request.command,
+                arguments: request.arguments)
+            let responseID = requestID
 
-            let semaphore = DispatchSemaphore(value: 0)
-            var commandResult: Result<Any, Error>!
-            DispatchQueue.main.async { [handler] in
-                do { commandResult = .success(try handler(command)) }
-                catch { commandResult = .failure(error) }
-                semaphore.signal()
-            }
-            guard semaphore.wait(timeout: .now() + 600) == .success else {
-                throw HarnessError.io("The command timed out after 600 seconds")
-            }
-            switch commandResult! {
-            case .success(let result):
-                return ["id": requestID, "ok": true, "result": result]
-            case .failure(let error):
-                throw error
+            return DispatchQueue.main.sync {
+                do {
+                    return Self.encodedResponse([
+                        "id": responseID.foundationValue,
+                        "ok": true,
+                        "result": try handler(command),
+                    ])
+                } catch let error as HarnessError {
+                    return Self.encodedErrorResponse(
+                        id: responseID,
+                        code: error.code,
+                        message: error.description)
+                } catch {
+                    return Self.encodedErrorResponse(
+                        id: responseID,
+                        code: "invalidRequest",
+                        message: error.localizedDescription)
+                }
             }
         } catch let error as HarnessError {
-            return errorResponse(id: requestID, code: error.code, message: error.description)
+            return Self.encodedErrorResponse(
+                id: requestID,
+                code: error.code,
+                message: error.description)
         } catch {
-            return errorResponse(id: requestID, code: "invalidRequest", message: error.localizedDescription)
+            return Self.encodedErrorResponse(
+                id: requestID,
+                code: "invalidRequest",
+                message: error.localizedDescription)
         }
     }
 
-    private func errorResponse(id: Any, code: String, message: String) -> [String: Any] {
-        ["id": id, "ok": false, "error": ["code": code, "message": message]]
+    private static func encodedErrorResponse(
+        id: JSONValue,
+        code: String,
+        message: String
+    ) -> Data? {
+        Self.encodedResponse([
+            "id": id.foundationValue,
+            "ok": false,
+            "error": ["code": code, "message": message],
+        ])
+    }
+
+    private static func encodedResponse(_ response: [String: Any]) -> Data? {
+        guard JSONSerialization.isValidJSONObject(response),
+              var data = try? JSONSerialization.data(withJSONObject: response, options: [.sortedKeys]) else {
+            return nil
+        }
+        data.append(0x0a)
+        return data
     }
 
     @discardableResult
-    private func writeResponse(_ response: [String: Any], to connection: Int32) -> Bool {
-        guard JSONSerialization.isValidJSONObject(response),
-              var data = try? JSONSerialization.data(withJSONObject: response, options: [.sortedKeys]) else {
-            return false
-        }
-        data.append(0x0a)
+    private static func writeResponse(_ data: Data, to connection: Int32) -> Bool {
         return data.withUnsafeBytes { bytes in
             guard var pointer = bytes.baseAddress else { return false }
             var remaining = bytes.count

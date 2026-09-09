@@ -5,6 +5,7 @@
 //  Ported from xterm.js search addon infrastructure.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 struct SearchResult: Equatable {
@@ -306,14 +307,17 @@ final class SearchEngine {
 
         let startColOffset = foundIndex - offsets[startRowOffset]
         let endColOffset = foundIndex + matchTerm.count - offsets[endRowOffset]
-        let startColIndex = stringLengthToBufferSize(row: row + startRowOffset, offset: startColOffset)
-        let endColIndex = stringLengthToBufferSize(row: row + endRowOffset, offset: endColOffset)
+        let startColIndex = stringLengthToBufferSize(
+            row: row + startRowOffset, offset: startColOffset, roundUp: false)
+        let endColIndex = stringLengthToBufferSize(
+            row: row + endRowOffset, offset: endColOffset, roundUp: true)
         let size = endColIndex - startColIndex + terminal.cols * (endRowOffset - startRowOffset)
 
         return SearchResult(term: matchTerm, col: startColIndex, row: row + startRowOffset, size: size)
     }
 
-    private func stringLengthToBufferSize (row: Int, offset: Int) -> Int {
+    private func stringLengthToBufferSize(row: Int, offset: Int,
+                                          roundUp: Bool) -> Int {
         let buffer = terminal.displayBuffer
         guard row >= 0 && row < buffer.lines.count else {
             return 0
@@ -323,23 +327,22 @@ final class SearchEngine {
         }
 
         let line = buffer.lines[row]
-        var adjustedOffset = offset
-        var i = 0
-        while i < adjustedOffset && i < line.count {
-            let cell = line[i]
-            if cell.width == 2 {
-                let nextIndex = i + 1
-                if nextIndex < line.count {
-                    let nextCell = line[nextIndex]
-                    if nextCell.width == 0 {
-                        adjustedOffset += 1
-                    }
-                }
+        var stringOffset = 0
+        var column = 0
+        while column < line.count {
+            let cell = line.packedView(at: column)
+            let width = max(1, Int(cell.width))
+            let nextStringOffset = stringOffset + cell.getText().count
+            if offset < nextStringOffset {
+                return roundUp ? column + width : column
             }
-            i += 1
+            if offset == nextStringOffset {
+                return column + width
+            }
+            stringOffset = nextStringOffset
+            column += width
         }
-
-        return adjustedOffset
+        return column
     }
 
     private func bufferColsToStringOffset (startRow: Int, cols: Int) -> Int {
@@ -352,11 +355,12 @@ final class SearchEngine {
             let line = buffer.lines[lineIndex]
             let limit = min(remainingCols, terminal.cols)
             if limit > 0 {
-                for i in 0..<limit {
-                    let cell = line[i]
-                    if cell.width > 0 {
-                        offset += 1
-                    }
+                var column = 0
+                while column < limit {
+                    let cell = line.packedView(at: column)
+                    let width = max(1, Int(cell.width))
+                    offset += cell.getText().count
+                    column += width
                 }
             }
             lineIndex += 1
@@ -378,3 +382,5 @@ private struct SearchPosition {
     var startCol: Int
     var startRow: Int
 }
+
+#endif // !SWIFTTERM_EMBEDDED

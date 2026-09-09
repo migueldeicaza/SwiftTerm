@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import CoreGraphics
 import Foundation
@@ -103,3 +104,5 @@ struct BlockElementRenderItem {
     let foregroundColor: TTColor
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

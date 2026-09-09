@@ -48,7 +48,7 @@ testing, and screen-scraping terminal output.
 - Hyperlink support (OSC 8)
 - Configurable Apple view link tracking via ``LinkReporting`` (explicit OSC 8 and implicit URL detection)
 - Optional GPU-accelerated rendering via Metal (macOS, iOS, visionOS)
-- Graphics: Sixel, iTerm2-style inline images, and Kitty graphics protocol
+- Graphics: Sixel, iTerm2-style inline images, and the Kitty graphics protocol. See <doc:KittyGraphicsIntegration>.
 - Selection and search with a built-in macOS find bar and programmable search APIs
 - Thread-safe ``Terminal`` instances
 - Terminal session recording and playback with `termcast`
@@ -64,6 +64,8 @@ testing, and screen-scraping terminal output.
 
 ### Views
 
+- <doc:Embedding>
+- <doc:AdoptingTheRenderLoop>
 - ``TerminalView``
 - ``TerminalViewDelegate``
 
@@ -81,10 +83,17 @@ testing, and screen-scraping terminal output.
 
 ### Guides
 
+- <doc:MigratingFrom1To2>
+- <doc:GettingStarted>
+- <doc:Embedding>
+- <doc:AdoptingTheRenderLoop>
 - <doc:Customization>
 - <doc:BiDi>
 - <doc:GPURendering>
 - <doc:GraphicsSupport>
+- <doc:KittyGraphicsIntegration>
+- <doc:KittyGraphicsProtocol>
+- <doc:KittyClipboardProtocol>
 - <doc:SSHIntegration>
 
 ### Terminal Delegate
@@ -133,8 +142,34 @@ testing, and screen-scraping terminal output.
 
 ### Graphics
 
+- <doc:GraphicsSupport>
+- <doc:KittyGraphicsIntegration>
+- <doc:KittyGraphicsProtocol>
+- ``KittyGraphicsConfiguration``
+- ``KittyGraphicsConfiguration/LocalMediaPolicy``
+- ``KittyGraphicsRenderSnapshot``
+- ``KittyGraphicsRenderImage``
+- ``KittyGraphicsRenderPlacement``
+- ``KittyGraphicsPixelRect``
+- ``KittyGraphicsCellGeometry``
 - ``ImageSizeRequest``
 - ``TerminalImage``
+
+### Clipboard
+
+- <doc:KittyClipboardProtocol>
+- ``KittyClipboardPolicy``
+- ``KittyClipboardCapabilities``
+- ``KittyClipboardLocation``
+- ``TerminalClipboardSnapshot``
+- ``TerminalPasteRequest``
+- ``TerminalPasteResult``
+- ``KittyClipboardWriteContent``
+- ``KittyClipboardReadResult``
+
+### Compatibility and Verification
+
+- <doc:KittyGraphicsParityMatrix>
 
 ### Mouse Input
 

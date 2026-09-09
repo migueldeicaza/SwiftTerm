@@ -6,7 +6,9 @@
 //  Copyright © 2019 Miguel de Icaza. All rights reserved.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /**
  * The buffer represents the contents shown to the user.
@@ -16,8 +18,38 @@ import Foundation
  *
  * Some of the saved state information is also tracked here.
  */
+/// A one-field box that lets other objects reach a ``Buffer`` without forming a
+/// `weak` reference to it.
+///
+/// `weak` is what moves an object onto the Swift runtime's side-table refcount
+/// path, and that transition is one-way: from then on every retain and release
+/// of the buffer costs roughly 9x what an inline refcount does. `Buffer` is
+/// retained and released continuously by the parse loop, so the tax is paid in
+/// the hottest place we have. Routing the back-references through a box keeps
+/// the buffer itself on the fast path — nothing points at it weakly, and the
+/// box, which is what the weak-style lifetime question is really about, is
+/// never touched in a hot path.
+///
+/// Both the buffer and its lines hold the box strongly. ``Buffer/deinit``
+/// clears ``buffer``, so a reader that outlives the buffer sees nil rather than
+/// a dangling pointer.
+final class BufferRef {
+#if SWIFTTERM_EMBEDDED
+    var buffer: Buffer?
+#else
+    unowned(unsafe) var buffer: Buffer?
+#endif
+    init (_ buffer: Buffer) { self.buffer = buffer }
+}
+
 public final class Buffer {
-    private var _lines: CircularBufferLineList
+    private let _lines: CircularBufferLineList
+    /// Identifier space shared by every packed cell in this buffer.
+    let cellArena: CellArena
+
+    /// The box handed to lines and to the line list so they can reach back here.
+    /// Implicitly unwrapped because it can only be built once `self` exists.
+    private(set) var selfRef: BufferRef! = nil
     var xDisp, _yDisp, xBase: Int
     private var _x, _y, _yBase: Int
     private var _linesWithImagesCount: Int = 0
@@ -60,7 +92,7 @@ public final class Buffer {
         set {
             if _yDisp < 0 {
                 #if DEBUG
-                abort()
+                fatalError("yDisp must not be negative")
                 #else
                 return
                 #endif
@@ -79,7 +111,7 @@ public final class Buffer {
         set(newValue) {
             if newValue < 0 {
                 #if DEBUG
-                abort()
+                fatalError("x must not be negative")
                 #else
                 return
                 #endif
@@ -96,7 +128,7 @@ public final class Buffer {
         set(newValue) {
             if newValue < 0 {
                 #if DEBUG
-                abort()
+                fatalError("y must not be negative")
                 #else
                 return
                 #endif
@@ -114,7 +146,7 @@ public final class Buffer {
         set {
             if newValue < 0 {
                 #if DEBUG
-                abort()
+                fatalError("scrollBottom must not be negative")
                 #else
                 return
                 #endif
@@ -209,8 +241,10 @@ public final class Buffer {
     
     var scrollback: Int?
     
+    /// Yields the line list without creating an owned result. Hot scroll paths
+    /// borrow the list for the duration of one operation.
     var lines : CircularBufferLineList {
-        get { return _lines }
+        _read { yield _lines }
     }
 
     /// Returns true if any lines in this buffer have images attached
@@ -237,6 +271,14 @@ public final class Buffer {
         }
     }
 
+    /// Removes inline images that normal terminal output replaces.
+    /// Kitty placements are stored independently in the terminal core.
+    func clearTextOverwrittenImagesFromLine(_ line: BufferLine) {
+        guard line.images != nil else { return }
+        _linesWithImagesCount -= 1
+        line.images = nil
+    }
+
     /// Recalculates the count of lines with images (used after reflow operations)
     func recalculateLinesWithImagesCount() {
         var count = 0
@@ -248,26 +290,35 @@ public final class Buffer {
         _linesWithImagesCount = count
     }
 
+    /// Points the line list back at this buffer. Replaces the four closures the
+    /// list used to hold; see ``CircularBufferLineList/owner`` for why.
     private func setupLinesCallbacks() {
-        _lines.onLineRecycled = { [weak self] hadImages in
-            if hadImages {
-                self?._linesWithImagesCount -= 1
-            }
-        }
-        _lines.onLinePushed = { [weak self] hasImages in
-            if hasImages {
-                self?._linesWithImagesCount += 1
-            }
-        }
-        // Stamp the owner at attach time (B.3): a clone never inherits a
-        // cross-buffer template's owner, so it is assigned here, when the line
-        // actually becomes a member of this buffer.
-        _lines.onLineAttached = { [weak self] line in
-            line.owningBuffer = self
+        _lines.owner = self
+        _lines.isLive = true
+    }
+
+    /// A line is about to be recycled; `hadImages` reports whether it carried any.
+    func lineWillRecycle (hadImages: Bool) {
+        if hadImages {
+            _linesWithImagesCount -= 1
         }
     }
+
+    /// A line was pushed onto the list; `hasImages` reports whether it carries any.
+    func lineDidPush (hasImages: Bool) {
+        if hasImages {
+            _linesWithImagesCount += 1
+        }
+    }
+
+    /// Stamp the owner at attach time (B.3): a clone never inherits a
+    /// cross-buffer template's owner, so it is assigned here, when the line
+    /// actually becomes a member of this buffer.
+    func lineAttached (_ line: BufferLine) {
+        line.adoptArena(cellArena)
+        line.owningBufferRef = selfRef
+    }
     
-    private var curAttr: Attribute = Attribute.empty
     private var insertMode: Bool = false
     private var marginMode: Bool = false
     private var wraparound: Bool = false
@@ -447,13 +498,9 @@ public final class Buffer {
     /// the active group's offset walk (E.4).
     func clearStaleSemanticCells(on line: BufferLine) {
         for col in 0..<line.count {
-            var cell = line[col]
-            switch cell.semanticContent {
-            case .input, .prompt:
-                cell.setSemanticContent(.none)
-                line[col] = cell
-            case .none, .output:
-                break
+            let cell = line.packedCell(at: col)
+            if cell.semanticContentCode >= 1 && cell.semanticContentCode <= 5 {
+                line.setPackedCell(cell.replacingSemanticContentCode(0), at: col)
             }
         }
     }
@@ -606,10 +653,42 @@ public final class Buffer {
         return relative
     }
     var defaultBidiState: BidiPresentationState
-    var scroll: (_ isWrapped: Bool)->() = { x in
-        fatalError("This should be set after creating a buffer")
+
+    /// The terminal that owns this buffer, set right after construction.
+    ///
+    /// This replaces a `scroll: (Bool) -> ()` closure that every owner
+    /// installed as `{ [weak self] wrapped in self?.scroll(isWrapped: wrapped) }`.
+    /// That `weak` capture was enough to move `Terminal` onto the runtime's
+    /// side-table refcount path permanently — about 9x on every retain and
+    /// release of the terminal — and it also paid a weak load per scrolled
+    /// line, in the single hottest path the parser has. A back-pointer plus a
+    /// direct call removes both, and the closure indirection with them.
+    ///
+    /// `unowned(unsafe)` is sound because a buffer is a stored property of its
+    /// terminal and cannot outlive it. See `Docs/io-cpu-profile.md` §3.1.
+#if SWIFTTERM_EMBEDDED
+    var terminal: Terminal? = nil
+#else
+    unowned(unsafe) var terminal: Terminal! = nil
+#endif
+
+    /// Scrolls the terminal that owns this buffer.
+    @inline(__always)
+    func scroll (_ isWrapped: Bool) {
+#if SWIFTTERM_EMBEDDED
+        // Embedded uses a breakable optional back-reference so `Terminal.close()`
+        // can release its object graph.
+        terminal?.scroll (isWrapped: isWrapped)
+#else
+        // This is a row-level hot path. Keep the normal-build back-reference
+        // direct: using the Embedded optional dispatch here caused a measurable
+        // scrolling regression. The buffer is owned by its terminal, so the
+        // `unowned(unsafe)` reference above is valid for this build.
+        terminal.scroll (isWrapped: isWrapped)
+#endif
     }
-    
+
+
     func setInsertMode(_ value: Bool) {
         self.insertMode = value
     }
@@ -622,8 +701,15 @@ public final class Buffer {
         self.wraparound = value
     }
 
-    public init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?,
-                 bidiState: BidiPresentationState = .default) {
+    public convenience init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?,
+                             bidiState: BidiPresentationState = .default) {
+        self.init(cols: cols, rows: rows, tabStopWidth: tabStopWidth,
+                  scrollback: scrollback, bidiState: bidiState, arena: CellArena())
+    }
+
+    init (cols: Int, rows: Int, tabStopWidth: Int, scrollback: Int?,
+          bidiState: BidiPresentationState = .default, arena: CellArena) {
+        cellArena = arena
         self.hasScrollback = scrollback != nil
         _yDisp = 0
         xDisp = 0
@@ -646,11 +732,31 @@ public final class Buffer {
         
         let len = hasScrollback ? (scrollback ?? 0) + rows : rows
         _lines = CircularBufferLineList (maxLength: len)
-        _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
+        // Must precede setupLinesCallbacks: attaching a line stamps `selfRef`.
+        selfRef = BufferRef (self)
         setupLinesCallbacks()
         setupTabStops (tabStopWidth: tabStopWidth)
     }
-        
+
+    deinit {
+        // Anything still holding the box — a line that outlived this buffer —
+        // now reads nil instead of a dangling pointer.
+        selfRef?.buffer = nil
+    }
+
+#if SWIFTTERM_EMBEDDED
+    func releaseEmbeddedReferences() {
+        terminal = nil
+        _lines.owner = nil
+        _lines.isLive = false
+        selfRef?.buffer = nil
+        for line in _lines.getArray() {
+            line?.owningBufferRef = nil
+        }
+    }
+#endif
+
+
     public func getCorrectBufferLength (_ rows: Int) -> Int
     {
         if hasScrollback {
@@ -666,19 +772,50 @@ public final class Buffer {
         let fgbg = attribute == nil ? Attribute.empty : attribute!.justColor ()
         return CharData(attribute: fgbg, scalar: UnicodeScalar(32)!, size: 1)
     }
+
+    func getPackedNullCell(attribute: Attribute? = nil) -> PackedCell {
+        let color = attribute?.justColor() ?? Attribute.empty
+        return cellArena.pack(attribute: color, scalar: 32, widthState: .narrow)!
+    }
+
+    func getPackedBlankCell(attribute: Attribute) -> PackedCell {
+        cellArena.pack(attribute: attribute, scalar: 0, widthState: .narrow)!
+    }
     
     public func getBlankLine (attribute: Attribute, isWrapped: Bool = false) -> BufferLine
     {
-        let cd = CharData (attribute: attribute)
-        let line = BufferLine(cols: cols, fillData: cd, isWrapped: isWrapped,
-                              bidiState: defaultBidiState)
+        makeBlankLine(cols: cols, packedBlank: getPackedBlankCell(attribute: attribute),
+                      isWrapped: isWrapped)
+    }
+
+    /// Creates a blank row without converting an arena-owned cell back through
+    /// `Attribute`.
+    func getBlankLine(packedBlank: PackedCell, isWrapped: Bool = false) -> BufferLine {
+        makeBlankLine(cols: cols, packedBlank: packedBlank, isWrapped: isWrapped)
+    }
+
+    func getBlankLine(packedBlank: PackedCell, isWrapped: Bool,
+                      bidiState: BidiPresentationState) -> BufferLine {
+        makeBlankLine(cols: cols, packedBlank: packedBlank,
+                      isWrapped: isWrapped, bidiState: bidiState)
+    }
+
+    private func makeBlankLine(cols: Int, packedBlank: PackedCell,
+                               isWrapped: Bool = false,
+                               bidiState: BidiPresentationState? = nil) -> BufferLine
+    {
+        let line = BufferLine(cols: cols, packedFill: packedBlank,
+                              blankTailCell: packedBlank,
+                              isWrapped: isWrapped,
+                              bidiState: bidiState ?? defaultBidiState,
+                              arena: cellArena)
         line.owningBuffer = self
         return line
     }
     
     func makeEmptyLine (_ line: Int) -> BufferLine
     {
-        return getBlankLine(attribute: CharData.defaultAttr, isWrapped: false)
+        getBlankLine(packedBlank: PackedCell(), isWrapped: false)
     }
     
     /**
@@ -714,10 +851,11 @@ public final class Buffer {
         x = 0
         y = 0
 
-        _lines = CircularBufferLineList (maxLength: getCorrectBufferLength(rows))
-        _lines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
-        setupLinesCallbacks()
-        _linesWithImagesCount = 0
+        // Reset in place: `_lines` is a `let` so the hot ring accesses can
+        // borrow it without ARC traffic. Owner and liveness survive the reset,
+        // and the live list reports every dropped line with images, so
+        // `_linesWithImagesCount` is already back to zero afterwards.
+        _lines.reset(maxLength: getCorrectBufferLength(rows))
         scrollTop = 0
         scrollBottom = rows - 1
         marginLeft = 0
@@ -763,8 +901,9 @@ public final class Buffer {
             return
         }
         let attr = attribute != nil ? attribute! : CharData.defaultAttr
+        let packedBlank = getPackedBlankCell(attribute: attr)
         for _ in 0..<rows {
-            _lines.push (getBlankLine (attribute: attr))
+            _lines.push(getBlankLine(packedBlank: packedBlank))
         }
     }
     
@@ -774,6 +913,7 @@ public final class Buffer {
     
     public func resize (newCols : Int, newRows : Int)
     {
+        let defaultBlank = PackedCell()
         if marginRight > newCols - 1 {
             marginRight = newCols - 1
         }
@@ -794,7 +934,8 @@ public final class Buffer {
                 // are created on demand at the buffer's current cols, so they never
                 // need resizing here.
                 for i in 0..<lines.count {
-                    lines [i].resize (cols: newCols, fillData: CharData.Null)
+                    lines[i].resize(cols: newCols,
+                                    fill: defaultBlank)
                 }
 
             }
@@ -802,9 +943,9 @@ public final class Buffer {
             // Resize rows in both directions as needed
             var addToY = 0
             if rows < newRows {
-                for y in rows..<newRows {
+                for _ in rows..<newRows {
                     if lines.count < newRows + yBase {
-                        if yBase > 0 && lines.count <= yBase + y + addToY + 1 {
+                        if yBase > 0 && lines.count <= yBase + self.y + addToY + 1 {
                             // There is room above the buffer and there are no empty elements below the line,
                             // scroll up
                             yBase -= 1
@@ -816,8 +957,8 @@ public final class Buffer {
                         } else {
                             // Add a blank line if there is no buffer left at the top to scroll to, or if there
                             // are blank lines after the cursor
-                            lines.push (BufferLine (cols: newCols, fillData: CharData.Null,
-                                                    bidiState: defaultBidiState))
+                            lines.push(makeBlankLine(cols: newCols,
+                                                     packedBlank: defaultBlank))
                         }
                     }
                 }
@@ -878,7 +1019,8 @@ public final class Buffer {
             if cols > newCols {
                 // lines.count, not lines.maxLength (see the widen loop above).
                 for i in 0..<lines.count {
-                    lines [i].resize (cols: newCols, fillData: CharData.Null)
+                    lines[i].resize(cols: newCols,
+                                    fill: defaultBlank)
                 }
             }
         }
@@ -893,7 +1035,7 @@ public final class Buffer {
                 let line = lines [i]
                 if line.count < newCols {
                     print ("stop here newCols=\(newCols) but the element has: \(line.count)")
-                    abort ()
+                    fatalError("A resized line is shorter than the buffer width")
                 }
             }
         }
@@ -980,7 +1122,7 @@ public final class Buffer {
             // D.2: no `.prompt`-tagged cell on a row whose derived kind is nil.
             if semanticRowKind(at: row) == nil {
                 for column in 0..<line.count {
-                    if case .prompt = line[column].semanticContent {
+                    if case .prompt = line.packedView(at: column).semanticContent {
                         return false
                     }
                 }
@@ -997,10 +1139,10 @@ public final class Buffer {
         return true
     }
     
-    func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil) -> String
+    func translateBufferLineToString (lineIndex: Int, trimRight: Bool, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil, textProvider: ((CharData) -> String)? = nil) -> String
     {
         let line = _lines [lineIndex]
-        return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol, skipNullCellsFollowingWide: skipNullCellsFollowingWide, characterProvider: characterProvider)
+        return line.translateToString(trimRight: trimRight, startCol: startCol, endCol: endCol, skipNullCellsFollowingWide: skipNullCellsFollowingWide, characterProvider: characterProvider, textProvider: textProvider)
     }
     
     func setupTabStops (index: Int = -1, tabStopWidth: Int)
@@ -1107,7 +1249,8 @@ public final class Buffer {
         return cols
     }
 
-    func getLinesToRemove (oldCols: Int, newCols: Int, bufferAbsoluteY: Int, nullChar: CharData) -> [Int]
+    func getLinesToRemove (oldCols: Int, newCols: Int, bufferAbsoluteY: Int,
+                           nullCell: PackedCell) -> [Int]
     {
         // Gather all BufferLines that need to be removed from the Buffer here so that they can be
         // batched up and only committed once
@@ -1174,13 +1317,15 @@ public final class Buffer {
                         wrappedLines [destLineIndex].copyFrom (wrappedLines [destLineIndex - 1], srcCol: newCols - 1, dstCol: destCol, len: 1)
                         destCol += 1
                         // Null out the end of the last row
-                        wrappedLines [destLineIndex - 1].replaceCells (start: newCols - 1, end: newCols, fillData: nullChar)
+                        wrappedLines[destLineIndex - 1].replacePackedCells(
+                            start: newCols - 1, end: newCols, fill: nullCell)
                     }
                 }
             }
 
             // Clear out remaining cells or fragments could remain;
-            wrappedLines [destLineIndex].replaceCells (start: destCol, end: newCols, fillData: nullChar)
+            wrappedLines[destLineIndex].replacePackedCells(
+                start: destCol, end: newCols, fill: nullCell)
 
             // Work backwards and remove any rows at the end that only contain null cells
             var countToRemove = 0
@@ -1208,7 +1353,9 @@ public final class Buffer {
     
     func reflowWider (_ oldCols: Int, _ oldRows: Int, _ newCols: Int, _ newRows: Int)
     {
-        let toRemove = getLinesToRemove(oldCols: oldCols, newCols: newCols, bufferAbsoluteY: yBase + y, nullChar: CharData.Null)
+        let toRemove = getLinesToRemove(
+            oldCols: oldCols, newCols: newCols, bufferAbsoluteY: yBase + y,
+            nullCell: PackedCell())
         
         //print ("Lines to remove: \(toRemove) \(toRemove.count)")
         if toRemove.count > 0 {
@@ -1243,7 +1390,7 @@ public final class Buffer {
 
             // Apply the new layout
             let newLayoutLines = CircularBufferLineList (maxLength: lines.count)
-            newLayoutLines.makeEmpty = { [unowned self] line in getBlankLine(attribute: CharData.defaultAttr, isWrapped: false) }
+            newLayoutLines.owner = self
             for i in 0..<layout.count {
                   newLayoutLines.push (lines [layout [i]])
             }
@@ -1265,8 +1412,8 @@ public final class Buffer {
     
                     if lines.count < newRows {
                         // Add an extra row at the bottom of the viewport
-                        lines.push (BufferLine (cols: newCols, fillData: CharData.Null,
-                                                bidiState: defaultBidiState))
+                        lines.push(makeBlankLine(cols: newCols,
+                                                 packedBlank: PackedCell()))
                     }
                 } else {
                     if yDisp == yBase {
@@ -1390,7 +1537,7 @@ public final class Buffer {
             let paragraphBidiState = wrappedLines[0].bidiState
             if linesToAdd > 0 {
                 for _ in 0..<linesToAdd {
-                    let newLine = getBlankLine (attribute: CharData.defaultAttr, isWrapped: true)
+                    let newLine = getBlankLine(packedBlank: PackedCell(), isWrapped: true)
                     newLine.bidiState = paragraphBidiState
                     newLines.append (newLine)
                 }
@@ -1440,7 +1587,9 @@ public final class Buffer {
             // Null out the end of the line ends if a wide character wrapped to the following line
             for i in 0..<wrappedLines.count {
                 if destLineLengths [i] < newCols {
-                    wrappedLines [i] [destLineLengths [i]] = CharData.Null
+                    wrappedLines[i].setPackedCell(
+                        PackedCell(),
+                        at: destLineLengths[i])
                 }
             }
 
@@ -1486,6 +1635,7 @@ public final class Buffer {
 
             // Record original lines so they don't get overridden when we rearrange the list
             let originalLines = CircularBufferLineList (maxLength: lines.maxLength)
+            originalLines.owner = self
             for i in 0..<lines.count {
                 originalLines.push (lines [i])
             }
@@ -1545,10 +1695,15 @@ public final class Buffer {
         recalculateLinesWithImagesCount()
     }
     
-    static var n = 0
-    
+#if !SWIFTTERM_EMBEDDED
+    private static let dumpSequence = Locked(0)
+
     func dump ()
     {
+        let sequence = Buffer.dumpSequence.withLock { sequence in
+            defer { sequence += 1 }
+            return sequence
+        }
         var str = ""
         str += "xDisp=\(xDisp), yDisp=\(yDisp), xBase=\(xBase), yBase=\(yBase)\n"
         str += "scrollTop=\(scrollTop) scrollBottom=\(scrollBottom)\n"
@@ -1561,34 +1716,32 @@ public final class Buffer {
                 txt = "<empty>"
             }
             let flag = i >= yDisp ? ">>" : "  "
-            let istr = String (format: "%03d", i)
-            let cstr = String (format: "%03d", _lines.debugGetCyclicIndex(i))
+            let istr = String(i).leftPadding(toLength: 3, withPad: "0")
+            let cstr = String(_lines.debugGetCyclicIndex(i)).leftPadding(toLength: 3, withPad: "0")
             str += "[\(istr):\(cstr)]\(flag)\(txt)\n"
         }
-        let file = "/Users/miguel/Downloads/Logs/dump-\(Buffer.n)"
+        let file = "/Users/miguel/Downloads/Logs/dump-\(sequence)"
         do {
             try str.write(to: URL.init (fileURLWithPath: file), atomically: false, encoding: .utf8)
 
         } catch {
             print ("Could not log the dump() contents to \(file)")
         }
-        Buffer.n += 1
     }
+#endif
     
+    @inline(__always)
+    var allowsBulkInsert: Bool { !insertMode }
+
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
     /// Returns number of bytes consumed. Returns 0 if insert mode is active.
-    func insertAsciiRun(
-        _ bytes: ArraySlice<UInt8>,
-        attribute: Attribute,
-        resolvePayload: () -> TinyAtom?
-    ) -> Int {
+    func insertAsciiRun(_ bytes: ArraySlice<UInt8>, styleID: UInt16,
+                        payloadCode: UInt16) -> Int {
         guard !insertMode else { return 0 }
+        let semanticCode = CellArena.semanticContentCode(for: semanticContent)
         let right = marginMode ? _marginRight : _cols - 1
         var consumed = 0
         var idx = bytes.startIndex
-        var payload: TinyAtom?
-        var didResolvePayload = false
-
         while idx < bytes.endIndex {
             if _x > right {
                 guard wraparound else { break }
@@ -1605,18 +1758,10 @@ public final class Buffer {
             let available = right - _x + 1
             let runLen = min(available, bytes.endIndex - idx)
             let row = _lines[_y + _yBase]
-            if !didResolvePayload {
-                payload = resolvePayload()
-                didResolvePayload = true
-            }
-            for i in 0..<runLen {
-                var cell = CharData(attribute: attribute, code: Int32(bytes[idx + i]), size: 1)
-                cell.setSemanticContent(semanticContent)   // buffer's own classification (D.1)
-                if let payload {
-                    cell.setPayload(atom: payload)
-                }
-                row[_x + i] = cell
-            }
+            clearTextOverwrittenImagesFromLine(row)
+            row.setPackedAsciiRun(bytes, sourceStart: idx, count: runLen, at: _x,
+                                  styleID: styleID, payloadCode: payloadCode,
+                                  semanticContentCode: semanticCode)
             _x += runLen
             consumed += runLen
             idx += runLen
@@ -1624,13 +1769,91 @@ public final class Buffer {
         return consumed
     }
 
-    func insertCharacter(_ charData: CharData, resolvePayload: () -> TinyAtom?) {
+    /// Bulk-inserts borrowed ASCII characters (all width-1, non-combining).
+    /// Returns the number of bytes consumed. Returns 0 if insert mode is active.
+    func insertAsciiRun(_ bytes: Span<UInt8>, styleID: UInt16,
+                        payloadCode: UInt16) -> Int {
+        guard !insertMode else { return 0 }
+        let semanticCode = CellArena.semanticContentCode(for: semanticContent)
+        let right = marginMode ? _marginRight : _cols - 1
+        var consumed = 0
+
+        while consumed < bytes.count {
+            if _x > right {
+                guard wraparound else { break }
+                _x = marginMode ? _marginLeft : 0
+                if _y >= _scrollBottom {
+                    scroll(true)
+                } else {
+                    let paragraphBidiState = _lines[_y + _yBase].bidiState
+                    _y += 1
+                    _lines[_y + _yBase].isWrapped = true
+                    _lines[_y + _yBase].bidiState = paragraphBidiState
+                }
+            }
+            let available = right - _x + 1
+            let runLength = min(available, bytes.count - consumed)
+            let row = _lines[_y + _yBase]
+            clearTextOverwrittenImagesFromLine(row)
+            row.setPackedAsciiRun(bytes, sourceStart: consumed, count: runLength,
+                                  at: _x, styleID: styleID, payloadCode: payloadCode,
+                                  semanticContentCode: semanticCode)
+            _x += runLength
+            consumed += runLength
+        }
+        return consumed
+    }
+
+    /// Bulk-inserts validated scalars of one width class.
+    /// Returns the number of scalars consumed.
+    func insertScalarRun(_ scalars: UnsafeBufferPointer<UInt32>, width: Int,
+                         styleID: UInt16, payloadCode: UInt16) -> Int {
+        guard !insertMode else { return 0 }
+        precondition(width == 1 || width == 2)
+        let semanticCode = CellArena.semanticContentCode(for: semanticContent)
+        let widthState: PackedCell.WidthState = width == 2 ? .wide : .narrow
+        let left = marginMode ? _marginLeft : 0
+        let right = marginMode ? _marginRight : _cols - 1
+        // The scalar fallback owns the behavior when the complete region
+        // cannot hold one glyph. Do not change the cursor before the fallback.
+        guard right - left + 1 >= width else { return 0 }
+        var consumed = 0
+
+        while consumed < scalars.count {
+            if _x + width - 1 > right {
+                guard wraparound else { break }
+                _x = left
+                if _y >= _scrollBottom {
+                    scroll(true)
+                } else {
+                    let paragraphBidiState = _lines[_y + _yBase].bidiState
+                    _y += 1
+                    _lines[_y + _yBase].isWrapped = true
+                    _lines[_y + _yBase].bidiState = paragraphBidiState
+                }
+            }
+            let available = (right - _x + 1) / width
+            let runLength = min(available, scalars.count - consumed)
+            guard runLength > 0 else { break }
+            let row = _lines[_y + _yBase]
+            clearTextOverwrittenImagesFromLine(row)
+            row.setPackedScalarRun(
+                scalars, sourceStart: consumed, count: runLength, at: _x,
+                widthState: widthState, styleID: styleID,
+                payloadCode: payloadCode, semanticContentCode: semanticCode)
+            _x += runLength * width
+            consumed += runLength
+        }
+        return consumed
+    }
+
+    func insertCharacter(_ inputCell: PackedCell) {
         // D.1: stamp the OSC 133 role once, here at the insertion funnel, from
         // the buffer's own classification. No caller can forget to stamp, and
         // during ordinary output `semanticContent` is `.none` (a no-op).
-        var charData = charData
-        charData.setSemanticContent(semanticContent)
-        var chWidth = Int (charData.width)
+        let cell = inputCell.replacingSemanticContentCode(
+            CellArena.semanticContentCode(for: semanticContent))
+        var chWidth = Int(cellArena.width(for: cell))
         
         let right = marginMode ? _marginRight : _cols - 1
         // goto next line if ch would overflow
@@ -1669,37 +1892,34 @@ public final class Buffer {
 
         // insert mode: move characters to right
         if insertMode {
-            var empty = CharData.Null
-            empty.attribute = curAttr
+            let empty = cellArena.pack(styleID: cell.styleID, scalar: 0,
+                                       widthState: .narrow)!
             // right shift cells according to the width
-            bufferRow.insertCells (pos: _x, n: chWidth, rightMargin: marginMode ? _marginRight : _cols-1, fillData: empty)
-            // test last cell - since the last cell has only room for
-            // a halfwidth char any fullwidth shifted there is lost
-            // and will be set to eraseChar
-            let lastCell = bufferRow [_cols - 1]
-            if lastCell.width == 2 {
-                bufferRow [_cols - 1] = empty
-            }
+            bufferRow.insertPackedCells(pos: _x, n: chWidth,
+                                        rightMargin: marginMode ? _marginRight : _cols - 1,
+                                        fill: empty)
         }
 
         // Write current char to buffer and advance cursor.
         if _x >= _cols {
             _x = _cols-1
         }
-        charData.setPayload(atom: resolvePayload() ?? TinyAtom.empty)
-        bufferRow[_x] = charData
+        clearTextOverwrittenImagesFromLine(bufferRow)
+        bufferRow.repairSeamsForWrite(at: _x, width: chWidth)
+        bufferRow.setPackedCell(cell, at: _x)
         _x += 1
 
         // fullwidth char - also set next cell to placeholder stub and advance cursor
         // for graphemes bigger than fullwidth we can simply loop to zero
         // we already made sure above, that buffer.x + chWidth will not overflow right
         if chWidth > 1 {
-            var wideEmpty = CharData(attribute: curAttr, scalar: UnicodeScalar(0)!, size: 0)
-            wideEmpty.setSemanticContent(charData.semanticContent)
-            wideEmpty.setPayload(atom: charData.payload)
+            let packedWideEmpty = cellArena.pack(
+                styleID: cell.styleID, scalar: 0, widthState: .spacerTail,
+                payloadCode: cell.payloadCode,
+                semanticContentCode: cell.semanticContentCode)!
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
-                bufferRow [_x] = wideEmpty
+                bufferRow.setPackedCell(packedWideEmpty, at: _x)
                 _x += 1
                 chWidth -= 1
             }
@@ -1707,16 +1927,18 @@ public final class Buffer {
         
     }
     
+#if !SWIFTTERM_EMBEDDED
     func dumpConsole ()
     {
         let debugBuffer = self
         for y in 0..<debugBuffer._lines.maxLength {
             let flag = y == debugBuffer.yDisp ? "D" : " "
             let yb   = y == debugBuffer.yBase ? "B" : " "
-            let istr = String (format: "%03d", y)
-            let cstr = String (format: "%03d", debugBuffer._lines.debugGetCyclicIndex(y))
+            let istr = String(y).leftPadding(toLength: 3, withPad: "0")
+            let cstr = String(debugBuffer._lines.debugGetCyclicIndex(y)).leftPadding(toLength: 3, withPad: "0")
         
             print ("[\(istr):\(cstr)]\(flag)\(yb) \(debugBuffer._lines.getArray() [y].debugDescription)")
         }
     }    
+#endif
 }

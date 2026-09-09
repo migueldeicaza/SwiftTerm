@@ -35,9 +35,15 @@ final class KittyQueryTransmissionTests {
         var text: String { String(decoding: sent, as: UTF8.self) }
     }
 
-    private func makeTerminal() -> (Terminal, CaptureDelegate) {
+    private func makeTerminal(
+        localMediaPolicy: KittyGraphicsConfiguration.LocalMediaPolicy = [],
+        trustedTemporaryDirectory: URL? = nil
+    ) -> (Terminal, CaptureDelegate) {
         let delegate = CaptureDelegate()
-        let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 10, rows: 5))
+        let graphics = KittyGraphicsConfiguration(
+            localMediaPolicy: localMediaPolicy,
+            trustedTemporaryDirectory: trustedTemporaryDirectory)
+        let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 10, rows: 5, kittyGraphics: graphics))
         return (terminal, delegate)
     }
 
@@ -60,7 +66,7 @@ final class KittyQueryTransmissionTests {
     /// A file-medium query answers OK. This is the probe real clients send, and
     /// answering it with an error is what pushed them onto the inline path.
     @Test func testFileTransmissionQueryIsAnswered() throws {
-        let (terminal, delegate) = makeTerminal()
+        let (terminal, delegate) = makeTerminal(localMediaPolicy: .regularFiles)
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -76,7 +82,7 @@ final class KittyQueryTransmissionTests {
 
     /// A query stores nothing - it only reports whether the medium works.
     @Test func testFileTransmissionQueryDoesNotStoreImage() throws {
-        let (terminal, _) = makeTerminal()
+        let (terminal, _) = makeTerminal(localMediaPolicy: .regularFiles)
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -90,9 +96,10 @@ final class KittyQueryTransmissionTests {
 
     /// A query must delete its temporary source without storing the image.
     @Test func testTemporaryFileQueryDeletesTheFile() throws {
-        let (terminal, delegate) = makeTerminal()
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
+        let (terminal, delegate) = makeTerminal(
+            localMediaPolicy: .temporaryFiles, trustedTemporaryDirectory: dir)
 
         // `t=t` additionally requires the path to be a temp path containing
         // "tty-graphics-protocol"
@@ -109,9 +116,10 @@ final class KittyQueryTransmissionTests {
     /// The ownership transfer still happens for a real transmission, so the
     /// fix does not turn `t=t` into a leak.
     @Test func testTemporaryFileTransmitStillDeletesTheFile() throws {
-        let (terminal, _) = makeTerminal()
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
+        let (terminal, _) = makeTerminal(
+            localMediaPolicy: .temporaryFiles, trustedTemporaryDirectory: dir)
 
         let file = dir.appendingPathComponent("tty-graphics-protocol-transmit")
         try onePixelRGBA.write(to: file)
@@ -125,7 +133,7 @@ final class KittyQueryTransmissionTests {
     /// Both queries and transmissions must unlink the shared memory source.
     @Test(arguments: ["q", "t"])
     func testSharedMemoryLoadUnlinksSource(action: String) throws {
-        let (terminal, delegate) = makeTerminal()
+        let (terminal, delegate) = makeTerminal(localMediaPolicy: .sharedMemory)
         // Keep the name below the macOS shared memory name limit.
         let name = "/stq-" + UUID().uuidString.prefix(16)
         let fd = name.withCString { Self.swiftShmOpen($0, O_CREAT | O_EXCL | O_RDWR, 0o600) }
@@ -157,7 +165,7 @@ final class KittyQueryTransmissionTests {
     /// Honouring `t=` must not mean accepting anything: a path that does not
     /// exist is still an error.
     @Test func testFileTransmissionQueryRejectsMissingFile() throws {
-        let (terminal, delegate) = makeTerminal()
+        let (terminal, delegate) = makeTerminal(localMediaPolicy: .regularFiles)
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -181,7 +189,7 @@ final class KittyQueryTransmissionTests {
         let (terminal2, delegate2) = makeTerminal()
         // 3 bytes where 4 are required: still rejected
         sendKitty(terminal2, control: "i=305,a=q,t=d,f=32,s=1,v=1", payload: Data([1, 2, 3]))
-        #expect(delegate2.text.contains("EINVAL"))
+        #expect(delegate2.text.contains("ENODATA: insufficient data"))
     }
 
     /// An unknown medium is reported as unsupported rather than silently accepted.
@@ -190,7 +198,29 @@ final class KittyQueryTransmissionTests {
 
         sendKitty(terminal, control: "i=306,a=q,t=z,f=32,s=1,v=1", payload: onePixelRGBA)
 
-        #expect(delegate.text.contains("ENOTSUP"))
+        #expect(delegate.text.contains("EINVAL: unsupported medium"))
+    }
+
+    @Test(arguments: ["f", "t", "s"])
+    func testLocalTransmissionQueryRequiresPermission(medium: String) {
+        let (terminal, delegate) = makeTerminal()
+        sendKitty(terminal, control: "i=308,a=q,t=\(medium),f=32,s=1,v=1", payload: Data("/query-source".utf8))
+        #expect(delegate.text == "\u{1b}_Gi=308;EINVAL: unsupported medium\u{1b}\\")
+    }
+
+    @Test func testQueryRequiresImageIdBeforeReadingTemporaryFile() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let (terminal, delegate) = makeTerminal(
+            localMediaPolicy: .temporaryFiles, trustedTemporaryDirectory: dir)
+        let file = dir.appendingPathComponent("tty-graphics-protocol-no-id")
+        try onePixelRGBA.write(to: file)
+
+        sendKitty(terminal, control: "I=309,a=q,t=t,f=32,s=1,v=1", payload: Data(file.path.utf8))
+
+        #expect(delegate.text.contains("EINVAL: image ID required"))
+        #expect(FileManager.default.fileExists(atPath: file.path))
+        #expect(terminal.kittyGraphicsState.imagesById.isEmpty)
     }
 }
 #endif

@@ -4,6 +4,9 @@
 //  Tests for DCS (Device Control String) sequence handling
 //  Ported from Ghostty's dcs.zig tests
 //
+//  The XTGETTCAP reply tests live in XtgettcapTests.swift, which is not
+//  restricted to macOS.
+//
 #if os(macOS)
 import Foundation
 import Testing
@@ -14,19 +17,6 @@ final class DcsTests {
     private let esc = "\u{1b}"
 
     // MARK: - DCS Sequence Tests (Ported from Ghostty)
-
-    /// Test basic DCS sequence parsing
-    /// From Ghostty: "dcs: XTGETTCAP"
-    @Test func testDcsXtgettcap() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
-        let t = h.terminal!
-
-        // XTGETTCAP: ESC P + q followed by hex-encoded capability name
-        // This requests terminal capabilities
-        t.feed(text: "\(esc)P+q\(esc)\\")
-
-        // Should not crash - terminal may or may not respond
-    }
 
     /// Test DCS with parameters
     /// From Ghostty: "dcs: params"
@@ -165,18 +155,6 @@ final class DcsTests {
         // Should not crash
     }
 
-    /// Test DCS with very long payload
-    @Test func testDcsLongPayload() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
-        let t = h.terminal!
-
-        // Long XTGETTCAP query
-        let longQuery = String(repeating: "54", count: 500)  // Hex for 'T'
-        t.feed(text: "\(esc)P+q\(longQuery)\(esc)\\")
-
-        // Should handle without crash (may truncate)
-    }
-
     /// Test DCS passthrough data handling
     @Test func testDcsPassthrough() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
@@ -201,47 +179,31 @@ final class DcsTests {
         // All should process without issues
     }
 
-    /// Test XTGETTCAP with specific capability names (hex encoded)
-    @Test func testXtgettcapSpecificCaps() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
-        let t = h.terminal!
-
-        // Query 'TN' (terminal name) - hex: 544E
-        t.feed(text: "\(esc)P+q544E\(esc)\\")
-
-        // Query 'Co' (colors) - hex: 436F
-        t.feed(text: "\(esc)P+q436F\(esc)\\")
-
-        // Query 'RGB' - hex: 524742
-        t.feed(text: "\(esc)P+q524742\(esc)\\")
-
-        // Should respond or ignore, but not crash
-    }
-
-    /// Test XTGETTCAP with multiple keys in one request
-    /// From Ghostty: "XTGETTCAP command multiple keys"
-    @Test func testXtgettcapMultipleKeys() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
-        let t = h.terminal!
-
-        // Multiple hex-encoded keys separated by semicolons
-        t.feed(text: "\(esc)P+q544E;436F;524742\(esc)\\")
-
-        // Should process all keys
-    }
-
     /// Test DECRQSS for cursor style (DECSCUSR)
     @Test func testDecrqssDecscusr() {
-        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
-        let t = h.terminal!
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
 
         // Set cursor style to blinking bar
-        t.feed(text: "\(esc)[5 q")
+        terminal.feed(text: "\(esc)[5 q")
 
         // Query cursor style
-        t.feed(text: "\(esc)P$q q\(esc)\\")
+        terminal.feed(text: "\(esc)P$q q\(esc)\\")
 
-        // Terminal should respond with cursor style
+        #expect(delegate.sentData.last == Array("\(esc)P1$r5 q\(esc)\\".utf8))
+    }
+
+    @Test func testDecscusrZeroRestoresStartupStyle() {
+        let delegate = TerminalTestDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cursorStyle: .steadyUnderline)
+        )
+
+        terminal.feed(text: "\(esc)[5 q\(esc)[0 q")
+        #expect(terminal.options.cursorStyle == .steadyUnderline)
+
+        terminal.feed(text: "\(esc)P$q q\(esc)\\")
+        #expect(delegate.sentData.last == Array("\(esc)P1$r4 q\(esc)\\".utf8))
     }
 }
 #endif

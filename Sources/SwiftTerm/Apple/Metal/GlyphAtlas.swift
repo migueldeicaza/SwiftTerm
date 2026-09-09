@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import CoreGraphics
 import Foundation
@@ -338,3 +339,5 @@ final class GlyphAtlas {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

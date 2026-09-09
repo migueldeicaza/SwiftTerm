@@ -6,11 +6,13 @@
 //  Copyright © 2019 Miguel de Icaza. All rights reserved.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /// This option set describes the character style for a cell, this includes
 /// information about the font to use as well as decorations on the text
-public struct CharacterStyle : OptionSet, Hashable {
+public struct CharacterStyle : OptionSet, Hashable, Sendable {
     public let rawValue: UInt8
     
     /**
@@ -50,7 +52,7 @@ public struct CharacterStyle : OptionSet, Hashable {
     public static let crossedOut = CharacterStyle (rawValue: 128)
 }
 
-public enum UnderlineStyle: UInt8 {
+public enum UnderlineStyle: UInt8, Sendable {
     case none = 0
     case single = 1
     case double = 2
@@ -64,9 +66,9 @@ public enum UnderlineStyle: UInt8 {
 /// cells, as well as the character style of the cell (bold, underline, inverse) that the character
 /// should be drawn as.
 ///
-public struct Attribute: Equatable, Hashable {
+public struct Attribute: Equatable, Hashable, Sendable {
     /// The various ways in which the color was expressed
-    public enum Color: Equatable, Hashable {
+    public enum Color: Equatable, Hashable, Sendable {
         /// This means that the foreground color stores 8 bits of information
         /// for the color (the original ANSI colors, plus a crop of colors
         /// and greys - those defined in Color.setupDefaultAnsiColors and additionally
@@ -180,43 +182,65 @@ public struct Attribute: Equatable, Hashable {
     }
 }
 
-/// TinyAtoms are 16-bit values that can be used to represent a string as a number
-/// you create them by calling TinyAtom.lookup (Any) and retrieve the
-/// value using the `target` property.   They are used to store the urls and any
-/// additional parameter information in the OSC 8 scenario or to store binary blobs
-/// for images
+/// TinyAtoms are 16-bit values that can be used to represent a value as a number.
+/// You create them by calling `TinyAtom.lookup(value:)` with a `Sendable` value.
+/// Retrieve the value with the `target` property. They store URLs and other
+/// parameters for OSC 8, or binary data for images.
 ///
-/// This is kept to 16 bits for now, so that we keep the CharData to less than 15 bytes
-/// it could in theory be changed to be 24 bits without much trouble
-public struct TinyAtom {
+/// The packed terminal cell stores this code in 16 bits. It could use 24 bits
+/// if the packed-cell layout changes.
+public struct TinyAtom: Sendable {
     var code: UInt16
-    private static let lock = NSLock()
-    private static var map: [UInt16:Any] = [:]
-    private static var lastUsed: UInt16 = 0
+#if SWIFTTERM_EMBEDDED
+    nonisolated(unsafe) private static var map: [UInt16: String] = [:]
+    nonisolated(unsafe) private static var lastUsed: UInt16 = 0
+#else
+    private struct State {
+        var map: [UInt16: any Sendable] = [:]
+        var lastUsed: UInt16 = 0
+    }
+    private static let state = Locked(State())
+#endif
     static let empty = TinyAtom (code: 0)
    
     private init(code: UInt16)
     {
         self.code = code
     }
+
+    /// Rebuilds an atom value that a cell-storage page owns.
+    ///
+    /// The page stores only the 16-bit code. The global atom table continues
+    /// to own the target until the terminal releases the code.
+    static func stored(code: UInt16) -> TinyAtom {
+        TinyAtom(code: code)
+    }
     
     /// Creates a caller-owned TinyAtom for the specified value, or returns nil if no codes remain.
     ///
     /// The caller must call ``release()`` when the atom is no longer in use. Use
     /// ``Terminal/makePayload(value:)`` for an atom whose lifetime is managed by a terminal.
-    public static func lookup (value: Any) -> TinyAtom? {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard lastUsed < UInt16.max - 1 else {
-            return nil
-        }
+#if SWIFTTERM_EMBEDDED
+    public static func lookup(value: String) -> TinyAtom? {
+        guard lastUsed < UInt16.max - 1 else { return nil }
         lastUsed += 1
-        let code = lastUsed
-
-        map [code] = value
-        return TinyAtom (code: code)
+        map[lastUsed] = value
+        return TinyAtom(code: lastUsed)
     }
+#else
+    public static func lookup<Value: Sendable>(value: Value) -> TinyAtom? {
+        state.withLock { state in
+            guard state.lastUsed < UInt16.max - 1 else {
+                return nil
+            }
+            state.lastUsed += 1
+            let code = state.lastUsed
+
+            state.map [code] = value
+            return TinyAtom (code: code)
+        }
+    }
+#endif
     
     public static func release(code: UInt16) {
         release(codes: [code])
@@ -230,39 +254,44 @@ public struct TinyAtom {
     }
 
     static func release<S: Sequence>(codes: S) where S.Element == UInt16 {
-        lock.lock()
-        defer { lock.unlock() }
-
-        for code in codes where code != 0 {
-            map.removeValue(forKey: code)
+#if SWIFTTERM_EMBEDDED
+        for code in codes where code != 0 { map.removeValue(forKey: code) }
+#else
+        state.withLock { state in
+            for code in codes where code != 0 {
+                state.map.removeValue(forKey: code)
+            }
         }
+#endif
     }
     
     /// Returns the target for the TinyAtom
-    public var target: Any? {
+#if SWIFTTERM_EMBEDDED
+    public var target: String? {
+        code == 0 ? nil : TinyAtom.map[code]
+    }
+#else
+    public var target: (any Sendable)? {
         get {
             if code == 0 {
                 return nil
             }
-            TinyAtom.lock.lock()
-            defer { TinyAtom.lock.unlock() }
-            return TinyAtom.map [code]
+            return TinyAtom.state.withLock { state in
+                state.map [code]
+            }
         }
     }
+#endif
 }
 
 /**
- * Stores a cell with both the character being displayed as well as the color attribute.
- * This uses an Int32 to store the value, if the value can not be encoded as a single Unicode.Scalar,
- * then an index is stored that is looked up in parallel, so that full grapheme clusters can be tracked.
+ * Provides an API value for one terminal cell.
  *
- * Use the `getCharacter` function to get simple runes, and use `Terminal.getCharacter(for:)` for extended graphemes. Use the `attribute` property
- * to retrieve the color and other character attributes.   The `width` property contains the number of
- * columns used by the `Character` stored in this `CharData` on the screen.
- *
- * It is possible to change the value of the stored character by calling the `setValue` method.
+ * `BufferLine` stores an 8-byte `PackedCell`. It creates a `CharData` value
+ * when a caller reads a cell and stores large values in its page side tables.
+ * Use `getText()` to preserve all scalars in a terminal grapheme cluster.
  */
-public struct CharData: CustomDebugStringConvertible {
+public struct CharData: CustomDebugStringConvertible, Sendable {
     public var debugDescription: String {
         let ch: Character
         if let scalar = UnicodeScalar(Int(code)) {
@@ -274,13 +303,18 @@ public struct CharData: CustomDebugStringConvertible {
         return "CharData: \(code) \(ch)"
     }
     
-    static let maxRune = 1 << 22
+    static let maxRune = 0x10ffff
 
     static let defaultAttr = Attribute(fg: .defaultColor, bg: .defaultColor, style: .none)
     static let invertedAttr = Attribute(fg: .defaultInvertedColor, bg: .defaultInvertedColor, style: .none)
     
-    // Contains a rune, or a pointer into a Grapheme Cluster
+    // Contains the scalar or the first scalar of a grapheme cluster.
     var code: Int32
+
+    // BufferLine stores these values in its page grapheme table. This field
+    // exists only in the temporary CharData value that the public API returns.
+    // It is not part of the terminal cell array.
+    private var graphemeScalarValues: [UInt32]?
     
     ///Contains the number of columns used by the `Character` stored in this `CharData` on the screen.
     public private(set) var width: Int8
@@ -291,6 +325,13 @@ public struct CharData: CustomDebugStringConvertible {
     // Kept in the byte that previously existed only for alignment, so OSC 133
     // semantic metadata does not increase the size of a terminal cell.
     private var semanticContentCode: UInt8
+
+    // The packed width state distinguishes a normal tail from a spacer at a
+    // soft-wrap boundary. Existing API users continue to use `width`.
+    private var widthStateCode: UInt8
+
+    /// True when selective erase must preserve this cell.
+    public private(set) var isProtected: Bool
 
     // The single source of truth for the cell-storage encoding of a
     // SemanticContent. Both directions switch exhaustively over this enum, so
@@ -349,9 +390,12 @@ public struct CharData: CustomDebugStringConvertible {
     {
         self.attribute = attribute
         self.code = code
+        graphemeScalarValues = nil
         width = size
         payload = TinyAtom.empty
         semanticContentCode = 0
+        widthStateCode = CharData.widthStateCode(for: size)
+        isProtected = false
     }
     
     init (attribute: Attribute, scalar: UnicodeScalar, size: Int8 = 1) {
@@ -366,8 +410,40 @@ public struct CharData: CustomDebugStringConvertible {
     
     public var isSimpleRune: Bool {
         get {
-            return code < CharData.maxRune
+            return graphemeScalarValues == nil
         }
+    }
+
+    private static func widthStateCode(for width: Int8) -> UInt8 {
+        switch width {
+        case 0: return 2
+        case 2: return 1
+        default: return 0
+        }
+    }
+
+    var packedWidthStateCode: UInt8 {
+        widthStateCode
+    }
+
+    /// The uncommon multi-scalar value used when this public value crosses the
+    /// packed-storage boundary. Simple scalar cells do not allocate an array.
+    var packedGraphemeScalars: [UInt32]? {
+        graphemeScalarValues
+    }
+
+    init(attribute: Attribute, code: Int32, graphemeScalarValues: [UInt32]?, size: Int8,
+         widthStateCode: UInt8, payloadCode: UInt16,
+         semanticContent: SemanticContent, isProtected: Bool)
+    {
+        self.attribute = attribute
+        self.code = code
+        self.graphemeScalarValues = graphemeScalarValues
+        width = size
+        payload = TinyAtom.stored(code: payloadCode)
+        semanticContentCode = SemanticContentCode(semanticContent).rawValue
+        self.widthStateCode = widthStateCode
+        self.isProtected = isProtected
     }
 
     /// Sets the Url token for the this CharData.
@@ -379,11 +455,17 @@ public struct CharData: CustomDebugStringConvertible {
     mutating func setSemanticContent(_ content: SemanticContent) {
         semanticContentCode = SemanticContentCode(content).rawValue
     }
-    
-    public func getPayload () -> Any?
-    {
-         payload.target
+
+    /// Sets whether selective erase must preserve this cell.
+    mutating public func setProtected(_ value: Bool) {
+        isProtected = value
     }
+    
+#if SWIFTTERM_EMBEDDED
+    public func getPayload() -> String? { payload.target }
+#else
+    public func getPayload() -> (any Sendable)? { payload.target }
+#endif
     
     public var hasPayload: Bool {
         get {
@@ -392,7 +474,7 @@ public struct CharData: CustomDebugStringConvertible {
     }
     
     /// The `Null` character can be used when filling up parts of the screeb
-    public static var Null : CharData = CharData (attribute: defaultAttr)
+    public static let Null : CharData = CharData (attribute: defaultAttr)
     
     /// Updates the contents of this CharData with a new code.
     /// - Parameter code: the new character code that will be stored
@@ -400,22 +482,49 @@ public struct CharData: CustomDebugStringConvertible {
     public mutating func setValue (code: Int32, size: Int32)
     {
         self.code = code
+        graphemeScalarValues = nil
         width = Int8 (size)
+        widthStateCode = CharData.widthStateCode(for: width)
+    }
+
+    mutating func setCharacter(_ character: Character, size: Int32)
+    {
+        let values = character.unicodeScalars.map { $0.value }
+        code = Int32(values.first ?? 0)
+        graphemeScalarValues = values.count > 1 ? values : nil
+        width = Int8(size)
+        widthStateCode = CharData.widthStateCode(for: width)
     }
     
-    /// Use this method to retrieve the Character stored in the CharData
-    /// For extended grapheme clusters use `Terminal.getCharacter(for:)`.
+    /// Returns the character that this API value contains.
     public func getCharacter () -> Character
     {
-        if let c = Unicode.Scalar (UInt32 (code)) {
-            return Character(c)
+        getText().first ?? " "
+    }
+
+    /// Returns all text stored in this cell. This can contain a Unicode
+    /// grapheme that the host Swift runtime segments into multiple Characters.
+    public func getText () -> String
+    {
+        if let values = graphemeScalarValues {
+            var text = ""
+            for value in values {
+                guard let scalar = Unicode.Scalar(value) else {
+                    return " "
+                }
+                text.unicodeScalars.append(scalar)
+            }
+            return text
+        }
+        if code >= 0, let scalar = Unicode.Scalar(UInt32(code)) {
+            return String(scalar)
         } else {
             return " "
         }
     }
 }
 
-#if !(os(iOS) || os(visionOS) || os(macOS) || os(visionOS))
+#if SWIFTTERM_EMBEDDED || !(os(iOS) || os(visionOS) || os(macOS) || os(visionOS))
 public class TTImage {
     
 }

@@ -52,6 +52,7 @@ struct CaptureResult {
 }
 
 enum ArtifactCapture {
+    @MainActor
     static func captureWindow(
         _ window: NSWindow,
         terminalView: TerminalView,
@@ -199,6 +200,7 @@ enum ArtifactCapture {
         return object["ok"] as? Bool == true
     }
 
+    @MainActor
     private static func bitmapRepresentation(of view: NSView) -> NSBitmapImageRep? {
         guard !view.bounds.isEmpty,
               let representation = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
@@ -206,6 +208,7 @@ enum ArtifactCapture {
         return representation
     }
 
+    @MainActor
     private static func webSnapshot(_ webView: WKWebView) -> NSImage? {
         let configuration = WKPDFConfiguration()
         configuration.rect = webView.bounds

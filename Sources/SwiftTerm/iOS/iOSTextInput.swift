@@ -53,6 +53,7 @@
 //    sequence can be detected in the terminal and handled as desired.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(iOS) || os(visionOS)
 import Foundation
 import UIKit
@@ -61,6 +62,7 @@ import CoreGraphics
 
 /// UITextInput Log capability
 @inline(__always)
+@MainActor
 internal func uitiLog (_ message: @autoclosure () -> String) {
     guard TerminalView.textInputDebugEnabled else { return }
     TerminalView.textInputLogCounter += 1
@@ -233,7 +235,7 @@ extension TerminalView: UITextInput {
                 return
             }
             _markedTextRange = coerceTextRange(newValue)
-            uitiLog("markedTextRange -> \(_markedTextRange)")
+            uitiLog("markedTextRange -> \(String(describing: _markedTextRange))")
         }
     }
     
@@ -514,3 +516,5 @@ extension TerminalView: UITextInput {
 }
 
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

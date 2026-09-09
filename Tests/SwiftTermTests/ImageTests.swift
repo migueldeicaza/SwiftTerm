@@ -71,6 +71,17 @@ final class ImageTrackingTests: TerminalDelegate {
         #expect(buffer.hasAnyImages == true, "hasAnyImages should be true after attaching an image")
     }
 
+    @Test func testTextOutputClearsInlineImageOnWrittenLine() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 25))
+        let buffer = terminal.buffer
+        buffer.attachImage(MockTerminalImage(), toLineAt: 0)
+
+        terminal.feed(text: " ")
+
+        #expect(buffer.lines[0].images == nil)
+        #expect(buffer.hasAnyImages == false)
+    }
+
     /// Test that attaching multiple images to the same line doesn't double-count
     @Test func testMultipleImagesOnSameLineNotDoubleCounted() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 25))

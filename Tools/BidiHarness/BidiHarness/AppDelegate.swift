@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var controller: HarnessViewController?

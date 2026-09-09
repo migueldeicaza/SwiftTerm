@@ -3,6 +3,7 @@ import AppKit
 import Testing
 @testable import SwiftTerm
 
+@MainActor
 final class FontDimensionTests {
     @Test func cellWidthSnapsToNearestDevicePixel() throws {
         let font = try #require(NSFont(name: "Monaco", size: 12))

@@ -22,6 +22,38 @@ final class TerminalCoreTests {
         TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "")
     }
 
+    @Test func testUnicodeRunWithWraparoundDisabledOverwritesLastCell() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 2)
+        terminal.feed(text: "\(esc)[?7l")
+        terminal.feed(text: "αβγδεζ")
+
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "αβγδζ")
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 1, equals: "")
+    }
+
+    @Test func testWideBatchFallsBackBeforeNarrowMarginWrap() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 4)
+        terminal.feed(text: "\(esc)[?69h\(esc)[3;3s\(esc)[1;3H")
+        terminal.feed(text: "中界")
+
+        // The existing scalar behavior wraps each glyph one time. The batch
+        // rejection must not add an extra wrap before the scalar fallback.
+        TerminalTestHarness.assertCursor(terminal.buffer, col: 4, row: 2)
+    }
+
+    @Test func testBatchableScalarAtChunkEndDoesNotReadPastInput() {
+        // The batcher looks one scalar ahead before it sets up its scratch
+        // buffers. A batchable scalar that ends the chunk leaves nothing to
+        // look at, so the lookahead must stop at the input end.
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 2)
+        for chunk in ["\u{3b1}", "\u{3b2}", "\u{3b3}"] {
+            terminal.feed(text: chunk)
+        }
+
+        TerminalTestHarness.assertLineText(terminal.buffer, row: 0, equals: "\u{3b1}\u{3b2}\u{3b3}")
+        TerminalTestHarness.assertCursor(terminal.buffer, col: 3, row: 0)
+    }
+
     @Test func testReverseWraparoundBackspace() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 2)
         terminal.feed(text: "\(esc)[?45h")

@@ -1,7 +1,6 @@
 //
 //  KittyCursorTests.swift
 //
-#if os(macOS)
 import Foundation
 import Testing
 
@@ -9,7 +8,7 @@ import Testing
 
 final class KittyCursorTests {
     private func makeHeadlessTerminal() -> HeadlessTerminal {
-        HeadlessTerminal(queue: SwiftTermTests.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
+        HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
     }
 
     private func sendKitty(terminal: Terminal, control: String, payload: [UInt8]) {
@@ -27,7 +26,7 @@ final class KittyCursorTests {
                   payload: [1, 2, 3])
 
         #expect(t.buffer.x == 3)
-        #expect(t.buffer.y == 2)
+        #expect(t.buffer.y == 1)
     }
 
     @Test func testKittyCursorStaysWithC1() {
@@ -52,7 +51,6 @@ final class KittyCursorTests {
                   payload: [1, 2, 3])
 
         #expect(t.buffer.x == 4)
-        #expect(t.buffer.y == 1)
+        #expect(t.buffer.y == 0)
     }
 }
-#endif

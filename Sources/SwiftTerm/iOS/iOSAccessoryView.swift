@@ -5,6 +5,7 @@
 //
 //  Created by Miguel de Icaza on 5/9/20.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(iOS) || os(visionOS)
 
 import Foundation
@@ -21,7 +22,6 @@ import UIKit
 public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     /// This points to an instanace of the `TerminalView` where events are sent
     public weak var terminalView: TerminalView?
-    weak var terminal: Terminal?
     var controlButton: UIButton?
     /// This tracks whether the "control" button is turned on or not
     public var controlModifier: Bool = false {
@@ -38,7 +38,6 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     public init (frame: CGRect, inputViewStyle: UIInputView.Style, container: TerminalView)
     {
         self.terminalView = container
-        self.terminal = terminalView?.getTerminal()
         super.init (frame: frame, inputViewStyle: inputViewStyle)
         allowsSelfSizing = true
     }
@@ -110,9 +109,10 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
         repeatTask = Task {
             try? await Task.sleep(nanoseconds: 600_000_000)
             guard !(repeatTask?.isCancelled ?? true) else { return }
-            let rc = self.repeatCommand
-            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
-                rc? ()
+            self.repeatTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak timerOwner = self] _ in
+                MainActor.assumeIsolated {
+                    timerOwner?.repeatCommand?()
+                }
             }
         }
     }
@@ -402,3 +402,5 @@ class BackgroundSelectedButton: UIButton {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

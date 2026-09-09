@@ -151,19 +151,19 @@ final class BellDispatchTests {
         view.terminalDelegate = delegate
 
         view.bellStyle = .sound
-        view.bell (source: view.getTerminal ())
+        view.bell(source: view.terminal)
         #expect (delegate.bells == 1)
 
         view.bellStyle = .none
-        view.bell (source: view.getTerminal ())
+        view.bell(source: view.terminal)
         #expect (delegate.bells == 1)
 
         view.bellStyle = .visual
-        view.bell (source: view.getTerminal ())
+        view.bell(source: view.terminal)
         #expect (delegate.bells == 1)
 
         view.bellStyle = .soundAndVisual
-        view.bell (source: view.getTerminal ())
+        view.bell(source: view.terminal)
         #expect (delegate.bells == 2)
     }
 }
@@ -230,6 +230,24 @@ final class BackgroundOpacityTests {
         view.nativeBackgroundColor = NSColor (srgbRed: 0, green: 0, blue: 0, alpha: 0.85)
         #expect (abs (view.backgroundOpacity - 0.85) < 0.001)
     }
+
+    @Test func opacitySurvivesTheTerminalColorCallback () async {
+        let view = TerminalView (frame: CGRect (x: 0, y: 0, width: 400, height: 300))
+        view.nativeBackgroundColor = NSColor (srgbRed: 0.1, green: 0.2, blue: 0.3, alpha: 1)
+        view.backgroundOpacity = 0.5
+
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
+
+        #expect (abs (view.backgroundOpacity - 0.5) < 0.001)
+        #expect (abs (view.nativeBackgroundColor.alphaComponent - 0.5) < 0.001)
+        #expect (abs ((view.layer?.backgroundColor?.alpha ?? 1.0) - 0.5) < 0.001)
+        let frameColor = FrameColor (view.effectiveNativeBackgroundColor, view: view)
+        #expect (abs (frameColor.alpha - 0.5) < 0.001)
+    }
 }
 
 @MainActor
@@ -243,13 +261,14 @@ final class TerminalViewOptionsTests {
         options.rows = 50
 
         let view = TerminalView (frame: .zero, options: options)
-        let terminal = view.getTerminal ()
-        #expect (terminal.options.scrollback == 1234)
-        #expect (terminal.options.cursorStyle == .steadyBar)
-        #expect (terminal.options.termName == "xterm-direct")
-        // Zero-sized frame: the requested dimensions are used as-is
-        #expect (terminal.cols == 132)
-        #expect (terminal.rows == 50)
+        view.withTerminal { terminal in
+            #expect (terminal.options.scrollback == 1234)
+            #expect (terminal.options.cursorStyle == .steadyBar)
+            #expect (terminal.options.termName == "xterm-direct")
+            // Zero-sized frame: the requested dimensions are used as-is
+            #expect (terminal.cols == 132)
+            #expect (terminal.rows == 50)
+        }
     }
 
     @Test func sizedFrameRecomputesGrid () {
@@ -257,9 +276,10 @@ final class TerminalViewOptionsTests {
         options.cols = 132
         options.rows = 50
         let view = TerminalView (frame: CGRect (x: 0, y: 0, width: 400, height: 300), options: options)
-        let terminal = view.getTerminal ()
-        #expect (terminal.cols != 132 || terminal.rows != 50)
-        #expect (terminal.options.scrollback == TerminalOptions.default.scrollback)
+        view.withTerminal { terminal in
+            #expect (terminal.cols != 132 || terminal.rows != 50)
+            #expect (terminal.options.scrollback == TerminalOptions.default.scrollback)
+        }
     }
 
     @Test func resetFontSizeRestoresCellDimensions () {

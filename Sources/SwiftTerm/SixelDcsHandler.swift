@@ -4,6 +4,7 @@
 //  Created by Anders Borum on 28/04/2020.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 // DCS handler for sixel sequences, collects the image and
@@ -11,7 +12,9 @@ import Foundation
 // into its internal representation to display the image.
 class SixelDcsHandler : DcsHandler {
     var data: [UInt8]
-    unowned var terminal: Terminal
+    // Nested lifetime: created per DCS sequence and held in the parser's
+    // `activeDcsHandler` for that sequence only.
+    unowned(unsafe) var terminal: Terminal
 
     public init (terminal: Terminal)
     {
@@ -19,7 +22,7 @@ class SixelDcsHandler : DcsHandler {
         data = []
     }
     
-    func hook (collect: cstring, parameters: [Int],  flag: UInt8)
+    func hook (collect: cstring, parameters: CsiParameters,  flag: UInt8)
     {
         data = []
     }
@@ -80,6 +83,11 @@ class SixelDcsHandler : DcsHandler {
     let poundChar: UInt8 = 0x23 /* # */
     
     func unhook () {
+        // A sequence with no payload carries no image. The parser now calls
+        // `unhook` for every sequence it started, so this case is reachable.
+        guard !data.isEmpty else {
+            return
+        }
         var p = 0
         palette = [Int: UInt32]()
         x = 0
@@ -406,3 +414,5 @@ class SixelDcsHandler : DcsHandler {
         return UInt32 (sixelXrgb(red: Int (dr), green: Int (dg), blue: Int (db)))
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

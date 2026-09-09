@@ -6,15 +6,30 @@
 //  Copyright © 2020 Miguel de Icaza. All rights reserved.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /**
  * Tracks the selection state in the terminal, the selection is determined by the `active`
  * property, and if that is true, then the `start` and `end` represents offsets within
  * the terminal's buffer.  They are guaranteed to be ordered.
+ *
+ * All state is guarded by `terminal.terminalLock`; callers must hold it.
  */
 public class SelectionService: CustomDebugStringConvertible {
     var terminal: Terminal
+
+    struct SelectedContentSnapshot {
+        struct Row: Equatable {
+            let cells: [PackedCell]
+            let isWrapped: Bool
+            let bidiState: BidiPresentationState
+        }
+
+        let buffer: Buffer
+        let rows: [Row]
+    }
     
     public init (terminal: Terminal)
     {
@@ -25,6 +40,15 @@ public class SelectionService: CustomDebugStringConvertible {
         pivot = Position(col: 0, row: 0)
         hasSelectionRange = false
         terminal.register (selection: self)
+    }
+
+    /// Removes this service from the terminal's registry.
+    ///
+    /// This is what makes the registry's `unowned(unsafe)` slots safe: the entry
+    /// is gone before the object is. `terminal` is held strongly, so it is
+    /// guaranteed to still be alive here.
+    deinit {
+        terminal.unregister (selection: self)
     }
 
     /**
@@ -137,12 +161,135 @@ public class SelectionService: CustomDebugStringConvertible {
         }
         selectNone ()
     }
+
+    /// Captures the cells that the active selection identifies.
+    ///
+    /// A feed can move these cells through a scroll operation. The selection
+    /// service adjusts its row positions during that operation. A later
+    /// comparison therefore uses the adjusted positions and does not depend on
+    /// the original row numbers.
+    func captureSelectedContent () -> SelectedContentSnapshot?
+    {
+        guard active else {
+            return nil
+        }
+        let buffer = terminal.displayBuffer
+        guard let rows = selectedContentRows (in: buffer) else {
+            return nil
+        }
+        return SelectedContentSnapshot (buffer: buffer, rows: rows)
+    }
+
+    /// Clears the selection when a feed changed its buffer or selected cells.
+    func clearIfSelectedContentChanged (from snapshot: SelectedContentSnapshot)
+    {
+        guard active else {
+            return
+        }
+        let buffer = terminal.displayBuffer
+        guard buffer === snapshot.buffer,
+              selectedContentRows (in: buffer) == snapshot.rows else {
+            selectNone ()
+            return
+        }
+    }
+
+    private func selectedContentRows (in buffer: Buffer) -> [SelectedContentSnapshot.Row]?
+    {
+        let firstRow = min (start.row, end.row)
+        let lastRow = max (start.row, end.row)
+        guard firstRow >= 0, lastRow < buffer.lines.count else {
+            return nil
+        }
+
+        var result: [SelectedContentSnapshot.Row] = []
+        result.reserveCapacity (lastRow - firstRow + 1)
+        for row in firstRow...lastRow {
+            let line = buffer.lines [row]
+            guard let columns = selectedColumnsRange (row: row, cols: line.count) else {
+                continue
+            }
+            let cells = columns.map { line.packedCell (at: $0) }
+            result.append (SelectedContentSnapshot.Row (
+                cells: cells,
+                isWrapped: line.isWrapped,
+                bidiState: line.bidiState))
+        }
+        return result
+    }
+
+    func selectedColumnsRange (row: Int, cols: Int) -> Range<Int>?
+    {
+        let firstRow = min (start.row, end.row)
+        let lastRow = max (start.row, end.row)
+        guard row >= firstRow, row <= lastRow else {
+            return nil
+        }
+
+        let lowerColumn: Int
+        let upperColumn: Int
+        if start.row == end.row, row == start.row {
+            if start.col < end.col {
+                lowerColumn = start.col
+                upperColumn = end.col + (end.col == cols - 1 ? 1 : 0)
+            } else if start.col > end.col {
+                lowerColumn = end.col
+                upperColumn = start.col
+            } else {
+                return nil
+            }
+        } else if start.row < end.row {
+            if row == start.row {
+                lowerColumn = start.col
+                upperColumn = cols
+            } else if row == end.row {
+                lowerColumn = 0
+                upperColumn = end.col + (end.col == cols - 1 ? 1 : 0)
+            } else {
+                lowerColumn = 0
+                upperColumn = cols
+            }
+        } else if end.row < start.row {
+            if row == end.row {
+                lowerColumn = end.col
+                upperColumn = cols
+            } else if row == start.row {
+                lowerColumn = 0
+                upperColumn = start.col + (start.col == cols - 1 ? 1 : 0)
+            } else {
+                lowerColumn = 0
+                upperColumn = cols
+            }
+        } else {
+            return nil
+        }
+
+        let lowerBound = max (0, min (lowerColumn, cols))
+        let upperBound = max (lowerBound, min (upperColumn, cols))
+        guard lowerBound < upperBound else {
+            return nil
+        }
+        return lowerBound..<upperBound
+    }
     
     /**
      * Controls whether the selection is active or not.   Changing the value will invoke the `selectionChanged`
      * method on the terminal's delegate if the state changes.
      */
-    var _active: Bool = false
+    /// Backing store for ``active``.
+    ///
+    /// The observer keeps `Terminal`'s active-selection count in step. That
+    /// count is what lets the scroll path skip the selection registry entirely
+    /// while nothing is selected, which is the common case and used to cost a
+    /// weak load per scrolled line. Property observers do not run for the
+    /// assignment in `init`, which is correct here: the terminal's count starts
+    /// at zero and so does this flag.
+    var _active: Bool = false {
+        didSet {
+            guard _active != oldValue else { return }
+            terminal.selectionActiveDidChange (nowActive: _active)
+        }
+    }
     public var active: Bool {
         get {
             return _active
@@ -697,6 +844,41 @@ public class SelectionService: CustomDebugStringConvertible {
         rowSelectionAnchor = nil
         selectingRows = false
         setActiveAndNotify()
+    }
+
+    /// Returns the word at a buffer-relative position without changing the
+    /// current selection. The word rules match word selection.
+    func word(at uncheckedPosition: Position, in buffer: Buffer) -> (text: String, start: Position)? {
+        guard uncheckedPosition.col >= 0, uncheckedPosition.col < terminal.cols,
+              uncheckedPosition.row >= 0, uncheckedPosition.row < buffer.lines.count else {
+            return nil
+        }
+
+        let position = uncheckedPosition
+        let includes: (Character) -> Bool = { character in
+            character.isLetter || character.isNumber || character == "." ||
+                character == "_" || character == "-"
+        }
+        guard includes(character(at: position, in: buffer)) else { return nil }
+
+        var first = position.col
+        while first > 0,
+              includes(character(at: Position(col: first - 1, row: position.row), in: buffer)) {
+            first -= 1
+        }
+
+        var last = position.col + 1
+        while last < terminal.cols,
+              includes(character(at: Position(col: last, row: position.row), in: buffer)) {
+            last += 1
+        }
+
+        let word = terminal.getText(
+            start: Position(col: first, row: position.row),
+            end: Position(col: last, row: position.row),
+            buffer: buffer)
+        guard !word.isEmpty else { return nil }
+        return (text: word, start: Position(col: first, row: position.row))
     }
 
     /**
