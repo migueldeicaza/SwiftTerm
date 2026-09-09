@@ -11,18 +11,20 @@
 //  inline through the pty, which is orders of magnitude more data - all of it
 //  parsed and decompressed on the thread feeding the terminal.
 //
-//  The second half of the fix is that a query must not *consume* the client's
-//  resource. `t=t` (temporary file) and `t=s` (shared memory) transfer ownership to
-//  the terminal, which then deletes them - but a query transfers nothing, so
-//  probing for support must not delete the file the client is about to send.
+//  Queries load images without storing them. The terminal must still delete
+//  temporary files (`t=t`) and unlink shared memory (`t=s`) after reading.
 //
 #if os(macOS)
 import Testing
 import Foundation
+import Darwin
 
 @testable import SwiftTerm
 
 final class KittyQueryTransmissionTests {
+    @_silgen_name("shm_open")
+    private static func swiftShmOpen(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t) -> Int32
+
     private final class CaptureDelegate: TerminalDelegate {
         var sent: [UInt8] = []
 
@@ -69,6 +71,7 @@ final class KittyQueryTransmissionTests {
 
         #expect(delegate.text.contains("OK"))
         #expect(!delegate.text.contains("EINVAL"))
+        #expect(FileManager.default.fileExists(atPath: file.path))
     }
 
     /// A query stores nothing - it only reports whether the medium works.
@@ -85,11 +88,8 @@ final class KittyQueryTransmissionTests {
         #expect(terminal.kittyGraphicsState.imagesById[300] == nil)
     }
 
-    /// Probing for temporary-file support must leave the file alone. A real
-    /// transmission (`a=t`/`a=T`) takes ownership and deletes it, but a query
-    /// transfers nothing - deleting here would destroy the file the client is
-    /// about to send.
-    @Test func testTemporaryFileQueryDoesNotDeleteTheFile() throws {
+    /// A query must delete its temporary source without storing the image.
+    @Test func testTemporaryFileQueryDeletesTheFile() throws {
         let (terminal, delegate) = makeTerminal()
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -102,7 +102,8 @@ final class KittyQueryTransmissionTests {
         sendKitty(terminal, control: "i=301,a=q,t=t,f=32,s=1,v=1", payload: Data(file.path.utf8))
 
         #expect(delegate.text.contains("OK"))
-        #expect(FileManager.default.fileExists(atPath: file.path))
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+        #expect(terminal.kittyGraphicsState.imagesById[301] == nil)
     }
 
     /// The ownership transfer still happens for a real transmission, so the
@@ -119,6 +120,36 @@ final class KittyQueryTransmissionTests {
 
         #expect(terminal.kittyGraphicsState.imagesById[302] != nil)
         #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
+    /// Both queries and transmissions must unlink the shared memory source.
+    @Test(arguments: ["q", "t"])
+    func testSharedMemoryLoadUnlinksSource(action: String) throws {
+        let (terminal, delegate) = makeTerminal()
+        // Keep the name below the macOS shared memory name limit.
+        let name = "/stq-" + UUID().uuidString.prefix(16)
+        let fd = name.withCString { Self.swiftShmOpen($0, O_CREAT | O_EXCL | O_RDWR, 0o600) }
+        try #require(fd >= 0)
+        defer {
+            close(fd)
+            _ = name.withCString { shm_unlink($0) }
+        }
+        try #require(ftruncate(fd, off_t(onePixelRGBA.count)) == 0)
+        let map = mmap(nil, onePixelRGBA.count, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0)
+        try #require(map != MAP_FAILED)
+        let pointer = try #require(map)
+        defer { munmap(pointer, onePixelRGBA.count) }
+        onePixelRGBA.copyBytes(to: pointer.assumingMemoryBound(to: UInt8.self), count: onePixelRGBA.count)
+
+        sendKitty(terminal, control: "i=307,a=\(action),t=s,f=32,s=1,v=1", payload: Data(name.utf8))
+
+        #expect(delegate.text == "\u{1b}_Gi=307;OK\u{1b}\\")
+        #expect((terminal.kittyGraphicsState.imagesById[307] == nil) == (action == "q"))
+        let reopened = name.withCString { Self.swiftShmOpen($0, O_RDONLY, 0) }
+        let reopenError = errno
+        defer { if reopened >= 0 { close(reopened) } }
+        #expect(reopened < 0)
+        #expect(reopenError == ENOENT)
     }
 
     // MARK: - the medium is still validated

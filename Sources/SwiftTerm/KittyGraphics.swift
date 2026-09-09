@@ -320,10 +320,10 @@ extension Terminal {
     /// data, all of it parsed and decompressed on the thread that feeds the
     /// terminal.
     ///
-    /// The query must not consume the client's resource: `a=q` asks whether a medium
-    /// works, it does not transfer anything (see `loadKittyPayload`).
+    /// A query loads the image without storing it. Temporary files and shared
+    /// memory must still be removed after reading, as required by `t=`.
     private func handleKittyQuery(control: KittyGraphicsControl, base64Payload: [UInt8]) {
-        let result = loadKittyPayload(control: control, base64Payload: base64Payload, consumeSource: false)
+        let result = loadKittyPayload(control: control, base64Payload: base64Payload)
         if let errorMessage = result.errorMessage {
             sendKittyError(control: control, message: errorMessage)
             return
@@ -646,16 +646,7 @@ extension Terminal {
         restrictCursor()
     }
 
-    /// Loads the payload for a graphics command, dispatching on the transmission
-    /// medium (`t=`).
-    ///
-    /// - Parameter consumeSource: whether the client's resource may be destroyed
-    ///   after reading. The `t` (temporary file) and `s` (shared memory) mediums are
-    ///   defined as "the terminal takes ownership and deletes it", but that must only
-    ///   happen for a real transmission. A query (`a=q`) merely asks whether a medium
-    ///   is supported, so it has to leave the resource alone - otherwise probing for
-    ///   support destroys the very file the client was about to send.
-    private func loadKittyPayload(control: KittyGraphicsControl, base64Payload: [UInt8], consumeSource: Bool = true) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
+    private func loadKittyPayload(control: KittyGraphicsControl, base64Payload: [UInt8]) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
         switch control.transmission {
         case "d":
             guard let payload = decodeKittyPayload(control: control, base64Payload: base64Payload) else {
@@ -663,11 +654,11 @@ extension Terminal {
             }
             return (payload, nil)
         case "f":
-            return loadKittyFilePayload(control: control, base64Payload: base64Payload, temporary: false, consumeSource: consumeSource)
+            return loadKittyFilePayload(control: control, base64Payload: base64Payload, temporary: false)
         case "t":
-            return loadKittyFilePayload(control: control, base64Payload: base64Payload, temporary: true, consumeSource: consumeSource)
+            return loadKittyFilePayload(control: control, base64Payload: base64Payload, temporary: true)
         case "s":
-            return loadKittySharedMemoryPayload(control: control, base64Payload: base64Payload, consumeSource: consumeSource)
+            return loadKittySharedMemoryPayload(control: control, base64Payload: base64Payload)
         default:
             return (nil, "ENOTSUP: unsupported transmission")
         }
@@ -767,7 +758,7 @@ extension Terminal {
         #endif
     }
 
-    private func loadKittyFilePayload(control: KittyGraphicsControl, base64Payload: [UInt8], temporary: Bool, consumeSource: Bool = true) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
+    private func loadKittyFilePayload(control: KittyGraphicsControl, base64Payload: [UInt8], temporary: Bool) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
         #if os(Windows)
         return (nil, "ENOTSUP: unsupported transmission")
         #else
@@ -796,7 +787,7 @@ extension Terminal {
         guard let data = readKittyFileData(path: resolved,
                                            offset: control.dataOffset,
                                            size: control.dataSize,
-                                           deleteAfterRead: temporary && consumeSource) else {
+                                           deleteAfterRead: temporary) else {
             return (nil, "EINVAL: bad payload")
         }
 
@@ -811,7 +802,7 @@ extension Terminal {
         #endif
     }
 
-    private func loadKittySharedMemoryPayload(control: KittyGraphicsControl, base64Payload: [UInt8], consumeSource: Bool = true) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
+    private func loadKittySharedMemoryPayload(control: KittyGraphicsControl, base64Payload: [UInt8]) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
         #if os(Windows)
         return (nil, "ENOTSUP: unsupported transmission")
         #else
@@ -831,7 +822,6 @@ extension Terminal {
         }
 
         guard let data = readKittySharedMemory(name: name,
-                                               unlinkAfterRead: consumeSource,
                                                expectedSize: expectedSize,
                                                offset: control.dataOffset,
                                                size: control.dataSize) else {
@@ -982,10 +972,7 @@ extension Terminal {
     #endif
 
     #if !os(Windows)
-    /// - Parameter unlinkAfterRead: the shared memory object is owned by the terminal
-    ///   once transmitted, so it is normally unlinked here. A support query (`a=q`)
-    ///   transfers nothing, so it must leave the client's object in place.
-    private func readKittySharedMemory(name: String, unlinkAfterRead: Bool = true, expectedSize: Int?, offset: Int, size: Int) -> Data? {
+    private func readKittySharedMemory(name: String, expectedSize: Int?, offset: Int, size: Int) -> Data? {
         guard offset >= 0, size >= 0 else {
             return nil
         }
@@ -997,9 +984,7 @@ extension Terminal {
         }
         defer {
             close(fd)
-            if unlinkAfterRead {
-                _ = name.withCString { shm_unlink($0) }
-            }
+            _ = name.withCString { shm_unlink($0) }
         }
 
         var st = stat()
