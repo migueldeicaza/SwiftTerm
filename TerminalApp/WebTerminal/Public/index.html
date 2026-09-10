@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>SwiftTerm · Local shell</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <main class="workspace">
+    <header class="toolbar">
+      <div class="identity"><span class="brand-mark" aria-hidden="true">›_</span><div><h1>SwiftTerm</h1><p id="session-title">Local shell</p></div></div>
+      <div class="controls"><span id="engine" class="engine">Full WASM</span><button id="clipboard-enable" type="button">Enable clipboard</button><button id="reconnect" type="button" disabled>Reconnect</button></div>
+    </header>
+    <section id="terminal-panel" class="terminal-panel" aria-label="Local shell terminal">
+      <div id="screen" class="screen">
+        <canvas id="terminal-canvas" role="img" aria-label="Shell output. This sample draws output on a canvas."></canvas>
+        <textarea id="terminal-input" aria-label="Terminal input" aria-describedby="input-help" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send" disabled></textarea>
+      </div>
+    </section>
+    <section id="clipboard-panel" class="request-panel" aria-label="Clipboard request" hidden>
+      <p id="clipboard-message" role="status"></p>
+      <button id="clipboard-allow" type="button">Allow</button><button id="clipboard-deny" type="button">Deny</button>
+    </section>
+    <section id="paste-panel" class="request-panel" aria-label="Paste approval" hidden>
+      <p>Newlines can run shell commands. Allow this paste?</p>
+      <button id="paste-allow" type="button">Paste with newlines</button><button id="paste-deny" type="button">Cancel</button>
+    </section>
+    <footer class="footer">
+      <p id="status" role="status" aria-live="polite" data-state="loading">Loading the terminal engine…</p>
+      <span id="geometry" aria-label="Terminal dimensions">80 × 24</span>
+    </footer>
+    <p id="input-help" class="help">Click the terminal to type. Paste uses your normal browser shortcut. Shift+Escape selects Reconnect. Reconnect starts a new shell.</p>
+    <noscript>This terminal needs JavaScript.</noscript>
+  </main>
+</body>
+</html>

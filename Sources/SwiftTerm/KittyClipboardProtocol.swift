@@ -854,6 +854,11 @@ final class KittyClipboardProtocol: @unchecked Sendable {
         lastCapabilities = Self.capabilities(of: terminal)
     }
 
+#if os(WASI) && !SWIFTTERM_EMBEDDED
+    func takeHostEventOverflow() -> Bool { completionQueue.takeOverflow() }
+    func pollHostEvents() -> Bool { completionQueue.poll() }
+#endif
+
     // MARK: Session lifecycle
 
     /// Clears every piece of protocol session state. RIS and destruction use it.
@@ -868,6 +873,10 @@ final class KittyClipboardProtocol: @unchecked Sendable {
 
     func terminalDestroyed() {
         terminal = nil
+        #if os(WASI)
+        completionQueue.clear()
+        clear()
+        #else
         completionQueue.async { [self] in
             grants.clear()
             tokens.removeAll()
@@ -875,6 +884,7 @@ final class KittyClipboardProtocol: @unchecked Sendable {
             pendingReads.removeAll()
             sessionGeneration &+= 1
         }
+        #endif
     }
 
     /// Re-reads the host capability set after the host changed its services.

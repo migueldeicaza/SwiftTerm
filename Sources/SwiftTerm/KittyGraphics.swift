@@ -6,7 +6,9 @@
 
 #if !SWIFTTERM_EMBEDDED
 import Foundation
-#if canImport(Musl)
+#if os(WASI)
+import WASILibc
+#elseif canImport(Musl)
 // The Swift Static Linux SDK builds against musl, where the C library module
 // is `Musl` and `Glibc` does not exist.
 import Musl
@@ -33,7 +35,7 @@ import PNG
 import LZ77
 #endif
 
-#if !os(Windows)
+#if !os(Windows) && !os(WASI)
 @_silgen_name("shm_open")
 private func swiftShmOpen(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t) -> Int32
 #endif
@@ -295,6 +297,8 @@ extension Terminal {
                     kittyGraphicsState.pending = nil
                     return
                 }
+                // Transfer ownership before append so Array can grow in place.
+                kittyGraphicsState.pending = nil
                 if control.suppressResponses > pending.control.suppressResponses {
                     pending.control.suppressResponses = control.suppressResponses
                 }
@@ -305,6 +309,7 @@ extension Terminal {
         }
 
         if var pending = kittyGraphicsState.pending {
+            kittyGraphicsState.pending = nil
             guard pending.base64Payload.count <= Terminal.kittyMaxApcBytes - payload.count else {
                 kittyGraphicsState.pending = nil
                 return
@@ -1049,7 +1054,31 @@ extension Terminal {
         return (cropped, cropWidth, cropHeight)
     }
 
+    /// Decode image bytes with the core decoder. WASI supports PNG.
+    public func decodeTerminalImage(_ data: TerminalData) -> (bytes: [UInt8], width: Int, height: Int)? {
+        decodePngToRgba(data)
+    }
+
+    /// Read IHDR before invoking a decoder that can allocate from its dimensions.
+    func validateKittyPNGHeader(_ data: Data) -> Bool {
+        let signature: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+        guard data.count >= 33, data.starts(with: signature) else { return false }
+        let header = Array(data.prefix(33))
+        guard header[8..<16].elementsEqual([0, 0, 0, 13, 73, 72, 68, 82]) else { return false }
+        func word(_ offset: Int) -> UInt32 {
+            (UInt32(header[offset]) << 24) | (UInt32(header[offset + 1]) << 16)
+                | (UInt32(header[offset + 2]) << 8) | UInt32(header[offset + 3])
+        }
+        guard let width = Int(exactly: word(16)), let height = Int(exactly: word(20)) else { return false }
+        // PNG can use four 16-bit channels before conversion to 8-bit RGBA.
+        return validateKittyRawDimensions(width: width, height: height, bytesPerPixel: 8)
+    }
+
     private func decodePngToRgba(_ data: Data) -> (bytes: [UInt8], width: Int, height: Int)? {
+        if data.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]) {
+            guard validateKittyPNGHeader(data) else { return nil }
+        }
+
         #if canImport(ImageIO) && canImport(CoreGraphics)
         guard let source = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
@@ -1091,6 +1120,7 @@ extension Terminal {
         }
         return (output, width, height)
         #elseif canImport(PNG)
+        guard validateKittyPNGHeader(data) else { return nil }
         var source = KittyPngDataSource(bytes: Array(data))
         guard let image = try? PNG.Image.decompress(stream: &source),
               validateKittyDimensions(width: image.size.x, height: image.size.y) else {
@@ -1245,7 +1275,7 @@ extension Terminal {
     }
 
     private func loadKittyFilePayload(control: KittyGraphicsControl, base64Payload: [UInt8], temporary: Bool) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
-        #if os(Windows)
+        #if os(Windows) || os(WASI)
         return (nil, "ENOTSUP: unsupported transmission")
         #else
         guard let pathData = decodeKittyBase64Payload(base64Payload), !pathData.isEmpty else {
@@ -1287,7 +1317,7 @@ extension Terminal {
     }
 
     private func loadKittySharedMemoryPayload(control: KittyGraphicsControl, base64Payload: [UInt8]) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
-        #if os(Windows)
+        #if os(Windows) || os(WASI)
         return (nil, "ENOTSUP: unsupported transmission")
         #else
         guard let pathData = decodeKittyBase64Payload(base64Payload), !pathData.isEmpty else {
@@ -1342,7 +1372,7 @@ extension Terminal {
         }
     }
 
-    #if os(Windows)
+    #if os(Windows) || os(WASI)
     private func resolveKittyRealPath(_ path: String) -> String? {
         nil
     }
@@ -1379,7 +1409,7 @@ extension Terminal {
         return path.hasPrefix(prefix)
     }
 
-    #if !os(Windows)
+    #if !os(Windows) && !os(WASI)
     private func readKittyFileData(path: String, offset: Int, size: Int, deleteAfterRead: Bool) -> Data? {
         guard offset >= 0, size >= 0 else {
             return nil
@@ -1442,7 +1472,7 @@ extension Terminal {
     }
     #endif
 
-    #if !os(Windows)
+    #if !os(Windows) && !os(WASI)
     private func readKittySharedMemory(name: String, expectedSize: Int?, offset: Int, size: Int) -> Data? {
         guard offset >= 0, size >= 0 else {
             return nil
@@ -1683,15 +1713,16 @@ extension Terminal {
     }
 
     private func nextKittyPlacementId(imageId: UInt32) -> UInt32 {
+        let state = kittyGraphicsState
         while true {
-            let id = kittyGraphicsState.nextPlacementId
-            kittyGraphicsState.nextPlacementId &+= 1
+            let id = state.nextPlacementId
+            state.nextPlacementId &+= 1
             guard id != 0 else { continue }
             let key = KittyPlacementKey(
                 imageId: imageId,
                 placementId: id,
                 isAnonymous: true)
-            if kittyGraphicsState.placementsByKey[key] == nil {
+            if state.placementsByKey[key] == nil {
                 return id
             }
         }
@@ -2488,7 +2519,12 @@ extension Terminal {
                 self.scheduleKittyAnimationTimer()
             }
         }
-        IOTimerQueue.shared.asyncAfter(
+        #if os(WASI)
+        let timerQueue = hostEventQueue
+        #else
+        let timerQueue = IOTimerQueue.shared
+        #endif
+        timerQueue.asyncAfter(
             deadline: .init(uptimeNanoseconds: deadline),
             execute: workItem)
     }

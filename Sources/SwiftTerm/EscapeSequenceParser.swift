@@ -237,7 +237,7 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
             }
         }
 #else
-        deliveryQueue.async { [self] in
+        let deliver: @Sendable () -> Void = { [self] in
             for registration in registrations {
                 let isActive = state.withLock { state in
                     state.registrations.contains { $0.id == registration.id }
@@ -247,6 +247,11 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
                 }
             }
         }
+#if os(WASI)
+        deliveryQueue.async(byteCount: event.payload.count, execute: deliver)
+#else
+        deliveryQueue.async(execute: deliver)
+#endif
 #endif
     }
 
@@ -259,6 +264,12 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
         }
 #endif
     }
+
+#if os(WASI) && !SWIFTTERM_EMBEDDED
+    func clearHostEvents() { deliveryQueue.clear() }
+    func takeHostEventOverflow() -> Bool { deliveryQueue.takeOverflow() }
+    func pollHostEvents() -> Bool { deliveryQueue.poll() }
+#endif
 
     func clearEmbeddedOscObservers() {
 #if SWIFTTERM_EMBEDDED

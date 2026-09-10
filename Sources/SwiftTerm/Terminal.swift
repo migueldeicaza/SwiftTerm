@@ -225,6 +225,9 @@ public protocol TerminalDelegate: AnyObject {
      * - Parameter source: identifies the instance of the terminal that sent this request
      * - Returns: the current clipboard contents, or `nil` to deny the request
      */
+    /// Accept an asynchronous OSC 52 read. Complete it on the terminal host executor.
+    func clipboardReadRequest(source: Terminal, selection: String) -> Bool
+
     func clipboardRead(source: Terminal) -> TerminalData?
 
     /**
@@ -580,6 +583,9 @@ open class Terminal {
     private var synchronizedOutputWatchdogDirty = false
 #if !SWIFTTERM_EMBEDDED
     private var synchronizedOutputTimeoutItem: DispatchWorkItem?
+#if os(WASI)
+    let hostEventQueue = DispatchQueue(label: "terminal-host-events")
+#endif
 #endif
     private(set) var synchronizedOutputWatchdogCounters = SynchronizedOutputWatchdogCounters()
 
@@ -766,6 +772,9 @@ open class Terminal {
     var hasKittyPlacements = false
     var kittyAnimationTimerSerial: UInt64 = 0
     
+    private var portableRenderMetadata: PortableRenderMetadata?
+    private var portableRenderCursor: RenderSnapshotCursor?
+
     var refreshStart = Int.max
     var refreshEnd = -1
     var scrollInvariantRefreshStart = Int.max
@@ -1120,6 +1129,10 @@ open class Terminal {
     }
 
     deinit {
+#if os(WASI) && !SWIFTTERM_EMBEDDED
+        hostEventQueue.clear()
+        oscEventDispatcher.clearHostEvents()
+#endif
 #if !SWIFTTERM_EMBEDDED
         kittyClipboardProtocol?.terminalDestroyed()
 #endif
@@ -3603,6 +3616,7 @@ open class Terminal {
         let payload = data[(sepIdx + 1)...]
 
         if payload.count == 1 && payload[payload.startIndex] == UInt8(ascii: "?") {
+            if tdel?.clipboardReadRequest(source: self, selection: selectionChars) == true { return }
             // Read / query – ask the delegate for clipboard contents.
             guard let content = tdel?.clipboardRead(source: self) else {
                 return
@@ -4980,7 +4994,7 @@ open class Terminal {
         case [7]:
             tdel.windowCommand(source: self, command: .refreshWindow)
         case _ where pars.count == 3 && pars.first == 8:
-            tdel.windowCommand(source: self, command: .resizeTerminal(cols: pars [1], rows: pars [2]))
+            tdel.windowCommand(source: self, command: .resizeTerminal(cols: pars [2], rows: pars [1]))
         case [9, 0]:
             tdel.windowCommand(source: self, command: .restoreMaximizedWindow)
         case [9, 1]:
@@ -7478,6 +7492,138 @@ open class Terminal {
         scrollInvariantRefreshEnd = buffer.yDisp + rows
     }
     
+    /// Copies one active palette entry. Callers must serialize access as for
+    /// other terminal getters. This method can run in a delegate callback
+    /// that already holds the terminal lock.
+    public func paletteColor(index: Int) -> RenderSnapshotColor? {
+        guard ansiColors.indices.contains(index) else { return nil }
+        return RenderSnapshotColor(ansiColors[index])
+    }
+
+    /// Copies render state under one terminal lock. Do not call this method
+    /// while you hold `terminalLock`. The copy does not clear pending damage.
+    public func makeRenderSnapshot(scope: RenderSnapshotScope) -> TerminalRenderSnapshot {
+        terminalLock.withLock {
+            let source = displayBuffer
+            let foreground = RenderSnapshotColor(foregroundColor)
+            let background = RenderSnapshotColor(backgroundColor)
+            let cursorColor = self.cursorColor.map(RenderSnapshotColor.init)
+            let palette = ansiColors.map(RenderSnapshotColor.init)
+            var modes: [RenderSnapshotLineMode] = []
+            modes.reserveCapacity(rows)
+            for y in 0..<rows {
+                let index = source.yDisp + y
+                guard index >= 0 && index < source.lines.count else {
+                    modes.append(.single)
+                    continue
+                }
+                switch source.lines[index].renderMode {
+                case .single: modes.append(.single)
+                case .doubleWidth: modes.append(.doubleWidth)
+                case .doubledTop: modes.append(.doubledTop)
+                case .doubledDown: modes.append(.doubledDown)
+                }
+            }
+            let metadata = PortableRenderMetadata(
+                cols: cols, rows: rows, alternate: isCurrentBufferAlternate,
+                yDisp: source.yDisp, linesTop: source.linesTop,
+                foreground: foreground, background: background,
+                cursorColor: cursorColor, palette: palette,
+                reverse: reverseColors, modes: modes)
+            if portableRenderMetadata != metadata {
+                updateFullScreen()
+            }
+            let style = options.cursorStyle
+            let styleBlinks: Bool
+            switch style {
+            case .blinkBlock, .blinkBar, .blinkUnderline: styleBlinks = true
+            case .steadyBlock, .steadyBar, .steadyUnderline: styleBlinks = false
+            }
+            let cursor = RenderSnapshotCursor(
+                x: max(0, min(cols, source.x)),
+                y: source.yBase + source.y - source.yDisp,
+                hidden: cursorHidden, style: style, blink: styleBlinks || cursorBlink)
+            if portableRenderCursor != cursor {
+                if let old = portableRenderCursor, old.y >= 0 && old.y < rows {
+                    updateRange(old.y)
+                }
+                if cursor.y >= 0 && cursor.y < rows {
+                    updateRange(cursor.y)
+                }
+            }
+            portableRenderMetadata = metadata
+            portableRenderCursor = cursor
+
+            let range: RenderSnapshotRange?
+            if scope == .full {
+                range = RenderSnapshotRange(startY: 0, endY: rows - 1)
+            } else if let pending = getUpdateRange(),
+                      pending.endY >= 0, pending.startY < rows {
+                range = RenderSnapshotRange(startY: max(0, pending.startY),
+                                            endY: min(rows - 1, pending.endY))
+            } else {
+                range = nil
+            }
+            let dirtyKind: RenderSnapshotDirtyKind
+            if let range {
+                dirtyKind = range.startY == 0 && range.endY == rows - 1 ? .full : .partial
+            } else {
+                dirtyKind = .clean
+            }
+            let scrollRange = getScrollInvariantUpdateRange().map {
+                // updateFullScreen uses a one-past-end sentinel in both
+                // ranges. Keep absolute coordinates and normalize that case.
+                let end = $0.startY == source.yDisp && $0.endY == source.yDisp + rows
+                    ? $0.endY - 1 : $0.endY
+                return RenderSnapshotRange(startY: $0.startY, endY: end)
+            }
+            var copiedRows: [RenderSnapshotRow] = []
+            if let range {
+                copiedRows.reserveCapacity(range.endY - range.startY + 1)
+                for y in range.startY...range.endY {
+                    let index = source.yDisp + y
+                    let line = index >= 0 && index < source.lines.count ? source.lines[index] : nil
+                    var cells: [RenderSnapshotCell] = []
+                    cells.reserveCapacity(cols)
+                    for x in 0..<cols {
+                        guard let line, x < line.count else {
+                            cells.append(RenderSnapshotCell(text: "", width: 1,
+                                widthState: .narrow, attribute: CharData.defaultAttr,
+                                isProtected: false, semanticContent: .none, payloadID: nil))
+                            continue
+                        }
+                        let cell = line.packedView(at: x)
+                        let widthState: RenderSnapshotWidthState
+                        switch cell.packed.widthState {
+                        case .narrow: widthState = .narrow
+                        case .wide: widthState = .wide
+                        case .spacerTail: widthState = .spacerTail
+                        case .spacerHead: widthState = .spacerHead
+                        }
+                        cells.append(RenderSnapshotCell(
+                            text: cell.code == 0 || cell.width == 0 ? "" : cell.getText(),
+                            width: cell.width, widthState: widthState,
+                            attribute: cell.attribute, isProtected: cell.isProtected,
+                            semanticContent: cell.semanticContent,
+                            payloadID: cell.packed.payloadCode == 0 ? nil : cell.packed.payloadCode))
+                    }
+                    let next = index + 1
+                    copiedRows.append(RenderSnapshotRow(y: y,
+                        isWrapped: line?.isWrapped ?? false,
+                        wrapsToNext: next >= 0 && next < source.lines.count && source.lines[next].isWrapped,
+                        renderMode: modes[y], cells: cells))
+                }
+            }
+            return TerminalRenderSnapshot(cols: cols, rows: rows,
+                isAlternateScreen: isCurrentBufferAlternate, dirtyKind: dirtyKind,
+                dirtyRange: range, scrollDirtyRange: scrollRange,
+                foregroundColor: foreground, backgroundColor: background,
+                cursorColor: cursorColor, palette: palette, reverseVideo: reverseColors,
+                synchronizedOutputActive: synchronizedOutputActive,
+                cursor: cursor, lines: copiedRows)
+        }
+    }
+
     /**
      * Returns the starting and ending lines that need to be redrawn, or nil
      * if no part of the screen needs to be updated.   Alternatively, you can
@@ -8268,20 +8414,55 @@ open class Terminal {
         // reference by at most `synchronizedOutputTimeoutSeconds` (1 s). Unlike
         // any unowned scheme, this cannot race teardown.
         // See Docs/io-cpu-profile.md §3.1.
+        #if os(WASI)
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.synchronizedOutputWatchdogFired(generation: generation)
+        }
+        #else
         let workItem = DispatchWorkItem {
             self.synchronizedOutputWatchdogFired(generation: generation)
         }
+        #endif
         synchronizedOutputTimeoutItem = workItem
         // Not the main queue: this is the valve that unfreezes a display an
         // application left frozen with DECSET 2026, and the main thread is the
         // one most likely to be stuck when it is needed (io-gaps.md G5c). The
         // handler already takes the terminal lock, so it is safe anywhere.
-        IOTimerQueue.shared.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds,
+        #if os(WASI)
+        let timerQueue = hostEventQueue
+        #else
+        let timerQueue = IOTimerQueue.shared
+        #endif
+        timerQueue.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds,
                                        execute: workItem)
 #endif
     }
 
     public func expireSynchronizedOutput() { endSynchronizedOutput() }
+#if os(WASI) && !SWIFTTERM_EMBEDDED
+    /// Run host callbacks and timers between serialized terminal operations.
+    /// Cancel pending browser callbacks before the host releases this terminal.
+    public func cancelHostEvents() {
+        hostEventQueue.clear()
+        oscEventDispatcher.clearHostEvents()
+        kittyClipboardProtocol?.terminalDestroyed()
+        kittyClipboardProtocol = nil
+    }
+
+    public func takeHostEventOverflow() -> Bool {
+        let timers = hostEventQueue.takeOverflow()
+        let osc = oscEventDispatcher.takeHostEventOverflow()
+        let clipboard = kittyClipboardProtocol?.takeHostEventOverflow() ?? false
+        return timers || osc || clipboard
+    }
+
+    public func pollHostEvents() -> Bool {
+        let timers = hostEventQueue.poll()
+        let osc = oscEventDispatcher.pollHostEvents()
+        let clipboard = kittyClipboardProtocol?.pollHostEvents() ?? false
+        return timers || osc || clipboard
+    }
+#endif
 #if !SWIFTTERM_EMBEDDED
     func synchronizedOutputWatchdogFired(generation: UInt64) {
         terminalLock.withLock {
@@ -9545,6 +9726,8 @@ final class ViewTerminal: Terminal {
 
 // Default implementations
 public extension TerminalDelegate {
+    func clipboardReadRequest(source: Terminal, selection: String) -> Bool { false }
+
     func cursorStyleChanged (source: Terminal, newStyle: CursorStyle)
     {
         // Do nothing

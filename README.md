@@ -120,11 +120,17 @@ require Xcode 26 or later. See the
 
 ## WebAssembly
 
-SwiftTerm can compile its Foundation-free, headless core for WASI, either
-with the full Swift runtime (`Wasm` trait, ~6 MB) or as Embedded Swift
-(`Embedded` + `Wasm` traits, ~0.6 MB). Swift 6.2 or later is required. Xcode
-builds require Xcode 26 or later. See the
-[WebAssembly build guide](Docs/wasm.md).
+SwiftTerm supplies a browser and Node.js terminal engine with ABI version 1,
+copied render snapshots, generated reply bytes, and host-event queues. The
+TypeScript package loads either the Full or Embedded WASM reactor. The host
+supplies a renderer and PTY transport. A Canvas 2D example is included.
+
+See the [WebAssembly build and browser guide](Docs/wasm.md) for the pinned
+compiler/SDK pair, build commands, API use, limits, and tests.
+
+The [Web terminal sample](TerminalApp/WebTerminal/README.md) is a SwiftPM
+package with a Hummingbird server, WebSocket transport, and a local shell PTY.
+Run `TerminalApp/WebTerminal/run.sh` to start it on localhost.
 
 The engine is in this directory, while code for macOS lives under `Mac`, and
 code for iOS, lives under `iOS`.    Given that those two share a lot of common 
