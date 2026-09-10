@@ -12,6 +12,7 @@ export class CanvasTerminalRenderer {
   private dpr = 0;
   private graphics?: GraphicsSnapshot;
   private images = new Map<bigint, { generation: bigint; canvas: HTMLCanvasElement }>();
+  private colors = new Map<number, string>();
   public drawnRows = 0;
   constructor(readonly canvas: HTMLCanvasElement, readonly terminal: SwiftTermTerminal, readonly cellWidth = 10, readonly cellHeight = 20, readonly fontFamily = 'monospace') {
     const context = canvas.getContext('2d');
@@ -115,26 +116,74 @@ export class CanvasTerminalRenderer {
   }
   private drawRow(row: RenderRow, pass: 'all' | 'background' | 'text' = 'all'): void {
     if (pass !== 'background') this.drawnRows++;
-    const ctx = this.context, w = this.cellWidth, h = this.cellHeight, doubleWidth = !!(row.flags & 14), doubleHeight = !!(row.flags & 12);
+    const ctx = this.context, h = this.cellHeight, doubleWidth = !!(row.flags & 14), doubleHeight = !!(row.flags & 12);
     ctx.save();
     ctx.beginPath(); ctx.rect(0, row.y * h, this.canvas.width / this.dpr, h); ctx.clip();
     ctx.translate(0, row.y * h - ((row.flags & 8) ? h : 0));
     ctx.scale(doubleWidth ? 2 : 1, doubleHeight ? 2 : 1);
-    if (pass !== 'text') for (const [x, cell] of row.cells.entries()) {
-      if (pass === 'background' && (cell.flags & 32)) continue;
-      ctx.fillStyle = color(cell.background); ctx.fillRect(x * w, 0, w, h);
+    if (pass !== 'text') this.drawBackgrounds(row, pass === 'background');
+    if (pass !== 'background') this.drawText(row);
+    ctx.restore();
+  }
+  private cssColor(rgba: number): string {
+    let value = this.colors.get(rgba);
+    if (value !== undefined) return value;
+    if (this.colors.size >= 4096) this.colors.clear();
+    value = color(rgba); this.colors.set(rgba, value);
+    return value;
+  }
+  private drawBackgrounds(row: RenderRow, skipDefault: boolean): void {
+    const ctx = this.context, w = this.cellWidth, h = this.cellHeight;
+    let start = -1, background = 0;
+    const flush = (end: number): void => {
+      if (start < 0) return;
+      ctx.fillStyle = this.cssColor(background);
+      ctx.fillRect(start * w, 0, (end - start) * w, h);
+      start = -1;
+    };
+    for (let x = 0; x < row.cells.length; x++) {
+      const cell = row.cells[x], draw = !skipDefault || !(cell.flags & 32);
+      if (!draw || (start >= 0 && cell.background !== background)) flush(x);
+      if (draw && start < 0) { start = x; background = cell.background; }
     }
-    if (pass !== 'background') for (const [x, cell] of row.cells.entries()) {
-      if (!cell.width || (cell.flags & 64) || cell.style & CellStyle.invisible) continue;
-      ctx.save(); ctx.beginPath(); ctx.rect(x * w, 0, cell.width * w, h); ctx.clip();
-      ctx.fillStyle = color(cell.foreground);
-      ctx.font = `${cell.style & CellStyle.italic ? 'italic ' : ''}${cell.style & CellStyle.bold ? 'bold ' : ''}${Math.floor(h * 0.75)}px ${this.fontFamily}`;
-      ctx.textBaseline = 'alphabetic';
-      ctx.fillText(cell.text, x * w, h * 0.78);
-      if (cell.style & CellStyle.crossedOut) ctx.fillRect(x * w, h * 0.5, cell.width * w, 1);
+    flush(row.cells.length);
+  }
+  private font(style: number): string {
+    return `${style & CellStyle.italic ? 'italic ' : ''}${style & CellStyle.bold ? 'bold ' : ''}${Math.floor(this.cellHeight * 0.75)}px ${this.fontFamily}`;
+  }
+  private isSimpleASCII(cell: RenderRow['cells'][number]): boolean {
+    if (cell.width !== 1 || cell.style & (CellStyle.invisible | CellStyle.underline | CellStyle.crossedOut) || cell.underlineStyle) return false;
+    return cell.text.length === 1 && cell.text.charCodeAt(0) >= 0x21 && cell.text.charCodeAt(0) <= 0x7e;
+  }
+  private drawText(row: RenderRow): void {
+    const ctx = this.context, w = this.cellWidth, h = this.cellHeight;
+    ctx.textBaseline = 'alphabetic';
+    for (let x = 0; x < row.cells.length;) {
+      const cell = row.cells[x];
+      if (!cell.width || (cell.flags & 64) || cell.style & CellStyle.invisible) { x++; continue; }
+      if (this.isSimpleASCII(cell)) {
+        let end = x + 1, text = cell.text;
+        while (end < row.cells.length) {
+          const next = row.cells[end];
+          if (!this.isSimpleASCII(next) || next.foreground !== cell.foreground || next.style !== cell.style) break;
+          text += next.text; end++;
+        }
+        ctx.save(); ctx.beginPath(); ctx.rect(x * w, 0, (end - x) * w, h); ctx.clip();
+        ctx.fillStyle = this.cssColor(cell.foreground); ctx.font = this.font(cell.style);
+        ctx.fillText(text, x * w, h * 0.78);
+        ctx.restore(); x = end; continue;
+      }
       const underline = cell.underlineStyle || (cell.style & CellStyle.underline ? 1 : 0);
+      const hasInk = cell.text !== '' && cell.text !== ' ';
+      if (!hasInk && !(cell.style & CellStyle.crossedOut) && !underline) { x++; continue; }
+      ctx.save(); ctx.beginPath(); ctx.rect(x * w, 0, cell.width * w, h); ctx.clip();
+      if (hasInk) {
+        ctx.fillStyle = this.cssColor(cell.foreground); ctx.font = this.font(cell.style);
+        ctx.fillText(cell.text, x * w, h * 0.78);
+      }
+      if (cell.style & CellStyle.crossedOut) ctx.fillRect(x * w, h * 0.5, cell.width * w, 1);
       if (underline) {
-        ctx.strokeStyle = color(cell.underlineColor); ctx.lineWidth = 1;
+        ctx.strokeStyle = this.cssColor(cell.underlineColor); ctx.lineWidth = 1;
         ctx.setLineDash(underline === 4 ? [1, 2] : underline === 5 ? [4, 3] : []);
         ctx.beginPath();
         if (underline === 3) {
@@ -143,9 +192,8 @@ export class CanvasTerminalRenderer {
         ctx.stroke();
         if (underline === 2) { ctx.beginPath(); ctx.moveTo(x * w, h - 4); ctx.lineTo((x + cell.width) * w, h - 4); ctx.stroke(); }
       }
-      ctx.restore();
+      ctx.restore(); x++;
     }
-    ctx.restore();
   }
   private drawCursor(snapshot: RenderSnapshot): void {
     const cursor = snapshot.cursor;
@@ -162,7 +210,7 @@ export class CanvasTerminalRenderer {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true; cancelAnimationFrame(this.frame);
-    this.images.clear(); this.graphics = undefined;
+    this.images.clear(); this.colors.clear(); this.graphics = undefined;
     window.removeEventListener('focus', this.focus); window.removeEventListener('blur', this.focus);
     document.removeEventListener('visibilitychange', this.visibility); window.removeEventListener('resize', this.requestFrame);
   }

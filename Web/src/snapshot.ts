@@ -33,7 +33,12 @@ export function decodeSnapshot(bytes: Uint8Array): RenderSnapshot {
       const co = cellOffset + (first + c) * 32, offset = u(co), n = u(co + 4), width = v.getUint8(co + 26), underlineStyle = v.getUint8(co + 27), semanticKind = v.getUint8(co + 28), flags = v.getUint8(co + 29);
       if (offset > textLength || n > textLength - offset || width > 2 || underlineStyle > 5 || semanticKind > 6 || ((flags & 4) && (width !== 0 || n !== 0))) invalid('Invalid cell record.');
       let text: string;
-      try { text = decoder.decode(bytes.subarray(textOffset + offset, textOffset + offset + n)); } catch { invalid('Invalid UTF-8 in a cell.'); }
+      const start = textOffset + offset;
+      // Printable ASCII is the sustained-output fast path. Avoid creating a
+      // subarray and starting TextDecoder once for every ordinary cell.
+      if (n === 0) text = '';
+      else if (n === 1 && bytes[start] < 0x80) text = String.fromCharCode(bytes[start]);
+      else try { text = decoder.decode(bytes.subarray(start, start + n)); } catch { invalid('Invalid UTF-8 in a cell.'); }
       cells.push(Object.freeze({ text, width: width as 0 | 1 | 2, foreground: u(co + 8), background: u(co + 12), underlineColor: u(co + 16), linkId: u(co + 20), style: v.getUint16(co + 24, true), underlineStyle, semanticKind, flags }));
     }
     rowData.push(Object.freeze({ y, flags: u(ro + 4), cells: Object.freeze(cells) }));

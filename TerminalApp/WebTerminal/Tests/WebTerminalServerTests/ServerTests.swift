@@ -65,6 +65,15 @@ import Testing
     #expect(await mailbox.next() == nil)
 }
 
+@Test func mailboxCombinesQueuedChunks() async {
+    let mailbox = OutputMailbox(capacity: 6)
+    mailbox.send([1, 2][...])
+    mailbox.send([3, 4][...])
+    mailbox.send([5, 6][...])
+    #expect(await mailbox.next() == .bytes([1, 2, 3, 4, 5, 6]))
+    mailbox.close()
+}
+
 @Test func mailboxCancellationWakesConsumerAndProducer() async {
     let mailbox = OutputMailbox(capacity: 1)
     let reader = Task { await mailbox.next() }

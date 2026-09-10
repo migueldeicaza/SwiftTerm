@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { CanvasTerminalRenderer } from '../../Web/dist/example/canvas2d.js';
 test('Canvas draws included rows, scales pixels, owns blink, defers synchronized frames, and retries a failed frame',()=>{
   const old=Object.fromEntries(['window','document','requestAnimationFrame','cancelAnimationFrame'].map(k=>[k,globalThis[k]]));
-  let scheduled,marks=0,fail=false,fills=0,reads=0;
+  let scheduled,marks=0,fail=false,fills=0,reads=0;const texts=[];
   const listeners=new Map();
   globalThis.window={devicePixelRatio:2,addEventListener:(n,fn)=>listeners.set(n,fn),removeEventListener:n=>listeners.delete(n)};
   globalThis.document={hidden:false,hasFocus:()=>true,addEventListener:(n,fn)=>listeners.set(n,fn),removeEventListener:n=>listeners.delete(n)};
   globalThis.requestAnimationFrame=fn=>{scheduled=fn;return 1;};globalThis.cancelAnimationFrame=()=>{};
   const context=Object.fromEntries(['save','restore','beginPath','rect','clip','translate','scale','setTransform','stroke','moveTo','lineTo','setLineDash','strokeRect'].map(n=>[n,()=>{}]));
-  context.fillRect=()=>fills++;context.fillText=()=>{if(fail)throw new Error('draw failed');};
+  context.fillRect=()=>fills++;context.fillText=text=>{if(fail)throw new Error('draw failed');texts.push(text);};
   const canvas={getContext:()=>context,style:{},width:0,height:0};
   const cell={text:'界',width:2,foreground:0xffffffff,background:0x000000ff,underlineColor:0xff0000ff,style:67,underlineStyle:3,flags:0,semanticKind:0,linkId:0};
   const row=y=>({y,flags:0,cells:[cell,{...cell,text:'',width:0}]});
@@ -19,6 +19,9 @@ test('Canvas draws included rows, scales pixels, owns blink, defers synchronized
   try{
     renderer=new CanvasTerminalRenderer(canvas,terminal);scheduled(0);assert.equal(marks,1);assert.equal(renderer.drawnRows,2);assert.equal(canvas.width,40);assert.equal(canvas.height,80);
     snapshot={...snapshot,generation:2n,dirty:'partial',rowData:[row(1)]};renderer.requestFrame();scheduled(0);assert.equal(marks,2);assert.equal(renderer.drawnRows,1);
+    const plain={...cell,text:'a',width:1,style:0,underlineStyle:0};const beforeText=texts.length;
+    renderer.draw({...snapshot,generation:20n,rowData:[{y:1,flags:0,cells:[plain,{...plain,text:'b'}]}]});
+    assert.deepEqual(texts.slice(beforeText),['ab'],'adjacent plain ASCII cells draw as one run');
     snapshot={...snapshot,dirty:'clean',rowData:[]};const before=fills;renderer.requestFrame();scheduled(0);assert.equal(fills,before,'clean frames do not draw the cursor over its previous pixels');
     scheduled(600);assert.ok(fills>before,'blink redraws its cached row without a WASM snapshot');
     snapshot={...snapshot,generation:3n,dirty:'full',rowData:[row(0),row(1)]};fail=true;renderer.requestFrame();const successful=marks;

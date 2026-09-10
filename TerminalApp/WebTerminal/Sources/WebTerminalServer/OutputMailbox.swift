@@ -82,7 +82,19 @@ final class OutputMailbox: @unchecked Sendable {
             condition.unlock()
             continuation.resume(returning: nil)
         } else if !chunks.isEmpty {
-            let bytes = chunks.removeFirst()
+            let bytes: [UInt8]
+            if chunks.count == 1 {
+                bytes = chunks.removeFirst()
+            } else {
+                // The producer has already paid the bounded queue cost. Send
+                // its backlog as one WebSocket frame so a fast stream does not
+                // cause one browser snapshot and paint for each PTY callback.
+                var combined: [UInt8] = []
+                combined.reserveCapacity(byteCount)
+                for chunk in chunks { combined.append(contentsOf: chunk) }
+                chunks.removeAll(keepingCapacity: true)
+                bytes = combined
+            }
             byteCount -= bytes.count
             condition.broadcast()
             condition.unlock()
