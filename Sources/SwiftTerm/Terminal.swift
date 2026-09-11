@@ -8572,6 +8572,10 @@ open class Terminal {
      * - Parameter control: `true` if the control key is pressed
      * - Returns: the Cb value in the low byte, with release button metadata
      *   in the high bits. Pass the complete value to `sendEvent`.
+     *
+     * The protocol has no press encoding for button 3: a Cb of 3 without the
+     * motion bit is a release. Button 3 and every unknown button therefore
+     * encode as the left button.
      */
     public func encodeButton (button: Int, release: Bool, shift: Bool, meta: Bool, control: Bool) -> Int
     {
@@ -8598,8 +8602,6 @@ open class Terminal {
                 value = 66
             case 7:
                 value = 67
-            case 3:
-                value = 3
             default:
                 value = 0
             }
@@ -8721,12 +8723,16 @@ open class Terminal {
         case .wheel:
             guard buttonValue >= 4, mouseMode.sendButtonPress() else { return false }
         }
-        var flags = encodeButton(button: buttonValue, release: action == .release,
+        // Motion with no button held is the one case that needs a Cb of 3, and
+        // it is only unambiguous once the motion bit is set.
+        let noButton = action == .move && button == .none
+        var flags = encodeButton(button: noButton ? 0 : buttonValue, release: action == .release,
             shift: modifiers & 1 != 0, meta: modifiers & 2 != 0, control: modifiers & 4 != 0) & 255
         if action == .move { flags |= 32 }
+        if noButton { flags |= 3 }
         sendMousePacket(buttonFlags: flags, release: action == .release,
                         originalButton: buttonValue, x: col, y: row,
-                        pixelX: pixelX + 1, pixelY: pixelY + 1)
+                        pixelX: pixelX, pixelY: pixelY)
         return true
     }
 

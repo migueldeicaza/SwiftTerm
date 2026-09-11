@@ -211,7 +211,12 @@ export class TerminalInputController {
   private readonly pointerUp = (event: PointerEvent): void => {
     if (this.gesture?.id !== event.pointerId) return;
     event.preventDefault();
-    this.gesture.last = this.point(event.clientX, event.clientY); this.gesture.modifiers = modifiers(event);
+    // A failed hit test must not leave the gesture and the pointer capture behind.
+    this.attempt(() => {
+      const gesture = this.gesture;
+      if (!gesture) return;
+      gesture.last = this.point(event.clientX, event.clientY); gesture.modifiers = modifiers(event);
+    });
     this.endGesture();
   };
   private readonly pointerCancel = (event: PointerEvent): void => { if (this.gesture?.id === event.pointerId) { this.lastClick = undefined; this.endGesture(); } };

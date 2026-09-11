@@ -3,6 +3,11 @@ import XCTest
 
 final class PortableSelectionTests: XCTestCase, TerminalDelegate {
     func send(source: Terminal, data: ArraySlice<UInt8>) {}
+    private var notified: [(Position, Position)] = []
+    private var watched: SelectionService?
+    func selectionChanged(source: Terminal) {
+        if let watched { notified.append((watched.start, watched.end)) }
+    }
     private func makeTerminal(cols: Int = 10, rows: Int = 3, scrollback: Int = 10)
         -> (Terminal, SelectionService) {
         let terminal = Terminal(delegate: self,
@@ -113,6 +118,35 @@ final class PortableSelectionTests: XCTestCase, TerminalDelegate {
         feed("\u{1b}[?1049h", into: terminal, selection: selection)
         XCTAssertFalse(terminal.selectionState(selection).active)
         XCTAssertTrue(terminal.viewportState().isAlternateScreen)
+    }
+
+    /// The endpoint mode belongs to the service the host builds.
+    func testUpdateSelectionKeepsTheServiceEndpointMode() {
+        let terminal = Terminal(delegate: self,
+            options: TerminalOptions(cols: 10, rows: 3, scrollback: 10))
+        let selection = SelectionService(terminal: terminal)
+        terminal.feedPreservingSelection(Array("0123456789".utf8)[...], selection: selection)
+        XCTAssertTrue(terminal.updateSelection(selection, action: 0, column: 2, row: 0))
+        XCTAssertFalse(selection.exclusiveEnd)
+        selection.selectAll()
+        XCTAssertEqual(selection.end.col, terminal.cols - 1)
+    }
+
+    /// A delegate must never see endpoints that still split a wide cell.
+    func testNormalizedEndpointsReachTheDelegate() {
+        let terminal = Terminal(delegate: self,
+            options: TerminalOptions(cols: 10, rows: 3, scrollback: 10))
+        let selection = SelectionService(terminal: terminal)
+        watched = selection
+        // The wide cell ends the row, so an inclusive row endpoint splits it.
+        terminal.feedPreservingSelection(Array("01234567界".utf8)[...], selection: selection)
+        terminal.updateSelection(selection, action: 0, column: 0, row: 0, mode: 2)
+        notified.removeAll()
+        terminal.updateSelection(selection, action: 1, column: 5, row: 0)
+        XCTAssertEqual(selection.end.col, 10)
+        XCTAssertFalse(notified.isEmpty)
+        XCTAssertEqual(notified.last?.0, selection.start)
+        XCTAssertEqual(notified.last?.1, selection.end)
     }
 
     func testHistoryEvictionAndInvalidCoordinates() {

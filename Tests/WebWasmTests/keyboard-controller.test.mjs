@@ -76,6 +76,19 @@ test('host owns shortcuts through repeat and release; caller policy can permit a
   assert.deepEqual(defaults.keys, []); defaults.controller.dispose();
 });
 
+test('the default policy keeps Control keys in the terminal on macOS only', () => {
+  const mac = setup({}, 'sent', { platform: 'MacIntel' });
+  mac.input.down('l', 'KeyL', { ctrlKey: true }); mac.input.up('l', 'KeyL');
+  assert.deepEqual(mac.keys.map(k => [k.key, k.eventType]), [['l', 1], ['l', 3]]);
+  mac.input.down('r', 'KeyR', { metaKey: true }); mac.input.up('r', 'KeyR');
+  assert.equal(mac.keys.length, 2, 'Command shortcuts stay with the browser');
+  mac.controller.dispose();
+  const other = setup();
+  other.input.down('l', 'KeyL', { ctrlKey: true }); other.input.up('l', 'KeyL');
+  assert.deepEqual(other.keys, []);
+  other.controller.dispose();
+});
+
 test('repeat uses the original press identity; unmatched and ignored releases are absent', () => {
   const { input, keys, controller } = setup({}, event => event.key === 'Shift' ? 'ignored' : 'sent');
   input.up('x', 'KeyX'); input.down('Shift', 'ShiftLeft'); input.up('Shift', 'ShiftLeft');

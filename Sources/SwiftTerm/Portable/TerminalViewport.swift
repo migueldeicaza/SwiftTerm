@@ -46,7 +46,7 @@ extension Terminal {
             userScrolling = top < state.maximumTopRow
             if top != state.topRow {
                 setViewYDisp(top)
-                refresh(startRow: 0, endRow: rows)
+                refresh(startRow: 0, endRow: rows - 1)
             }
         }
     }
@@ -64,12 +64,13 @@ extension Terminal {
     /// both the anchor cell and the target cell, including wide continuations.
     /// Actions: begin=0, extend=1, clear=2, all=3.
     /// Begin modes: character=0, word=1, row=2, Shift extension=3.
+    /// The endpoint mode belongs to the service: build it with
+    /// `SelectionService(terminal:exclusiveEnd:)` and keep that choice.
     @discardableResult
     public func updateSelection(_ selection: SelectionService, action: UInt32,
                                 column: Int = 0, row: Int = 0, mode: UInt32 = 0) -> Bool {
         terminalLock.withLock {
             guard selection.terminal === self, action <= 3, mode <= 3 else { return false }
-            selection.exclusiveEnd = true
             if action == 2 { selection.selectNone(); return true }
             if action == 3 { selection.selectAll(); return true }
             guard column >= 0, column < cols, row >= 0, row < rows else { return false }

@@ -316,6 +316,21 @@ test('disposal in a mouse press callback releases the press without restoring po
   assert.deepEqual(f.mouse().map(e => e.action), ['press', 'release']); assert.equal(f.captures.size, 0);
 });
 
+test('a geometry failure on release still ends the gesture and frees the pointer', t => {
+  const errors = [], f = fixture(t, { state: { mouseMode: 'button' }, options: { onError: error => errors.push(error.message) } });
+  f.surface.emit('pointerdown');
+  assert.deepEqual(f.mouse().map(e => e.action), ['press']); assert.deepEqual([...f.captures], [1]);
+  f.controller.options.geometry = () => { throw new Error('no geometry'); };
+  f.surface.emit('pointerup');
+  assert.ok(errors.length > 0 && errors.every(message => message === 'no geometry'));
+  assert.deepEqual([...f.captures], [], 'the pointer capture is released');
+  f.controller.options.geometry = () => f.geometry;
+  errors.length = 0;
+  f.surface.emit('pointerdown');
+  assert.deepEqual(f.mouse().map(e => e.action), ['press', 'release', 'press'], 'later presses still reach the terminal');
+  assert.deepEqual(errors, []);
+});
+
 test('pointer capture failure releases a sent press and reports the error', t => {
   const errors = [], f = fixture(t, { state: { mouseMode: 'button' }, options: { onError: error => errors.push(error.message) } });
   f.surface.setPointerCapture = () => { throw new Error('capture failed'); };

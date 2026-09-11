@@ -30,11 +30,17 @@ function baseKey(code: string): string {
   if (/^Digit[0-9]$/.test(code)) return code.slice(5);
   return punctuation[code] ?? '';
 }
-export function defaultKeyboardShortcut(event: KeyboardEvent): boolean {
+function macPlatform(): boolean { return /Mac|iPhone|iPad/.test(globalThis.navigator?.platform ?? ''); }
+/**
+ * The default browser/terminal split. `mac` defaults to the running platform.
+ * macOS puts the browser shortcuts on Command, which leaves Control for the
+ * terminal: Ctrl+L, Ctrl+W and Ctrl+N stay terminal keys there.
+ */
+export function defaultKeyboardShortcut(event: KeyboardEvent, mac: boolean = macPlatform()): boolean {
   const key = event.key.toLowerCase();
   return (event.metaKey && ['a', 'c', 'v', 'x', 'r', 'l', 'w', 't', 'n', 'q', '+', '-', '0', '='].includes(key)) ||
     (event.ctrlKey && event.shiftKey && ['c', 'v'].includes(key)) ||
-    (event.ctrlKey && !event.altKey && ['l', 't', 'w', 'n', '+', '-', '0', '='].includes(key)) ||
+    (!mac && event.ctrlKey && !event.altKey && ['l', 't', 'w', 'n', '+', '-', '0', '='].includes(key)) ||
     (event.shiftKey && event.key === 'Insert');
 }
 
@@ -151,7 +157,7 @@ export class KeyboardInputController {
       event.preventDefault(); this.presses.set(id, { route: 'ignored', key }); return;
     }
     this.compositionEndedAt = -Infinity; this.duplicateCommit = null;
-    if (!this.consumedModifiers(event) && (this.options.shortcut ?? defaultKeyboardShortcut)(event)) {
+    if (!this.consumedModifiers(event) && (this.options.shortcut ? this.options.shortcut(event) : defaultKeyboardShortcut(event, this.mac))) {
       this.presses.set(id, { route: 'host', key }); return;
     }
     if (!this.ready()) { event.preventDefault(); this.presses.set(id, { route: 'ignored', key }); return; }

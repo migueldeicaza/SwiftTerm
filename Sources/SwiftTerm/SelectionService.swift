@@ -970,7 +970,10 @@ extension SelectionService {
                Position.compare(start, end) != .after {
                 end = cell.end
             }
+            // The extend helpers notified with the raw endpoints. Notify again
+            // once the wide-cell normalization has settled them.
             normalizePointerEndpoints()
+            setActiveAndNotify()
             return
         }
         let anchor = pointerCell(pivot ?? start)

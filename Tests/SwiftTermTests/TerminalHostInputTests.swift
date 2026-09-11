@@ -44,6 +44,17 @@ struct TerminalHostInputTests {
         #expect(delegate.sentData.flatMap { $0 } == Array(expected.utf8))
     }
 
+    /// The protocol keeps a Cb of 3 for releases and for motion with no button.
+    /// An extra physical button must never encode one of those.
+    @Test func extraButtonPressIsNotEncodedAsARelease() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
+        terminal.feed(text: "\u{1b}[?1000h\u{1b}[?1006h")
+        let flags = terminal.encodeButton(button: 3, release: false,
+                                          shift: false, meta: false, control: false)
+        terminal.sendEvent(buttonFlags: flags, x: 2, y: 3, pixelX: 2, pixelY: 3)
+        #expect(delegate.sentData.flatMap { $0 } == Array("\u{1b}[<0;3;4M".utf8))
+    }
+
     @Test(arguments: [1005, 1006, 1015, 1016])
     func protocolCoordinatesAndRelease(mode: Int) {
         let (terminal, delegate) = TerminalTestHarness.makeTerminal()
@@ -55,7 +66,8 @@ struct TerminalHostInputTests {
         case 1005: expected = "\u{1b}[M##$"
         case 1006: expected = "\u{1b}[<2;3;4m"
         case 1015: expected = "\u{1b}[35;3;4M"
-        default: expected = "\u{1b}[<2;21;61m"
+        // Pixels reach the encoder zero based, exactly like the Apple views.
+        default: expected = "\u{1b}[<2;20;60m"
         }
         #expect(delegate.sentData.flatMap { $0 } == Array(expected.utf8))
     }

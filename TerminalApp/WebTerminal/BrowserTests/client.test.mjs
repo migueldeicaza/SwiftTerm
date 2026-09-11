@@ -1,17 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeKey, gridDimensions, sendBytes, decodeServerMessage, MAX_INPUT_BYTES, MAX_BUFFERED_BYTES, ShellClient } from '../Public/app.js';
-const key = (key, modifiers = {}) => encodeKey({ key, ...modifiers });
-test('common VT keys preserve input direction and leave text/IME to the browser', () => {
-  assert.equal(key('Enter'), '\r'); assert.equal(key('Backspace'), '\x7f'); assert.equal(key('Delete'), '\x1b[3~');
-  assert.equal(key('ArrowUp'), '\x1b[A'); assert.equal(key('ArrowLeft', { ctrlKey: true }), '\x1b[1;5D');
-  assert.equal(key('ArrowDown', { altKey: true, shiftKey: true }), '\x1b[1;4B');
-  assert.equal(key('c', { ctrlKey: true }), '\x03'); assert.equal(key(' ', { ctrlKey: true }), '\x00');
-  assert.equal(key('x', { altKey: true }), '\x1bx'); assert.equal(key('Tab', { shiftKey: true }), '\x1b[Z');
-  assert.equal(key('F1'), '\x1bOP'); assert.equal(key('F12'), '\x1b[24~');
-  assert.equal(key('a'), null); assert.equal(key('é'), null); assert.equal(key('Enter', { isComposing: true }), null);
-  assert.equal(key('v', { metaKey: true }), null); assert.equal(key('v', { ctrlKey: true, shiftKey: true }), null);
-});
+import { gridDimensions, sendBytes, decodeServerMessage, MAX_INPUT_BYTES, MAX_BUFFERED_BYTES, ShellClient } from '../Public/app.js';
 test('grid sizes stay within server bounds', () => {
   assert.deepEqual(gridDimensions(809, 499, 10, 20), { cols: 80, rows: 24 });
   assert.deepEqual(gridDimensions(0, 0, 10, 20), { cols: 2, rows: 2 });
@@ -157,7 +146,13 @@ test('shell client connects the input controller to one ordered output queue and
     client.connect(); Socket.latest.open(); Socket.latest.message('{"type":"ready"}');
     controllers[2].options.onError(new Error('terminal input failed'));
     assert.equal(elements.status.dataset.state, 'error'); assert.equal(elements.status.textContent, 'terminal input failed');
-    assert.equal(Socket.latest.readyState, 3); assert.equal(elements.input.disabled, true);
+    // One rejected input call reports, and leaves the shell connected.
+    assert.equal(Socket.latest.readyState, 1); assert.equal(elements.input.disabled, false);
+    assert.equal(controllers[2].options.canInput(), true);
+    const unsupported = new Error('This WASM artifact does not support this operation.'); unsupported.code = 'UNSUPPORTED';
+    controllers[2].options.onError(unsupported);
+    assert.match(elements.status.textContent, /Rebuild the WASM assets/);
+    assert.equal(Socket.latest.readyState, 1);
     client.dispose(); client.dispose();
     for (let index = 1; index < 3; index++) {
       assert.equal(terminals[index].disposed, 1); assert.equal(renderers[index].disposed, 1); assert.equal(controllers[index].disposed, 1);
@@ -168,10 +163,3 @@ test('shell client connects the input controller to one ordered output queue and
   }
 });
 
-test('fallback keys use application cursor and physical keypad modes', () => {
-  assert.equal(encodeKey({key: 'ArrowUp'}, {applicationCursor: true}), '\x1bOA');
-  assert.equal(encodeKey({key: 'Home'}, {applicationCursor: true}), '\x1bOH');
-  assert.equal(encodeKey({key: 'ArrowUp', ctrlKey: true}, {applicationCursor: true}), '\x1b[1;5A');
-  assert.equal(encodeKey({key: '1', code: 'Numpad1'}, {applicationKeypad: true}), '\x1bOq');
-  assert.equal(encodeKey({key: 'Enter', code: 'NumpadEnter'}, {applicationKeypad: true}), '\x1bOM');
-});

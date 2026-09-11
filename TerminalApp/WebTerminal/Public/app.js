@@ -6,39 +6,6 @@ const RESUME_BUFFERED_BYTES = 256 * 1024;
 const MAX_PROCESS_BYTES = 16 * 1024 * 1024;
 const FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 
-/** Return common VT input bytes as text, or null to use browser text input. */
-export function encodeKey(event, modes = {}) {
-  if (event.isComposing || event.keyCode === 229 || event.metaKey) return null;
-  const key = event.key, lower = key.toLowerCase();
-  if (event.ctrlKey && event.shiftKey && (lower === 'c' || lower === 'v')) return null;
-  const modifier = 1 + (event.shiftKey ? 1 : 0) + (event.altKey ? 2 : 0) + (event.ctrlKey ? 4 : 0);
-  const cursors = { ArrowUp: 'A', ArrowDown: 'B', ArrowRight: 'C', ArrowLeft: 'D', Home: 'H', End: 'F' };
-  if (modes.applicationKeypad && modifier === 1) {
-    const keypad = { Numpad0: 'p', Numpad1: 'q', Numpad2: 'r', Numpad3: 's', Numpad4: 't', Numpad5: 'u', Numpad6: 'v', Numpad7: 'w', Numpad8: 'x', Numpad9: 'y', NumpadDecimal: 'n', NumpadDivide: 'o', NumpadMultiply: 'j', NumpadSubtract: 'm', NumpadAdd: 'k', NumpadEnter: 'M', NumpadEqual: 'X' };
-    if (keypad[event.code]) return `\x1bO${keypad[event.code]}`;
-  }
-  if (cursors[key]) return modifier === 1 ? `\x1b${modes.applicationCursor ? 'O' : '['}${cursors[key]}` : `\x1b[1;${modifier}${cursors[key]}`;
-  const numbered = { Insert: 2, Delete: 3, PageUp: 5, PageDown: 6, F5: 15, F6: 17, F7: 18, F8: 19, F9: 20, F10: 21, F11: 23, F12: 24 };
-  if (numbered[key]) return `\x1b[${numbered[key]}${modifier === 1 ? '' : `;${modifier}`}~`;
-  const functions = { F1: 'P', F2: 'Q', F3: 'R', F4: 'S' };
-  if (functions[key]) return modifier === 1 ? `\x1bO${functions[key]}` : `\x1b[1;${modifier}${functions[key]}`;
-  let text;
-  if (key === 'Enter') text = '\r';
-  else if (key === 'Backspace') text = '\x7f';
-  else if (key === 'Tab') return event.shiftKey ? '\x1b[Z' : '\t';
-  else if (key === 'Escape') return '\x1b';
-  else if (event.ctrlKey) {
-    if (key === ' ' || key === '2') text = '\x00';
-    else if (key === '6') text = '\x1e';
-    else if (key === '-') text = '\x1f';
-    else if (key === '?' || key === '8') text = '\x7f';
-    else if (key.length === 1 && key.toUpperCase().charCodeAt(0) >= 64 && key.toUpperCase().charCodeAt(0) <= 95) text = String.fromCharCode(key.toUpperCase().charCodeAt(0) & 31);
-    else return null;
-  } else if (event.altKey && [...key].length === 1) text = key;
-  else return null;
-  return event.altKey ? `\x1b${text}` : text;
-}
-
 export function gridDimensions(width, height, cellWidth, cellHeight) {
   return {
     cols: Math.max(2, Math.min(500, Math.floor(width / cellWidth) || 2)),
@@ -130,7 +97,7 @@ export class ShellClient {
         },
         onInput: () => { renderer.requestFrame(); this.pump(); },
         onSelection: state => renderer.setSelection(state),
-        onError: error => this.fail(error.message || 'Terminal input failed.'),
+        onError: error => this.inputFailed(error),
         onPaste: text => { connection.clipboard?.capturePaste(text); this.paste(text); },
         shortcut: event => {
           if (event.key === 'Escape' && event.shiftKey && !event.isComposing) {
@@ -277,7 +244,16 @@ export class ShellClient {
     this.pump();
     if (c.paused) { c.rejectedInput = true; this.updateInput(); return; }
     try { c.terminal.sendText(text); c.renderer.requestFrame(); this.pump(); }
-    catch (error) { this.fail(error.message || 'Input failed.'); }
+    catch (error) { this.inputFailed(error); }
+  }
+
+  /** One rejected key, pointer, or selection call must not end the shell. */
+  inputFailed(error) {
+    if (!this.connection) return;
+    const message = error?.code === 'UNSUPPORTED'
+      ? 'This build is missing an input API. Rebuild the WASM assets.'
+      : error?.message || 'Terminal input failed.';
+    this.status(message, 'error');
   }
 
   fail(message) {

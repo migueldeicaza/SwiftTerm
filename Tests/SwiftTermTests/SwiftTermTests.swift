@@ -16,7 +16,8 @@ final class SwiftTermTests {
         return queue
     }()
     let termConfig = "--expected-terminal xterm --xterm-checksum=334"
-    let logfile = NSTemporaryDirectory() + "log"
+    // Tests run in parallel, so each one needs its own esctest log.
+    let logfile = NSTemporaryDirectory() + "log-\(UUID().uuidString)"
     
     func pythonBin() -> String? {
         // Check environment variable first
