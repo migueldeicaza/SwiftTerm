@@ -17,6 +17,17 @@ scope.onmessage = (event: MessageEvent) => {
         if (!terminal) throw new Error('Initialize the terminal first.');
         if (type === 'write') terminal.write(event.data.bytes);
         else if (type === 'key') { scope.postMessage({ id, handled: terminal.sendKey(event.data.event) }); return; }
+        else if (type === 'text') terminal.sendText(event.data.text);
+        else if (type === 'mouse') { scope.postMessage({ id, handled: terminal.sendMouse(event.data.event) }); return; }
+        else if (type === 'inputState') { scope.postMessage({ id, state: terminal.inputState() }); return; }
+        else if (type === 'scroll') terminal.scrollViewport(event.data.lines);
+        else if (type === 'scrollTo') terminal.scrollViewportTo(event.data.topRow);
+        else if (type === 'selectionBegin') terminal.selectionBegin(event.data.col, event.data.row, event.data.mode);
+        else if (type === 'selectionExtend') terminal.selectionExtend(event.data.col, event.data.row);
+        else if (type === 'selectionClear') terminal.selectionClear();
+        else if (type === 'selectionAll') terminal.selectionAll();
+        else if (type === 'selectionState') { scope.postMessage({ id, state: terminal.selectionState() }); return; }
+        else if (type === 'selectionText') { scope.postMessage({ id, text: terminal.selectionText() }); return; }
         else if (type === 'paste') { scope.postMessage({ id, result: terminal.paste(event.data.text, event.data.options) }); return; }
         else if (type === 'inputModes') { scope.postMessage({ id, modes: terminal.inputModes() }); return; }
         else if (type === 'poll') { scope.postMessage({ id, changed: terminal.poll() }); return; }

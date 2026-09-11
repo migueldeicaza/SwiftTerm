@@ -13,6 +13,7 @@ export const requiredExports = Object.freeze([
 ]);
 export const extensionExports: Readonly<Record<number, readonly string[]>> = Object.freeze({
   32: ['swiftterm_terminal_key'],
+  64: ['swiftterm_terminal_mouse', 'swiftterm_terminal_pointer_modes'],
   128: ['swiftterm_terminal_input_modes'],
   256: ['swiftterm_terminal_paste'],
   512: ['swiftterm_terminal_clipboard_configure', 'swiftterm_terminal_clipboard_complete', 'swiftterm_terminal_clipboard_reset'],
@@ -20,6 +21,8 @@ export const extensionExports: Readonly<Record<number, readonly string[]>> = Obj
   2048: ['swiftterm_graphics_update', 'swiftterm_graphics_snapshot_size', 'swiftterm_graphics_snapshot_copy', 'swiftterm_graphics_clean'],
   4096: ['swiftterm_graphics_update', 'swiftterm_graphics_snapshot_size', 'swiftterm_graphics_snapshot_copy', 'swiftterm_graphics_clean'],
   8192: ['swiftterm_terminal_poll'],
+  16384: ['swiftterm_terminal_text'],
+  32768: ['swiftterm_terminal_scroll', 'swiftterm_terminal_selection', 'swiftterm_terminal_selection_state_size', 'swiftterm_terminal_selection_state_copy', 'swiftterm_terminal_selection_text_size', 'swiftterm_terminal_selection_text_copy'],
 });
 type RawFunction = (...args: number[]) => number;
 /** Internal memory owner. Views must never survive a call into WASM. */

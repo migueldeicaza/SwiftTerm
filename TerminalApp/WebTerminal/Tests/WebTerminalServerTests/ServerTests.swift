@@ -34,6 +34,19 @@ import Testing
     #expect(configuration.assetDirectory.hasSuffix("/Web/dist"))
 }
 
+@Test func shellEnvironmentAdvertisesColorWithoutInheritedSuppression() {
+    let environment = TerminalSession.shellEnvironment(from: [
+        "TERM": "dumb", "COLORTERM": "", "NO_COLOR": "1",
+        "COLUMNS": "80", "LINES": "24", "PRESERVED": "yes"
+    ])
+    #expect(environment["TERM"] == "xterm-256color")
+    #expect(environment["COLORTERM"] == "truecolor")
+    #expect(environment["NO_COLOR"] == nil)
+    #expect(environment["COLUMNS"] == nil)
+    #expect(environment["LINES"] == nil)
+    #expect(environment["PRESERVED"] == "yes")
+}
+
 @Test func resizeBoundsAndPixels() throws {
     let message = ResizeMessage(type: "resize", cols: 96, rows: 31, cellWidth: 9, cellHeight: 20)
     let size = try message.windowSize()

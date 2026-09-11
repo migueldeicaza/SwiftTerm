@@ -31,9 +31,13 @@ public class SelectionService: CustomDebugStringConvertible {
         let rows: [Row]
     }
     
-    public init (terminal: Terminal)
+    /// Use exclusive column endpoints for portable selection clients.
+    var exclusiveEnd: Bool
+
+    public init (terminal: Terminal, exclusiveEnd: Bool = false)
     {
         self.terminal = terminal
+        self.exclusiveEnd = exclusiveEnd
         _active = false
         start = Position(col: 0, row: 0)
         end = Position(col: 0, row: 0)
@@ -95,7 +99,7 @@ public class SelectionService: CustomDebugStringConvertible {
         }
 
         let newPivot: Position?
-        if let pivot, pivot == start || pivot == end {
+        if let pivot, exclusiveEnd || pivot == start || pivot == end {
             guard let translatedPivot = translate (pivot) else {
                 selectNone ()
                 return
@@ -231,7 +235,7 @@ public class SelectionService: CustomDebugStringConvertible {
         if start.row == end.row, row == start.row {
             if start.col < end.col {
                 lowerColumn = start.col
-                upperColumn = end.col + (end.col == cols - 1 ? 1 : 0)
+                upperColumn = end.col + (!exclusiveEnd && end.col == cols - 1 ? 1 : 0)
             } else if start.col > end.col {
                 lowerColumn = end.col
                 upperColumn = start.col
@@ -244,7 +248,7 @@ public class SelectionService: CustomDebugStringConvertible {
                 upperColumn = cols
             } else if row == end.row {
                 lowerColumn = 0
-                upperColumn = end.col + (end.col == cols - 1 ? 1 : 0)
+                upperColumn = end.col + (!exclusiveEnd && end.col == cols - 1 ? 1 : 0)
             } else {
                 lowerColumn = 0
                 upperColumn = cols
@@ -255,7 +259,7 @@ public class SelectionService: CustomDebugStringConvertible {
                 upperColumn = cols
             } else if row == start.row {
                 lowerColumn = 0
-                upperColumn = start.col + (start.col == cols - 1 ? 1 : 0)
+                upperColumn = start.col + (!exclusiveEnd && start.col == cols - 1 ? 1 : 0)
             } else {
                 lowerColumn = 0
                 upperColumn = cols
@@ -372,7 +376,8 @@ public class SelectionService: CustomDebugStringConvertible {
         
     func clamp (_ buffer: Buffer, _ p: Position) -> Position {
         let maxRow = max(0, buffer.lines.count - 1)
-        return Position(col: min(p.col, buffer.cols - 1), row: min(p.row, maxRow))
+        return Position(col: max(0, min(p.col, exclusiveEnd ? buffer.cols : buffer.cols - 1)),
+                        row: max(0, min(p.row, maxRow)))
     }
     /**
      * Sets the selection, this is validated against the
@@ -597,8 +602,14 @@ public class SelectionService: CustomDebugStringConvertible {
      */
     public func selectAll ()
     {
+        selectionMode = .character
+        selectingRows = false
+        wordSelectionAnchor = nil
+        rowSelectionAnchor = nil
+        pivot = nil
         start = Position(col: 0, row: 0)
-        end = Position(col: terminal.cols-1, row: terminal.displayBuffer.lines.maxLength - 1)
+        end = Position(col: exclusiveEnd ? terminal.cols : terminal.cols - 1,
+                       row: terminal.displayBuffer.lines.count - 1)
         setActiveAndNotify()
     }
     
@@ -619,7 +630,7 @@ public class SelectionService: CustomDebugStringConvertible {
     public func select(row: Int)
     {
         start = Position(col: 0, row: row)
-        end = Position(col: terminal.cols-1, row: row)
+        end = Position(col: exclusiveEnd ? terminal.cols : terminal.cols - 1, row: row)
         selectingRows = true
         selectionMode = .row
         wordSelectionAnchor = nil
@@ -633,7 +644,7 @@ public class SelectionService: CustomDebugStringConvertible {
 
     private func setRowSelection(from anchorRow: Int, through targetRow: Int) {
         start = Position(col: 0, row: min(anchorRow, targetRow))
-        end = Position(col: terminal.cols - 1, row: max(anchorRow, targetRow))
+        end = Position(col: exclusiveEnd ? terminal.cols : terminal.cols - 1, row: max(anchorRow, targetRow))
     }
 
     private func character (at position: Position, in buffer: Buffer) -> Character
@@ -812,8 +823,8 @@ public class SelectionService: CustomDebugStringConvertible {
 //        let position = Position(
 //            col: max (min (uncheckedPosition.col, buffer.cols-1), 0),
 //            row: max (min (uncheckedPosition.row, buffer.rows-1+buffer.yDisp), buffer.yDisp))
-        let position = Position (col: (min (terminal.cols, max (uncheckedPosition.col, 0))),
-                                 row: (max (uncheckedPosition.row, 0)))
+        let position = Position (col: min(terminal.cols - 1, max(uncheckedPosition.col, 0)),
+                                 row: min(buffer.lines.count - 1, max(uncheckedPosition.row, 0)))
         switch character (at: position, in: buffer) {
         case Character(UnicodeScalar(0)):
             simpleScanSelection (from: position, in: buffer) { ch in ch == nullChar }
@@ -907,5 +918,81 @@ public class SelectionService: CustomDebugStringConvertible {
     
     public var debugDescription: String {
         return "[Selection (active=\(active), start=\(start) end=\(end) hasSR=\(hasSelectionRange) pivot=\(pivot?.debugDescription ?? "nil")]"
+    }
+}
+
+extension SelectionService {
+    /// Return the complete cell interval for a pointer hit.
+    private func pointerCell(_ position: Position) -> (start: Position, end: Position) {
+        let buffer = terminal.displayBuffer
+        var first = position
+        if first.col > 0,
+           buffer.getChar(atBufferRelative: first).width == 0,
+           buffer.getChar(atBufferRelative: Position(col: first.col - 1, row: first.row)).width == 2 {
+            first.col -= 1
+        }
+        let width = max(1, Int(buffer.getChar(atBufferRelative: first).width))
+        return (first, Position(col: min(terminal.cols, first.col + width), row: first.row))
+    }
+
+    func updatePointerSelection(_ position: Position, begin: Bool, mode: UInt32) {
+        let cell = pointerCell(position)
+        if begin && mode != 3 {
+            switch mode {
+            case 1:
+                pivot = nil
+                selectWordOrExpression(at: cell.start, in: terminal.displayBuffer)
+                if start == end { start = cell.start; end = cell.end }
+                normalizePointerEndpoints()
+                wordSelectionAnchor = (start, end)
+            case 2:
+                pivot = nil
+                select(row: position.row)
+            default:
+                startSelection(row: position.row - terminal.displayBuffer.yDisp, col: cell.start.col)
+                end = cell.end
+                pivot = cell.start
+            }
+            setActiveAndNotify()
+            return
+        }
+        guard active else {
+            if begin { updatePointerSelection(position, begin: true, mode: 0) }
+            return
+        }
+        if selectionMode != .character {
+            if begin { shiftExtend(bufferPosition: cell.start) }
+            else { dragExtend(bufferPosition: cell.start) }
+            // Punctuation and emoji have no forward word boundary. The
+            // shared word helper returns their start; include the hit cell
+            // when that position becomes the forward exclusive endpoint.
+            if selectionMode == .word, end == cell.start,
+               Position.compare(start, end) != .after {
+                end = cell.end
+            }
+            normalizePointerEndpoints()
+            return
+        }
+        let anchor = pointerCell(pivot ?? start)
+        if Position.compare(cell.start, anchor.start) == .before {
+            start = cell.start
+            end = anchor.end
+        } else {
+            start = anchor.start
+            end = cell.end
+        }
+        pivot = anchor.start
+        setActiveAndNotify()
+    }
+
+    private func normalizePointerEndpoints() {
+        let buffer = terminal.displayBuffer
+        if start.col < terminal.cols { start = pointerCell(start).start }
+        // An exclusive end inside a wide cell must include that whole cell.
+        if end.col > 0 && end.col < terminal.cols,
+           buffer.getChar(atBufferRelative: end).width == 0,
+           buffer.getChar(atBufferRelative: Position(col: end.col - 1, row: end.row)).width == 2 {
+            end.col += 1
+        }
     }
 }

@@ -3,13 +3,17 @@ import { readFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { checkCanvasCellGrid } from './canvas-grid.mjs';
+import { checkBrowserInput } from './browser-input.mjs';
 const require=createRequire(new URL('../../Web/package.json',import.meta.url));
 const playwright=process.env.PLAYWRIGHT_MODULE_PATH?require(process.env.PLAYWRIGHT_MODULE_PATH):require('playwright');
 const root=resolve(new URL('../../',import.meta.url).pathname);
 const url='http://swiftterm.test';
+const trace = message => { if (process.env.BROWSER_TRACE) console.log(message); };
+
 {
   for(const name of (process.env.BROWSERS||'chromium,firefox,webkit').split(',')){
-    const browser=await playwright[name].launch({headless:true});
+    const browser=await playwright[name].launch({headless:true,timeout:30000});
+    trace(`${name}: launched`);
     try{
       const context=await browser.newContext({deviceScaleFactor:2});
       await context.route('**/*',async route=>{
@@ -20,9 +24,14 @@ const url='http://swiftterm.test';
       });
       for(const variant of (process.env.WASM_VARIANTS||'full,embedded').split(',')){
         const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+        trace(`${name} ${variant}: load`);
         await page.goto(`${url}/Web/example/index.html?variant=${variant}`);
         await page.waitForFunction(()=>window.swifttermExample?.renderer.drawnRows>0);
+        trace(`${name} ${variant}: cell grid`);
         await checkCanvasCellGrid(page);
+        trace(`${name} ${variant}: input`);
+        await checkBrowserInput(page);
+        trace(`${name} ${variant}: rendering`);
         const first=await page.evaluate(()=>{const{terminal,renderer}=window.swifttermExample;return{width:renderer.canvas.width,height:renderer.canvas.height,cols:terminal.snapshot().cols,pixels:[...renderer.canvas.getContext('2d').getImageData(0,0,20,20).data].some(v=>v!==0)};});
         assert.deepEqual(first,{width:1600,height:960,cols:80,pixels:true});
         const partial=await page.evaluate(()=>{const{terminal,renderer}=window.swifttermExample;terminal.write('\x1b[6;1Hpartial');const s=terminal.snapshot();renderer.draw(s);terminal.markFrameRendered(s.generation);return{dirty:s.dirty,included:s.rowData.length,drawn:renderer.drawnRows,rows:s.rows};});
@@ -54,15 +63,25 @@ const url='http://swiftterm.test';
           assert.deepEqual(await page.evaluate(() => [...window.swifttermExample.renderer.canvas.getContext('2d').getImageData(10,20,1,1).data]), [0,0,0,255]);
         }
         // Worker initialization, copied snapshots, and generation acknowledgement.
+        trace(`${name} ${variant}: worker`);
         const worker=await page.evaluate(async variant=>{
           const w=new Worker('../dist/example/worker.js',{type:'module'});let id=0;
-          const send=data=>new Promise((resolve,reject)=>{const request=++id;const callback=e=>{if(e.data.id===request){w.removeEventListener('message',callback);e.data.error?reject(new Error(e.data.error)):resolve(e.data);}};w.addEventListener('message',callback);w.postMessage({...data,id:request});});
+          const send=data=>new Promise((resolve,reject)=>{
+            const request=++id;
+            const cleanup=()=>{clearTimeout(timer);w.removeEventListener('message',callback);w.removeEventListener('error',failed);};
+            const callback=e=>{if(e.data.id===request){cleanup();e.data.error?reject(new Error(e.data.error)):resolve(e.data);}};
+            const failed=e=>{cleanup();reject(new Error(e.message||`Worker failed during ${data.type}`));};
+            const timer=setTimeout(()=>{cleanup();reject(new Error(`Worker ${data.type} timed out`));},15000);
+            w.addEventListener('message',callback);w.addEventListener('error',failed);w.postMessage({...data,id:request});
+          });
           try{await send({type:'init',wasmURL:new URL(`../dist/swiftterm-${variant}.wasm`,location.href).href,options:{cols:10,rows:2,scrollback:0}});await send({type:'write',bytes:new TextEncoder().encode('worker')});const{snapshot}=await send({type:'snapshot'});await send({type:'clean',generation:snapshot.generation});await send({type:'dispose'});return snapshot.rowData[0].cells.map(c=>c.text).join('');}finally{w.terminate();}
         },variant);assert.match(worker,/worker/);
-        const recreated=await page.evaluate(()=>{const{terminal,renderer,module}=window.swifttermExample;renderer.dispose();terminal.dispose();terminal.dispose();const next=module.createTerminal({cols:4,rows:2,scrollback:0});next.write('new');const text=next.snapshot().rowData[0].cells.map(c=>c.text).join('');next.dispose();return text;});assert.equal(recreated,'new');
-        assert.deepEqual(errors,[]);await page.close();console.log(`${name} ${variant}: passed`);
+        trace(`${name} ${variant}: dispose/recreate`);
+        const recreated=await page.evaluate(()=>{const{terminal,renderer,module,input}=window.swifttermExample;input.dispose();renderer.dispose();terminal.dispose();terminal.dispose();const next=module.createTerminal({cols:4,rows:2,scrollback:0});next.write('new');const text=next.snapshot().rowData[0].cells.map(c=>c.text).join('');next.dispose();return text;});assert.equal(recreated,'new');
+        assert.deepEqual(errors,[]);trace(`${name} ${variant}: page close`);await page.close();console.log(`${name} ${variant}: passed`);
       }
       await context.close();
-    }finally{await browser.close();}
+    } catch (error) { console.error(`${name}: test failed`, error); throw error; }
+    finally { await browser.close(); }
   }
 }

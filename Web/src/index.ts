@@ -1,6 +1,10 @@
 export { SwiftTermModule, loadSwiftTerm } from './loader.js';
 export { SwiftTermTerminal } from './terminal.js';
 export { SwiftTermError, Status } from './errors.js';
-export { Capability, CellStyle, CellFlag, ClipboardStatus } from './types.js';
+export { Capability, CellStyle, CellFlag, ClipboardStatus, KeyModifier, KeyEventType } from './types.js';
+export { TerminalInputController } from './input.js';
+export { defaultKeyboardShortcut } from './keyboard.js';
+export type { TerminalInputOptions, InputGeometry } from './input.js';
 export type { SwiftTermModuleOptions, WasmImports, TerminalOptions, RenderSnapshot, RenderRow, RenderCell, CursorState, DirtyKind, HostEvent, InputModes, TerminalKeyEvent, ClipboardRequest } from './types.js';
 export type { GraphicsSnapshot, GraphicsImage, GraphicsPlacement } from './graphics.js';
+export type { KeyDisposition, InputState, MouseMode, MouseProtocol, TerminalMouseEvent, ViewportState, SelectionSpan, SelectionState, SelectionMode } from './types.js';

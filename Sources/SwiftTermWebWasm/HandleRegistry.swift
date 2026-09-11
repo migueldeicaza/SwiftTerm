@@ -3,6 +3,11 @@ import SwiftTerm
 final class TerminalEntry {
     let host: WasmTerminalHost
     let terminal: Terminal
+    let selection: SelectionService
+    var selectionRevision: UInt64 = 1
+    var selectionSnapshot: [UInt8] = []
+    var selectionTextSnapshot: [UInt8] = []
+    var lastSelectionState: TerminalSelectionState?
     var busy = false
     var revision: UInt64 = 1
     var snapshotGeneration: UInt64 = 0
@@ -26,6 +31,13 @@ final class TerminalEntry {
         #endif
         terminal = Terminal(delegate: host, options: options)
         terminal.silentLog = true
+        selection = SelectionService(terminal: terminal, exclusiveEnd: true)
+    }
+    func feedPreservingSelection(_ bytes: ArraySlice<UInt8>) {
+        terminal.feedPreservingSelection(bytes, selection: selection)
+    }
+    func clearSelection() {
+        _ = terminal.updateSelection(selection, action: 2)
     }
     func fail(_ code: Int32, _ message: String) -> Int32 {
         error = Array(message.utf8)

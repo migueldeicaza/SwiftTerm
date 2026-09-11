@@ -1007,13 +1007,13 @@ open class Terminal {
         /// Returns true if you should send a button press event (separate from release)
         func sendButtonPress () -> Bool
         {
-            self == .vt200 || self == .buttonEventTracking || self == .anyEvent
+            self != .off
         }
         
         /// Returns true if you should send the button release event
         func sendButtonRelease () -> Bool
         {
-            self != .off
+            self == .vt200 || self == .buttonEventTracking || self == .anyEvent
         }
         
         /// Returns true if you should send a motion event when a button is pressed
@@ -7542,10 +7542,12 @@ open class Terminal {
             case .blinkBlock, .blinkBar, .blinkUnderline: styleBlinks = true
             case .steadyBlock, .steadyBar, .steadyUnderline: styleBlinks = false
             }
+            let viewportCursorRow = source.yBase + source.y - source.yDisp
+            let cursorIsOffscreen = viewportCursorRow < 0 || viewportCursorRow >= rows
             let cursor = RenderSnapshotCursor(
                 x: max(0, min(cols, source.x)),
-                y: source.yBase + source.y - source.yDisp,
-                hidden: cursorHidden, style: style, blink: styleBlinks || cursorBlink)
+                y: max(0, min(rows - 1, viewportCursorRow)),
+                hidden: cursorHidden || cursorIsOffscreen, style: style, blink: styleBlinks || cursorBlink)
             if portableRenderCursor != cursor {
                 if let old = portableRenderCursor, old.y >= 0 && old.y < rows {
                     updateRange(old.y)
@@ -8562,13 +8564,14 @@ open class Terminal {
     }
 
     /**
-     * Encodes the button action in the format expected by the client
+     * Encodes the button action for `sendEvent` or `sendMotion`.
      * - Parameter button: The button to encode
      * - Parameter release: `true` if this is a mouse release event
      * - Parameter shift: `true` if the shift key is pressed
      * - Parameter meta: `true` if the meta/alt key is pressed
      * - Parameter control: `true` if the control key is pressed
-     * - Returns: the encoded value
+     * - Returns: the Cb value in the low byte, with release button metadata
+     *   in the high bits. Pass the complete value to `sendEvent`.
      */
     public func encodeButton (button: Int, release: Bool, shift: Bool, meta: Bool, control: Bool) -> Int
     {
@@ -8576,6 +8579,9 @@ open class Terminal {
 
         if release {
             value = 3
+            // Keep the original release button for sendEvent. The low byte
+            // remains the legacy Cb value; the high bits are local metadata.
+            if button == 1 || button == 2 { value |= button << 8 }
         } else {
             switch (button) {
             case 0:
@@ -8588,6 +8594,12 @@ open class Terminal {
                 value = 64
             case 5:
                 value = 65
+            case 6:
+                value = 66
+            case 7:
+                value = 67
+            case 3:
+                value = 3
             default:
                 value = 0
             }
@@ -8612,25 +8624,31 @@ open class Terminal {
     
     /**
      * Sends a mouse event for a specific button at the specific location
-     * - Parameter buttonFlags: Button flags encoded in Cb mode.
+     * - Parameter buttonFlags: Cb flags, or the complete result of `encodeButton`.
      * - Parameter x: X coordinate for the event
      * - Parameter y: Y coordinate for the event
      */
     public func sendEvent (buttonFlags: Int, x: Int, y: Int, pixelX: Int, pixelY: Int)
     {
-        //print ("got \(mouseProtocol)")
+        let originalButton = (buttonFlags >> 8) & 3
+        let buttonFlags = buttonFlags & 255
+        let isRelease = (buttonFlags & 3) == 3 && (buttonFlags & (32 | 64)) == 0
+        sendMousePacket(buttonFlags: buttonFlags, release: isRelease,
+                        originalButton: originalButton, x: x, y: y, pixelX: pixelX, pixelY: pixelY)
+    }
+
+    private func sendMousePacket(buttonFlags: Int, release: Bool, originalButton: Int,
+                                 x: Int, y: Int, pixelX: Int, pixelY: Int) {
         switch mouseProtocol {
         case .x10:
-            sendResponse(cc.CSI, "M", [UInt8(min(buttonFlags+32, 255)), UInt8(min(32 + x+1, 255)), UInt8(min(32+y+1, 255))])
+            sendResponse(cc.CSI, "M", [UInt8(min(buttonFlags+32, 255)), UInt8(max(0, min(x, 222))+33), UInt8(max(0, min(y, 222))+33)])
         case .sgr:
-            let isRelease = (buttonFlags & 3) == 3 && (buttonFlags & 32) == 0
-            let bflags : Int = isRelease ? (buttonFlags & ~3) : buttonFlags
-            let m = isRelease ? "m" : "M"
+            let bflags = release ? (buttonFlags & ~3) | originalButton : buttonFlags
+            let m = release ? "m" : "M"
             sendResponse(cc.CSI, "<\(bflags);\(x+1);\(y+1)\(m)")
         case .sgrPixel:
-            let isRelease = (buttonFlags & 3) == 3 && (buttonFlags & 32) == 0
-            let bflags : Int = isRelease ? (buttonFlags & ~3) : buttonFlags
-            let m = isRelease ? "m" : "M"
+            let bflags = release ? (buttonFlags & ~3) | originalButton : buttonFlags
+            let m = release ? "m" : "M"
             sendResponse(cc.CSI, "<\(bflags);\(pixelX);\(pixelY)\(m)")
             
         case .urxvt:
@@ -8655,6 +8673,63 @@ open class Terminal {
         sendEvent(buttonFlags: buttonFlags+32, x: x, y: y, pixelX: pixelX, pixelY: pixelY)
     }
     
+    /// Bits 0...2: tracking (off, X10, VT200, button, any).
+    /// Bits 3...5: encoding (legacy, UTF-8, SGR, URXVT, SGR pixel).
+    /// Bit 6: Shift capture; bit 7: alternate scroll; bit 8: alternate screen.
+    public var hostPointerModes: UInt32 {
+        let tracking: UInt32
+        switch mouseMode {
+        case .off: tracking = 0
+        case .x10: tracking = 1
+        case .vt200: tracking = 2
+        case .buttonEventTracking: tracking = 3
+        case .anyEvent: tracking = 4
+        }
+        let encoding: UInt32
+        switch mouseProtocol {
+        case .x10: encoding = 0
+        case .utf8: encoding = 1
+        case .sgr: encoding = 2
+        case .urxvt: encoding = 3
+        case .sgrPixel: encoding = 4
+        }
+        return tracking | (encoding << 3) | (mouseShiftCapture ? 64 : 0)
+            | (alternateScrollMode ? 128 : 0) | (isCurrentBufferAlternate ? 256 : 0)
+    }
+
+    /// Send a semantic mouse event on the terminal processing executor.
+    /// All positions are zero based. Pixels use the host's logical screen size.
+    /// Modifier bits are Shift=1, Alt=2, Control=4, Super=8. Super is ignored.
+    /// The host owns gesture routing, including Shift selection policy.
+    @discardableResult
+    public func sendHostMouse(action: TerminalMouseAction, button: TerminalMouseButton,
+                              modifiers: UInt32, col: Int, row: Int,
+                              pixelX: Int, pixelY: Int) -> Bool {
+        guard col >= 0, col < cols, row >= 0, row < rows,
+              pixelX >= 0, pixelX < Int.max, pixelY >= 0, pixelY < Int.max,
+              modifiers <= 15 else { return false }
+        let buttonValue = Int(button.rawValue)
+        switch action {
+        case .press:
+            guard buttonValue < 3, mouseMode.sendButtonPress() else { return false }
+        case .release:
+            guard buttonValue < 3, mouseMode.sendButtonRelease() else { return false }
+        case .move:
+            guard buttonValue <= 3,
+                  button == .none ? mouseMode.sendMotionEvent() : mouseMode.sendButtonTracking()
+            else { return false }
+        case .wheel:
+            guard buttonValue >= 4, mouseMode.sendButtonPress() else { return false }
+        }
+        var flags = encodeButton(button: buttonValue, release: action == .release,
+            shift: modifiers & 1 != 0, meta: modifiers & 2 != 0, control: modifiers & 4 != 0) & 255
+        if action == .move { flags |= 32 }
+        sendMousePacket(buttonFlags: flags, release: action == .release,
+                        originalButton: buttonValue, x: col, y: row,
+                        pixelX: pixelX + 1, pixelY: pixelY + 1)
+        return true
+    }
+
     static let matchColorCache : [Int:Int] = [:]
     func matchColor (_ r1: Int, _ g1: Int, _ b1: Int) -> Int32
     {

@@ -91,6 +91,10 @@ struct TerminalWebInputTests {
         #expect(terminal.sendHostTextPaste("a\nb", allowUnsafe: true))
         #expect(delegate.submittedBeforeSend == [true, true])
         #expect(delegate.sent.last == Array("a\rb".utf8))
+
+        #expect(terminal.sendHostText("\r"))
+        #expect(delegate.submittedBeforeSend == [true, true, true])
+        #expect(delegate.sent.last == Array("\r".utf8))
     }
 
     @Test func bracketedPasteRetainsArmedSemanticStateAndUsesHostControls() {

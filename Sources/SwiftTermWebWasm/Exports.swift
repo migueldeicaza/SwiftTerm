@@ -14,9 +14,9 @@ public func wasmABIVersion() -> UInt32 { 1 }
 #endif
 public func wasmCapabilities() -> UInt32 {
     #if SWIFTTERM_WEB_EMBEDDED
-    return 2 | 4 | 8 | 16 | 32 | 128 | 256 | 8192
+    return 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 8192 | 16384 | 32768
     #else
-    return 1 | 4 | 8 | 16 | 32 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192
+    return 1 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | 8192 | 16384 | 32768
     #endif
 }
 
@@ -120,6 +120,7 @@ public func terminalReset(_ terminal: UInt32) -> Int32 {
         #endif
         #endif
         entry.host.queueFailure = false
+        entry.clearSelection()
         entry.terminal.resetToInitialState()
         entry.host.forceFull = true
         return ABI.ok
@@ -136,6 +137,7 @@ public func terminalResize(_ terminal: UInt32, _ cols: UInt32, _ rows: UInt32, _
         }
         if width != 0 { entry.host.cellWidth = Int(width) }
         if height != 0 { entry.host.cellHeight = Int(height) }
+        entry.clearSelection()
         entry.terminal.resize(cols: Int(cols), rows: Int(rows))
         if width != 0 && height != 0 { entry.terminal.updatePixelGeometry(cellWidth: Int(width), cellHeight: Int(height)) }
         entry.host.forceFull = true
@@ -178,7 +180,7 @@ public func terminalWrite(_ terminal: UInt32, _ src: UInt32, _ length: UInt32) -
         guard length <= UInt32(ABI.maximumWrite) else { return entry.fail(ABI.invalidArgument, "The write exceeds 16 MiB.") }
         guard !entry.host.queueFailure else { return entry.fail(ABI.outOfMemory, "Drain the queues and reset after queue overflow.") }
         guard let bytes = runtime.memory.read(src, length) else { return entry.fail(ABI.outOfBounds, "The input buffer is outside a host allocation.") }
-        entry.terminal.feed(buffer: bytes[...])
+        entry.feedPreservingSelection(bytes[...])
         #if os(WASI) && !SWIFTTERM_EMBEDDED
         if entry.terminal.takeHostEventOverflow() { entry.host.queueFailure = true }
         #endif

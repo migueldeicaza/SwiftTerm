@@ -67,46 +67,18 @@ export function decodeServerMessage(text) {
 }
 
 export class ShellClient {
-  constructor(module, Renderer, elements, Socket = WebSocket) {
+  constructor(module, Renderer, elements, Socket = WebSocket, InputController, browserShortcut) {
     this.module = module;
     this.Renderer = Renderer;
+    this.InputController = InputController;
+    this.browserShortcut = browserShortcut;
     this.elements = elements;
     this.Socket = Socket;
     this.connection = null;
     this.disposed = false;
-    this.composing = false;
     this.resizeFrame = 0;
     this.listeners = new AbortController();
-    const { input, screen, reconnect } = elements, signal = this.listeners.signal;
-    input.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && event.shiftKey && !event.isComposing) { event.preventDefault(); reconnect.focus(); return; }
-      this.key(event);
-    }, { signal });
-    input.addEventListener('keyup', event => this.key(event, true), { signal });
-    input.addEventListener('compositionstart', () => { this.composing = true; }, { signal });
-    input.addEventListener('compositionend', () => {
-      this.composing = false;
-      const text = input.value; input.value = '';
-      if (text) this.sendInput(text);
-    }, { signal });
-    input.addEventListener('input', event => {
-      if (this.composing || event.isComposing) return;
-      const text = input.value; input.value = '';
-      if (text) this.sendInput(text);
-    }, { signal });
-    input.addEventListener('paste', event => {
-      if (!event.clipboardData) return;
-      event.preventDefault();
-      const text = event.clipboardData.getData('text/plain').replace(/\r\n?/g, '\n');
-      this.connection?.clipboard?.capturePaste(text);
-      this.paste(text);
-    }, { signal });
-    screen.addEventListener('pointerdown', event => {
-      if (event.button === 0 && !input.disabled) {
-        // Keep the pointer default action from moving focus back to the canvas.
-        event.preventDefault(); input.focus({ preventScroll: true });
-      }
-    }, { signal });
+    const { screen, reconnect } = elements, signal = this.listeners.signal;
     reconnect.addEventListener('click', () => this.connect(), { signal });
     elements.pasteAllow?.addEventListener('click', () => {
       const pending = this.pendingPaste; this.pendingPaste = null; elements.pastePanel.hidden = true;
@@ -148,6 +120,27 @@ export class ShellClient {
     socket.binaryType = 'arraybuffer';
     const connection = { terminal, renderer, socket, cellWidth, cellHeight, ...size, ready: false, ended: false, paused: false, rejectedInput: false, resizePending: true, replyPending: false, timer: 0 };
     this.connection = connection;
+    try {
+      if (!this.InputController) throw new Error('The input controller is missing. Rebuild the Web assets.');
+      connection.input = new this.InputController(terminal, this.elements.canvas, this.elements.input, {
+        geometry: () => ({ ...renderer.inputGeometry, cols: connection.cols, rows: connection.rows }),
+        canInput: () => {
+          this.pump();
+          return this.connection === connection && connection.ready && !connection.ended && !connection.paused;
+        },
+        onInput: () => { renderer.requestFrame(); this.pump(); },
+        onSelection: state => renderer.setSelection(state),
+        onError: error => this.fail(error.message || 'Terminal input failed.'),
+        onPaste: text => { connection.clipboard?.capturePaste(text); this.paste(text); },
+        shortcut: event => {
+          if (event.key === 'Escape' && event.shiftKey && !event.isComposing) {
+            event.preventDefault(); this.elements.reconnect.focus(); return true;
+          }
+          return this.browserShortcut?.(event) ?? false;
+        },
+      });
+      renderer.onDraw = () => connection.input?.refresh();
+    } catch (error) { this.fail(error.message); return; }
     if (this.elements.clipboard) connection.clipboard = new ClipboardController(terminal, this.elements.clipboard, () => this.pump(), globalThis.navigator?.clipboard, globalThis.ClipboardItem, !!(this.module.capabilities & 512));
     this.elements.reconnect.disabled = false;
     socket.addEventListener('open', () => {
@@ -213,7 +206,8 @@ export class ShellClient {
 
   pump() {
     const c = this.connection;
-    if (!c || c.ended || c.socket.readyState !== 1) return;
+    if (this.pumping || !c || c.ended || c.socket.readyState !== 1) return;
+    this.pumping = true;
     try {
       if (this.module.capabilities & 8192) { if (c.terminal.poll()) c.renderer.requestFrame(); }
       this.events(c); c.clipboard?.expire();
@@ -232,42 +226,13 @@ export class ShellClient {
       else if (c.paused && c.socket.bufferedAmount <= RESUME_BUFFERED_BYTES) c.paused = false;
       this.updateInput();
     } catch (error) { this.fail(error.message || 'Cannot send terminal replies.'); }
+    finally { this.pumping = false; }
   }
 
   events(connection) {
     for (const item of connection.terminal.drainEvents()) {
       if (item.type === 'title') this.elements.title.textContent = item.text.slice(0, 200) || 'Local shell';
       else if (item.type === 'clipboardWrite' || item.type === 'clipboardRequest') connection.clipboard?.accept(item);
-    }
-  }
-
-  key(event, release = false) {
-    if (event.isComposing || event.keyCode === 229 || this.composing) return;
-    if (event.getModifierState?.('AltGraph') && [...event.key].length === 1) return;
-    const lower = event.key?.toLowerCase();
-    // Keep browser clipboard and window shortcuts reachable.
-    if ((event.metaKey && ['c', 'v', 'x', 'r', 'l', 'w', 't'].includes(lower)) ||
-        (event.ctrlKey && event.shiftKey && ['c', 'v'].includes(lower))) return;
-    const c = this.connection;
-    if (!c || !c.ready || c.ended || c.paused) return;
-    if (this.module.capabilities & 32) {
-      this.pump();
-      if (c.paused) { event.preventDefault(); return; }
-      const modifiers = (event.shiftKey ? 1 : 0) | (event.altKey ? 2 : 0) | (event.ctrlKey ? 4 : 0) | (event.metaKey ? 8 : 0)
-        | (event.getModifierState?.('CapsLock') ? 64 : 0) | (event.getModifierState?.('NumLock') ? 128 : 0);
-      const text = [...event.key].length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey ? event.key : undefined;
-      const base = /^Key[A-Z]$/.test(event.code ?? '') ? event.code.slice(3).toLowerCase().codePointAt(0) : 0;
-      try {
-        const handled = c.terminal.sendKey({ key: event.key, code: event.code ?? '', modifiers,
-          eventType: release ? 3 : event.repeat ? 2 : 1, text,
-          shiftedKey: event.shiftKey && text ? text.codePointAt(0) : 0, baseLayoutKey: base });
-        if (handled) event.preventDefault();
-        this.pump();
-      } catch (error) { this.fail(error.message); }
-    } else if (!release) {
-      const modes = this.module.capabilities & 128 ? c.terminal.inputModes() : {};
-      const text = encodeKey(event, modes);
-      if (text !== null) { event.preventDefault(); this.sendInput(text); }
     }
   }
 
@@ -294,6 +259,7 @@ export class ShellClient {
     const enabled = !!c && c.ready && !c.ended && !c.paused && c.socket.readyState === 1;
     const wasDisabled = this.elements.input.disabled;
     this.elements.input.disabled = !enabled;
+    c?.input?.refresh();
     if (c?.paused && !c.ended) this.status(c.rejectedInput ? 'Input paused. The last input was not sent; send it again after the connection resumes.' : 'Input paused while the connection sends queued data.', 'paused');
     else if (enabled && this.elements.status.dataset.state === 'paused') {
       this.status(c.rejectedInput ? 'Connected. The last input was not sent; send it again.' : 'Connected · Local shell', 'connected');
@@ -310,14 +276,8 @@ export class ShellClient {
     if (bytes.length > MAX_INPUT_BYTES) { this.status('Input was not sent. Send at most 64 KiB at a time.', 'error'); return; }
     this.pump();
     if (c.paused) { c.rejectedInput = true; this.updateInput(); return; }
-    const result = sendBytes(c.socket, bytes);
-    if (result.ok) {
-      c.rejectedInput = false;
-      if (this.elements.status.dataset.state === 'error' || this.elements.status.dataset.state === 'connected') this.status('Connected · Local shell', 'connected');
-      this.pump();
-    } else if (result.reason === 'backpressure') {
-      c.paused = true; c.rejectedInput = true; this.updateInput();
-    } else this.fail('The shell connection closed before input could be sent.');
+    try { c.terminal.sendText(text); c.renderer.requestFrame(); this.pump(); }
+    catch (error) { this.fail(error.message || 'Input failed.'); }
   }
 
   fail(message) {
@@ -329,11 +289,11 @@ export class ShellClient {
   disconnect() {
     const c = this.connection;
     this.connection = null;
-    this.elements.input.disabled = true; this.elements.input.value = ''; this.composing = false;
+    this.elements.input.disabled = true; this.elements.input.value = '';
     this.pendingPaste = null; if (this.elements.pastePanel) this.elements.pastePanel.hidden = true;
     if (!c) return;
     clearInterval(c.timer);
-    c.clipboard?.dispose(); c.renderer.dispose(); c.terminal.dispose();
+    c.input?.dispose(); c.clipboard?.dispose(); c.renderer.dispose(); c.terminal.dispose();
     if (c.socket.readyState < 2) c.socket.close();
   }
 
@@ -357,12 +317,12 @@ async function start() {
   let client, gone = false;
   window.addEventListener('pagehide', () => { gone = true; client?.dispose(); }, { once: true });
   try {
-    const [{ loadSwiftTerm }, { CanvasTerminalRenderer }] = await Promise.all([
+    const [{ loadSwiftTerm, TerminalInputController, defaultKeyboardShortcut }, { CanvasTerminalRenderer }] = await Promise.all([
       import('/assets/index.js'), import('/assets/example/canvas2d.js')
     ]);
     const module = await loadSwiftTerm({ wasmURL: `/assets/swiftterm-${variant}.wasm` });
     if (gone) return;
-    client = new ShellClient(module, CanvasTerminalRenderer, elements); client.connect();
+    client = new ShellClient(module, CanvasTerminalRenderer, elements, WebSocket, TerminalInputController, defaultKeyboardShortcut); client.connect();
   } catch (error) {
     elements.status.textContent = `Cannot load the terminal: ${error.message}`;
     elements.status.dataset.state = 'error';

@@ -13,6 +13,21 @@ public extension Terminal {
             | (UInt32(keyboardEnhancementFlags.rawValue) << 8)
     }
 
+    /// Send committed typing text on the terminal processing executor.
+    /// This uses keyboard modes, including Kitty text reporting, and never paste modes.
+    /// Returns true when bytes were sent.
+    @discardableResult
+    func sendHostText(_ text: String) -> Bool {
+        let event = KittyKeyEvent(key: .none, modifiers: [], eventType: .press,
+                                 text: text, shiftedKey: nil, baseLayoutKey: nil)
+        let encoder = KittyKeyboardEncoder(flags: keyboardEnhancementFlags,
+            applicationCursor: applicationCursor, applicationKeypad: applicationKeypad,
+            backspaceSendsControlH: false)
+        guard let bytes = encoder.encode(event), !bytes.isEmpty else { return false }
+        sendUserInput(bytes[...])
+        return true
+    }
+
     /// Call on the terminal processing executor, as for feed.
     /// Queue a safe text paste. Returns false when the payload needs approval.
     @discardableResult

@@ -28,7 +28,9 @@ public enum RenderSnapshotWidthState: Sendable { case narrow, wide, spacerTail, 
 
 public struct RenderSnapshotCursor: Equatable, Sendable {
     public let x: Int
+    /// Viewport row, clamped to the visible grid even when the cursor is hidden.
     public let y: Int
+    /// True when cursor display is disabled or its row is outside the viewport.
     public let hidden: Bool
     public let style: CursorStyle
     /// The selected cursor style or DEC cursor blink mode enables blink.

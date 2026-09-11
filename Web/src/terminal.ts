@@ -3,7 +3,7 @@ import { decodeGraphics, type GraphicsSnapshot } from './graphics.js';
 import { decodeSnapshot } from './snapshot.js';
 import { decodeEvent } from './events.js';
 import type { WasmRuntime } from './loader.js';
-import type { HostEvent, RenderSnapshot, TerminalOptions, InputModes, TerminalKeyEvent } from './types.js';
+import type { HostEvent, RenderSnapshot, TerminalOptions, InputModes, TerminalKeyEvent, KeyDisposition, InputState, TerminalMouseEvent, SelectionState, SelectionMode, ViewportState } from './types.js';
 const encoder = new TextEncoder();
 export class SwiftTermTerminal {
   private handle: number;
@@ -53,6 +53,10 @@ export class SwiftTermTerminal {
   }
   /** Return true if the core handled the key. False leaves text input to the browser. */
   sendKey(event: TerminalKeyEvent): boolean {
+    return this.sendKeyResult(event) !== 'text';
+  }
+  /** Distinguish a queued key from a filtered event and browser text input. */
+  sendKeyResult(event: TerminalKeyEvent): KeyDisposition {
     return this.run(() => {
       this.requireCapability(32);
       const strings = [event.key, event.code ?? '', event.text ?? ''];
@@ -64,7 +68,83 @@ export class SwiftTermTerminal {
         uint(event.shiftedKey ?? 0, 'shiftedKey', 0, 0x10ffff), uint(event.baseLayoutKey ?? 0, 'baseLayoutKey', 0, 0x10ffff)];
       words.forEach((x, i) => view.setUint32(i * 4, x, true));
       let offset = 28; for (const part of parts) { bytes.set(part, offset); offset += part.length; }
-      return this.inputBytes('swiftterm_terminal_key', bytes) !== 0;
+      const result = this.inputBytes('swiftterm_terminal_key', bytes);
+      if (result > 2) throw new SwiftTermError('INTERNAL_ERROR', 'Invalid key disposition.');
+      return (['text', 'sent', 'ignored'] as const)[result];
+    });
+  }
+  /** Submit committed text, including IME input, without paste semantics. */
+  sendText(text: string): void {
+    this.run(() => {
+      this.requireCapability(16384);
+      if (typeof text !== 'string' || text.length > 65536) throw new SwiftTermError('INVALID_ARGUMENT', 'Text input cannot exceed 64 KiB.');
+      const bytes = encoder.encode(text); uint(bytes.length, 'text size', 0, 65536);
+      this.inputBytes('swiftterm_terminal_text', bytes);
+    });
+  }
+  inputState(): InputState {
+    const modes = this.inputModes();
+    return this.run(() => {
+      this.requireCapability(64);
+      const bits = this.status('swiftterm_terminal_pointer_modes');
+      const mouseMode = (['off', 'x10', 'vt200', 'button', 'any'] as const)[bits & 7];
+      const mouseProtocol = (['legacy', 'utf8', 'sgr', 'urxvt', 'pixel'] as const)[(bits >>> 3) & 7];
+      if (!mouseMode || !mouseProtocol) throw new SwiftTermError('INTERNAL_ERROR', 'Invalid mouse mode.');
+      return { ...modes, mouseMode, mouseProtocol, mouseShiftCapture: !!(bits & 64), alternateScroll: !!(bits & 128), alternateScreen: !!(bits & 256) };
+    });
+  }
+  sendMouse(event: TerminalMouseEvent): boolean {
+    return this.run(() => {
+      this.requireCapability(64);
+      const action = ['press', 'release', 'move', 'wheel'].indexOf(event.action);
+      uint(action, 'mouse action', 0, 3);
+      return this.status('swiftterm_terminal_mouse', action, uint(event.button, 'button', 0, 7), uint(event.modifiers ?? 0, 'modifiers', 0, 15),
+        uint(event.col, 'column', 0, 1023), uint(event.row, 'row', 0, 1023), uint(event.pixelX, 'pixelX', 0, 0x7ffffffe), uint(event.pixelY, 'pixelY', 0, 0x7ffffffe)) !== 0;
+    });
+  }
+  scrollViewport(lines: number): void { this.scroll(lines, false); }
+  scrollViewportTo(topRow: number): void { this.scroll(topRow, true); }
+  private scroll(value: number, absolute: boolean): void {
+    this.run(() => {
+      this.requireCapability(32768);
+      if (!Number.isInteger(value) || value < -0x80000000 || value > 0x7fffffff) throw new SwiftTermError('INVALID_ARGUMENT', 'Scroll position must be a signed 32-bit integer.');
+      this.status('swiftterm_terminal_scroll', value, absolute ? 1 : 0);
+    });
+  }
+  selectionBegin(col: number, row: number, mode: SelectionMode = 'character'): void {
+    const value = ['character', 'word', 'row', 'extend'].indexOf(mode);
+    uint(value, 'selection mode', 0, 3); this.select(0, col, row, value);
+  }
+  selectionExtend(col: number, row: number): void { this.select(1, col, row, 0); }
+  selectionClear(): void { this.select(2, 0, 0, 0); }
+  selectionAll(): void { this.select(3, 0, 0, 0); }
+  private select(action: number, col: number, row: number, mode: number): void {
+    this.run(() => { this.requireCapability(32768); this.status('swiftterm_terminal_selection', action, uint(col, 'column', 0, 1024), uint(row, 'row', 0, 1023), mode); });
+  }
+  selectionState(): SelectionState {
+    return this.run(() => {
+      this.requireCapability(32768);
+      const bytes = this.runtime.read(this.handle, 'swiftterm_terminal_selection_state_size', 'swiftterm_terminal_selection_state_copy', 32 + 1024 * 12);
+      const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      if (bytes.length < 32 || view.getUint32(0, true) !== 1) throw new SwiftTermError('INVALID_SNAPSHOT', 'Invalid selection state.');
+      const count = view.getUint32(24, true), flags = view.getUint32(20, true);
+      if (count > 1024 || bytes.length !== 32 + count * 12) throw new SwiftTermError('INVALID_SNAPSHOT', 'Invalid selection span count.');
+      const spans = [];
+      for (let i = 0; i < count; i++) {
+        const offset = 32 + i * 12, row = view.getUint32(offset, true), startCol = view.getUint32(offset + 4, true), endCol = view.getUint32(offset + 8, true);
+        if (row > 1023 || startCol > endCol || endCol > 1024) throw new SwiftTermError('INVALID_SNAPSHOT', 'Invalid selection span.');
+        spans.push({ row, startCol, endCol });
+      }
+      return { generation: BigInt(view.getUint32(4, true)) | BigInt(view.getUint32(8, true)) << 32n,
+        topRow: view.getUint32(12, true), maximumTopRow: view.getUint32(16, true), active: !!(flags & 1), alternateScreen: !!(flags & 2), spans };
+    });
+  }
+  viewportState(): ViewportState { const { topRow, maximumTopRow, alternateScreen } = this.selectionState(); return { topRow, maximumTopRow, alternateScreen }; }
+  selectionText(): string {
+    return this.run(() => {
+      this.requireCapability(32768);
+      const bytes = this.runtime.read(this.handle, 'swiftterm_terminal_selection_text_size', 'swiftterm_terminal_selection_text_copy', 256 * 1024 * 1024);
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     });
   }
   /** Queue one paste. allowUnsafe requires explicit approval from the user. */

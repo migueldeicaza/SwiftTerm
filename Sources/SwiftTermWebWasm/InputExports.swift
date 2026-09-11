@@ -11,6 +11,57 @@ public func terminalInputModes(_ terminal: UInt32) -> Int32 {
 }
 
 #if arch(wasm32)
+@_expose(wasm, "swiftterm_terminal_pointer_modes")
+#endif
+public func terminalPointerModes(_ terminal: UInt32) -> Int32 {
+    WasmRuntime.shared.withTerminal(terminal) { Int32($0.terminal.hostPointerModes) }
+}
+
+#if arch(wasm32)
+@_expose(wasm, "swiftterm_terminal_text")
+#endif
+public func terminalText(_ terminal: UInt32, _ pointer: UInt32, _ length: UInt32) -> Int32 {
+    WasmRuntime.shared.mutate(terminal) { entry in
+        guard length <= 64 * 1024 else { return ABI.invalidArgument }
+        guard let bytes = WasmRuntime.shared.memory.read(pointer, length) else { return ABI.outOfBounds }
+        let text = String(decoding: bytes, as: UTF8.self)
+        guard Array(text.utf8) == bytes else { return ABI.invalidArgument }
+        return entry.terminal.sendHostText(text) ? 1 : 0
+    }
+}
+
+#if arch(wasm32)
+@_expose(wasm, "swiftterm_terminal_mouse")
+#endif
+public func terminalMouse(_ terminal: UInt32, _ action: UInt32, _ button: UInt32,
+                          _ modifiers: UInt32, _ col: UInt32, _ row: UInt32,
+                          _ pixelX: UInt32, _ pixelY: UInt32) -> Int32 {
+    WasmRuntime.shared.mutate(terminal) { entry in
+        guard let action = TerminalMouseAction(rawValue: action),
+              let buttonKind = TerminalMouseButton(rawValue: button), modifiers <= 15,
+              col < UInt32(entry.terminal.cols), row < UInt32(entry.terminal.rows)
+        else { return ABI.invalidArgument }
+        switch action {
+        case .press, .release: guard button < 3 else { return ABI.invalidArgument }
+        case .move: guard button <= 3 else { return ABI.invalidArgument }
+        case .wheel: guard button >= 4 else { return ABI.invalidArgument }
+        }
+        // Use UInt64 before multiplication. Conversion to Int is safe on wasm32
+        // only after the logical screen and signed integer bounds are checked.
+        let width = entry.host.cellWidth > 0
+            ? UInt64(entry.host.cellWidth) * UInt64(entry.terminal.cols) : 65536
+        let height = entry.host.cellHeight > 0
+            ? UInt64(entry.host.cellHeight) * UInt64(entry.terminal.rows) : 65536
+        guard UInt64(pixelX) < width, UInt64(pixelY) < height,
+              pixelX < UInt32(Int32.max), pixelY < UInt32(Int32.max)
+        else { return ABI.invalidArgument }
+        return entry.terminal.sendHostMouse(action: action, button: buttonKind,
+            modifiers: modifiers, col: Int(col), row: Int(row),
+            pixelX: Int(pixelX), pixelY: Int(pixelY)) ? 1 : 0
+    }
+}
+
+#if arch(wasm32)
 @_expose(wasm, "swiftterm_terminal_key")
 #endif
 public func terminalKey(_ terminal: UInt32, _ pointer: UInt32, _ length: UInt32) -> Int32 {

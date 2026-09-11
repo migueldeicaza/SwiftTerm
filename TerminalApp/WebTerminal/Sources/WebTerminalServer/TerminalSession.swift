@@ -60,18 +60,26 @@ final class TerminalSession: LocalProcessDelegate, @unchecked Sendable {
     private var kittyTransfer: KittyFileTransfer?
     private var size = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
 
+    static func shellEnvironment(from source: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
+        var environment = source
+        environment["TERM"] = "xterm-256color"
+        environment["COLORTERM"] = "truecolor"
+        // The server process can use NO_COLOR for its own logs. Do not pass
+        // that setting to an interactive terminal that advertises color.
+        environment.removeValue(forKey: "NO_COLOR")
+        environment.removeValue(forKey: "COLUMNS")
+        environment.removeValue(forKey: "LINES")
+        return environment
+    }
+
     func start(configuration: ServerConfiguration) throws {
         let transfer = try KittyFileTransfer(output: output)
         let child = LocalProcess(delegate: self, directDelivery: true)
         // Allow final output to drain through a slow connection before exit.
         child.drainTimeout = 15
         lock.withLock { process = child; kittyTransfer = transfer }
-        var environment = ProcessInfo.processInfo.environment
-        environment["TERM"] = "xterm-256color"
-        environment["COLORTERM"] = "truecolor"
+        var environment = Self.shellEnvironment()
         environment["TMPDIR"] = transfer.temporaryDirectory.path
-        environment.removeValue(forKey: "COLUMNS")
-        environment.removeValue(forKey: "LINES")
         do {
             try child.startProcessChecked(
                 executable: configuration.shell, args: ["-i"],

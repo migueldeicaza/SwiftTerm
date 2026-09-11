@@ -12,7 +12,8 @@ entry point. The TypeScript loader supplies the required WASI imports and calls
   Foundation, PNG decoding, Kitty graphics, Sixel, and Kitty Clipboard.
 - **Embedded** selects the `Embedded` trait alone. It uses the portable core with
   Embedded Swift language restrictions. Graphics and Kitty Clipboard are
-  unavailable. Key modes and bracketed paste are supported by both builds.
+  unavailable. Key modes, committed text, mouse input, selection, scrollback,
+  and bracketed paste are supported by both builds.
 
 ## Build
 
@@ -123,7 +124,7 @@ python3 -m http.server 8000
 ```
 
 The Canvas example uses animation frames and device-pixel scaling. It owns
-cursor blink timing and focus/visibility handling. Canvas shaping, font
+cursor blink timing. The shared input controller owns focus and visibility. Canvas shaping, font
 fallback, ligatures, emoji, and BiDi can differ from native rendering. A host
 can replace Canvas with WebGL 2 or WebGPU without changing the engine API.
 The worker example keeps parsing in a worker and sends copied frames to its
@@ -133,9 +134,10 @@ For a WebSocket PTY transport, set `socket.binaryType = 'arraybuffer'`. Pass
 received bytes to `terminal.write(new Uint8Array(event.data))`. After each
 write, send generated reply bytes back through the socket. Keyboard and paste
 input must go to the PTY transport; do not pass it to `write`. Use `sendKey`
-and `paste` to encode input through the core, then drain `readOutput` to the
-PTY. `inputModes` reports application cursor/keypad, bracketed paste, and Kitty
-keyboard/paste state. Call `poll` during idle frames to service host callbacks,
+and `sendText` for keys and committed text. Use `sendMouse` and `paste` for
+pointer input and paste. Drain their encoded bytes through `readOutput` to the
+PTY. `inputState` reports keyboard and paste state plus mouse tracking, encoding,
+Shift capture, alternate-scroll mode, and the active buffer. Call `poll` during idle frames to service host callbacks,
 synchronized-output timeouts, clipboard timeouts, and image animation.
 
 `drainEvents()` returns host requests such as title changes, bells, clipboard
@@ -165,6 +167,118 @@ follows the records. Hosts must copy pixels before acknowledging a snapshot.
 The Full reactor is larger because it includes Foundation and image codecs.
 Use the generated size reports when choosing a build and enable HTTP
 compression when serving it outside a local development session.
+
+## Input and selection API
+
+Use `TerminalInputController` from the TypeScript package for DOM input. Its
+constructor takes a terminal, a canvas, a textarea, and host callbacks.
+`geometry()` supplies logical cell size and grid dimensions. Optional
+`rowScale(row)` handles doubled-width rows; optional `cursor` positions the IME
+candidate window. `canInput()` gates input under transport pressure. `onInput()`
+lets the host drain output, and `onSelection()` updates the selection overlay.
+`onPaste()` and `shortcut()` supply host policy. A shortcut callback returns true
+to keep the press and its release outside the terminal; call
+`defaultKeyboardShortcut()` to keep the defaults when adding a host shortcut.
+
+Call `refresh()` after PTY output, resize, or transport-pressure changes. Dispose
+the controller before its terminal. It owns focus, composition, pressed keys,
+pointer capture, wheel routing, and local copy. Focus is true only while its
+textarea has focus in the active, visible document. The renderer does not infer
+terminal focus from document focus. The sample and standalone Canvas example
+both use this controller. See [Web/README.md](../Web/README.md) for a full example.
+
+For direct calls, `sendKeyResult()` returns `text`, `sent`, or `ignored`.
+Only `text` needs browser text fallback. `sendKey()` returns false for `text`
+and true for the other two results. Use the unshifted key identity and keep it
+for release. Supply shifted and base-layout scalar values separately.
+`sendText()` submits committed text through the core keyboard modes. It does
+not use paste framing. `paste()` retains its separate safety and mode rules.
+
+`sendMouse()` accepts press, release, move, and wheel actions. Cell and pixel
+coordinates are zero-based and relative to the viewport. Pixels use logical
+screen dimensions, without a device-pixel ratio multiplier. Set cell dimensions
+with `resize()`. Buttons are left=0, middle=1, right=2, none=3, wheel up=4,
+down=5, left=6, and right=7. Use none only for motion. Modifier bits are
+Shift=1, Alt=2, Control=4, and Super=8; Super is ignored. X10 sends presses
+only. SGR release packets retain the released button. The return value is false
+when the current tracking mode filters the event.
+
+Selection pointer coordinates identify visible cells. `selectionBegin()`
+accepts character, word, row, and Shift-extension modes. Character selection
+includes both endpoint cells and complete wide characters. `selectionExtend()`
+changes the target. `selectionClear()` clears the range, and `selectionAll()`
+includes history. `selectionText()` uses core text extraction, including soft
+wraps and selected rows outside the viewport.
+
+`selectionState()` supplies owned visible spans with an exclusive `endCol` and
+a separate generation. Render selection changes even when the cell frame is
+clean. `viewportState()` supplies the current `topRow`, `maximumTopRow`, and
+alternate-screen flag. `scrollViewport()` uses signed line movement; positive
+values scroll down. `scrollViewportTo()` uses a buffer row. Both clamp to the
+history bounds and update the state that keeps the viewport fixed during output.
+
+Each WASM terminal owns one `SelectionService`. Calls hold the terminal lock.
+Feed-owner checks compare selected content once per feed batch. They add no
+selection work to the per-byte parser. Selection follows valid content during
+scrolling. History eviction or changed selected content can clear it. Resize,
+reset, and a buffer switch clear it. Rectangular selection, exact reflow
+preservation, and words across wrapped rows remain deferred.
+
+### Additive ABI version 1 exports
+
+Existing version 1 record layouts remain unchanged. The loader checks the new
+exports. Full and Embedded supply these capability bits:
+
+| Bit value | Capability |
+| --- | --- |
+| 64 | Mouse input and pointer-mode state |
+| 16384 | Committed text input |
+| 32768 | Selection and viewport operations |
+
+All arguments below are `u32`, except the scroll value, which is `i32`.
+All results are `i32`. Negative results use the existing ABI error codes.
+
+| Export | Arguments after the terminal handle | Success result |
+| --- | --- | --- |
+| `swiftterm_terminal_text` | UTF-8 pointer, byte length | 1 sent, 0 empty |
+| `swiftterm_terminal_pointer_modes` | None | Packed mode bits |
+| `swiftterm_terminal_mouse` | action, button, modifiers, col, row, pixelX, pixelY | 1 sent, 0 filtered |
+| `swiftterm_terminal_scroll` | value, absolute flag | 0 |
+| `swiftterm_terminal_selection` | action, col, row, mode | 0 |
+| `swiftterm_terminal_selection_state_size` | None | Snapshot byte count |
+| `swiftterm_terminal_selection_state_copy` | destination, capacity | Copied byte count |
+| `swiftterm_terminal_selection_text_size` | None | UTF-8 byte count |
+| `swiftterm_terminal_selection_text_copy` | destination, capacity | Copied byte count |
+
+Mouse actions are press=0, release=1, move=2, and wheel=3. Selection actions
+are begin=0, extend=1, clear=2, and all=3. Begin modes are character=0, word=1,
+row=2, and Shift extension=3. The absolute scroll flag is 0 for relative lines
+and 1 for an absolute top row. The existing `swiftterm_terminal_key` result is
+0 for text fallback, 1 for sent, and 2 for ignored.
+
+Pointer-mode bits 0–2 encode off=0, X10=1, VT200=2, button tracking=3, and
+any motion=4. Bits 3–5 encode legacy=0, UTF-8=1, SGR=2, URXVT=3, and pixel
+SGR=4. Bit 6 is Shift capture, bit 7 is alternate scroll, and bit 8 is the
+alternate-screen flag.
+
+The selection state has a 32-byte little-endian header:
+
+| Byte offset | `u32` field |
+| --- | --- |
+| 0 | Version, always 1 |
+| 4, 8 | Selection revision, low and high words |
+| 12 | Viewport top row |
+| 16 | Maximum viewport top row |
+| 20 | Flags: active=1, alternate screen=2 |
+| 24 | Visible span count |
+| 28 | Reserved, zero |
+
+Each 12-byte span contains `row`, `startCol`, and `endColExclusive`, as three
+little-endian `u32` values. Rows are viewport-relative. A size call refreshes
+its terminal-owned buffer. Copy reads that buffer without a refresh, even if
+an intervening operation changes selection. Text size/copy calls use a separate
+owned UTF-8 buffer. Both copies use the existing host-allocation checks and the
+256 MiB snapshot limit. Committed text is limited to 64 KiB per call.
 
 ## Limits and memory
 
@@ -198,9 +312,11 @@ that exceeds a limit is discarded; the next sequence can still be decoded.
 
 ```sh
 swift test --filter PortableRenderSnapshotTests
+swift test --filter PortableSelectionTests
 SWIFTTERM_EMBEDDED_CHECK=1 SWIFTTERM_WEB_WASM_TESTS=1 \
   swift test --filter SwiftTermWebWasmTests
 npm test --prefix Web
+node --test Tests/WebWasmTests/interaction.test.mjs
 npm run test:browser --prefix Web
 npm run benchmark --prefix Web
 ```
@@ -210,6 +326,13 @@ browser tests. CI runs Chromium, Firefox, and WebKit, both runtime variants,
 ABI validation, snapshot comparisons, invalid-input checks, and benchmarks.
 The raw export and import lists are in `scripts/wasm/`. Change them only after
 reviewing the compiler output and the browser WASI shim together.
+
+The input implementation passed native input and selection tests, native facade
+tests, and all 20 interaction tests against Full and Embedded artifacts. These
+checks include exact encoded bytes, selection text and spans, scrollback,
+invalid arguments, and stable size/copy buffers. Browser, live-shell, and latency
+results are in [web-input-plan.md](web-input-plan.md). Manual checks with a native
+IME remain necessary.
 
 ### WASI timer scheduling
 

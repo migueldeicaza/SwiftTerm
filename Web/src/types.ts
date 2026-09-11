@@ -44,7 +44,7 @@ export type HostEvent = EventBase & (
   | { readonly type: 'mouseMode'; readonly mode: number }
   | { readonly type: 'unknown'; readonly eventType: number; readonly data: Uint8Array }
 );
-export const Capability = Object.freeze({ fullRuntime: 1, embeddedRuntime: 2, dirtyRange: 4, scrollInvariantRange: 8, hostEvents: 16, keyEncoding: 32, mouseEncoding: 64, inputModes: 128, paste: 256, clipboard: 512, kittyGraphics: 1024, sixel: 2048, iTermImages: 4096, poll: 8192 });
+export const Capability = Object.freeze({ fullRuntime: 1, embeddedRuntime: 2, dirtyRange: 4, scrollInvariantRange: 8, hostEvents: 16, keyEncoding: 32, mouseEncoding: 64, inputModes: 128, paste: 256, clipboard: 512, kittyGraphics: 1024, sixel: 2048, iTermImages: 4096, poll: 8192, textInput: 16384, selection: 32768 });
 export const CellStyle = Object.freeze({ bold: 1, underline: 2, blink: 4, inverse: 8, invisible: 16, dim: 32, italic: 64, crossedOut: 128 });
 export const CellFlag = Object.freeze({ selected: 1, protected: 2, wideTail: 4, explicitUnderlineColor: 8, softWrapSpacer: 16, defaultBackground: 32, kittyPlaceholder: 64 });
 
@@ -56,6 +56,30 @@ export interface TerminalKeyEvent {
   key: string; code?: string; modifiers?: number; eventType?: 1 | 2 | 3;
   text?: string; shiftedKey?: number; baseLayoutKey?: number;
 }
+export const KeyModifier = Object.freeze({ shift: 1, alt: 2, control: 4, super: 8, hyper: 16, meta: 32, capsLock: 64, numLock: 128 });
+export const KeyEventType = Object.freeze({ press: 1, repeat: 2, release: 3 } as const);
+export type KeyDisposition = 'text' | 'sent' | 'ignored';
+export type MouseMode = 'off' | 'x10' | 'vt200' | 'button' | 'any';
+export type MouseProtocol = 'legacy' | 'utf8' | 'sgr' | 'urxvt' | 'pixel';
+export interface InputState extends InputModes {
+  readonly mouseMode: MouseMode; readonly mouseProtocol: MouseProtocol;
+  readonly mouseShiftCapture: boolean; readonly alternateScroll: boolean; readonly alternateScreen: boolean;
+}
+export interface TerminalMouseEvent {
+  action: 'press' | 'release' | 'move' | 'wheel';
+  /** 0 left, 1 middle, 2 right, 3 none, 4 wheel up, 5 down, 6 left, 7 right. */
+  button: number; modifiers?: number;
+  /** Cell and pixel positions are zero-based and relative to the viewport. */
+  col: number; row: number; pixelX: number; pixelY: number;
+}
+export interface ViewportState {
+  readonly topRow: number; readonly maximumTopRow: number; readonly alternateScreen: boolean;
+}
+export interface SelectionSpan { readonly row: number; readonly startCol: number; readonly endCol: number }
+export interface SelectionState extends ViewportState {
+  readonly generation: bigint; readonly active: boolean; readonly spans: readonly SelectionSpan[];
+}
+export type SelectionMode = 'character' | 'word' | 'row' | 'extend';
 export interface ClipboardRequest {
   readonly id: number;
   readonly operation: 'readPermission' | 'writePermission' | 'list' | 'read' | 'write' | 'osc52Read';

@@ -2,6 +2,26 @@ import Testing
 @testable import SwiftTerm
 
 struct PortableRenderSnapshotTests {
+    @Test func scrollbackHidesAndBoundsTheCursor() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 12, rows: 4, scrollback: 20)
+        terminal.feed(text: (0..<10).map { "line\($0)" }.joined(separator: "\r\n"))
+        let bottom = terminal.makeRenderSnapshot(scope: .full)
+        #expect(!bottom.cursor.hidden)
+        #expect(bottom.cursor.y == 3)
+        terminal.scrollViewport(-1)
+        let scrolled = terminal.makeRenderSnapshot(scope: .full)
+        #expect(scrolled.cursor.hidden)
+        #expect(scrolled.cursor.y == 3)
+        terminal.scrollViewport(Int.min)
+        #expect(terminal.makeRenderSnapshot(scope: .full).cursor.hidden)
+        terminal.scrollViewport(Int.max)
+        let restored = terminal.makeRenderSnapshot(scope: .full)
+        #expect(!restored.cursor.hidden)
+        #expect(restored.cursor.y == 3)
+        terminal.feed(text: "\u{1b}[?25l")
+        #expect(terminal.makeRenderSnapshot(scope: .full).cursor.hidden)
+    }
+
     final class ResizeProbe: TerminalDelegate {
         func send(source: Terminal, data: ArraySlice<UInt8>) {}
         var columns: Int?

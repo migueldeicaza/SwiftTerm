@@ -45,10 +45,71 @@ Run `npm test` for decoder, wrapper, ABI, and corpus tests. Set `REQUIRE_WASM=1`
 
 `npm run benchmark` reports frame time, snapshot byte size, host-buffer allocation calls, WASM memory growth, and JavaScript heap change. The allocation count excludes internal Swift allocations. Heap change is not an allocation count. Use `BENCHMARK_OUTPUT=/path/results.json` to save the results. These measurements have no regression threshold yet.
 
-The input extension supplies `inputModes()`, `sendKey()`, and `paste()`. Key encoding uses the core encoder for application cursor, application keypad, and Kitty keyboard modes. `sendKey()` returns false when the browser must deliver normal text input. Keep IME composition in the browser and send only its committed text to the PTY. `paste()` uses the core safety policy and current paste modes. A rejected multiline paste needs a separate user action before `allowUnsafe: true`; do not set this flag by default. The paste operation queues the complete batch in the reply queue, including bracket markers or Kitty paste-event packets.
+## Keyboard, pointer, and selection input
+
+Full and Embedded support the same input and selection APIs. Input bytes use the core encoder and enter the output queue. Send them to the PTY with `readOutput()` and `consumeOutput()`.
+
+- `sendKeyResult(event)` returns `text`, `sent`, or `ignored`. For `text`, let the browser supply committed text. For `sent`, the core queued the key. For `ignored`, no text fallback is needed. The older `sendKey(event)` returns false only for `text`.
+- `sendText(text)` submits committed text, including an IME result. It uses the current Kitty keyboard modes. It does not add paste markers. Each call is limited to 64 KiB of UTF-8.
+- `paste(text, options)` uses the core paste policy and current paste modes. A rejected multiline paste needs a separate user action before `allowUnsafe: true`; do not set this flag by default. A paste queues the complete batch, including bracket markers or Kitty paste packets.
+- `inputState()` includes keyboard modes, `mouseMode`, `mouseProtocol`, `mouseShiftCapture`, `alternateScroll`, and `alternateScreen`. `inputModes()` remains available for keyboard and paste state.
+
+For direct key calls, use the unshifted character as `key`. Supply committed text separately in `text`, and alternate scalar values in `shiftedKey` and `baseLayoutKey`. Keep the same key identity for its release. A physical `code` alone does not identify the active keyboard layout. The controller below does this work for browser events.
+
+`sendMouse(event)` takes an action (`press`, `release`, `move`, or `wheel`), a button, modifiers, and cell and pixel coordinates. It returns true when the core sends the event. All coordinates are zero-based and relative to the viewport. `pixelX` and `pixelY` use logical pixels, before device-pixel scaling. Supply the logical cell size through `resize(cols, rows, cellWidth, cellHeight)`. Mouse modifier bits are Shift=1, Alt=2, Control=4, and Super=8; the encoder ignores Super.
+
+| Button | Meaning |
+| --- | --- |
+| 0, 1, 2 | Left, middle, right |
+| 3 | No pressed button, for motion |
+| 4, 5 | Wheel up, down |
+| 6, 7 | Wheel left, right |
+
+X10 reports presses only. SGR and pixel SGR retain the released button. `sendMouse` uses the active tracking mode; the host decides whether a gesture is local selection or application mouse input.
+
+`selectionBegin(col, row, mode)` starts a range at a visible cell. Modes are `character`, `word`, `row`, and `extend` for Shift extension. Character ranges include the anchor and target cells. A wide-cell continuation selects the complete character. Use `selectionExtend(col, row)`, `selectionClear()`, and `selectionAll()` for the remaining operations. `selectionAll()` includes scrollback.
+
+`selectionState()` returns an owned snapshot with a separate `generation`, `active`, viewport state, and visible `spans`. Each span has `row`, `startCol`, and `endCol`; `endCol` is excluded. Draw these spans as a selection overlay. A selection change can need a draw even when the cell snapshot is clean. `selectionText()` uses core text extraction. It includes selected history outside the viewport and joins soft wraps.
+
+`scrollViewport(lines)` uses positive values to scroll down. `scrollViewportTo(topRow)` uses a buffer row. Both clamp to the history bounds. `viewportState()` returns `topRow`, `maximumTopRow`, and `alternateScreen`. Selection follows valid content during scrolling. Expired or changed selected content clears the selection. Resize, buffer switch, and reset also clear it. Rectangular selection, exact selection preservation across reflow, and words across wrapped rows remain deferred.
+
+## Reusable browser controller
+
+Use one `TerminalInputController` for each terminal canvas and textarea. It owns keyboard, composition, pointer capture, wheel, copy, paste, and focus listeners. The sample and Canvas example use this controller.
+
+```js
+import { TerminalInputController } from '@swiftterm/wasm';
+
+const input = new TerminalInputController(terminal, canvas, textarea, {
+  geometry: () => renderer.inputGeometry,
+  canInput: () => transportReady,
+  onInput: () => { pumpPTYOutput(); renderer.requestFrame(); },
+  onSelection: state => renderer.setSelection(state),
+  onError: error => showInputError(error),
+});
+renderer.onDraw = () => input.refresh();
+// The host supplies transportReady, pumpPTYOutput, and showInputError.
+// After PTY output, resize, or a transport-pressure change:
+input.refresh();
+// Before the host destroys the terminal:
+input.dispose();
+```
+
+`geometry()` supplies `cols`, `rows`, `cellWidth`, and `cellHeight` in logical pixels. Supply current grid dimensions after resize, including before the next draw. Optional `rowScale(row)` supplies the width multiplier for doubled rows. Optional `cursor` places the IME candidate window near the cursor. The Canvas renderer's `onDraw` callback updates that position after each frame. The controller accounts for the canvas CSS rectangle; do not multiply coordinates by device-pixel ratio.
+
+`canInput()` gates terminal input while the transport cannot accept it. `onInput()` lets the host drain output and request a frame. `onSelection(state)` updates the overlay. `onPaste(text, event)` can replace default paste handling with host approval UI. Call `refresh()` when output, geometry, or transport pressure changes. Dispose the controller before the terminal on disconnect or replacement.
+
+The controller reports terminal focus only while its textarea has focus in the active, visible document. A button in the same page does not count as terminal focus. Visibility remains separate. Blur clears pressed-key and composition state and ends pointer gestures.
+
+The default shortcut policy keeps browser copy, paste, navigation, and zoom shortcuts. `shortcut(event)` replaces that policy: return true to keep the press and its release outside the terminal. Call exported `defaultKeyboardShortcut(event)` when adding host shortcuts to the defaults. Command+A and Control+Shift+A select all terminal content. `layout` can supply unshifted characters indexed by `KeyboardEvent.code`. The optional browser Keyboard Map API and observed keys improve layout information. `optionAsMeta` makes printable macOS Option combinations act as terminal Alt input.
+
+Shift starts local selection while mouse tracking is active, unless the application requests Shift capture. Double-click selects a word; triple-click selects a row. Dragging outside the canvas scrolls selection at a bounded rate. Copy uses the browser `copy` event and core selection text. This is separate from remote OSC 52 and Kitty clipboard requests. Wheel input uses mouse tracking, alternate-screen cursor keys under mode 1007, or normal scrollback.
+
+Automated tests cover composition event sequences. They do not replace manual checks with a native IME, including Japanese composition and dead keys.
+
 
 Full supports the asynchronous clipboard extension. Call `configureClipboard(3)` only when the host can serve standard clipboard reads and atomic writes. The browser sample advertises this service when its Clipboard APIs are available. This does not access clipboard data. The **Disable clipboard** button revokes the service for the current connection. Event `clipboardRequest` has a request ID and an operation. Supply its result through `completeClipboard()`. Status values are in `ClipboardStatus`. List completions carry a UTF-8 JSON array of MIME names; read completions carry raw representation bytes; permission and write completions carry no data. A request expires after 30 seconds, and reset or disposal cancels it. Call `poll()` at regular intervals to service protocol completions and deadlines even when no PTY output arrives.
 
 The local shell sample supports `text/plain` and `image/png` clipboard items when the browser supports them. It checks every representation before one atomic write. Other formats fail with `ENOSYS`; primary selection is not offered. Actual clipboard reads and writes need a visible action. Browser activation rules can require an extra format-read or write action. The captured clipboard is reused for follow-up reads for at most 30 seconds. OSC 52 writes have a separate copy action. OSC 52 reads preserve the requested selector. Notifications remain requests and are not shown automatically. Embedded supplies key and text-paste encoding but does not implement the Kitty clipboard protocol.
 
-A worker has no Clipboard API. Relay its clipboard request events to the window, complete the browser operation there, and return the result with the worker `completeClipboard` message. The worker also accepts `inputModes`, `key`, `paste`, `poll`, `configureClipboard`, and `resetClipboard` messages.
+A worker has no Clipboard API. Relay its clipboard request events to the window, complete the browser operation there, and return the result with the worker `completeClipboard` message. The worker also accepts `inputModes`, `inputState`, `key`, `text`, `mouse`, `scroll`, `scrollTo`, `selectionBegin`, `selectionExtend`, `selectionClear`, `selectionAll`, `selectionState`, `selectionText`, `paste`, `poll`, `configureClipboard`, and `resetClipboard` messages. DOM input stays in the window; worker messages serialize engine operations.

@@ -204,7 +204,7 @@ struct KittyKeyboardEncoder {
         }
 
         // A key-less event contains committed text, such as text from an IME.
-        // The protocol has no key code for it, so send the UTF-8 text as is.
+        // Associated-text reporting uses key zero for this event.
         // A single character with a text-preventing modifier (for example the
         // iOS Meta accessory) is a real key press: encode it as that key so
         // the modifier is not lost.
@@ -222,6 +222,11 @@ struct KittyKeyboardEncoder {
                 keyed.key = .unicode(scalar.value)
                 keyed.text = nil
                 return encode(keyed)
+            }
+            if includeAssociatedText {
+                return encodeCsiU(event: event, overrideKeyCode: 0,
+                                  includeText: true, includeAlternates: false,
+                                  includeEventType: wantsEvents, includeLocks: true)
             }
             return [UInt8](text.utf8)
         }

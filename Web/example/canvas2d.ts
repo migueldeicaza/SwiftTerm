@@ -1,4 +1,4 @@
-import { CellStyle, type RenderSnapshot, type RenderRow, type GraphicsSnapshot, type GraphicsPlacement, type SwiftTermTerminal } from '../src/index.js';
+import { CellStyle, type RenderSnapshot, type RenderRow, type GraphicsSnapshot, type GraphicsPlacement, type SwiftTermTerminal, type SelectionState, type InputGeometry } from '../src/index.js';
 function color(rgba: number): string { return `rgba(${rgba >>> 24},${(rgba >>> 16) & 255},${(rgba >>> 8) & 255},${(rgba & 255) / 255})`; }
 type SpacedCanvasContext = CanvasRenderingContext2D & { letterSpacing?: string };
 /** A validation renderer. Text shaping, fallback, BiDi, ligatures, and emoji can differ from native SwiftTerm. */
@@ -16,23 +16,25 @@ export class CanvasTerminalRenderer {
   private colors = new Map<number, string>();
   private textMetrics = new Map<number, { font: string; spacing: number }>();
   private supportsLetterSpacing: boolean;
+  private selection?: SelectionState;
+  private selectionCanvas?: HTMLCanvasElement;
   public drawnRows = 0;
+  /** Called after geometry and cursor data reflect the drawn frame. */
+  public onDraw?: () => void;
   constructor(readonly canvas: HTMLCanvasElement, readonly terminal: SwiftTermTerminal, readonly cellWidth = 10, readonly cellHeight = 20, readonly fontFamily = 'monospace') {
     const context = canvas.getContext('2d');
     if (!context) throw new Error('Canvas 2D is unavailable.');
     this.context = context;
     this.supportsLetterSpacing = 'letterSpacing' in context;
-    window.addEventListener('focus', this.focus);
-    window.addEventListener('blur', this.focus);
     document.addEventListener('visibilitychange', this.visibility);
     window.addEventListener('resize', this.requestFrame);
     const grid = terminal.snapshot();
+    this.last = grid;
     terminal.resize(grid.cols, grid.rows, cellWidth, cellHeight);
-    this.focus(); this.visibility();
+    this.visibility();
     this.frame = requestAnimationFrame(this.tick);
   }
   readonly requestFrame = (): void => { this.pending = true; };
-  private readonly focus = (): void => { this.terminal.setFocus(document.hasFocus()); this.pending = true; };
   private readonly visibility = (): void => { this.terminal.setVisible(!document.hidden); this.pending = true; };
   private readonly tick = (time: number): void => {
     if (this.disposed) return;
@@ -92,7 +94,37 @@ export class CanvasTerminalRenderer {
       for (const row of snapshot.rowData) this.drawRow(row);
     }
     this.last = snapshot;
+    if (this.selection) this.drawSelection();
     if (redrawAll || snapshot.dirty === 'full' || snapshot.rowData.some(row => row.y === snapshot.cursor.y)) this.drawCursor(snapshot);
+    this.onDraw?.();
+  }
+  get inputGeometry(): InputGeometry {
+    return { cols: this.last!.cols, rows: this.last!.rows, cellWidth: this.cellWidth, cellHeight: this.cellHeight,
+      cursor: this.last!.cursor, rowScale: row => (this.rows.get(row)?.flags ?? 0) & 14 ? 2 : 1 };
+  }
+  /** Draw selection without changing the cached text rows or terminal snapshot. */
+  setSelection(state: SelectionState): void { this.selection = state; this.drawSelection(); }
+  private drawSelection(): void {
+    if (!this.selection || !this.canvas.parentElement) return;
+    if (!this.selectionCanvas) {
+      this.selectionCanvas = document.createElement('canvas');
+      this.selectionCanvas.setAttribute('aria-hidden', 'true');
+      Object.assign(this.selectionCanvas.style, { position: 'absolute', pointerEvents: 'none' });
+      this.canvas.parentElement.append(this.selectionCanvas);
+    }
+    const overlay = this.selectionCanvas, rect = this.canvas.getBoundingClientRect(), ratio = window.devicePixelRatio || 1;
+    const width = Math.round(rect.width * ratio), height = Math.round(rect.height * ratio);
+    if (overlay.width !== width || overlay.height !== height) { overlay.width = width; overlay.height = height; }
+    Object.assign(overlay.style, { left: `${this.canvas.offsetLeft}px`, top: `${this.canvas.offsetTop}px`, width: `${rect.width}px`, height: `${rect.height}px` });
+    const ctx = overlay.getContext('2d'); if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, overlay.width, overlay.height);
+    const g = this.inputGeometry;
+    ctx.setTransform(ratio * rect.width / (g.cols * this.cellWidth), 0, 0, ratio * rect.height / (g.rows * this.cellHeight), 0, 0);
+    ctx.fillStyle = 'rgba(110,155,240,0.38)';
+    for (const span of this.selection.spans) {
+      const scale = g.rowScale!(span.row);
+      ctx.fillRect(span.startCol * this.cellWidth * scale, span.row * this.cellHeight, (span.endCol - span.startCol) * this.cellWidth * scale, this.cellHeight);
+    }
   }
   private drawRowAt(y: number): void { const row = this.rows.get(y); if (row) this.drawRow(row); }
   private acceptGraphics(snapshot: GraphicsSnapshot): void {
@@ -227,8 +259,9 @@ export class CanvasTerminalRenderer {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true; cancelAnimationFrame(this.frame);
+    this.onDraw = undefined;
     this.images.clear(); this.colors.clear(); this.textMetrics.clear(); this.graphics = undefined;
-    window.removeEventListener('focus', this.focus); window.removeEventListener('blur', this.focus);
+    this.selectionCanvas?.remove(); this.selectionCanvas = undefined;
     document.removeEventListener('visibilitychange', this.visibility); window.removeEventListener('resize', this.requestFrame);
   }
 }

@@ -14,7 +14,7 @@ Install the pinned Swift WASM compiler and SDK described in
 From the repository root:
 
 ```sh
-TerminalApps/WebTerminal/run.sh
+TerminalApp/WebTerminal/run.sh
 ```
 
 The script installs the web build dependencies if needed, builds missing
@@ -25,13 +25,13 @@ The shell has the same user access as the server process.
 After the web assets exist, the package can run directly:
 
 ```sh
-swift run --package-path TerminalApps/WebTerminal web-terminal
+swift run --package-path TerminalApp/WebTerminal web-terminal
 ```
 
 To select a shell, working directory, or port:
 
 ```sh
-TerminalApps/WebTerminal/run.sh --port 9090 --shell /bin/sh --directory /tmp
+TerminalApp/WebTerminal/run.sh --port 9090 --shell /bin/sh --directory /tmp
 ```
 
 The default shell is `$SHELL`, with `/bin/sh` as the fallback. The server starts
@@ -49,7 +49,8 @@ scripts/build-wasm.sh embedded --browser --release
 ## Data flow
 
 ```text
-Browser input → WebSocket binary message → LocalProcess → PTY → local shell
+Browser input → shared input controller → SwiftTerm encoder → output queue
+Output queue → WebSocket binary message → LocalProcess → PTY → local shell
 Browser canvas ← SwiftTerm WASM ← WebSocket binary message ← PTY output
 ```
 
@@ -97,22 +98,22 @@ browser engine can impose a lower total image limit.
 ## Checks
 
 ```sh
-swift test --package-path TerminalApps/WebTerminal
-node --test TerminalApps/WebTerminal/BrowserTests/*.test.mjs
+swift test --package-path TerminalApp/WebTerminal
+node --test TerminalApp/WebTerminal/BrowserTests/*.test.mjs
 ```
 
 With the server running, check the HTTP routes, WebSocket origin checks,
 PTY input, resize, exit, and WASM output parsing:
 
 ```sh
-node TerminalApps/WebTerminal/BrowserTests/server-smoke.mjs http://127.0.0.1:8080
+node TerminalApp/WebTerminal/BrowserTests/server-smoke.mjs http://127.0.0.1:8080
 ```
 
 To check five Control-C cycles, exact Kitty file bytes, and `mc` response times
 with the local server running (`mc` and `/usr/bin/python3` must be installed):
 
 ```sh
-node TerminalApps/WebTerminal/BrowserTests/backend-live.mjs http://127.0.0.1:8080
+node TerminalApp/WebTerminal/BrowserTests/backend-live.mjs http://127.0.0.1:8080
 ```
 
 To check normal canvas focus, typed Control-C, and the time to paint the
@@ -120,14 +121,35 @@ Midnight Commander menu footer, install the Web package's Playwright browser
 and run:
 
 ```sh
-node TerminalApps/WebTerminal/BrowserTests/ui-live.mjs http://127.0.0.1:8080
+node TerminalApp/WebTerminal/BrowserTests/ui-live.mjs http://127.0.0.1:8080
 ```
 
-The sample supports text, IME input, core key encoding, application cursor and
-keypad modes, bracketed paste, resize, and reconnect. Full builds also render
+The sample uses the reusable `TerminalInputController` from `Web/`. It supports
+committed text, IME input, core key encoding, application cursor and keypad
+modes, paste, mouse reporting, local selection, scrollback, resize, and reconnect.
+All terminal input passes through the core output queue before the WebSocket.
+
+Click the terminal to focus its textarea. Shift+Escape moves focus to Reconnect.
+The terminal loses focus when a page button receives focus. Drag to select text;
+double-click selects a word, and triple-click selects a row. Command+A or
+Control+Shift+A selects all content, including history. Copy uses core-selected
+text, including selected rows outside the viewport. While application mouse
+tracking is active, hold Shift for local selection unless the application
+requests Shift capture. Wheel input follows mouse tracking, mode 1007 on the
+alternate screen, or normal scrollback. Drag beyond the canvas to scroll a
+selection. Resize, buffer switch, reset, and changed selected content clear it.
+
+The controller preserves browser shortcuts and routes only committed IME text
+to `sendText()`. Paste uses the core paste policy and the sample's approval UI.
+The transport gates input when its queue is full. See [Web/README.md](../../Web/README.md)
+for controller callbacks, geometry, key dispositions, and selection APIs.
+
+Rectangular selection, exact reflow preservation, and words across wrapped
+rows remain deferred. Screen-reader terminal output is not implemented.
+Automated composition tests do not replace manual native IME checks.
+
+Full builds also render
 Kitty graphics, Sixel, and iTerm PNG images. Kitty Clipboard and OSC 52 reads
 are reported when browser Clipboard APIs are available. This does not read
 clipboard data. Clipboard actions require a visible browser action; supported
-formats are text/plain and image/png. Primary selection is
-unsupported. Mouse reporting, selection, scrollback navigation, and
-screen-reader terminal output are not implemented.
+formats are text/plain and image/png. Primary selection is unsupported.
