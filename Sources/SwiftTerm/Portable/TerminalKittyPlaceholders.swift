@@ -36,12 +36,18 @@ extension Terminal {
             var previous: KittyPlaceholderCell?
             var previousAttribute: Attribute?
             for col in 0..<min(cols, line.count) {
-                let cell = line[col]
+                let cell = line.packedView(at: col)
+                guard cell.code == Int32(KittyPlaceholder.baseScalar) else {
+                    previous = nil
+                    previousAttribute = nil
+                    continue
+                }
+                let attribute = cell.attribute
                 let placeholder = KittyPlaceholderDecoder.decode(
-                    character: cell.getCharacter(), attribute: cell.attribute, row: row, col: col,
+                    cell: cell, attribute: attribute, row: row, col: col,
                     previous: previous, previousAttribute: previousAttribute)
                 previous = placeholder
-                previousAttribute = placeholder == nil ? nil : cell.attribute
+                previousAttribute = placeholder == nil ? nil : attribute
                 guard let placeholder,
                       let record = records[placeholder.imageId]?.first(where: {
                           (placeholder.placementId == 0 || $0.placementId == placeholder.placementId) &&
@@ -57,7 +63,7 @@ extension Terminal {
                 let fitWidth = Double(source.width) * scale
                 let fitHeight = Double(source.height) * scale
                 let x = Double(col - placeholder.placeholderCol) * cw + Double(record.pixelOffsetX) + (width - fitWidth) / 2
-                let y = Double(row - placeholder.placeholderRow) * ch - Double(record.pixelOffsetY) + (height - fitHeight) / 2
+                let y = Double(row - placeholder.placeholderRow) * ch + Double(record.pixelOffsetY) + (height - fitHeight) / 2
                 let left = max(Double(col) * cw, x)
                 let top = max(Double(row) * ch, y)
                 let right = min(Double(col + 1) * cw, x + fitWidth)

@@ -1,5 +1,6 @@
 import { CellStyle, type RenderSnapshot, type RenderRow, type GraphicsSnapshot, type GraphicsPlacement, type SwiftTermTerminal } from '../src/index.js';
 function color(rgba: number): string { return `rgba(${rgba >>> 24},${(rgba >>> 16) & 255},${(rgba >>> 8) & 255},${(rgba & 255) / 255})`; }
+type SpacedCanvasContext = CanvasRenderingContext2D & { letterSpacing?: string };
 /** A validation renderer. Text shaping, fallback, BiDi, ligatures, and emoji can differ from native SwiftTerm. */
 export class CanvasTerminalRenderer {
   private context: CanvasRenderingContext2D;
@@ -13,11 +14,14 @@ export class CanvasTerminalRenderer {
   private graphics?: GraphicsSnapshot;
   private images = new Map<bigint, { generation: bigint; canvas: HTMLCanvasElement }>();
   private colors = new Map<number, string>();
+  private textMetrics = new Map<number, { font: string; spacing: number }>();
+  private supportsLetterSpacing: boolean;
   public drawnRows = 0;
   constructor(readonly canvas: HTMLCanvasElement, readonly terminal: SwiftTermTerminal, readonly cellWidth = 10, readonly cellHeight = 20, readonly fontFamily = 'monospace') {
     const context = canvas.getContext('2d');
     if (!context) throw new Error('Canvas 2D is unavailable.');
     this.context = context;
+    this.supportsLetterSpacing = 'letterSpacing' in context;
     window.addEventListener('focus', this.focus);
     window.addEventListener('blur', this.focus);
     document.addEventListener('visibilitychange', this.visibility);
@@ -148,8 +152,20 @@ export class CanvasTerminalRenderer {
     }
     flush(row.cells.length);
   }
-  private font(style: number): string {
-    return `${style & CellStyle.italic ? 'italic ' : ''}${style & CellStyle.bold ? 'bold ' : ''}${Math.floor(this.cellHeight * 0.75)}px ${this.fontFamily}`;
+  private applyFont(style: number, fixedCellSpacing: boolean): boolean {
+    const key = style & (CellStyle.italic | CellStyle.bold);
+    let metrics = this.textMetrics.get(key);
+    const spaced = this.context as SpacedCanvasContext;
+    if (!metrics) {
+      const font = `${key & CellStyle.italic ? 'italic ' : ''}${key & CellStyle.bold ? 'bold ' : ''}${Math.floor(this.cellHeight * 0.75)}px ${this.fontFamily}`;
+      this.context.font = font;
+      if (this.supportsLetterSpacing) spaced.letterSpacing = '0px';
+      metrics = { font, spacing: this.cellWidth - this.context.measureText('M').width };
+      this.textMetrics.set(key, metrics);
+    } else this.context.font = metrics.font;
+    if (this.supportsLetterSpacing) spaced.letterSpacing = fixedCellSpacing ? `${metrics.spacing}px` : '0px';
+    // Even a small advance error accumulates across a long terminal row.
+    return this.supportsLetterSpacing || metrics.spacing === 0;
   }
   private isSimpleASCII(cell: RenderRow['cells'][number]): boolean {
     if (cell.width !== 1 || cell.style & (CellStyle.invisible | CellStyle.underline | CellStyle.crossedOut) || cell.underlineStyle) return false;
@@ -161,7 +177,7 @@ export class CanvasTerminalRenderer {
     for (let x = 0; x < row.cells.length;) {
       const cell = row.cells[x];
       if (!cell.width || (cell.flags & 64) || cell.style & CellStyle.invisible) { x++; continue; }
-      if (this.isSimpleASCII(cell)) {
+      if (this.isSimpleASCII(cell) && this.applyFont(cell.style, true)) {
         let end = x + 1, text = cell.text;
         while (end < row.cells.length) {
           const next = row.cells[end];
@@ -169,16 +185,17 @@ export class CanvasTerminalRenderer {
           text += next.text; end++;
         }
         ctx.save(); ctx.beginPath(); ctx.rect(x * w, 0, (end - x) * w, h); ctx.clip();
-        ctx.fillStyle = this.cssColor(cell.foreground); ctx.font = this.font(cell.style);
+        ctx.fillStyle = this.cssColor(cell.foreground);
         ctx.fillText(text, x * w, h * 0.78);
         ctx.restore(); x = end; continue;
       }
       const underline = cell.underlineStyle || (cell.style & CellStyle.underline ? 1 : 0);
       const hasInk = cell.text !== '' && cell.text !== ' ';
       if (!hasInk && !(cell.style & CellStyle.crossedOut) && !underline) { x++; continue; }
+      if (hasInk) this.applyFont(cell.style, false);
       ctx.save(); ctx.beginPath(); ctx.rect(x * w, 0, cell.width * w, h); ctx.clip();
       if (hasInk) {
-        ctx.fillStyle = this.cssColor(cell.foreground); ctx.font = this.font(cell.style);
+        ctx.fillStyle = this.cssColor(cell.foreground);
         ctx.fillText(cell.text, x * w, h * 0.78);
       }
       if (cell.style & CellStyle.crossedOut) ctx.fillRect(x * w, h * 0.5, cell.width * w, 1);
@@ -210,7 +227,7 @@ export class CanvasTerminalRenderer {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true; cancelAnimationFrame(this.frame);
-    this.images.clear(); this.colors.clear(); this.graphics = undefined;
+    this.images.clear(); this.colors.clear(); this.textMetrics.clear(); this.graphics = undefined;
     window.removeEventListener('focus', this.focus); window.removeEventListener('blur', this.focus);
     document.removeEventListener('visibilitychange', this.visibility); window.removeEventListener('resize', this.requestFrame);
   }

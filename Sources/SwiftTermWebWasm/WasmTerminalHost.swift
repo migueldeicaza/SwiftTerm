@@ -10,7 +10,6 @@ final class WasmTerminalHost: TerminalDelegate {
     var focused = true
     var cellWidth = 0
     var cellHeight = 0
-    var cursorStyle: CursorStyle = .blinkBlock
     var cursorVisible = true
     let graphics = WasmGraphicsState()
     var synchronizedOutputDeadline: UInt64?
@@ -74,7 +73,6 @@ final class WasmTerminalHost: TerminalDelegate {
         return nil
     }
     func cursorStyleChanged(source: Terminal, newStyle: CursorStyle) {
-        cursorStyle = newStyle
         let value = ABI.cursor(newStyle)
         event(8, [value.shape, value.blink, cursorVisible ? 1 : 0, 0])
     }

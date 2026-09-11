@@ -283,7 +283,6 @@ public func renderClean(_ terminal: UInt32, _ low: UInt32, _ high: UInt32) -> In
             return entry.fail(ABI.staleGeneration, "The snapshot generation does not match the current state.")
         }
         entry.terminal.clearUpdateRange()
-        entry.snapshotClean = true
         entry.snapshotDirty = 0
         SnapshotEncoder.clean(&entry.snapshot)
         return ABI.ok

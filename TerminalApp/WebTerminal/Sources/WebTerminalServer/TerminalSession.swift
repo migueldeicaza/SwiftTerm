@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 import WSCore
 import NIOCore
 import SwiftTerm
@@ -24,6 +25,29 @@ struct ResizeMessage: Decodable, Sendable {
             ws_xpixel: UInt16(clamping: cols * (cellWidth ?? 0)),
             ws_ypixel: UInt16(clamping: rows * (cellHeight ?? 0))
         )
+    }
+}
+
+struct WebSocketOutputBatcher {
+    private static let detectionWindow: UInt64 = 20_000_000
+    private static let activationBytes = 32 * 1024
+    private static let activeWindow: UInt64 = 50_000_000
+    private var detectionStartedAt: UInt64?
+    private var detectedBytes = 0
+    private var activeUntil: UInt64 = 0
+
+    mutating func shouldBatch(byteCount: Int, at now: UInt64) -> Bool {
+        if let start = detectionStartedAt, now >= start, now - start <= Self.detectionWindow {
+            detectedBytes += byteCount
+        } else {
+            detectionStartedAt = now
+            detectedBytes = byteCount
+        }
+        guard detectedBytes >= Self.activationBytes else { return now < activeUntil }
+        activeUntil = now &+ Self.activeWindow
+        detectionStartedAt = nil
+        detectedBytes = 0
+        return true
     }
 }
 
@@ -155,10 +179,20 @@ final class TerminalSession: LocalProcessDelegate, @unchecked Sendable {
                         }
                     }
                     group.addTask {
+                        var batcher = WebSocketOutputBatcher()
                         while let event = await session.output.next() {
                             try Task.checkCancellation()
                             switch event {
-                            case .bytes(let bytes):
+                            case .bytes(var bytes):
+                                let now = DispatchTime.now().uptimeNanoseconds
+                                // Delay small chunks by 2 ms during bulk output and for
+                                // 50 ms after its last detected burst. Small replies do
+                                // not extend that window.
+                                if bytes.count < 64 * 1024,
+                                   batcher.shouldBatch(byteCount: bytes.count, at: now) {
+                                    try await Task.sleep(for: .milliseconds(2))
+                                    session.output.appendAvailableBytes(to: &bytes)
+                                }
                                 try await outgoing.writeBinaryMessage(ByteBuffer(bytes: bytes))
                             case .exit(let code):
                                 try await outgoing.write(.text("{\"type\":\"exit\",\"code\":\(code.map(String.init) ?? "null")}"))

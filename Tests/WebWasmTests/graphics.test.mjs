@@ -38,6 +38,27 @@ test('Graphics decoder rejects truncated and oversized record tables', () => {
   view.setUint32(0,0x58475453,true);view.setUint16(4,1,true);view.setUint16(6,32,true);view.setUint32(16,0xffffffff,true);
   assert.throws(()=>decodeGraphics(bytes),{code:'INVALID_SNAPSHOT'});
 });
+test('Full: Sixel rejects oversized images and excess pixel work, then continues parsing', async () => {
+  const t=(await load('full')).createTerminal({cols:12,rows:3,scrollback:0});
+  try {
+    t.resize(12,3,10,20);
+    const payloads = [
+      '!999999999999999999999~', '!2147483647~', '!2147483647?~~', '#999999999999999999999~',
+      // Include a 72 MB bitmap, whose size fits 32-bit arithmetic.
+      '!3000000~', '!20000000~', '!999999999~', '"1;1;4097;4096~',
+      // Each pass fits the bitmap limit. Nine passes exceed the pixel-write limit.
+      '!8388608@$'.repeat(9),
+    ];
+    for (const payload of payloads) {
+      t.reset();
+      t.write(`\x1bPq${payload}\x1b\\OK`);
+      assert.equal(t.graphicsSnapshot().images.length,0);
+      assert.equal(t.snapshot().rowData[0].cells.slice(0,2).map(cell=>cell.text).join(''),'OK');
+      t.write('\x1bPq~\x1b\\');
+      assert.equal(t.graphicsSnapshot().images.length,1);
+    }
+  } finally { t.dispose(); }
+});
 test('Embedded: graphics unavailable, bracketed paste remains available', async () => {
   const t=(await load('embedded')).createTerminal({cols:12,rows:3});
   try { assert.equal(t.graphicsSnapshot(),null); t.write('\x1b[?2004h'); t.paste('hello'); assert.equal(reply(t),'\x1b[200~hello\x1b[201~'); }

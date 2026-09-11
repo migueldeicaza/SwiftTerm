@@ -7,7 +7,6 @@ let environment = ProcessInfo.processInfo.environment
 let embeddedCheck = environment["SWIFTTERM_EMBEDDED_CHECK"] == "1"
 let wasmSmokeBuild = environment["SWIFTTERM_WASM"] == "1"
 let webWasmBuild = environment["SWIFTTERM_WEB_WASM"] == "1"
-let webFullBuild = environment["SWIFTTERM_WEB_FULL"] == "1"
 let webWasmTests = environment["SWIFTTERM_WEB_WASM_TESTS"] == "1"
 
 // A package manifest is compiled and run on the HOST, so `os(Linux)` is false
@@ -37,12 +36,12 @@ let graphicsDependencies: [Target.Dependency] = [
     .product(
         name: "PNG",
         package: "swift-png",
-        condition: webFullBuild ? nil : .when(platforms: [.linux, .windows])
+        condition: .when(platforms: [.linux, .windows, .wasi], traits: ["PortableGraphics"])
     ),
     .product(
         name: "LZ77",
         package: "swift-png",
-        condition: webFullBuild ? nil : .when(platforms: [.linux, .windows])
+        condition: .when(platforms: [.linux, .windows, .wasi], traits: ["PortableGraphics"])
     ),
 ]
 
@@ -52,8 +51,6 @@ var portableTraitSettings: [SwiftSetting] = [
     .define("SWIFTTERM_WASM", .when(traits: ["Wasm"])),
 ]
 
-if !webFullBuild { portableTraitSettings += [.define("SWIFTTERM_EMBEDDED", .when(traits: ["Wasm"]))] }
-if webFullBuild { portableTraitSettings += [.define("SWIFTTERM_WEB_FULL")] }
 var swiftTermSettings: [SwiftSetting] = portableTraitSettings
 
 if embeddedCheck {
@@ -67,7 +64,7 @@ let swiftTermTarget: Target = .target(
     name: "SwiftTerm",
     dependencies: graphicsDependencies,
     path: "Sources/SwiftTerm",
-    exclude: platformExcludes + (webFullBuild ? ["HeadlessTerminal.swift", "TerminalIOPipeline.swift", "LocalProcess.swift", "Pty.swift"] : []) + [
+    exclude: platformExcludes + [
         "Mac/README.md",
         "Apple/Metal/Shaders.metal",
     ],
@@ -230,13 +227,16 @@ let package = Package(
     ],
     products: products,
     traits: [
+        .default(enabledTraits: ["PortableGraphics"]),
+        .trait(name: "PortableGraphics", description: "PNG and zlib decoders for the full non-Apple core"),
         .trait(
             name: "Embedded",
             description: "Foundation-free portable core for Embedded Swift"
         ),
         .trait(
             name: "Wasm",
-            description: "Foundation-free portable core for WASI"
+            description: "Full WASI core with Foundation and graphics; use Embedded separately for the reduced core",
+            enabledTraits: ["PortableGraphics"]
         ),
     ],
     dependencies: [

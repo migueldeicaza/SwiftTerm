@@ -7,7 +7,7 @@
 
 #if !SWIFTTERM_EMBEDDED
 import Foundation
-#if !os(iOS) && !os(tvOS) && !os(Windows)
+#if !os(WASI) && !os(iOS) && !os(tvOS) && !os(Windows)
 
 /**
  * APIs to assist in controlling a Unix pseudo-terminal from Swift.
@@ -98,6 +98,8 @@ public class PseudoTerminalHelpers {
         var defaultAction = sigaction()
 #if canImport(Darwin)
         defaultAction.__sigaction_u.__sa_handler = SIG_DFL
+#elseif canImport(Musl)
+        defaultAction.__sa_handler.sa_handler = SIG_DFL
 #else
         defaultAction.__sigaction_handler.sa_handler = SIG_DFL
 #endif

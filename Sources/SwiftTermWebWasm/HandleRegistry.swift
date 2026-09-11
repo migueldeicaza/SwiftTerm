@@ -8,7 +8,6 @@ final class TerminalEntry {
     var snapshotGeneration: UInt64 = 0
     var snapshot: [UInt8] = []
     var snapshotDirty: Int32 = 0
-    var snapshotClean = false
     var error: [UInt8] = []
     init(cols: UInt32, rows: UInt32, scrollback: UInt32) {
         let host = WasmTerminalHost()
@@ -33,7 +32,7 @@ final class TerminalEntry {
         return code
     }
     func canMutate() -> Bool { revision < UInt64.max }
-    func changed() { revision += 1; snapshotClean = false }
+    func changed() { revision += 1 }
     deinit {
         #if SWIFTTERM_EMBEDDED
         terminal.close()

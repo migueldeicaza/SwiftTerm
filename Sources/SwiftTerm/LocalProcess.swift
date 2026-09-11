@@ -7,11 +7,13 @@
 //  Created by Miguel de Icaza on 4/5/20.
 //
 #if !SWIFTTERM_EMBEDDED
-#if !os(iOS) && !os(Windows)
+#if !os(WASI) && !os(iOS) && !os(Windows)
 import Foundation
 import Dispatch
 #if canImport(Darwin)
 import Darwin
+#elseif canImport(Musl)
+import Musl
 #elseif canImport(Glibc)
 import Glibc
 #endif
@@ -51,7 +53,7 @@ private final class LocalProcessChildReaper: @unchecked Sendable {
         kill(pid, signal)
     }
 
-#if canImport(Darwin) || canImport(Glibc)
+#if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
     func wait() -> Int32? {
         // Two callers can wait concurrently. Both observe with waitid; the
         // lock serializes the reap, and the caller that loses the race gets nil.
@@ -142,14 +144,25 @@ public protocol LocalProcessDelegate: AnyObject {
     /// This method is invoked on the delegate when the process has exited.
     /// Use a serial `dispatchQueue` so data and termination callbacks stay ordered.
     /// - Parameter source: the local process that terminated
-    /// - Parameter exitCode: the normalized exit status from 0 through 255, or nil when the process ended because of a signal or the wait failed
+    /// - Parameter exitCode: the normalized exit status from 0 through 255, or nil when the process ended because of a signal, the wait failed
     func processTerminated (_ source: LocalProcess, exitCode: Int32?)
-    
+
+    /// Reports an unchecked launch failure on the delivery queue.
+    /// No processTerminated callback follows this failure.
+    func processFailedToStart(_ source: LocalProcess, error: LocalProcessError)
+
     /// This method is invoked when data has been received from the local process that should be send to the terminal for processing.
     func dataReceived (slice: ArraySlice<UInt8>)
 
     /// This method should return the window size to report to the local process.
     func getWindowSize () -> winsize
+}
+
+public extension LocalProcessDelegate {
+    /// Show the failure without treating it as a child exit.
+    func processFailedToStart(_ source: LocalProcess, error: LocalProcessError) {
+        dataReceived(slice: Array("\r\nProcess launch failed: \(error)\r\n".utf8)[...])
+    }
 }
 
 /// Receives process bytes that are valid only for the duration of the call.
@@ -194,6 +207,7 @@ protocol LocalProcessBorrowedDataDelegate: AnyObject {
  */
 public class LocalProcess {
     private let session = Locked(LocalProcessSessionState())
+    private let duplicateDescriptor: (Int32) -> Int32
     private let counters = Locked(LocalProcessCounters())
     private let delegateReference = Locked(WeakLocalProcessDelegateReference())
 
@@ -263,8 +277,16 @@ public class LocalProcess {
      * - Parameter directDelivery: when true, data received by the IO pipeline is delivered inline on the
      * pipeline parse thread instead of synchronously hopping to `dispatchQueue`.
      */
-    public init (delegate: LocalProcessDelegate, dispatchQueue: DispatchQueue? = nil, directDelivery: Bool = false)
-    {
+    public convenience init (delegate: LocalProcessDelegate, dispatchQueue: DispatchQueue? = nil, directDelivery: Bool = false) {
+        self.init(delegate: delegate, dispatchQueue: dispatchQueue, directDelivery: directDelivery,
+                  duplicateDescriptor: dup)
+    }
+
+    // Separate descriptor acquisition so launch failure can be tested without
+    // exhausting the host process descriptor table.
+    init(delegate: LocalProcessDelegate, dispatchQueue: DispatchQueue? = nil,
+         directDelivery: Bool = false, duplicateDescriptor: @escaping (Int32) -> Int32) {
+        self.duplicateDescriptor = duplicateDescriptor
         self.dispatchQueue = Self.effectiveDeliveryQueue(dispatchQueue)
         self.directDelivery = directDelivery
         delegateReference.withLock { $0.value = delegate }
@@ -317,7 +339,6 @@ public class LocalProcess {
         }
         let counters = counters
         let session = session
-        let completed = Locked(false)
         data.withUnsafeBytes { ptr in
             let bytes = DispatchData(bytes: ptr)
             let count = bytes.count
@@ -325,13 +346,9 @@ public class LocalProcess {
                 print("[SEND-\(copy)] Queuing data to client: \(data) ")
             }
             sendState.channel.write(offset: 0, data: bytes, queue: writeQueue) { done, remaining, error in
-                guard done || error != 0 else { return }
-                let firstCompletion = completed.withLock { value -> Bool in
-                    guard !value else { return false }
-                    value = true
-                    return true
-                }
-                guard firstCompletion else { return }
+                // DispatchIO reports errors in its final (done) callback.
+                // It will not enqueue the handler again after that callback.
+                guard done else { return }
                 let written = error == 0 ? count : max(0, count - (remaining?.count ?? count))
                 let totalWritten = counters.withLock { state -> Int in
                     state.totalWritten += written
@@ -357,10 +374,8 @@ public class LocalProcess {
         }
     }
 
-    /// True after `running` becomes false while the `processTerminated`
-    /// callback is still pending delivery. `startProcess` is not admitted
-    /// until this window closes; relaunch from inside `processTerminated`,
-    /// or wait until both `running` and `windingDown` are false.
+    /// True while an exit or launch-failure callback awaits delivery.
+    /// A new launch is not admitted until this window closes.
     public var windingDown: Bool {
         session.withLock { $0.phase == .windingDown }
     }
@@ -402,7 +417,8 @@ public class LocalProcess {
         }
 #endif
 
-        resources.writeChannel?.close(flags: .stop)
+        // Keep the master open until the child reaps. Closing after a write
+        // reaches the kernel can discard bytes the slave has not read yet.
         if let pipeline = resources.pipeline {
             // A synchronous join can deadlock when the last owner releases the
             // process on the delivery queue while parsing waits in queue.sync.
@@ -424,9 +440,15 @@ public class LocalProcess {
             ) {
                 reaper.signal(SIGKILL)
             }
+            let writeChannel = resources.writeChannel
             Self.startChildWaiter {
                 _ = reaper.wait()
+                // A descendant can keep the slave open after this child exits.
+                // End any blocked writes once the graceful attempt is over.
+                writeChannel?.close(flags: .stop)
             }
+        } else {
+            resources.writeChannel?.close(flags: .stop)
         }
     }
 
@@ -510,6 +532,8 @@ public class LocalProcess {
      * - Parameter environment: an array of environment variables to pass to the child process, if this is null, this picks a good set of defaults from `Terminal.getEnvironmentVariables`.
      * - Parameter execName: If provided, this is used as the Unix argv[0] parameter, otherwise, the executable is used as the args [0], this is used when the intent is to set a different process name than the file that backs it.
      *
+     * A fork or input-channel failure is reported on the delivery queue through
+     * `processFailedToStart` with a typed error.
      * The call is silently ignored while a previous session is still active,
      * which includes the `windingDown` window after `running` turns false.
      * To relaunch, call this from inside `processTerminated`, or wait until
@@ -517,7 +541,7 @@ public class LocalProcess {
      */
     public func startProcess(executable: String = "/bin/bash", args: [String] = [], environment: [String]? = nil, execName: String? = nil, currentDirectory: String? = nil)
      {
-        _ = startProcessChecked(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
+        _ = startProcessWithForkpty(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory, notifyLaunchFailure: true)
     }
 
     /// Starts a PTY session and reports busy, fork, or input-channel failure.
@@ -528,7 +552,29 @@ public class LocalProcess {
         startProcessWithForkpty(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
     }
 
-    private func startProcessWithForkpty(executable: String, args: [String], environment: [String]?, execName: String?, currentDirectory: String?) -> Result<Void, LocalProcessError> {
+    private func finishLaunchFailure(_ error: LocalProcessError, notify: Bool) {
+        let generation = session.withLock { state -> UInt64 in
+            state.terminateRequestedDuringStart = false
+            state.generation &+= 1
+            state.phase = notify ? .windingDown : .idle
+            return state.generation
+        }
+        guard notify else { return }
+        let reference = lifecycleReference
+        dispatchQueue.async {
+            guard let process = reference.withLock({ $0.value }) else { return }
+            let deliver = process.session.withLock { state -> Bool in
+                guard state.generation == generation, state.phase == .windingDown else { return false }
+                state.phase = .idle
+                return true
+            }
+            if deliver {
+                process.delegateReference.withLock { $0.value }?.processFailedToStart(process, error: error)
+            }
+        }
+    }
+
+    private func startProcessWithForkpty(executable: String, args: [String], environment: [String]?, execName: String?, currentDirectory: String?, notifyLaunchFailure: Bool = false) -> Result<Void, LocalProcessError> {
         let admitted = session.withLock { state -> Bool in
             guard state.phase == .idle else { return false }
             state.phase = .starting
@@ -561,26 +607,18 @@ public class LocalProcess {
             desiredWindowSize: &size
         ) else {
             let failure = errno
-            session.withLock { state in
-                if state.phase == .starting {
-                    state.phase = .idle
-                }
-                state.terminateRequestedDuringStart = false
-            }
+            finishLaunchFailure(.forkFailed(failure), notify: notifyLaunchFailure)
             return .failure(.forkFailed(failure))
         }
 
-        let writeFd = dup(childfd)
+        let writeFd = duplicateDescriptor(childfd)
         guard writeFd >= 0 else {
             let failure = errno
             close(childfd)
             let reaper = LocalProcessChildReaper(pid: shellPid)
             reaper.signal(SIGKILL)
             Self.startChildWaiter { _ = reaper.wait() }
-            session.withLock { state in
-                state.phase = .idle
-                state.terminateRequestedDuringStart = false
-            }
+            finishLaunchFailure(.writeChannelFailed(failure), notify: notifyLaunchFailure)
             return .failure(.writeChannelFailed(failure))
         }
         let writeChannel = DispatchIO(type: .stream, fileDescriptor: writeFd, queue: writeQueue) { _ in
@@ -601,12 +639,11 @@ public class LocalProcess {
             state.phase = terminateRequested ? .terminating : .running
             state.shellPid = shellPid
             state.childfd = childfd
+            state.writeChannel = writeChannel
             let reaper = LocalProcessChildReaper(pid: shellPid)
             state.reaper = reaper
             return (state.generation, reaper, terminateRequested)
         }
-
-        session.withLock { $0.writeChannel = writeChannel }
 
         let pipeline = TerminalIOPipeline(fd: childfd, delegate: self)
         session.withLock { $0.pipeline = pipeline }

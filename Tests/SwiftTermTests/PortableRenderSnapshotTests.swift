@@ -58,6 +58,25 @@ struct PortableRenderSnapshotTests {
         #expect(snapshot.lines[0].cells[1].text == "e\u{301}")
     }
 
+    @Test func cursorDamageReusesCellsAndLaterWritesKeepTheOldCopy() {
+        let terminal = terminal()
+        terminal.feed(text: "e\u{301}\u{754c}")
+        let first = terminal.makeRenderSnapshot(scope: .full)
+        terminal.clearUpdateRange()
+        terminal.feed(text: "\u{1b}[1;1H")
+        let moved = terminal.makeRenderSnapshot(scope: .dirty)
+        let firstCells = first.lines[0].cells
+        let movedCells = moved.lines[0].cells
+        #expect(firstCells.withUnsafeBufferPointer { firstBuffer in
+            movedCells.withUnsafeBufferPointer { $0.baseAddress == firstBuffer.baseAddress }
+        })
+        terminal.feed(text: "X")
+        let changed = terminal.makeRenderSnapshot(scope: .dirty)
+        #expect(changed.lines[0].cells[0].text == "X")
+        #expect(firstCells[0].text == "e\u{301}")
+        #expect(movedCells[0].text == "e\u{301}")
+    }
+
     @Test func cursorDamageIncludesBothRows() {
         let terminal = terminal()
         _ = terminal.makeRenderSnapshot(scope: .full)

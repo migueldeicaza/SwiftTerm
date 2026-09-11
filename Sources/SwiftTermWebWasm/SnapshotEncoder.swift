@@ -57,7 +57,8 @@ enum SnapshotEncoder {
               let cellOffset = add(104, rowSize), let textOffset = add(cellOffset, cellSize),
               let total = add(textOffset, textSize) else { return false }
         bytes.removeAll(keepingCapacity: true)
-        bytes.append(contentsOf: repeatElement(UInt8(0), count: total))
+        bytes.reserveCapacity(total)
+        bytes.append(contentsOf: repeatElement(UInt8(0), count: textOffset))
         bytes.put32(0x53575453, at: 0)
         bytes.put16(1, at: 4)
         bytes.put16(104, at: 6)
@@ -92,7 +93,6 @@ enum SnapshotEncoder {
         bytes.put32(UInt32(cellOffset), at: 80)
         bytes.put32(UInt32(cells), at: 84)
         bytes.put32(UInt32(textOffset), at: 88)
-        bytes.put32(UInt32(textSize), at: 92)
         var cellIndex = 0
         var textIndex = 0
         for (rowIndex, row) in source.lines.enumerated() {
@@ -115,7 +115,6 @@ enum SnapshotEncoder {
                 var bg = resolve(attribute.bg, source, foreground: false)
                 if attribute.style.contains(.inverse) { swap(&fg, &bg) }
                 bytes.put32(UInt32(textIndex), at: at)
-                bytes.put32(UInt32(cell.text.utf8.count), at: at + 4)
                 bytes.put32(fg, at: at + 8)
                 bytes.put32(bg, at: at + 12)
                 bytes.put32(attribute.underlineColor.map { resolve($0, source) } ?? fg, at: at + 16)
@@ -135,10 +134,15 @@ enum SnapshotEncoder {
                 #endif
                 if !attribute.style.contains(.inverse) && attribute.bg == .defaultColor { cellFlags |= 32 }
                 bytes[at + 29] = cellFlags
-                for byte in cell.text.utf8 { bytes[textOffset + textIndex] = byte; textIndex += 1 }
+                let textStart = bytes.count
+                bytes.append(contentsOf: cell.text.utf8)
+                let length = bytes.count - textStart
+                bytes.put32(UInt32(length), at: at + 4)
+                textIndex += length
                 cellIndex += 1
             }
         }
+        bytes.put32(UInt32(textIndex), at: 92)
         return true
     }
 

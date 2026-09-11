@@ -311,14 +311,12 @@ extension Terminal {
         if var pending = kittyGraphicsState.pending {
             kittyGraphicsState.pending = nil
             guard pending.base64Payload.count <= Terminal.kittyMaxApcBytes - payload.count else {
-                kittyGraphicsState.pending = nil
                 return
             }
             if control.suppressResponses > pending.control.suppressResponses {
                 pending.control.suppressResponses = control.suppressResponses
             }
             pending.base64Payload.append(contentsOf: payload)
-            kittyGraphicsState.pending = nil
             processKittyGraphics(control: pending.control, base64Payload: pending.base64Payload)
             return
         }
@@ -1070,23 +1068,36 @@ extension Terminal {
                 | (UInt32(header[offset + 2]) << 8) | UInt32(header[offset + 3])
         }
         guard let width = Int(exactly: word(16)), let height = Int(exactly: word(20)) else { return false }
-        // PNG can use four 16-bit channels before conversion to 8-bit RGBA.
-        return validateKittyRawDimensions(width: width, height: height, bytesPerPixel: 8)
+        let depth = Int(header[24])
+        let channels: Int
+        switch (header[25], depth) {
+        case (0, 1), (0, 2), (0, 4), (0, 8), (0, 16): channels = 1
+        case (2, 8), (2, 16): channels = 3
+        case (3, 1), (3, 2), (3, 4), (3, 8): channels = 1
+        case (4, 8), (4, 16): channels = 2
+        case (6, 8), (6, 16): channels = 4
+        default: return false
+        }
+        // Apply the existing per-buffer limit to samples and RGBA8 output.
+        // This checks the larger buffer, not total peak decoder memory.
+        let bytesPerPixel = max(4, (channels * depth + 7) / 8)
+        return validateKittyRawDimensions(width: width, height: height, bytesPerPixel: bytesPerPixel)
     }
 
     private func decodePngToRgba(_ data: Data) -> (bytes: [UInt8], width: Int, height: Int)? {
-        if data.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]) {
-            guard validateKittyPNGHeader(data) else { return nil }
-        }
-
         #if canImport(ImageIO) && canImport(CoreGraphics)
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        if data.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]), !validateKittyPNGHeader(data) {
+            return nil
+        }
+        let imageOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, imageOptions),
+              let dimensions = validatedKittyImageDimensions(source),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, imageOptions) else {
             return nil
         }
         let width = image.width
         let height = image.height
-        guard validateKittyDimensions(width: width, height: height) else {
+        guard width == dimensions.width, height == dimensions.height else {
             return nil
         }
         let bytesPerPixel = 4
@@ -1260,19 +1271,19 @@ extension Terminal {
         return pixelCount <= limit
     }
 
-    private func validateKittyPngDimensions(data: Data) -> Bool {
-        #if canImport(ImageIO)
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+    #if canImport(ImageIO)
+    /// Check metadata for every ImageIO container before creating its bitmap.
+    func validatedKittyImageDimensions(_ source: CGImageSource) -> (width: Int, height: Int)? {
+        let metadataOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let props = CGImageSourceCopyPropertiesAtIndex(source, 0, metadataOptions) as? [CFString: Any],
               let width = props[kCGImagePropertyPixelWidth] as? Int,
-              let height = props[kCGImagePropertyPixelHeight] as? Int else {
-            return false
+              let height = props[kCGImagePropertyPixelHeight] as? Int,
+              validateKittyRawDimensions(width: width, height: height, bytesPerPixel: 4) else {
+            return nil
         }
-        return validateKittyDimensions(width: width, height: height)
-        #else
-        return true
-        #endif
+        return (width, height)
     }
+    #endif
 
     private func loadKittyFilePayload(control: KittyGraphicsControl, base64Payload: [UInt8], temporary: Bool) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
         #if os(Windows) || os(WASI)
@@ -2502,31 +2513,28 @@ extension Terminal {
     }
 
     private func scheduleKittyAnimationTimer() {
+        #if os(WASI)
+        hostEventQueue.cancelTimer(.kittyAnimation)
+        #endif
         kittyAnimationTimerSerial &+= 1
         let serial = kittyAnimationTimerSerial
-        let now = DispatchTime.now().uptimeNanoseconds
+        let now = TerminalEventTime.now().uptimeNanoseconds
         guard let deadline = kittyGraphicsAdvanceAnimations(monotonicNanoseconds: now) else { return }
         // The work item re-arms itself for as long as an animation is running,
         // so it must not keep the terminal alive: a looping animation would
         // otherwise pin the terminal, both buffers and every decoded image for
         // the lifetime of the process after the view goes away.
-        let workItem = DispatchWorkItem { [weak self] in
+        let workItem = TerminalEventWorkItem { [weak self] in
             guard let self else { return }
             self.terminalLock.withLock {
                 guard self.kittyAnimationTimerSerial == serial else { return }
                 _ = self.kittyGraphicsAdvanceAnimations(
-                    monotonicNanoseconds: DispatchTime.now().uptimeNanoseconds)
+                    monotonicNanoseconds: TerminalEventTime.now().uptimeNanoseconds)
                 self.scheduleKittyAnimationTimer()
             }
         }
-        #if os(WASI)
-        let timerQueue = hostEventQueue
-        #else
-        let timerQueue = IOTimerQueue.shared
-        #endif
-        timerQueue.asyncAfter(
-            deadline: .init(uptimeNanoseconds: deadline),
-            execute: workItem)
+        scheduleEventTimer(.kittyAnimation,
+            deadline: .init(uptimeNanoseconds: deadline), execute: workItem)
     }
 
     /// Invalidates the previous screen's timer and starts the active screen's

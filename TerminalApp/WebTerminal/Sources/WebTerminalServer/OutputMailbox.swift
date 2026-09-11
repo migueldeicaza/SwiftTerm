@@ -76,6 +76,20 @@ final class OutputMailbox: @unchecked Sendable {
         }
     }
 
+    /// Add output that arrived after the consumer received its first chunk.
+    /// The caller uses this after a short batching delay. Exit stays queued
+    /// until all bytes that preceded it are sent.
+    func appendAvailableBytes(to bytes: inout [UInt8]) {
+        condition.lock()
+        guard !chunks.isEmpty else { condition.unlock(); return }
+        bytes.reserveCapacity(bytes.count + byteCount)
+        for chunk in chunks { bytes.append(contentsOf: chunk) }
+        chunks.removeAll(keepingCapacity: true)
+        byteCount = 0
+        condition.broadcast()
+        condition.unlock()
+    }
+
     private func register(_ continuation: CheckedContinuation<TerminalOutput?, Never>) {
         condition.lock()
         if closed {

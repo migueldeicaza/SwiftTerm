@@ -196,7 +196,7 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
     private var state = State()
 #else
     private let state = Locked(State())
-    private let deliveryQueue = DispatchQueue(label: "org.tirania.SwiftTerm.osc-events")
+    private let deliveryQueue = TerminalCallbackQueue(label: "org.tirania.SwiftTerm.osc-events")
 #endif
 
     func observe(

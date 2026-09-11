@@ -68,7 +68,9 @@ final class HostMemory {
         guard UInt64(bytes.count) <= UInt64(capacity) else { return ABI.bufferTooSmall }
         if bytes.isEmpty { return 0 }
         guard let pointer = UnsafeMutablePointer<UInt8>(bitPattern: UInt(address)) else { return ABI.outOfBounds }
-        for (offset, byte) in bytes.enumerated() { pointer[offset] = byte }
+        bytes.withUnsafeBufferPointer { source in
+            pointer.update(from: source.baseAddress!, count: source.count)
+        }
         return Int32(bytes.count)
     }
 }

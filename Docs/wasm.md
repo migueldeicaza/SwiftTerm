@@ -8,9 +8,9 @@ The browser package uses a WASI reactor with ABI version 1. It has no `_start`
 entry point. The TypeScript loader supplies the required WASI imports and calls
 `_initialize` once. Full and Embedded use the same binary format and API.
 
-- **Full** selects the `Wasm` trait with `SWIFTTERM_WEB_FULL=1`. It includes
+- **Full** selects the `Wasm` trait. It includes
   Foundation, PNG decoding, Kitty graphics, Sixel, and Kitty Clipboard.
-- **Embedded** selects `Embedded,Wasm`. It uses the portable core with
+- **Embedded** selects the `Embedded` trait alone. It uses the portable core with
   Embedded Swift language restrictions. Graphics and Kitty Clipboard are
   unavailable. Key modes and bracketed paste are supported by both builds.
 
@@ -59,9 +59,18 @@ scripts/build-wasm.sh embedded --smoke --release --run
 ```
 
 `SWIFTTERM_WASM=1` adds only the smoke product to the manifest.
-`SWIFTTERM_WEB_WASM=1` adds the browser reactor. The traits select the portable
-source path. Consumers of the native package do not acquire these executable
+`SWIFTTERM_WEB_WASM=1` adds the browser reactor. The traits select the core source path;
+`SWIFTTERM_WEB_FULL` is no longer used. `Wasm` alone selects Full even when
+that environment variable is absent. The two variants are separate: do not combine
+`Wasm` and `Embedded`. Existing manual `--traits Embedded,Wasm` commands must
+change to `--traits Embedded --disable-default-traits`; the build script interface is unchanged.
+The default `PortableGraphics` trait supplies PNG and zlib dependencies for native
+Linux and Windows. `Wasm` enables it explicitly. `Embedded` builds must omit it;
+the script disables default traits for this variant. Consumers of the native package do not acquire these executable
 targets or their linker settings.
+
+The library uses source guards because SwiftPM source exclusions cannot depend
+on traits. The same library target serves native, Full, and Embedded consumers.
 
 ## Use the engine
 
@@ -177,6 +186,14 @@ failed write can have been applied. Do not retry that write. Drain the queues
 and reset the terminal before further input. A failed queue append does not
 allocate beyond the queue limit.
 
+Sixel limits apply to native builds and Full WASM. Each sequence can contain
+up to 64 MiB of input and produce up to 64 MiB of RGBA pixels. The decoder
+checks dimensions and pixel work before it allocates the bitmap. The work
+limit is 67,108,864 pixel writes, including repeated writes to the same pixel.
+Transparent padding uses no pixel writes and is skipped without expansion.
+Each colour or raster parameter list can contain up to 32 values. A sequence
+that exceeds a limit is discarded; the next sequence can still be decoded.
+
 ## Tests
 
 ```sh
@@ -193,3 +210,11 @@ browser tests. CI runs Chromium, Firefox, and WebKit, both runtime variants,
 ABI validation, snapshot comparisons, invalid-input checks, and benchmarks.
 The raw export and import lists are in `scripts/wasm/`. Change them only after
 reviewing the compiler output and the browser WASI shim together.
+
+### WASI timer scheduling
+
+Full reactors poll per-terminal host queues. Bounded callback storage is separate
+from two replaceable timer slots: synchronized output and Kitty animation.
+A full callback queue cannot discard either timer. A new animation deadline
+replaces its previous slot; reset and disposal cancel both slots. Native timers
+continue to use Dispatch without these browser queue limits.

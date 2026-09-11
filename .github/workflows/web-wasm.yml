@@ -1,0 +1,81 @@
+name: WebAssembly browser API
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  browser:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: Web/package-lock.json
+      - name: Install pinned Swift compiler and WASM SDK
+        shell: bash
+        run: |
+          source scripts/wasm-toolchain.env
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libedit2 libxml2-dev libncurses-dev libsqlite3-dev libz3-dev libpython3.12
+          curl --fail --location --retry 3 "https://download.swift.org/swift-6.4.x-branch/ubuntu24.04/$SWIFTTERM_TOOLCHAIN_ID/$SWIFTTERM_TOOLCHAIN_ID-ubuntu24.04.tar.gz" -o "$RUNNER_TEMP/swift.tar.gz"
+          mkdir -p "$RUNNER_TEMP/swift"
+          tar -xzf "$RUNNER_TEMP/swift.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/swift"
+          echo "$RUNNER_TEMP/swift/usr/bin" >> "$GITHUB_PATH"
+          echo "SWIFTTERM_SWIFT=$RUNNER_TEMP/swift/usr/bin/swift" >> "$GITHUB_ENV"
+          curl --fail --location --retry 3 "https://download.swift.org/swift-6.4.x-branch/wasm-sdk/$SWIFTTERM_TOOLCHAIN_ID/${SWIFTTERM_TOOLCHAIN_ID}_wasm.artifactbundle.tar.gz" -o "$RUNNER_TEMP/wasm-sdk.tar.gz"
+          "$RUNNER_TEMP/swift/usr/bin/swift" sdk install "$RUNNER_TEMP/wasm-sdk.tar.gz"
+      - name: Install web test tools
+        run: |
+          npm ci --prefix Web
+          cd Web
+          npx playwright install --with-deps chromium firefox webkit
+      - name: Native snapshot and facade tests
+        run: |
+          swift test --filter "PortableRenderSnapshotTests|ParserTests|SIMDParserTests|LocalProcessLifecycleTests"
+          SWIFTTERM_EMBEDDED_CHECK=1 SWIFTTERM_WEB_WASM_TESTS=1 swift test --filter SwiftTermWebWasmTests
+          native_bin=$(SWIFTTERM_EMBEDDED_CHECK=1 SWIFTTERM_WEB_WASM_TESTS=1 swift build --show-bin-path)
+          cp "$native_bin/SwiftTermWebWasm" "$RUNNER_TEMP/swiftterm-native-snapshot"
+          echo "SWIFTTERM_NATIVE_SNAPSHOT=$RUNNER_TEMP/swiftterm-native-snapshot" >> "$GITHUB_ENV"
+      - name: Build and run both command smoke targets
+        run: |
+          scripts/build-wasm.sh full --smoke --release --run
+          scripts/build-wasm.sh embedded --smoke --release --run
+      - name: Build and check both reactors
+        run: |
+          scripts/build-wasm.sh full --browser --release
+          scripts/build-wasm.sh embedded --browser --release
+      - name: ABI, corpus, and wrapper tests
+        env:
+          REQUIRE_WASM: '1'
+        run: npm test --prefix Web
+      - name: Browser tests
+        env:
+          BROWSERS: chromium,firefox,webkit
+        run: npm run test:browser --prefix Web
+      - name: Local web terminal sample tests
+        run: |
+          swift test --package-path TerminalApp/WebTerminal
+          node --test TerminalApp/WebTerminal/BrowserTests/*.test.mjs
+      - name: Local web terminal transport check
+        run: |
+          sample_bin=$(swift build --package-path TerminalApp/WebTerminal --show-bin-path)
+          "$sample_bin/web-terminal" --shell /bin/sh > "$RUNNER_TEMP/web-terminal.log" 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8080/ > /dev/null; then break; fi
+            sleep 1
+          done
+          node TerminalApp/WebTerminal/BrowserTests/server-smoke.mjs http://127.0.0.1:8080
+      - name: Record frame and input measurements
+        run: npm run benchmark --prefix Web > Web/dist/benchmarks.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swiftterm-web-wasm
+          path: Web/dist/

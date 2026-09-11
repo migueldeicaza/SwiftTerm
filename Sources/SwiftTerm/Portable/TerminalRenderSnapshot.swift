@@ -91,3 +91,10 @@ struct PortableRenderMetadata: Equatable {
     let reverse: Bool
     let modes: [RenderSnapshotLineMode]
 }
+
+// Cache owned cell values only. Line metadata is copied on each snapshot.
+struct PortableRenderCellCache {
+    let identity: BufferLine.RenderIdentity
+    let generation: UInt64
+    let cells: [RenderSnapshotCell]
+}

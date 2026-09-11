@@ -52,6 +52,55 @@ import Testing
     }
 }
 
+@Test func outputBatcherKeepsSmallInteractiveRepliesImmediate() {
+    var batcher = WebSocketOutputBatcher()
+    for index in 0..<1_000 {
+        let shouldBatch = batcher.shouldBatch(byteCount: 9, at: UInt64(index) * 500_000)
+        #expect(!shouldBatch)
+    }
+}
+
+@Test func outputBatcherActivatesForSustainedBulkOutput() throws {
+    var batcher = WebSocketOutputBatcher()
+    var activationTime: UInt64?
+    for index in 0..<1_000 {
+        let now = UInt64(index) * 50_000
+        if batcher.shouldBatch(byteCount: 128, at: now) {
+            activationTime = now
+            break
+        }
+    }
+    let activated = try #require(activationTime)
+    let remainsActive = batcher.shouldBatch(byteCount: 1, at: activated + 49_000_000)
+    let expiresAfterIdle = batcher.shouldBatch(byteCount: 1, at: activated + 100_000_000)
+    #expect(remainsActive)
+    #expect(!expiresAfterIdle)
+}
+
+@Test func outputBatcherStopsAfterBulkChangesToSmallReplies() {
+    var batcher = WebSocketOutputBatcher()
+    let activated = batcher.shouldBatch(byteCount: 32 * 1024, at: 0)
+    #expect(activated)
+    for milliseconds in 1..<100 {
+        let shouldBatch = batcher.shouldBatch(byteCount: 9, at: UInt64(milliseconds) * 1_000_000)
+        #expect(shouldBatch == (milliseconds < 50))
+    }
+}
+
+@Test func outputBatcherDetectsNewBulkDuringTheActiveWindow() {
+    var batcher = WebSocketOutputBatcher()
+    let activated = batcher.shouldBatch(byteCount: 32 * 1024, at: 0)
+    #expect(activated)
+    let firstHalf = batcher.shouldBatch(byteCount: 16 * 1024, at: 10_000_000)
+    let secondHalf = batcher.shouldBatch(byteCount: 16 * 1024, at: 20_000_000)
+    #expect(firstHalf && secondHalf)
+    // The new burst extends the window to 70 ms. Small output does not renew it.
+    let beforeDeadline = batcher.shouldBatch(byteCount: 9, at: 69_000_000)
+    let atDeadline = batcher.shouldBatch(byteCount: 9, at: 70_000_000)
+    #expect(beforeDeadline)
+    #expect(!atDeadline)
+}
+
 @Test func mailboxPreservesBytesAndExitOrder() async {
     let mailbox = OutputMailbox(capacity: 3)
     Thread.detachNewThread {
@@ -72,6 +121,22 @@ import Testing
     mailbox.send([5, 6][...])
     #expect(await mailbox.next() == .bytes([1, 2, 3, 4, 5, 6]))
     mailbox.close()
+}
+
+@Test func mailboxAppendsBytesThatArriveAfterFirstRead() async {
+    let mailbox = OutputMailbox(capacity: 6)
+    let reader = Task { await mailbox.next() }
+    mailbox.send([1, 2][...])
+    guard case .bytes(var bytes) = await reader.value else {
+        Issue.record("The first output event must contain bytes.")
+        return
+    }
+    mailbox.send([3, 4][...])
+    mailbox.send([5, 6][...])
+    mailbox.appendAvailableBytes(to: &bytes)
+    #expect(bytes == [1, 2, 3, 4, 5, 6])
+    mailbox.finish(exitCode: 7)
+    #expect(await mailbox.next() == .exit(7))
 }
 
 @Test func mailboxCancellationWakesConsumerAndProducer() async {

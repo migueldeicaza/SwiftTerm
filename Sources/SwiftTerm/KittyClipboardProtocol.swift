@@ -831,7 +831,7 @@ private struct KittyClipboardPasteToken {
 
 final class KittyClipboardProtocol: @unchecked Sendable {
     private weak var terminal: Terminal?
-    private let completionQueue = DispatchQueue(label: "org.tirania.SwiftTerm.kitty-clipboard")
+    private let completionQueue = TerminalCallbackQueue(label: "org.tirania.SwiftTerm.kitty-clipboard")
 
     // All of this state is owned by the terminal serialization context.
     private var grants = KittyClipboardGrants()

@@ -49,6 +49,9 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
      */
     func processTerminated (source: TerminalView, exitCode: Int32?)
 
+    /// Reports a launch failure, separate from child exit.
+    func processFailedToStart(source: TerminalView, error: LocalProcessError)
+
     // MARK: Kitty clipboard protocol, OSC 5522
     //
     // ``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so the
@@ -91,6 +94,8 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
 }
 
 public extension LocalProcessTerminalViewDelegate {
+    func processFailedToStart(source: TerminalView, error: LocalProcessError) {}
+
     func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
         []
     }
@@ -135,17 +140,20 @@ private final class LocalProcessTerminalViewProcessAdapter:
     private let outputHandler: LockedVoidCallback
     private let windowSize = Locked(winsize())
     private let inputProcess = Locked(WeakLocalProcessInputReference())
+    private let failureHandler: @MainActor @Sendable (LocalProcessError) -> Void
     private let terminationHandler: @MainActor @Sendable (Int32?) -> Void
 
     init(renderOwner: TerminalRenderOwner,
          frameSignal: FrameDriverSignal,
          diagnosticsState: Locked<TerminalView.Diagnostics>,
          outputHandler: LockedVoidCallback,
+         failureHandler: @escaping @MainActor @Sendable (LocalProcessError) -> Void,
          terminationHandler: @escaping @MainActor @Sendable (Int32?) -> Void) {
         self.renderOwner = renderOwner
         self.frameSignal = frameSignal
         self.diagnosticsState = diagnosticsState
         self.outputHandler = outputHandler
+        self.failureHandler = failureHandler
         self.terminationHandler = terminationHandler
     }
 
@@ -161,6 +169,11 @@ private final class LocalProcessTerminalViewProcessAdapter:
         inputProcess.withLock { reference in
             reference.value?.send(data: bytes[...])
         }
+    }
+
+    func processFailedToStart(_ source: LocalProcess, error: LocalProcessError) {
+        let handler = failureHandler
+        Task { @MainActor in handler(error) }
     }
 
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
@@ -258,6 +271,10 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
             frameSignal: frameSignal,
             diagnosticsState: diagnosticsState,
             outputHandler: processOutputHandler,
+            failureHandler: { [weak self] error in
+                guard let self, let process = self.process else { return }
+                self.processFailedToStart(process, error: error)
+            },
             terminationHandler: { [weak self] exitCode in
                 guard let self, let process = self.process else { return }
                 self.processTerminated(process, exitCode: exitCode)
@@ -302,7 +319,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     public func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
         var size = getWindowSize()
         processAdapter.updateWindowSize(size)
-        guard process.updateWindowSize(&size) else { return }
+        _ = process.updateWindowSize(&size)
         
         processDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
     }
@@ -433,6 +450,11 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     /**
      * Implements the LocalProcessDelegate method.
      */
+    open func processFailedToStart(_ source: LocalProcess, error: LocalProcessError) {
+        feed(text: "\r\nProcess launch failed: \(error)\r\n")
+        processDelegate?.processFailedToStart(source: self, error: error)
+    }
+
     open func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         processDelegate?.processTerminated(source: self, exitCode: exitCode)
     }

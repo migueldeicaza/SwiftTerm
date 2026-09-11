@@ -225,10 +225,12 @@ public protocol TerminalDelegate: AnyObject {
      * - Parameter source: identifies the instance of the terminal that sent this request
      * - Returns: the current clipboard contents, or `nil` to deny the request
      */
-    /// Accept an asynchronous OSC 52 read. Complete it on the terminal host executor.
-    func clipboardReadRequest(source: Terminal, selection: String) -> Bool
-
     func clipboardRead(source: Terminal) -> TerminalData?
+
+    /// Accept an asynchronous OSC 52 read. Return false to use clipboardRead.
+    /// Complete an accepted read on the terminal host executor.
+    /// The default preserves the synchronous delegate used by existing hosts.
+    func clipboardReadRequest(source: Terminal, selection: String) -> Bool
 
     /**
      * Returns the active terminal-driver special bytes that must become spaces
@@ -582,9 +584,9 @@ open class Terminal {
     private(set) var synchronizedOutputGeneration: UInt64 = 0
     private var synchronizedOutputWatchdogDirty = false
 #if !SWIFTTERM_EMBEDDED
-    private var synchronizedOutputTimeoutItem: DispatchWorkItem?
+    private var synchronizedOutputTimeoutItem: TerminalEventWorkItem?
 #if os(WASI)
-    let hostEventQueue = DispatchQueue(label: "terminal-host-events")
+    let hostEventQueue = TerminalCallbackQueue(label: "terminal-host-events")
 #endif
 #endif
     private(set) var synchronizedOutputWatchdogCounters = SynchronizedOutputWatchdogCounters()
@@ -774,6 +776,7 @@ open class Terminal {
     
     private var portableRenderMetadata: PortableRenderMetadata?
     private var portableRenderCursor: RenderSnapshotCursor?
+    private var portableRenderCells: [PortableRenderCellCache?] = []
 
     var refreshStart = Int.max
     var refreshEnd = -1
@@ -7577,35 +7580,51 @@ open class Terminal {
                     ? $0.endY - 1 : $0.endY
                 return RenderSnapshotRange(startY: $0.startY, endY: end)
             }
+            if portableRenderCells.count != rows {
+                portableRenderCells = Array(repeating: nil, count: rows)
+            }
             var copiedRows: [RenderSnapshotRow] = []
             if let range {
                 copiedRows.reserveCapacity(range.endY - range.startY + 1)
                 for y in range.startY...range.endY {
                     let index = source.yDisp + y
                     let line = index >= 0 && index < source.lines.count ? source.lines[index] : nil
-                    var cells: [RenderSnapshotCell] = []
-                    cells.reserveCapacity(cols)
-                    for x in 0..<cols {
-                        guard let line, x < line.count else {
-                            cells.append(RenderSnapshotCell(text: "", width: 1,
-                                widthState: .narrow, attribute: CharData.defaultAttr,
-                                isProtected: false, semanticContent: .none, payloadID: nil))
-                            continue
+                    var cells: [RenderSnapshotCell]
+                    if let line, let cached = portableRenderCells[y],
+                       cached.identity === line.renderIdentity,
+                       cached.generation == line.generation, cached.cells.count == cols {
+                        cells = cached.cells
+                    } else {
+                        cells = []
+                        cells.reserveCapacity(cols)
+                        for x in 0..<cols {
+                            guard let line, x < line.count else {
+                                cells.append(RenderSnapshotCell(text: "", width: 1,
+                                    widthState: .narrow, attribute: CharData.defaultAttr,
+                                    isProtected: false, semanticContent: .none, payloadID: nil))
+                                continue
+                            }
+                            let cell = line.packedView(at: x)
+                            let widthState: RenderSnapshotWidthState
+                            switch cell.packed.widthState {
+                            case .narrow: widthState = .narrow
+                            case .wide: widthState = .wide
+                            case .spacerTail: widthState = .spacerTail
+                            case .spacerHead: widthState = .spacerHead
+                            }
+                            cells.append(RenderSnapshotCell(
+                                text: cell.code == 0 || cell.width == 0 ? "" : cell.getText(),
+                                width: cell.width, widthState: widthState,
+                                attribute: cell.attribute, isProtected: cell.isProtected,
+                                semanticContent: cell.semanticContent,
+                                payloadID: cell.packed.payloadCode == 0 ? nil : cell.packed.payloadCode))
                         }
-                        let cell = line.packedView(at: x)
-                        let widthState: RenderSnapshotWidthState
-                        switch cell.packed.widthState {
-                        case .narrow: widthState = .narrow
-                        case .wide: widthState = .wide
-                        case .spacerTail: widthState = .spacerTail
-                        case .spacerHead: widthState = .spacerHead
+                        if let line {
+                            portableRenderCells[y] = PortableRenderCellCache(
+                                identity: line.renderIdentity, generation: line.generation, cells: cells)
+                        } else {
+                            portableRenderCells[y] = nil
                         }
-                        cells.append(RenderSnapshotCell(
-                            text: cell.code == 0 || cell.width == 0 ? "" : cell.getText(),
-                            width: cell.width, widthState: widthState,
-                            attribute: cell.attribute, isProtected: cell.isProtected,
-                            semanticContent: cell.semanticContent,
-                            payloadID: cell.packed.payloadCode == 0 ? nil : cell.packed.payloadCode))
                     }
                     let next = index + 1
                     copiedRows.append(RenderSnapshotRow(y: y,
@@ -8388,6 +8407,9 @@ open class Terminal {
         }
 #else
         guard active else {
+            #if os(WASI)
+            hostEventQueue.cancelTimer(.synchronizedOutput)
+            #endif
             if let synchronizedOutputTimeoutItem {
                 synchronizedOutputTimeoutItem.cancel()
                 self.synchronizedOutputTimeoutItem = nil
@@ -8415,11 +8437,11 @@ open class Terminal {
         // any unowned scheme, this cannot race teardown.
         // See Docs/io-cpu-profile.md §3.1.
         #if os(WASI)
-        let workItem = DispatchWorkItem { [weak self] in
+        let workItem = TerminalEventWorkItem { [weak self] in
             self?.synchronizedOutputWatchdogFired(generation: generation)
         }
         #else
-        let workItem = DispatchWorkItem {
+        let workItem = TerminalEventWorkItem {
             self.synchronizedOutputWatchdogFired(generation: generation)
         }
         #endif
@@ -8428,19 +8450,13 @@ open class Terminal {
         // application left frozen with DECSET 2026, and the main thread is the
         // one most likely to be stuck when it is needed (io-gaps.md G5c). The
         // handler already takes the terminal lock, so it is safe anywhere.
-        #if os(WASI)
-        let timerQueue = hostEventQueue
-        #else
-        let timerQueue = IOTimerQueue.shared
-        #endif
-        timerQueue.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds,
-                                       execute: workItem)
+        scheduleEventTimer(.synchronizedOutput,
+            deadline: .now() + synchronizedOutputTimeoutSeconds, execute: workItem)
 #endif
     }
 
     public func expireSynchronizedOutput() { endSynchronizedOutput() }
 #if os(WASI) && !SWIFTTERM_EMBEDDED
-    /// Run host callbacks and timers between serialized terminal operations.
     /// Cancel pending browser callbacks before the host releases this terminal.
     public func cancelHostEvents() {
         hostEventQueue.clear()
@@ -8456,6 +8472,7 @@ open class Terminal {
         return timers || osc || clipboard
     }
 
+    /// Run host callbacks and timers between serialized terminal operations.
     public func pollHostEvents() -> Bool {
         let timers = hostEventQueue.poll()
         let osc = oscEventDispatcher.pollHostEvents()
@@ -9688,7 +9705,7 @@ open class Terminal {
 
     /// Monotonic nanosecond clock used for paste-token expiry. Tests replace it.
     var kittyClipboardClock: @Sendable () -> UInt64 = {
-        DispatchTime.now().uptimeNanoseconds
+        TerminalEventTime.now().uptimeNanoseconds
     }
 #endif
 }

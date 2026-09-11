@@ -25,7 +25,10 @@ for(const variant of variants){
     const p=e.swiftterm_wasm_alloc(16)>>>0;assert.ok(p);assert.equal(e.swiftterm_wasm_free(p+1),-2);assert.equal(e.swiftterm_wasm_free(p),0);assert.equal(e.swiftterm_wasm_free(p),-2);assert.equal(e.swiftterm_wasm_free(0),0);
     assert.equal(write(h,'\x1b[6n'),0);const replies=copy(h,'swiftterm_terminal_output');assert.ok(replies.length);assert.deepEqual(copy(h,'swiftterm_terminal_output'),replies);
     const dst=e.swiftterm_wasm_alloc(replies.length)>>>0;assert.equal(e.swiftterm_terminal_output_copy(h,dst,replies.length-1),-4);assert.equal(e.swiftterm_terminal_output_copy(h,dst,replies.length),replies.length);e.swiftterm_wasm_free(dst);
-    assert.equal(e.swiftterm_terminal_output_consume(h,replies.length+1),-2);assert.equal(e.swiftterm_terminal_output_consume(h,replies.length),0);assert.equal(e.swiftterm_terminal_output_size(h),0);
+    assert.equal(e.swiftterm_terminal_output_consume(h,replies.length+1),-2);
+    assert.equal(e.swiftterm_terminal_output_consume(h,2),0);
+    assert.deepEqual(copy(h,'swiftterm_terminal_output'),replies.slice(2));
+    assert.equal(e.swiftterm_terminal_output_consume(h,replies.length-2),0);assert.equal(e.swiftterm_terminal_output_size(h),0);
     assert.equal(write(h,'\x1b]2;hello\x07'),0);const event=copy(h,'swiftterm_terminal_event');assert.ok(event.length>=16);assert.deepEqual(copy(h,'swiftterm_terminal_event'),event);assert.equal(e.swiftterm_terminal_event_consume(h),0);
     assert.equal(e.swiftterm_render_update(h),2);const frame=copy(h,'swiftterm_render_snapshot'),v=new DataView(frame.buffer);
     assert.equal(write(h,'new'),0);assert.equal(e.swiftterm_render_clean(h,v.getUint32(8,true),v.getUint32(12,true)),-7);
