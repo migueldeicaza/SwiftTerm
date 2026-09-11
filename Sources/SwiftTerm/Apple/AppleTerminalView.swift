@@ -1622,6 +1622,22 @@ extension TerminalView {
         renderOwner.bufferData(kind: kind, encoding: encoding)
     }
 
+    /// Observes copied OSC sequences as the view's terminal encounters them,
+    /// without changing how the view handles them.
+    ///
+    /// This forwards to ``Terminal/observeOscEvents(_:)`` on the terminal the
+    /// view owns, so a host can react to sequences the view does not surface
+    /// itself — desktop notifications sent with OSC 9, 99 or 777, for
+    /// instance — without access to the mutable terminal. Events are delivered
+    /// asynchronously on a private serial queue in encounter order. Retain the
+    /// returned token for as long as events are needed.
+    @MainActor
+    public func observeOscEvents(
+        _ handler: @escaping @Sendable (TerminalOscEvent) -> Void
+    ) -> TerminalOscObservation {
+        terminal.observeOscEvents(handler)
+    }
+
     /// Records the light/dark preference represented by the current palette and optionally
     /// notifies an application that subscribed with `CSI ? 2031 h`.
     ///
