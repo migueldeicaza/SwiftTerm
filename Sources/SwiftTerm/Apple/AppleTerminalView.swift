@@ -32,6 +32,20 @@ private func cellPixelDimension(_ points: CGFloat, scale: CGFloat) -> Int {
     return max(1, Int(value))
 }
 
+func terminalPixelCount(cells: Int, cellPoints: CGFloat, scale: CGFloat) -> Int {
+    let cellPixels = cellPixelDimension(cellPoints, scale: scale)
+    let result = cells.multipliedReportingOverflow(by: cellPixels)
+    return result.overflow ? Int.max : max(1, result.partialValue)
+}
+
+func terminalDevicePixelIndex(pointOffset: CGFloat, scale: CGFloat, pixelCount: Int) -> Int {
+    guard pointOffset.isFinite, scale.isFinite, pixelCount > 1 else { return 0 }
+    let value = (pointOffset * scale).rounded(.down)
+    guard value > 0 else { return 0 }
+    guard value < CGFloat(pixelCount) else { return pixelCount - 1 }
+    return Int(value)
+}
+
 #if os(iOS) || os(visionOS)
 import UIKit
 typealias TTColor = UIColor

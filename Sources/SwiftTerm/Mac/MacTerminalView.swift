@@ -3399,10 +3399,24 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     {
         terminal.terminalLock.preconditionLocked()
         func toInt (_ p: NSPoint) -> Position {
-
-            let x = min (max (p.x, 0), bounds.width)
-            let y = min (max (p.y, 0), bounds.height)
-            return Position (col: Int (x), row: Int (bounds.height-y))
+            let scale = backingScaleFactor()
+            let width = terminalPixelCount(
+                cells: terminal.cols,
+                cellPoints: cellDimension.width,
+                scale: scale)
+            let height = terminalPixelCount(
+                cells: terminal.rows,
+                cellPoints: cellDimension.height,
+                scale: scale)
+            return Position(
+                col: terminalDevicePixelIndex(
+                    pointOffset: p.x - bounds.minX,
+                    scale: scale,
+                    pixelCount: width),
+                row: terminalDevicePixelIndex(
+                    pointOffset: bounds.maxY - p.y,
+                    scale: scale,
+                    pixelCount: height))
         }
         let displayBuffer = terminal.displayBuffer
         let col = Int (point.x / cellDimension.width)

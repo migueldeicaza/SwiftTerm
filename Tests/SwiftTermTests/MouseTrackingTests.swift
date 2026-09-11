@@ -961,6 +961,32 @@ struct MouseTrackingTests {
         #expect(sentString == "\(esc)[<33;80;24M")
     }
 
+    @Test func sgrPixelEncodingUsesOneBasedDevicePixelCoordinates() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
+        terminal.feed(text: "\(esc)[?1002h\(esc)[?1006h\(esc)[?1016h")
+        delegate.clearSentData()
+
+        terminal.sendMotion(buttonFlags: 0, x: 0, y: 0, pixelX: 0, pixelY: 0)
+        terminal.sendMotion(buttonFlags: 0, x: 0, y: 0, pixelX: 287, pixelY: 426)
+
+        let responses = delegate.sentData.map {
+            String(bytes: $0, encoding: .utf8) ?? ""
+        }
+        #expect(responses == [
+            "\(esc)[<32;1;1M",
+            "\(esc)[<32;288;427M",
+        ])
+    }
+
+#if os(macOS)
+    @Test func terminalDevicePixelIndexScalesAndClampsCoordinates() {
+        #expect(terminalDevicePixelIndex(pointOffset: 143.5, scale: 2, pixelCount: 2_790) == 287)
+        #expect(terminalDevicePixelIndex(pointOffset: 213, scale: 2, pixelCount: 1_860) == 426)
+        #expect(terminalDevicePixelIndex(pointOffset: -1, scale: 2, pixelCount: 1_860) == 0)
+        #expect(terminalDevicePixelIndex(pointOffset: 930, scale: 2, pixelCount: 1_860) == 1_859)
+    }
+#endif
+
     @Test func encodeButtonScrollUp() {
         let (terminal, _) = TerminalTestHarness.makeTerminal()
         let flags = terminal.encodeButton(button: 4, release: false, shift: false, meta: false, control: false)
