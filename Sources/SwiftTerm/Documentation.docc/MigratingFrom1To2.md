@@ -89,6 +89,8 @@ Use terminal snapshots and command entry points instead:
 - ``TerminalView/send(data:)`` / ``TerminalView/feed(byteArray:)`` /
   ``TerminalView/feed(text:)`` for parser-safe input
 - ``TerminalView/softReset()`` and ``TerminalView/resetToInitialState()``
+- ``TerminalView/observeOscEvents(_:)`` for copied OSC sequences, such as
+  desktop notifications (OSC 9, 99 and 777) that the view does not display
 
 If you need terminal-level behavior inside UI callbacks, use the ``Terminal``
 instance passed to ``TerminalViewDelegate`` methods such as
