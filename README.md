@@ -114,16 +114,20 @@ compiled based on the target platform.
 ## Embedded Swift
 
 SwiftTerm has a Foundation-free, headless core for Embedded Swift. Select it
-with the `Embedded` package trait. Swift 6.2 or later is required. Xcode builds
-require Xcode 26 or later. See the
-[Embedded Swift build and integration guide](Docs/embedded-swift.md).
+with the `Embedded` package trait. It omits the Apple views, local-process
+host, image decoders, and Kitty Clipboard. Swift 6.2 or later is required;
+Xcode builds require Xcode 26 or later. The portable host APIs are documented
+in the [DocC guide](Sources/SwiftTerm/Documentation.docc/PortableHosting.md).
 
 ## WebAssembly
 
 SwiftTerm supplies a browser and Node.js terminal engine with ABI version 1,
 copied render snapshots, generated reply bytes, and host-event queues. The
 TypeScript package loads either the Full or Embedded WASM reactor. The host
-supplies a renderer and PTY transport. A Canvas 2D example is included.
+supplies a renderer and PTY transport. The Full build supports PNG, Kitty,
+Sixel, iTerm graphics, and Kitty Clipboard; Embedded keeps terminal input,
+selection, scrollback, and bracketed paste while omitting graphics and
+clipboard support. A Canvas 2D example is included.
 
 See the [WebAssembly build and browser guide](Docs/wasm.md) for the pinned
 compiler/SDK pair, build commands, API use, limits, and tests.
