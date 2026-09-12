@@ -55,6 +55,18 @@ struct TerminalSnapshotTests {
         requireSendable(RenderLoop.self)
     }
 
+    @Test func viewStateReportsBracketedPasteMode() {
+        let view = makeView()
+
+        #expect(!view.terminalStateSnapshot().bracketedPasteMode)
+
+        view.feed(text: "\u{1b}[?2004h")
+        #expect(view.terminalStateSnapshot().bracketedPasteMode)
+
+        view.feed(text: "\u{1b}[?2004l")
+        #expect(!view.terminalStateSnapshot().bracketedPasteMode)
+    }
+
     @Test func drawingDoesNotBlockParserFeed() {
         let view = makeView()
         let owner = view.renderOwner

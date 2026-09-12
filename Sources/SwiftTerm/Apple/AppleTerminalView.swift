@@ -1044,6 +1044,8 @@ public struct TerminalViewStateSnapshot: Sendable {
     public let dimensions: TerminalDimensions
     public let cursor: Position
     public let viewportRow: Int
+    /// Whether DEC private mode 2004 (bracketed paste) is enabled.
+    public let bracketedPasteMode: Bool
     public let currentBidiState: BidiPresentationState
     public let bidiArrowKeySwap: Bool
     public let cursorStyle: CursorStyle
