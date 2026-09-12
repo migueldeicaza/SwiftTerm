@@ -79,23 +79,57 @@ registration, or fallback handler registration.
 SwiftTerm 1.0 exposed the underlying terminal through ``TerminalView/getTerminal()``
 so callers could mutate or query `Terminal` state directly.
 
-SwiftTerm 2.0 removed those entry points from the public surface to keep
-terminal mutation behind `Sendable` boundaries that are concurrency-safe.
-Use terminal snapshots and command entry points instead:
+SwiftTerm 2.0 does not expose a `Terminal` from `TerminalView`. `Terminal` and
+its buffers are mutable. Parsing, rendering, and input can occur on different
+threads. A raw terminal reference could outlive the lock that protects it.
+It could also change state without a new view snapshot and redraw.
 
-- ``TerminalView/terminalDimensions`` for copied `cols`/`rows`
-- ``TerminalView/terminalStateSnapshot()`` for status/diagnostic reads
-- ``TerminalView/getBufferAsData(kind:encoding:)`` for text snapshots
-- ``TerminalView/send(data:)`` / ``TerminalView/feed(byteArray:)`` /
-  ``TerminalView/feed(text:)`` for parser-safe input
-- ``TerminalView/softReset()`` and ``TerminalView/resetToInitialState()``
-- ``TerminalView/observeOscEvents(_:)`` for copied OSC sequences, such as
-  desktop notifications (OSC 9, 99 and 777) that the view does not display
+The internal `withTerminal` helper is not a replacement public API. A closure
+cannot prevent callers from saving the `Terminal`, `Buffer`, or `BufferLine`.
+It must not call an API that takes the terminal lock again. Use the view's
+copied reads and command entry points. They own the locking, copying, and
+render updates.
 
-If you need terminal-level behavior inside UI callbacks, use the ``Terminal``
-instance passed to ``TerminalViewDelegate`` methods such as
-the `source` argument. For direct terminal ownership APIs, use
-``HeadlessTerminal`` where ``HeadlessTerminal/terminal`` remains public.
+### Read terminal data
+
+Use the narrowest read API that gives the data you need:
+
+| Need | API | Result |
+| --- | --- | --- |
+| Grid size | ``TerminalView/terminalDimensions`` | A copied `TerminalDimensions` value with columns and rows. |
+| Status or visible screen | ``TerminalView/terminalStateSnapshot()`` | A copied ``TerminalViewStateSnapshot``. It includes dimensions, cursor state, viewport row, palette state, and visible rows. |
+| Text from the active, normal, or alternate buffer | ``TerminalView/getBufferAsData(kind:encoding:)`` | A copied `Data` value. Select the required ``Terminal/BufferKind``. |
+| A terminal event outside the displayed content | `TerminalView.observeOscEvents(_:)` | A copied ``TerminalOscEvent`` goes to an `@Sendable` handler. Retain its ``TerminalOscObservation`` token for the required lifetime. |
+
+`TerminalView.observeOscEvents(_:)` is for passive observation, such as OSC 9,
+99, or 777 desktop notifications that the view does not display. It preserves
+normal OSC handling. Its handler runs asynchronously. Do not use it for a
+response that must change parser behavior. If an application owns a
+``Terminal`` directly, it can instead use
+``Terminal/observeOscEvents(_:)`` or
+``Terminal/registerOscHandler(code:handler:)``.
+
+### Send data and change terminal state
+
+The direction of the data determines the API:
+
+| Operation | API | Use |
+| --- | --- | --- |
+| Receive bytes or text from the process or remote peer | ``TerminalView/feed(byteArray:)`` or ``TerminalView/feed(text:)`` | Parse output and update the display. These APIs are safe from another thread. |
+| Keep a sendable input handle for a background transport | ``TerminalView/feedSender`` | Store its `TerminalFeedSender` when the transport must not retain the view. Call `feed` with received output. |
+| Send user input to the process or remote peer | ``TerminalView/send(data:)`` | Send bytes through ``TerminalViewDelegate/send(source:data:)``. The host delegate writes them to its transport. |
+| Paste application-provided text | ``TerminalView/pasteText(_:)`` | Call this main-actor API. It applies bracketed paste and paste safety rules. Do not use `send(data:)` unless the content is typed input. |
+| Perform DECSTR | ``TerminalView/softReset()`` | Reset terminal modes through the normal parser path. |
+| Perform RIS | ``TerminalView/resetToInitialState()`` | Reset the terminal to its initial state through the normal parser path. |
+
+``TerminalViewDelegate`` callbacks also give the host the view and copied event
+values such as a title or a resize. The `source` argument is a `TerminalView`,
+not a `Terminal`. Keep delegate callbacks short. Do not call `feed` or `send`
+from a callback that runs with the terminal lock held.
+
+For an application that needs direct ownership of a terminal without a view,
+use ``HeadlessTerminal``. ``HeadlessTerminal/terminal`` remains public because
+the application, rather than a view, owns its lifecycle and rendering.
 
 Example migration:
 
@@ -194,7 +228,7 @@ Before you release the updated application:
    and `getTerminal`.
 2. Replace direct OSC handler registration with
    ``Terminal/registerOscHandler(code:handler:)``.
-3. Replace Terminal access patterns using terminal snapshots or delegate callbacks.
+3. Replace Terminal access patterns with the matching view read or command API.
 4. Review all ``LocalProcess`` and ``HeadlessTerminal`` initializer references.
 5. Rebuild all modules that link to SwiftTerm.
 6. Run tests that send and receive process data.
@@ -207,7 +241,14 @@ Before you release the updated application:
 - ``TerminalView/terminalDimensions``
 - ``TerminalView/terminalStateSnapshot()``
 - ``TerminalView/getBufferAsData(kind:encoding:)``
+- ``TerminalView/feedSender``
 - ``TerminalView/send(data:)``
+- ``TerminalView/pasteText(_:)``
+- ``TerminalView/softReset()``
+- ``TerminalView/resetToInitialState()``
+- ``Terminal/observeOscEvents(_:)``
+- ``TerminalOscEvent``
+- ``TerminalOscObservation``
 - ``LocalProcess``
 - ``LocalProcessDelegate``
 - ``HeadlessTerminal``

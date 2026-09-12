@@ -92,6 +92,15 @@ private final class OverlayScrollerIndicator: NSView {
  *
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
+ *
+ * ## Terminal ownership
+ *
+ * `TerminalView` owns its mutable `Terminal`. It does not expose that terminal.
+ * Parsing, rendering, and input can occur on different threads. Use copied reads
+ * such as ``terminalDimensions``, ``terminalStateSnapshot()``, and
+ * ``getBufferAsData(kind:encoding:)``. Use ``feed(byteArray:)`` for received
+ * output and ``send(data:)`` for user input. Use ``pasteText(_:)`` for text
+ * paste. See <doc:MigratingFrom1To2> for the complete access map.
  */
 open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     let coreGraphicsRenderCache = CoreGraphicsRenderCache()
