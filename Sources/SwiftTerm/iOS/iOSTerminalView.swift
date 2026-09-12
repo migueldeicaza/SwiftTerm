@@ -96,6 +96,15 @@ public extension Notification.Name {
  *
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
+ *
+ * ## Terminal ownership
+ *
+ * `TerminalView` owns its mutable `Terminal`. It does not expose that terminal.
+ * Parsing, rendering, and input can occur on different threads. Use copied reads
+ * such as ``terminalDimensions``, ``terminalStateSnapshot()``, and
+ * ``getBufferAsData(kind:encoding:)``. Use ``feed(byteArray:)`` for received
+ * output and ``send(data:)`` for user input. Use ``pasteText(_:)`` for text
+ * paste. See <doc:MigratingFrom1To2> for the complete access map.
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate, UIPointerInteractionDelegate {
     let coreGraphicsRenderCache = CoreGraphicsRenderCache()
@@ -827,10 +836,24 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
         terminal.terminalLock.preconditionLocked()
         func toInt (_ p: CGPoint) -> Position {
-            
-            let x = min (max (p.x, 0), bounds.width)
-            let y = min (max (p.y, 0), bounds.height)
-            return Position (col: Int (x), row: Int (y))
+            let scale = backingScaleFactor()
+            let width = terminalPixelCount(
+                cells: terminal.cols,
+                cellPoints: cellDimension.width,
+                scale: scale)
+            let height = terminalPixelCount(
+                cells: terminal.rows,
+                cellPoints: cellDimension.height,
+                scale: scale)
+            return Position(
+                col: terminalDevicePixelIndex(
+                    pointOffset: p.x - bounds.minX,
+                    scale: scale,
+                    pixelCount: width),
+                row: terminalDevicePixelIndex(
+                    pointOffset: p.y - bounds.minY,
+                    scale: scale,
+                    pixelCount: height))
         }
 
         let col = Int (point.x / cellDimension.width)

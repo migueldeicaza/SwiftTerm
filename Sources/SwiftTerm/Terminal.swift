@@ -8627,8 +8627,10 @@ open class Terminal {
     /**
      * Sends a mouse event for a specific button at the specific location
      * - Parameter buttonFlags: Cb flags, or the complete result of `encodeButton`.
-     * - Parameter x: X coordinate for the event
-     * - Parameter y: Y coordinate for the event
+     * - Parameter x: Zero-based cell column for the event.
+     * - Parameter y: Zero-based cell row for the event.
+     * - Parameter pixelX: Zero-based horizontal device-pixel coordinate for the event.
+     * - Parameter pixelY: Zero-based vertical device-pixel coordinate for the event.
      */
     public func sendEvent (buttonFlags: Int, x: Int, y: Int, pixelX: Int, pixelY: Int)
     {
@@ -8651,7 +8653,7 @@ open class Terminal {
         case .sgrPixel:
             let bflags = release ? (buttonFlags & ~3) | originalButton : buttonFlags
             let m = release ? "m" : "M"
-            sendResponse(cc.CSI, "<\(bflags);\(pixelX);\(pixelY)\(m)")
+            sendResponse(cc.CSI, "<\(bflags);\(pixelX+1);\(pixelY+1)\(m)")
             
         case .urxvt:
             sendResponse(cc.CSI, "\(buttonFlags+32);\(x+1);\(y+1)M");

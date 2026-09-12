@@ -32,6 +32,20 @@ private func cellPixelDimension(_ points: CGFloat, scale: CGFloat) -> Int {
     return max(1, Int(value))
 }
 
+func terminalPixelCount(cells: Int, cellPoints: CGFloat, scale: CGFloat) -> Int {
+    let cellPixels = cellPixelDimension(cellPoints, scale: scale)
+    let result = cells.multipliedReportingOverflow(by: cellPixels)
+    return result.overflow ? Int.max : max(1, result.partialValue)
+}
+
+func terminalDevicePixelIndex(pointOffset: CGFloat, scale: CGFloat, pixelCount: Int) -> Int {
+    guard pointOffset.isFinite, scale.isFinite, pixelCount > 1 else { return 0 }
+    let value = (pointOffset * scale).rounded(.down)
+    guard value > 0 else { return 0 }
+    guard value < CGFloat(pixelCount) else { return pixelCount - 1 }
+    return Int(value)
+}
+
 #if os(iOS) || os(visionOS)
 import UIKit
 typealias TTColor = UIColor
@@ -1030,6 +1044,8 @@ public struct TerminalViewStateSnapshot: Sendable {
     public let dimensions: TerminalDimensions
     public let cursor: Position
     public let viewportRow: Int
+    /// Whether DEC private mode 2004 (bracketed paste) is enabled.
+    public let bracketedPasteMode: Bool
     public let currentBidiState: BidiPresentationState
     public let bidiArrowKeySwap: Bool
     public let cursorStyle: CursorStyle
@@ -1620,6 +1636,22 @@ extension TerminalView {
         encoding: String.Encoding = .utf8
     ) -> Data {
         renderOwner.bufferData(kind: kind, encoding: encoding)
+    }
+
+    /// Observes copied OSC sequences as the view's terminal encounters them,
+    /// without changing how the view handles them.
+    ///
+    /// This forwards to ``Terminal/observeOscEvents(_:)`` on the terminal the
+    /// view owns, so a host can react to sequences the view does not surface
+    /// itself — desktop notifications sent with OSC 9, 99 or 777, for
+    /// instance — without access to the mutable terminal. Events are delivered
+    /// asynchronously on a private serial queue in encounter order. Retain the
+    /// returned token for as long as events are needed.
+    @MainActor
+    public func observeOscEvents(
+        _ handler: @escaping @Sendable (TerminalOscEvent) -> Void
+    ) -> TerminalOscObservation {
+        terminal.observeOscEvents(handler)
     }
 
     /// Records the light/dark preference represented by the current palette and optionally
