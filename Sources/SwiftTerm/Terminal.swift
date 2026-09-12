@@ -1721,7 +1721,11 @@ open class Terminal {
 
     /// Enqueues one copied event before synchronous parser dispatch continues.
     func publishOscEvent(code: Int, payload: ArraySlice<UInt8>) {
-        oscEventDispatcher.publish(code: code, payload: payload)
+        oscEventDispatcher.publish(
+            code: code,
+            payload: payload,
+            cursor: Position(col: buffer.x, row: buffer.y)
+        )
     }
     
     func cmdSet8BitControls ()

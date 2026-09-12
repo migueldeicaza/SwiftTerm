@@ -2988,7 +2988,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Starts auto-repeat for `keyCode`. As with a hardware keyboard, only
     /// the most recent key repeats, so any other repeat stops first. The
     /// release of a different key does not stop this repeat.
-    private func startKeyRepeat(for keyCode: UIKeyboardHIDUsage,
+    private final func startKeyRepeat(for keyCode: UIKeyboardHIDUsage,
                                 _ tick: @escaping @MainActor @Sendable (TerminalView) -> Void) {
         stopAllKeyRepeats()
         let timer = Timer(fire: Date(timeInterval: 0.4, since: Date()),

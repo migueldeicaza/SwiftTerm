@@ -306,6 +306,13 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func setCursorStyle(_ style: CursorStyle) {
+        guard let terminal = currentSession()?.terminal else { return }
+        terminal.terminalLock.withLock {
+            terminal.setCursorStyle(style)
+        }
+    }
+
     func updateColorScheme(_ colorScheme: TerminalColorScheme, notify: Bool) {
         guard let terminal = currentSession()?.terminal else { return }
         terminal.terminalLock.withLock {

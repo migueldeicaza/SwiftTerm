@@ -151,9 +151,17 @@ public struct TerminalOscEvent: Equatable, Sendable {
     /// The bytes after the OSC command and separator.
     public let payload: [UInt8]
 
-    public init(code: Int, payload: [UInt8]) {
+    /// The cursor position when the parser receives this OSC sequence.
+    public let cursor: Position
+
+    public init(
+        code: Int,
+        payload: [UInt8],
+        cursor: Position = Position(col: 0, row: 0)
+    ) {
         self.code = code
         self.payload = payload
+        self.cursor = cursor
     }
 }
 
@@ -221,14 +229,14 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
 #endif
     }
 
-    func publish(code: Int, payload: ArraySlice<UInt8>) {
+    func publish(code: Int, payload: ArraySlice<UInt8>, cursor: Position) {
 #if SWIFTTERM_EMBEDDED
         let registrations = state.registrations
 #else
         let registrations = state.withLock { $0.registrations }
 #endif
         guard !registrations.isEmpty else { return }
-        let event = TerminalOscEvent(code: code, payload: Array(payload))
+        let event = TerminalOscEvent(code: code, payload: Array(payload), cursor: cursor)
 
 #if SWIFTTERM_EMBEDDED
         for registration in registrations {

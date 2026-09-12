@@ -1693,6 +1693,12 @@ extension TerminalView {
         feedSender.feed(text: "\u{1b}c")
     }
 
+    /// Changes the cursor style without sending data to the host.
+    public func setCursorStyle(_ style: CursorStyle) {
+        renderOwner.setCursorStyle(style)
+        frameSignal.markDirty()
+    }
+
     /// Strategy used to derive palette entries 16 through 255.
     public var ansi256PaletteStrategy: Ansi256PaletteStrategy {
         get { renderOwner.ansi256PaletteStrategy() }
@@ -4492,14 +4498,28 @@ extension TerminalView {
         send (data: (bytes)[...])
     }
     
-    func sendKeyUp ()
+    /// Sends the Up key with the active terminal modes.
+    public func sendKeyUp ()
     {
         send (withTerminal { $0.applicationCursor } ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
     }
     
-    func sendKeyDown ()
+    /// Sends the Down key with the active terminal modes.
+    public func sendKeyDown ()
     {
         send (withTerminal { $0.applicationCursor } ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
+    }
+
+    /// Sends the Home key with the active cursor-key mode.
+    public func sendKeyHome() {
+        send(withTerminal { $0.applicationCursor }
+             ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
+    }
+
+    /// Sends the End key with the active cursor-key mode.
+    public func sendKeyEnd() {
+        send(withTerminal { $0.applicationCursor }
+             ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
     }
 
     private func sendHorizontalKey(left: Bool) {
@@ -4518,12 +4538,14 @@ extension TerminalView {
         send(sequence)
     }
     
-    func sendKeyLeft()
+    /// Sends the Left key with the active terminal modes.
+    public func sendKeyLeft()
     {
         sendHorizontalKey(left: true)
     }
     
-    func sendKeyRight ()
+    /// Sends the Right key with the active terminal modes.
+    public func sendKeyRight ()
     {
         sendHorizontalKey(left: false)
     }
