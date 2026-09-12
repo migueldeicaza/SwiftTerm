@@ -2557,6 +2557,12 @@ extension Terminal {
     public func kittyGraphicsRenderSnapshot() -> KittyGraphicsRenderSnapshot {
         kittyGraphicsState.activeIsAlternate = isCurrentBufferAlternate
         let store = kittyGraphicsState.active
+        if store.imagesById.isEmpty && store.placementsByKey.isEmpty {
+            return KittyGraphicsRenderSnapshot(
+                storageGeneration: store.generation,
+                imagesById: [:],
+                placements: [])
+        }
         var images: [UInt32: KittyGraphicsRenderImage] = [:]
         images.reserveCapacity(store.imagesById.count)
 
