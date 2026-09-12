@@ -6,6 +6,8 @@ import Foundation
 let environment = ProcessInfo.processInfo.environment
 let embeddedCheck = environment["SWIFTTERM_EMBEDDED_CHECK"] == "1"
 let wasmSmokeBuild = environment["SWIFTTERM_WASM"] == "1"
+let webWasmBuild = environment["SWIFTTERM_WEB_WASM"] == "1"
+let webWasmTests = environment["SWIFTTERM_WEB_WASM_TESTS"] == "1"
 
 // A package manifest is compiled and run on the HOST, so `os(Linux)` is false
 // when cross-compiling from macOS to Linux. Allow Apple sources to be excluded
@@ -34,19 +36,18 @@ let graphicsDependencies: [Target.Dependency] = [
     .product(
         name: "PNG",
         package: "swift-png",
-        condition: .when(platforms: [.linux, .windows])
+        condition: .when(platforms: [.linux, .windows, .wasi], traits: ["PortableGraphics"])
     ),
     .product(
         name: "LZ77",
         package: "swift-png",
-        condition: .when(platforms: [.linux, .windows])
+        condition: .when(platforms: [.linux, .windows, .wasi], traits: ["PortableGraphics"])
     ),
 ]
 
-let portableTraitSettings: [SwiftSetting] = [
+var portableTraitSettings: [SwiftSetting] = [
     .define("SWIFTTERM_EMBEDDED", .when(traits: ["Embedded"])),
     .enableExperimentalFeature("Embedded", .when(traits: ["Embedded"])),
-    .define("SWIFTTERM_EMBEDDED", .when(traits: ["Wasm"])),
     .define("SWIFTTERM_WASM", .when(traits: ["Wasm"])),
 ]
 
@@ -149,14 +150,14 @@ if embeddedCheck {
     )
 }
 
-if wasmSmokeBuild {
+if wasmSmokeBuild || webWasmBuild || webWasmTests {
     // Embedded WASM executables need two link fixes that plain SwiftPM does
     // not provide: the Embedded Swift Unicode data tables, and tolerance for
     // the duplicate symbols that appear because the importer re-emits the
     // library code that SwiftPM also links as objects. The library directory
     // lives inside the WASM SDK bundle, so scripts/build-wasm.sh locates it
-    // and passes it through this environment variable. The smoke target only
-    // exists for this dev build, so consumers never see the unsafe flags.
+    // and passes it through this environment variable. These targets only
+    // exist for opt-in builds, so consumers never see the unsafe flags.
     let embeddedWasmLinkerSettings: [LinkerSetting]
     if let libDir = environment["SWIFTTERM_WASM_EMBEDDED_LIBDIR"] {
         embeddedWasmLinkerSettings = [
@@ -169,21 +170,48 @@ if wasmSmokeBuild {
     } else {
         embeddedWasmLinkerSettings = []
     }
-    products.append(
-        .executable(name: "SwiftTermWasmSmoke", targets: ["SwiftTermWasmSmoke"])
-    )
-    targets.append(
-        .executableTarget(
-            name: "SwiftTermWasmSmoke",
-            dependencies: ["SwiftTerm"],
-            path: "Sources/SwiftTermWasmSmoke",
-            // The smoke program must compile in the same language mode as the
-            // library: with the Embedded trait, a plain-Swift target cannot
-            // link against the $e-mangled Embedded module.
-            swiftSettings: portableTraitSettings,
-            linkerSettings: embeddedWasmLinkerSettings
+    if wasmSmokeBuild {
+        products.append(
+            .executable(name: "SwiftTermWasmSmoke", targets: ["SwiftTermWasmSmoke"])
         )
-    )
+        targets.append(
+            .executableTarget(
+                name: "SwiftTermWasmSmoke",
+                dependencies: ["SwiftTerm"],
+                path: "Sources/SwiftTermWasmSmoke",
+                // The smoke program must compile in the same language mode as the
+                // library: with the Embedded trait, a plain-Swift target cannot
+                // link against the $e-mangled Embedded module.
+                swiftSettings: portableTraitSettings,
+                linkerSettings: embeddedWasmLinkerSettings
+            )
+        )
+    }
+    if webWasmBuild || webWasmTests {
+        products.append(.executable(name: "SwiftTermWebWasm", targets: ["SwiftTermWebWasm"]))
+        targets.append(.executableTarget(
+            name: "SwiftTermWebWasm",
+            dependencies: ["SwiftTerm"],
+            path: "Sources/SwiftTermWebWasm",
+            swiftSettings: portableTraitSettings + [
+                .define("SWIFTTERM_WEB_EMBEDDED", .when(traits: ["Embedded"])),
+                .unsafeFlags(["-parse-as-library"]),
+            ] + (embeddedCheck ? [
+                .define("SWIFTTERM_EMBEDDED"),
+                .define("SWIFTTERM_WEB_EMBEDDED"),
+            ] : []),
+            linkerSettings: embeddedWasmLinkerSettings + (webWasmBuild ? [
+                .unsafeFlags(["-Xclang-linker", "-mexec-model=reactor"])
+            ] : [])
+        ))
+        if webWasmTests {
+            targets.append(.testTarget(
+                name: "SwiftTermWebWasmTests",
+                dependencies: ["SwiftTerm", "SwiftTermWebWasm"],
+                path: "Tests/SwiftTermWebWasmTests"
+            ))
+        }
+    }
 }
 
 let package = Package(
@@ -199,13 +227,16 @@ let package = Package(
     ],
     products: products,
     traits: [
+        .default(enabledTraits: ["PortableGraphics"]),
+        .trait(name: "PortableGraphics", description: "PNG and zlib decoders for the full non-Apple core"),
         .trait(
             name: "Embedded",
             description: "Foundation-free portable core for Embedded Swift"
         ),
         .trait(
             name: "Wasm",
-            description: "Foundation-free portable core for WASI"
+            description: "Full WASI core with Foundation and graphics; use Embedded separately for the reduced core",
+            enabledTraits: ["PortableGraphics"]
         ),
     ],
     dependencies: [

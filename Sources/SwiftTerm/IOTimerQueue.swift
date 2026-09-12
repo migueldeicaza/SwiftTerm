@@ -16,7 +16,7 @@
 //  cross-thread hop. See the G5c notes in io-gaps.md.
 //
 
-#if !SWIFTTERM_EMBEDDED
+#if !SWIFTTERM_EMBEDDED && !os(WASI)
 import Foundation
 
 enum IOTimerQueue {

@@ -1,0 +1,30 @@
+{
+  "name": "@swiftterm/wasm",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SwiftTerm terminal engine for browsers and Node.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./swiftterm-full.wasm": "./dist/swiftterm-full.wasm",
+    "./swiftterm-embedded.wasm": "./dist/swiftterm-embedded.wasm"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node package-dist.mjs",
+    "test": "npm run build && node --test ../Tests/WebWasmTests/*.test.mjs",
+    "test:browser": "npm run build && node ../Tests/WebWasmTests/browser.mjs",
+    "benchmark": "npm run build && node ../Tests/WebWasmTests/benchmark.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3",
+    "playwright": "1.55.0"
+  },
+  "license": "MIT"
+}

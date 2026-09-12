@@ -5,7 +5,7 @@
 //  Created by Miguel de Icaza on 4/5/20.
 //
 #if !SWIFTTERM_EMBEDDED
-#if !os(iOS) && !os(Windows)
+#if !os(iOS) && !os(Windows) && !os(WASI)
 import Foundation
 
 ///
@@ -20,6 +20,7 @@ import Foundation
 public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     public private(set) var terminal: Terminal!
     public var process: LocalProcess!
+    private let onLaunchFailure: ((LocalProcessError) -> Void)?
     var onEnd: (_ exitCode: Int32?) -> ()
     var dir: String?
     let deliveryQueue: DispatchQueue
@@ -32,6 +33,7 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     private let inputRegistrationTerminal = Locked<Terminal?>(nil)
 
     /// Creates a headless terminal.
+    /// Use onLaunchFailure to handle launch errors. onEnd reports child exit only.
     ///
     /// If `queue` is `nil`, the terminal and its local process share one
     /// private serial queue. Pass `DispatchQueue.main` explicitly if required.
@@ -43,10 +45,12 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         queue: DispatchQueue? = nil,
         options: TerminalOptions = TerminalOptions.default,
         directDelivery: Bool = false,
+        onLaunchFailure: ((LocalProcessError) -> Void)? = nil,
         onEnd: @escaping (_ exitCode: Int32?) -> ()
     )
     {
         let deliveryQueue = LocalProcess.effectiveDeliveryQueue(queue)
+        self.onLaunchFailure = onLaunchFailure
         self.onEnd = onEnd
         self.deliveryQueue = deliveryQueue
         self.directDelivery = directDelivery
@@ -58,6 +62,14 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
             directDelivery: directDelivery)
     }
     
+    /// Launch failure is separate from onEnd, which reports child exit only.
+    public func processFailedToStart(_ source: LocalProcess, error: LocalProcessError) {
+        callbackLock.lock()
+        defer { callbackLock.unlock() }
+        if let onLaunchFailure { onLaunchFailure(error) }
+        else { dataReceived(slice: Array("\r\nProcess launch failed: \(error)\r\n".utf8)[...]) }
+    }
+
     public func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         callbackLock.lock()
         defer { callbackLock.unlock() }

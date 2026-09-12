@@ -11,6 +11,12 @@ front-ends for AppKit (macOS) and UIKit (iOS/visionOS). The core engine handles 
 sequence parsing, buffer management, Unicode rendering, and terminal state — while the
 view layer handles input, rendering, and platform integration.
 
+The Foundation-free portable core also supports custom hosts and WebAssembly.
+It produces owned render snapshots and accepts semantic keyboard, text, paste,
+mouse, selection, and viewport operations. The bundled `Web/` TypeScript
+package builds on that API for browsers, workers, and Node.js; its host supplies
+the renderer and process transport.
+
 The library has been used in several commercially available SSH clients, including
 [Secure Shellfish](https://apps.apple.com/us/app/secure-shellfish-ssh-files/id1336634154),
 [La Terminal](https://apps.apple.com/us/app/la-terminal-ssh-client/id1629902861),
@@ -81,6 +87,15 @@ testing, and screen-scraping terminal output.
 - <doc:HeadlessUsage>
 - ``HeadlessTerminal``
 
+### Portable and Web Hosts
+
+- <doc:PortableHosting>
+- ``TerminalRenderSnapshot``
+- ``TerminalViewportState``
+- ``TerminalSelectionState``
+- ``TerminalMouseAction``
+- ``TerminalMouseButton``
+
 ### Guides
 
 - <doc:MigratingFrom1To2>
@@ -95,6 +110,7 @@ testing, and screen-scraping terminal output.
 - <doc:KittyGraphicsProtocol>
 - <doc:KittyClipboardProtocol>
 - <doc:SSHIntegration>
+- <doc:PortableHosting>
 
 ### Terminal Delegate
 

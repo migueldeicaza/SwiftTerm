@@ -1,6 +1,8 @@
 #if os(macOS) || os(Linux)
 #if os(macOS)
 import Darwin
+#elseif canImport(Musl)
+import Musl
 #else
 import Glibc
 #endif
@@ -10,6 +12,83 @@ import XCTest
 @testable import SwiftTerm
 
 final class LocalProcessLifecycleTests: XCTestCase {
+    func testUncheckedLaunchFailureNotifiesDelegateAndBlocksRelaunchUntilDelivery() {
+        let queue = DispatchQueue(label: "SwiftTerm.launch-failure")
+        queue.suspend()
+        let terminated = expectation(description: "failed launch reported")
+        let delegate = LifecycleDelegate()
+        let terminationCount = Locked(0)
+        delegate.onTermination = { terminationCount.withLock { $0 += 1 } }
+        let failures = Locked<[LocalProcessError]>([])
+        delegate.onFailure = { error in failures.withLock { $0.append(error) }; terminated.fulfill() }
+        let process = LocalProcess(delegate: delegate, dispatchQueue: queue, duplicateDescriptor: { _ in
+            errno = EMFILE
+            return -1
+        })
+        process.startProcess(executable: "/bin/sleep", args: ["30"])
+        XCTAssertFalse(process.running)
+        XCTAssertTrue(process.windingDown)
+        XCTAssertEqual(process.childfd, -1)
+        if case .failure(.alreadyRunning) = process.startProcessChecked(executable: "/bin/true") {} else {
+            XCTFail("The pending failure callback must block a new launch")
+        }
+        queue.resume()
+        wait(for: [terminated], timeout: 5)
+        XCTAssertFalse(process.windingDown)
+        queue.sync {}
+        XCTAssertEqual(terminationCount.withLock { $0 }, 0)
+        XCTAssertEqual(failures.withLock { $0 }, [.writeChannelFailed(EMFILE)])
+    }
+
+    func testHeadlessLaunchFailureDoesNotInvokeOnEnd() {
+        let queue = DispatchQueue(label: "SwiftTerm.headless-launch-failure")
+        let failed = expectation(description: "headless failure reported")
+        let errors = Locked<[LocalProcessError]>([])
+        let endings = Locked(0)
+        let terminal = HeadlessTerminal(queue: queue, onLaunchFailure: { error in
+            errors.withLock { $0.append(error) }
+            failed.fulfill()
+        }, onEnd: { _ in endings.withLock { $0 += 1 } })
+        terminal.process = LocalProcess(delegate: terminal, dispatchQueue: queue, duplicateDescriptor: { _ in
+            errno = EMFILE
+            return -1
+        })
+        terminal.process.startProcess(executable: "/bin/sh", args: ["-c", "exit 0"])
+        wait(for: [failed], timeout: 5)
+        queue.sync {}
+        XCTAssertEqual(errors.withLock { $0 }, [.writeChannelFailed(EMFILE)])
+        XCTAssertEqual(endings.withLock { $0 }, 0)
+    }
+
+    func testCheckedDescriptorFailureReturnsErrorWithoutTerminationCallback() {
+        let delegate = LifecycleDelegate()
+        let queue = DispatchQueue(label: "SwiftTerm.checked-failure")
+        let terminations = Locked(0)
+        delegate.onTermination = { terminations.withLock { $0 += 1 } }
+        var failOnce = true
+        let process = LocalProcess(delegate: delegate, dispatchQueue: queue, duplicateDescriptor: { fd in
+            if failOnce { failOnce = false; errno = EMFILE; return -1 }
+            return dup(fd)
+        })
+        if case .failure(.writeChannelFailed(EMFILE)) = process.startProcessChecked(executable: "/bin/sh", args: ["-c", "exit 0"]) {} else {
+            XCTFail("Descriptor failure must be returned")
+        }
+        queue.sync {}
+        XCTAssertEqual(terminations.withLock { $0 }, 0)
+        XCTAssertFalse(process.running)
+        XCTAssertFalse(process.windingDown)
+        XCTAssertEqual(process.childfd, -1)
+        let terminated = expectation(description: "successful relaunch terminated")
+        delegate.onTermination = { terminations.withLock { $0 += 1 }; terminated.fulfill() }
+        if case .failure(let error) = process.startProcessChecked(executable: "/bin/sh", args: ["-c", "exit 0"]) {
+            XCTFail("Relaunch failed: \(error)")
+        }
+        wait(for: [terminated], timeout: 5)
+        queue.sync {}
+        XCTAssertEqual(terminations.withLock { $0 }, 1)
+        XCTAssertEqual(delegate.exitCode, 0)
+    }
+
     func testForkptyPublishesExactPIDAndNormalizedExitCode() {
         let terminated = expectation(description: "process terminated")
         let delegate = LifecycleDelegate()
@@ -434,6 +513,195 @@ final class LocalProcessLifecycleTests: XCTestCase {
         XCTAssertEqual(secondDelegate.receivedData, Array("second".utf8))
     }
 
+    func testCheckedLaunchWriteAndResize() throws {
+        let delegate = LifecycleDelegate()
+        let terminated = expectation(description: "checked child exited")
+        delegate.onTermination = { terminated.fulfill() }
+        let process = LocalProcess(delegate: delegate)
+        let launched = process.startProcessChecked(executable: "/bin/sh", args: ["-c", "read line; stty size"])
+        if case .failure(.forkFailed(let code)) = launched,
+           code == EPERM || code == EACCES || code == ENXIO {
+            throw XCTSkip("PTY launch is unavailable in this environment: errno \(code)")
+        }
+        try launched.get()
+        if case .failure(.alreadyRunning) = process.startProcessChecked(executable: "/bin/sh") {
+            // The active session must remain unchanged.
+        } else {
+            XCTFail("A second launch must report an active session")
+        }
+        var size = winsize(ws_row: 47, ws_col: 91, ws_xpixel: 0, ws_ypixel: 0)
+        XCTAssertTrue(process.updateWindowSize(&size))
+        let written = expectation(description: "input write completed")
+        let result = Locked<Result<Int, LocalProcessError>?>(nil)
+        process.send(data: ArraySlice("\n".utf8)) { value in
+            result.withLock { $0 = value }
+            written.fulfill()
+        }
+        wait(for: [written, terminated], timeout: 5)
+        XCTAssertEqual(try result.withLock { try $0?.get() }, 1)
+        XCTAssertTrue(String(decoding: delegate.receivedData, as: UTF8.self).contains("47 91"))
+        XCTAssertFalse(process.updateWindowSize(&size))
+    }
+
+    func testCompletionReportsInactiveProcess() {
+        let delegate = LifecycleDelegate()
+        let process = LocalProcess(delegate: delegate)
+        let completed = expectation(description: "inactive write completed")
+        let result = Locked<Result<Int, LocalProcessError>?>(nil)
+        process.send(data: [1, 2, 3]) { value in
+            result.withLock { $0 = value }
+            completed.fulfill()
+        }
+        wait(for: [completed], timeout: 1)
+        XCTAssertEqual(result.withLock { $0 }, .failure(.notRunning))
+    }
+
+    func testDeinitAllowsQueuedInputToDrainBeforeEscalation() throws {
+        let destination = FileManager.default.temporaryDirectory.appendingPathComponent("swiftterm-drain-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: destination) }
+        let delegate = LifecycleDelegate()
+        var process: LocalProcess? = LocalProcess(delegate: delegate)
+        process!.killEscalationDelay = 5
+        try process!.startProcessChecked(executable: "/bin/sh", args: ["-c",
+            "trap '' HUP TERM; stty -echo raw; printf ready; sleep 0.2; dd bs=1 count=65536 of='\(destination.path)' 2>/dev/null"
+        ]).get()
+        let pid = process!.shellPid
+        defer { _ = kill(-pid, SIGKILL) }
+        XCTAssertTrue(waitUntil(timeout: 5, interval: 0.01) { delegate.receivedByteCount >= 5 })
+        let payload = [UInt8](repeating: 65, count: 65536)
+        let completed = expectation(description: "queued input drained")
+        let result = Locked<Result<Int, LocalProcessError>?>(nil)
+        process!.send(data: payload[...]) { value in
+            result.withLock { $0 = value }
+            completed.fulfill()
+        }
+        process = nil
+        wait(for: [completed], timeout: 4)
+        XCTAssertEqual(try result.withLock { try $0?.get() }, payload.count)
+        XCTAssertTrue(waitUntil(timeout: 4, interval: 0.01) {
+            (try? Data(contentsOf: destination).count) == payload.count
+        })
+        XCTAssertEqual(try Data(contentsOf: destination), Data(payload))
+    }
+
+    func testDeinitStopsBlockedWriteAfterReapWithDescendantHoldingSlave() throws {
+        let delegate = LifecycleDelegate()
+        var process: LocalProcess? = LocalProcess(delegate: delegate)
+        try process!.startProcessChecked(executable: "/bin/sh", args: ["-c",
+            "stty -echo raw; exec 9<&0; /bin/sh -c 'trap \"\" HUP TERM; while :; do sleep 1; done' & printf '%s\\n' $!; while :; do :; done"
+        ]).get()
+        let group = process!.shellPid
+        defer { _ = kill(-group, SIGKILL) }
+        XCTAssertTrue(waitUntil(timeout: 5, interval: 0.01) {
+            delegate.receivedData.contains(10)
+        })
+        let text = String(decoding: delegate.receivedData, as: UTF8.self)
+        let descendant = try XCTUnwrap(Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)), "Child output: \(text)")
+        let completed = expectation(description: "write cancelled after parent reap")
+        let result = Locked<Result<Int, LocalProcessError>?>(nil)
+        process!.send(data: Array(repeating: UInt8(65), count: 8 * 1024 * 1024)[...]) { value in
+            result.withLock { $0 = value }
+            completed.fulfill()
+        }
+        process = nil
+        wait(for: [completed], timeout: 5)
+        XCTAssertEqual(kill(descendant, 0), 0, "The descendant must still hold the slave during this check")
+        if case .failure(.writeFailed) = result.withLock({ $0 }) {} else {
+            XCTFail("The blocked write must fail after child reap")
+        }
+    }
+
+    func testPendingWriteCompletesWhenProcessIsReleased() throws {
+        let ready = expectation(description: "child no longer reads input")
+        let delegate = LifecycleDelegate()
+        let notified = Locked(false)
+        delegate.onData = {
+            let first = notified.withLock { value -> Bool in
+                guard !value else { return false }
+                value = true
+                return true
+            }
+            if first { ready.fulfill() }
+        }
+        var process: LocalProcess? = LocalProcess(delegate: delegate)
+        let launched = process!.startProcessChecked(executable: "/bin/sh", args: [
+            "-c", "stty -echo raw; printf ready; while :; do :; done"])
+        if case .failure(.forkFailed(let code)) = launched,
+           code == EPERM || code == EACCES || code == ENXIO {
+            throw XCTSkip("PTY launch is unavailable in this environment: errno \(code)")
+        }
+        try launched.get()
+        wait(for: [ready], timeout: 5)
+        let completed = expectation(description: "stopped write completed")
+        let result = Locked<Result<Int, LocalProcessError>?>(nil)
+        process!.send(data: Array(repeating: UInt8(65), count: 8 * 1024 * 1024)[...]) { value in
+            result.withLock { $0 = value }
+            completed.fulfill()
+        }
+        process = nil
+        wait(for: [completed], timeout: 5)
+        if case .failure(.writeFailed(let code, let written)) = result.withLock({ $0 }) {
+            XCTAssertNotEqual(code, 0)
+            XCTAssertLessThan(written, 8 * 1024 * 1024)
+        } else {
+            XCTFail("A stopped pending write must report failure")
+        }
+    }
+
+    func testCtrlCInterruptsCatWithDefaultSignals() throws {
+        try checkCtrlCInterruptsCat(blocked: false, ignored: false)
+    }
+
+    func testCtrlCInterruptsCatWithInheritedBlockedSIGINT() throws {
+        try checkCtrlCInterruptsCat(blocked: true, ignored: false)
+    }
+
+    func testCtrlCInterruptsCatWithInheritedIgnoredSIGINT() throws {
+        try checkCtrlCInterruptsCat(blocked: false, ignored: true)
+    }
+
+    private func checkCtrlCInterruptsCat(blocked: Bool, ignored: Bool) throws {
+        let delegate = LifecycleDelegate()
+        let exited = Locked(false)
+        delegate.onTermination = { exited.withLock { $0 = true } }
+        let process = LocalProcess(delegate: delegate)
+        defer { process.terminate() }
+
+        // Change only the launching thread's mask. Restore the parent's
+        // disposition immediately after fork, before the test waits for I/O.
+        var mask = sigset_t()
+        var previousMask = sigset_t()
+        sigemptyset(&mask)
+        if blocked { sigaddset(&mask, SIGINT) }
+        XCTAssertEqual(pthread_sigmask(SIG_SETMASK, &mask, &previousMask), 0)
+        var previousAction = sigaction()
+        XCTAssertEqual(sigaction(SIGINT, nil, &previousAction), 0)
+        _ = signal(SIGINT, ignored ? SIG_IGN : SIG_DFL)
+        let launched = process.startProcessChecked(executable: "/bin/cat")
+        XCTAssertEqual(sigaction(SIGINT, &previousAction, nil), 0)
+        XCTAssertEqual(pthread_sigmask(SIG_SETMASK, &previousMask, nil), 0)
+        try launched.get()
+
+        let fd = process.childfd
+        let pid = process.shellPid
+        XCTAssertGreaterThan(pid, 0)
+        XCTAssertEqual(tcgetpgrp(fd), pid, "The child must own the foreground PTY group")
+        var attributes = termios()
+        XCTAssertEqual(tcgetattr(fd, &attributes), 0)
+        XCTAssertNotEqual(attributes.c_lflag & tcflag_t(ISIG), 0)
+        attributes.c_lflag &= ~tcflag_t(ECHO)
+        withUnsafeMutableBytes(of: &attributes.c_cc) { $0[Int(VINTR)] = 3 }
+        XCTAssertEqual(tcsetattr(fd, TCSANOW, &attributes), 0)
+        process.send(data: Array("cat-ready\n".utf8)[...])
+        XCTAssertTrue(waitUntil(timeout: 2) {
+            String(decoding: delegate.receivedData, as: UTF8.self).contains("cat-ready")
+        }, "Wait for cat to read and write, not for the PTY echo")
+        process.send(data: [3])
+        XCTAssertTrue(waitUntil(timeout: 1) { exited.withLock { $0 } },
+                      "VINTR must interrupt cat even when the server blocks or ignores SIGINT")
+        XCTAssertNil(delegate.exitCode)
+    }
+
     private func waitUntil(
         timeout: TimeInterval,
         interval: TimeInterval = 0.001,
@@ -452,6 +720,7 @@ private final class LifecycleDelegate: LocalProcessDelegate, @unchecked Sendable
     private let dataDelay: TimeInterval
     private var storedExitCode: Int32?
     private var storedReceivedData: [UInt8] = []
+    var onFailure: ((LocalProcessError) -> Void)?
     private var storedOnTermination: (() -> Void)?
     private var storedOnData: (() -> Void)?
 
@@ -501,6 +770,10 @@ private final class LifecycleDelegate: LocalProcessDelegate, @unchecked Sendable
         lock.lock()
         defer { lock.unlock() }
         return storedReceivedData
+    }
+
+    func processFailedToStart(_ source: LocalProcess, error: LocalProcessError) {
+        onFailure?(error)
     }
 
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {

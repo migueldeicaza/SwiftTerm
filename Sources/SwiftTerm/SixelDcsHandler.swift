@@ -11,26 +11,70 @@ import Foundation
 // then calls into the front-end to attach the parsed image
 // into its internal representation to display the image.
 class SixelDcsHandler : DcsHandler {
+    static let maximumInputBytes = 64 * 1024 * 1024
+    static let maximumPixelBytes = 64 * 1024 * 1024
+    static let maximumPixels = maximumPixelBytes / 4
+    static let maximumPixelWrites = 4 * maximumPixels
+
+    // Keep the limits local to Sixel. Tests can use smaller values to check
+    // each boundary without allocating a full-size bitmap.
+    struct Limits: Sendable {
+        let maximumInputBytes: Int
+        let maximumPixels: Int
+        let maximumPixelWrites: Int
+
+        static let `default` = Limits()
+
+        init(maximumInputBytes: Int = SixelDcsHandler.maximumInputBytes,
+             maximumPixels: Int = SixelDcsHandler.maximumPixels,
+             maximumPixelWrites: Int = SixelDcsHandler.maximumPixelWrites) {
+            precondition(maximumInputBytes >= 0)
+            precondition(maximumPixels > 0 && maximumPixels <= Int.max / 4)
+            precondition(maximumPixelWrites >= 0)
+            self.maximumInputBytes = maximumInputBytes
+            self.maximumPixels = maximumPixels
+            self.maximumPixelWrites = maximumPixelWrites
+        }
+    }
+
+    private let limits: Limits
     var data: [UInt8]
+    private var invalid = false
+    private var pixelWrites = 0
     // Nested lifetime: created per DCS sequence and held in the parser's
     // `activeDcsHandler` for that sequence only.
     unowned(unsafe) var terminal: Terminal
 
-    public init (terminal: Terminal)
+    public init (terminal: Terminal, limits: Limits = .default)
     {
         self.terminal = terminal
+        self.limits = limits
         data = []
     }
     
     func hook (collect: cstring, parameters: CsiParameters,  flag: UInt8)
     {
         data = []
+        pixels = []
+        palette = [:]
+        invalid = false
+        pixelWrites = 0
     }
     
     func put (data : ArraySlice<UInt8>) {
-        for x in data {
-            self.data.append(x)
+        guard !invalid else { return }
+        guard data.count <= limits.maximumInputBytes - self.data.count else {
+            reject()
+            return
         }
+        self.data.append(contentsOf: data)
+    }
+
+    private func reject() {
+        invalid = true
+        data = []
+        pixels = []
+        palette = [:]
     }
     
     private func nextInt(_ p: inout Int) -> Int? {
@@ -43,6 +87,11 @@ class SixelDcsHandler : DcsHandler {
             
             let digit = Int(c) - 48
             if let existing = result {
+                guard existing <= (Int.max - digit) / 10 else {
+                    reject()
+                    p = data.count
+                    return nil
+                }
                 result = 10 * existing + digit
             } else {
                 result = digit
@@ -50,7 +99,7 @@ class SixelDcsHandler : DcsHandler {
             
             p += 1
         }
-        return nil
+        return result
     }
     
     private func nextIntArray(_ p: inout Int) -> [Int] {
@@ -65,27 +114,25 @@ class SixelDcsHandler : DcsHandler {
                 break
             }
             
+            guard result.count < 32 else {
+                reject()
+                break
+            }
             result.append(next)
         }
         return result
     }
     
-    private func skipToCharacter(_ p: inout Int, _ char: Character) {
-        let value = char.asciiValue
-        while p < data.count {
-            if data[p] == value {
-                return
-            }
-            p += 1
-        }
-    }
-        
     let poundChar: UInt8 = 0x23 /* # */
     
     func unhook () {
+        defer {
+            data = []
+            palette = [:]
+        }
         // A sequence with no payload carries no image. The parser now calls
         // `unhook` for every sequence it started, so this case is reachable.
-        guard !data.isEmpty else {
+        guard !invalid, !data.isEmpty else {
             return
         }
         var p = 0
@@ -94,13 +141,13 @@ class SixelDcsHandler : DcsHandler {
         y = 0
         maxX = 0
         maxY = 0
+        pixelWrites = 0
         
         // First iteration, scan the image to compute the size
-        skipToCharacter(&p, "#")
         let skipped = p
         var colorindex = 15
         
-        while p + 1 < data.count {
+        while p < data.count && !invalid {
             if data[p] == poundChar {
                 p += 1 // jump past #
                 
@@ -113,7 +160,7 @@ class SixelDcsHandler : DcsHandler {
                 continue
             }
             let oldP = p
-            sizePixels(&p, colorindex)
+            sizePixels(&p)
             // stop if there is no advancement
             if p <= oldP {
                 break
@@ -127,11 +174,13 @@ class SixelDcsHandler : DcsHandler {
         
         // Allocate the buffer, and parse again, this time
         // plotting the data into the pixels buffer
-        pixels = Array.init(repeating: 0, count: maxX*maxY*4)
+        guard !invalid, maxX > 0, maxY > 0 else { return }
+        guard validDimensions(maxX, maxY) else { reject(); return }
+        pixels = Array.init(repeating: 0, count: maxX * maxY * 4)
         p = skipped
         x = 0
         y = 0
-        while p + 1 < data.count {
+        while p < data.count && !invalid {
             if data[p] == poundChar {
                 p += 1 // jump past #
                 
@@ -161,6 +210,7 @@ class SixelDcsHandler : DcsHandler {
             }
         }
 
+        guard !invalid else { return }
         terminal.tdel?.createImageFromBitmap(source: terminal, bytes: &pixels, width: maxX, height: maxY)
     }
     
@@ -190,71 +240,61 @@ class SixelDcsHandler : DcsHandler {
         
         if color.count >= 5 && color[1] == 2 {
             let index = color[0]
-            let color: UInt32 = UInt32 ((pctToByte (color[2]) << 24) | (pctToByte(color [3]) << 16) | (pctToByte(color [4]) << 8) | 0xff)
+            let color: UInt32 = (UInt32(pctToByte(color[2])) << 24) | (UInt32(pctToByte(color[3])) << 16) | (UInt32(pctToByte(color[4])) << 8) | 0xff
             palette[index] = color
         }
     }
 
-    // read lines building up bitmap[y][x] with index into
-    // or -1 to mean transparent
-    private func sizePixels(_ p: inout Int, _ color: Int) {
-        func write(sixel: Int) {
-            if (sixel & 32) != 0 {
-                maxY = max (y&+6, maxY)
-            }
-            if (sixel & 16) != 0 {
-                maxY = max (y&+5, maxY)
-            }
-            if (sixel & 8) != 0 {
-                maxY = max (y&+4, maxY)
-            }
-            if (sixel & 4) != 0 {
-                maxY = max (y&+3, maxY)
-            }
-            if (sixel & 2) != 0 {
-                maxY = max (y&+2, maxY)
-            }
-            if (sixel & 1) != 0 {
-                maxY = max (y&+1, maxY)
-            }
-            x = x &+ 1
-        }
+    private func validDimensions(_ width: Int, _ height: Int) -> Bool {
+        width >= 0 && height >= 0 && width <= limits.maximumPixels && height <= limits.maximumPixels
+            && (height == 0 || width <= limits.maximumPixels / height)
+    }
 
+    // Check dimensions and expanded pixel work before allocating the bitmap.
+    private func sizePixels(_ p: inout Int) {
         var reps = 1
-        while p < data.count && data[p] != poundChar {
+        while p < data.count && data[p] != poundChar && !invalid {
             let c = data[p]
-            p = p &+ 1
-            
+            p += 1
             switch c {
-                
-            case 33: // ! repeats the next sixel a number of times
-                guard let value = nextInt(&p) else {
-                    // ignore repeat
-                    continue
+            case 33:
+                guard let value = nextInt(&p) else { continue }
+                guard value <= limits.maximumPixels else { reject(); return }
+                reps = max(1, value)
+            case 34: // Raster dimensions are hints; the painted area sets the bitmap size.
+                let attributes = nextIntArray(&p)
+                if attributes.count >= 4 && !validDimensions(attributes[2], attributes[3]) {
+                    reject()
+                    return
                 }
-                reps = value
-
-            // "$"  (dollar sign) character moves the sixel "cursor" to the "beginning of the current (same) line
             case 36:
-                maxX = max (maxX, x)
+                maxX = max(maxX, x)
                 x = 0
-                
-            // (hyphen or minus sign) character moves the sixel "cursor" to the "beginning of the next line
             case 45:
-                y = y &+ 6
-                maxX = max (maxX, x)
+                guard y <= limits.maximumPixels - 6 else { reject(); return }
+                y += 6
+                maxX = max(maxX, x)
                 x = 0
-                
             case 63...126:
-                for _ in 0..<reps {
-                    write(sixel: Int(c) - 63)
+                let sixel = Int(c) - 63
+                guard reps <= limits.maximumPixels - x else { reject(); return }
+                // Count only set pixels. Transparent runs are skipped in one
+                // step during decoding, even across many colour passes.
+                let workPerColumn = sixel.nonzeroBitCount
+                if workPerColumn > 0 {
+                    guard reps <= (limits.maximumPixelWrites - pixelWrites) / workPerColumn else {
+                        reject()
+                        return
+                    }
+                    pixelWrites += reps * workPerColumn
                 }
-                // back to not repeating
+                x += reps
+                for bit in 0..<6 where sixel & (1 << bit) != 0 {
+                    guard y <= limits.maximumPixels - bit - 1 else { reject(); return }
+                    maxY = max(maxY, y + bit + 1)
+                }
+                guard validDimensions(max(maxX, x), maxY) else { reject(); return }
                 reps = 1
-                
-            case 10, 13:
-                break // ignore newline
-                
             default:
                 break
             }
@@ -271,33 +311,31 @@ class SixelDcsHandler : DcsHandler {
             rgba = known
         } else if color < terminal.defaultAnsiColors.count {
             let standard = terminal.defaultAnsiColors[color]
-            rgba = UInt32 ((standard.red >> 8) << 24) |
-                UInt32 ((standard.green >> 8) << 16) |
-                UInt32 ((standard.blue >> 8) << 8) |
+            rgba = (UInt32(standard.red >> 8) << 24) |
+                (UInt32(standard.green >> 8) << 16) |
+                (UInt32(standard.blue >> 8) << 8) |
                 UInt32 (0xff)
         } else {
             rgba = transparent
         }
         
         func write(sixel: Int) {
-            var k = 0
-            while k < 6 {
-                let on = (sixel & (1 << k)) != 0
-                if on {
-                    let s = ((y &+ k)*maxX &+ x) * 4
-                    pixels[s]   = UInt8 (rgba >> 24)
-                    pixels[s &+ 1] = UInt8 ((rgba >> 16) & 0xff)
-                    pixels[s &+ 2] = UInt8 ((rgba >> 8) & 0xff)
-                    pixels[s &+ 3] = UInt8 ((rgba) & 0xff)
-                }
-                k = k &+ 1
+            var bits = sixel
+            while bits != 0 {
+                let k = bits.trailingZeroBitCount
+                let s = ((y + k) * maxX + x) * 4
+                pixels[s]   = UInt8 (rgba >> 24)
+                pixels[s &+ 1] = UInt8 ((rgba >> 16) & 0xff)
+                pixels[s &+ 2] = UInt8 ((rgba >> 8) & 0xff)
+                pixels[s &+ 3] = UInt8 ((rgba) & 0xff)
+                bits &= bits - 1
             }
             
             x = x &+ 1
         }
     
         var reps = 1
-        while p < data.count && data[p] != poundChar {
+        while p < data.count && data[p] != poundChar && !invalid {
             let c = data[p]
             p += 1
             
@@ -307,7 +345,10 @@ class SixelDcsHandler : DcsHandler {
                     // ignore repeat
                     continue
                 }
-                reps = value
+                reps = max(1, value)
+
+            case 34:
+                _ = nextIntArray(&p) // Raster attributes were checked in the first pass.
 
             // "$"  (dollar sign) character moves the sixel "cursor" to the "beginning of the current (same) line
             case 36:
@@ -319,6 +360,12 @@ class SixelDcsHandler : DcsHandler {
                 x = 0
                 
             case 63...126:
+                // Transparent padding changes the column but paints no pixels.
+                if c == 63 {
+                    x += reps
+                    reps = 1
+                    continue
+                }
                 for _ in 0..<reps {
                     write(sixel: Int(c) - 63)
                 }

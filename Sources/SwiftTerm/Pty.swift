@@ -7,7 +7,7 @@
 
 #if !SWIFTTERM_EMBEDDED
 import Foundation
-#if !os(iOS) && !os(tvOS) && !os(Windows)
+#if !os(WASI) && !os(iOS) && !os(tvOS) && !os(Windows)
 
 /**
  * APIs to assist in controlling a Unix pseudo-terminal from Swift.
@@ -93,13 +93,43 @@ public class PseudoTerminalHelpers {
             }
         }
 
+        // Build the signal state before fork. The child must use only
+        // async-signal-safe system calls until execve.
+        var defaultAction = sigaction()
+#if canImport(Darwin)
+        defaultAction.__sigaction_u.__sa_handler = SIG_DFL
+#elseif canImport(Musl)
+        defaultAction.__sa_handler.sa_handler = SIG_DFL
+#else
+        defaultAction.__sigaction_handler.sa_handler = SIG_DFL
+#endif
+        sigemptyset(&defaultAction.sa_mask)
+        defaultAction.sa_flags = 0
+        var emptyMask = sigset_t()
+        sigemptyset(&emptyMask)
         var master: Int32 = 0
-        
+
         let pid = forkpty(&master, nil, nil, &desiredWindowSize)
         if pid < 0 {
             return nil
         }
         if pid == 0 {
+            // Signal ignores and the calling thread's mask survive exec.
+            // A server can ignore SIGINT for a DispatchSource or block it on
+            // a worker thread. Do not pass that policy to terminal programs.
+            // Reset dispositions before unblocking, so no inherited handler
+            // can run in the child between fork and exec. Some platforms
+            // reserve signal numbers; sigaction rejects those with EINVAL.
+            var number: Int32 = 1
+            while number < NSIG {
+                if number != SIGKILL && number != SIGSTOP {
+                    _ = sigaction(number, &defaultAction, nil)
+                }
+                number += 1
+            }
+            if sigprocmask(SIG_SETMASK, &emptyMask, nil) != 0 {
+                _exit(127)
+            }
             if let cCurrentDirectory {
                 _ = chdir(cCurrentDirectory)
             }

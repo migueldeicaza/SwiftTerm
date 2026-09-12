@@ -12,7 +12,9 @@ struct SwiftTermWasmSmoke {
         let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 8, rows: 2, scrollback: 0))
         terminal.feed(text: "WASM")
         let output = terminal.getBufferAsData()
+        #if SWIFTTERM_EMBEDDED
         terminal.close()
+        #endif
         guard output.starts(with: [87, 65, 83, 77]) else { fatalError("SwiftTerm WASM smoke check failed") }
         print("SwiftTerm WASM smoke check passed")
     }

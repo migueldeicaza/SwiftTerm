@@ -6,7 +6,9 @@
 
 #if !SWIFTTERM_EMBEDDED
 import Foundation
-#if canImport(Musl)
+#if os(WASI)
+import WASILibc
+#elseif canImport(Musl)
 // The Swift Static Linux SDK builds against musl, where the C library module
 // is `Musl` and `Glibc` does not exist.
 import Musl
@@ -33,7 +35,7 @@ import PNG
 import LZ77
 #endif
 
-#if !os(Windows)
+#if !os(Windows) && !os(WASI)
 @_silgen_name("shm_open")
 private func swiftShmOpen(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t) -> Int32
 #endif
@@ -295,6 +297,8 @@ extension Terminal {
                     kittyGraphicsState.pending = nil
                     return
                 }
+                // Transfer ownership before append so Array can grow in place.
+                kittyGraphicsState.pending = nil
                 if control.suppressResponses > pending.control.suppressResponses {
                     pending.control.suppressResponses = control.suppressResponses
                 }
@@ -305,15 +309,14 @@ extension Terminal {
         }
 
         if var pending = kittyGraphicsState.pending {
+            kittyGraphicsState.pending = nil
             guard pending.base64Payload.count <= Terminal.kittyMaxApcBytes - payload.count else {
-                kittyGraphicsState.pending = nil
                 return
             }
             if control.suppressResponses > pending.control.suppressResponses {
                 pending.control.suppressResponses = control.suppressResponses
             }
             pending.base64Payload.append(contentsOf: payload)
-            kittyGraphicsState.pending = nil
             processKittyGraphics(control: pending.control, base64Payload: pending.base64Payload)
             return
         }
@@ -1049,15 +1052,52 @@ extension Terminal {
         return (cropped, cropWidth, cropHeight)
     }
 
+    /// Decode image bytes with the core decoder. WASI supports PNG.
+    public func decodeTerminalImage(_ data: TerminalData) -> (bytes: [UInt8], width: Int, height: Int)? {
+        decodePngToRgba(data)
+    }
+
+    /// Read IHDR before invoking a decoder that can allocate from its dimensions.
+    func validateKittyPNGHeader(_ data: Data) -> Bool {
+        let signature: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
+        guard data.count >= 33, data.starts(with: signature) else { return false }
+        let header = Array(data.prefix(33))
+        guard header[8..<16].elementsEqual([0, 0, 0, 13, 73, 72, 68, 82]) else { return false }
+        func word(_ offset: Int) -> UInt32 {
+            (UInt32(header[offset]) << 24) | (UInt32(header[offset + 1]) << 16)
+                | (UInt32(header[offset + 2]) << 8) | UInt32(header[offset + 3])
+        }
+        guard let width = Int(exactly: word(16)), let height = Int(exactly: word(20)) else { return false }
+        let depth = Int(header[24])
+        let channels: Int
+        switch (header[25], depth) {
+        case (0, 1), (0, 2), (0, 4), (0, 8), (0, 16): channels = 1
+        case (2, 8), (2, 16): channels = 3
+        case (3, 1), (3, 2), (3, 4), (3, 8): channels = 1
+        case (4, 8), (4, 16): channels = 2
+        case (6, 8), (6, 16): channels = 4
+        default: return false
+        }
+        // Apply the existing per-buffer limit to samples and RGBA8 output.
+        // This checks the larger buffer, not total peak decoder memory.
+        let bytesPerPixel = max(4, (channels * depth + 7) / 8)
+        return validateKittyRawDimensions(width: width, height: height, bytesPerPixel: bytesPerPixel)
+    }
+
     private func decodePngToRgba(_ data: Data) -> (bytes: [UInt8], width: Int, height: Int)? {
         #if canImport(ImageIO) && canImport(CoreGraphics)
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        if data.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]), !validateKittyPNGHeader(data) {
+            return nil
+        }
+        let imageOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(data as CFData, imageOptions),
+              let dimensions = validatedKittyImageDimensions(source),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, imageOptions) else {
             return nil
         }
         let width = image.width
         let height = image.height
-        guard validateKittyDimensions(width: width, height: height) else {
+        guard width == dimensions.width, height == dimensions.height else {
             return nil
         }
         let bytesPerPixel = 4
@@ -1091,6 +1131,7 @@ extension Terminal {
         }
         return (output, width, height)
         #elseif canImport(PNG)
+        guard validateKittyPNGHeader(data) else { return nil }
         var source = KittyPngDataSource(bytes: Array(data))
         guard let image = try? PNG.Image.decompress(stream: &source),
               validateKittyDimensions(width: image.size.x, height: image.size.y) else {
@@ -1230,22 +1271,22 @@ extension Terminal {
         return pixelCount <= limit
     }
 
-    private func validateKittyPngDimensions(data: Data) -> Bool {
-        #if canImport(ImageIO)
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+    #if canImport(ImageIO)
+    /// Check metadata for every ImageIO container before creating its bitmap.
+    func validatedKittyImageDimensions(_ source: CGImageSource) -> (width: Int, height: Int)? {
+        let metadataOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let props = CGImageSourceCopyPropertiesAtIndex(source, 0, metadataOptions) as? [CFString: Any],
               let width = props[kCGImagePropertyPixelWidth] as? Int,
-              let height = props[kCGImagePropertyPixelHeight] as? Int else {
-            return false
+              let height = props[kCGImagePropertyPixelHeight] as? Int,
+              validateKittyRawDimensions(width: width, height: height, bytesPerPixel: 4) else {
+            return nil
         }
-        return validateKittyDimensions(width: width, height: height)
-        #else
-        return true
-        #endif
+        return (width, height)
     }
+    #endif
 
     private func loadKittyFilePayload(control: KittyGraphicsControl, base64Payload: [UInt8], temporary: Bool) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
-        #if os(Windows)
+        #if os(Windows) || os(WASI)
         return (nil, "ENOTSUP: unsupported transmission")
         #else
         guard let pathData = decodeKittyBase64Payload(base64Payload), !pathData.isEmpty else {
@@ -1287,7 +1328,7 @@ extension Terminal {
     }
 
     private func loadKittySharedMemoryPayload(control: KittyGraphicsControl, base64Payload: [UInt8]) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
-        #if os(Windows)
+        #if os(Windows) || os(WASI)
         return (nil, "ENOTSUP: unsupported transmission")
         #else
         guard let pathData = decodeKittyBase64Payload(base64Payload), !pathData.isEmpty else {
@@ -1342,7 +1383,7 @@ extension Terminal {
         }
     }
 
-    #if os(Windows)
+    #if os(Windows) || os(WASI)
     private func resolveKittyRealPath(_ path: String) -> String? {
         nil
     }
@@ -1379,7 +1420,7 @@ extension Terminal {
         return path.hasPrefix(prefix)
     }
 
-    #if !os(Windows)
+    #if !os(Windows) && !os(WASI)
     private func readKittyFileData(path: String, offset: Int, size: Int, deleteAfterRead: Bool) -> Data? {
         guard offset >= 0, size >= 0 else {
             return nil
@@ -1442,7 +1483,7 @@ extension Terminal {
     }
     #endif
 
-    #if !os(Windows)
+    #if !os(Windows) && !os(WASI)
     private func readKittySharedMemory(name: String, expectedSize: Int?, offset: Int, size: Int) -> Data? {
         guard offset >= 0, size >= 0 else {
             return nil
@@ -1683,15 +1724,16 @@ extension Terminal {
     }
 
     private func nextKittyPlacementId(imageId: UInt32) -> UInt32 {
+        let state = kittyGraphicsState
         while true {
-            let id = kittyGraphicsState.nextPlacementId
-            kittyGraphicsState.nextPlacementId &+= 1
+            let id = state.nextPlacementId
+            state.nextPlacementId &+= 1
             guard id != 0 else { continue }
             let key = KittyPlacementKey(
                 imageId: imageId,
                 placementId: id,
                 isAnonymous: true)
-            if kittyGraphicsState.placementsByKey[key] == nil {
+            if state.placementsByKey[key] == nil {
                 return id
             }
         }
@@ -2471,26 +2513,28 @@ extension Terminal {
     }
 
     private func scheduleKittyAnimationTimer() {
+        #if os(WASI)
+        hostEventQueue.cancelTimer(.kittyAnimation)
+        #endif
         kittyAnimationTimerSerial &+= 1
         let serial = kittyAnimationTimerSerial
-        let now = DispatchTime.now().uptimeNanoseconds
+        let now = TerminalEventTime.now().uptimeNanoseconds
         guard let deadline = kittyGraphicsAdvanceAnimations(monotonicNanoseconds: now) else { return }
         // The work item re-arms itself for as long as an animation is running,
         // so it must not keep the terminal alive: a looping animation would
         // otherwise pin the terminal, both buffers and every decoded image for
         // the lifetime of the process after the view goes away.
-        let workItem = DispatchWorkItem { [weak self] in
+        let workItem = TerminalEventWorkItem { [weak self] in
             guard let self else { return }
             self.terminalLock.withLock {
                 guard self.kittyAnimationTimerSerial == serial else { return }
                 _ = self.kittyGraphicsAdvanceAnimations(
-                    monotonicNanoseconds: DispatchTime.now().uptimeNanoseconds)
+                    monotonicNanoseconds: TerminalEventTime.now().uptimeNanoseconds)
                 self.scheduleKittyAnimationTimer()
             }
         }
-        IOTimerQueue.shared.asyncAfter(
-            deadline: .init(uptimeNanoseconds: deadline),
-            execute: workItem)
+        scheduleEventTimer(.kittyAnimation,
+            deadline: .init(uptimeNanoseconds: deadline), execute: workItem)
     }
 
     /// Invalidates the previous screen's timer and starts the active screen's
@@ -2513,6 +2557,12 @@ extension Terminal {
     public func kittyGraphicsRenderSnapshot() -> KittyGraphicsRenderSnapshot {
         kittyGraphicsState.activeIsAlternate = isCurrentBufferAlternate
         let store = kittyGraphicsState.active
+        if store.imagesById.isEmpty && store.placementsByKey.isEmpty {
+            return KittyGraphicsRenderSnapshot(
+                storageGeneration: store.generation,
+                imagesById: [:],
+                placements: [])
+        }
         var images: [UInt32: KittyGraphicsRenderImage] = [:]
         images.reserveCapacity(store.imagesById.count)
 

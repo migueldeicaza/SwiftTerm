@@ -110,6 +110,7 @@ change terminal state.
 - ``getUpdateRange()``
 - ``getScrollInvariantUpdateRange()``
 - ``clearUpdateRange()``
+- ``makeRenderSnapshot(scope:)``
 
 ### Mouse Events
 
@@ -118,6 +119,23 @@ change terminal state.
 - ``sendEvent(buttonFlags:x:y:)``
 - ``sendEvent(buttonFlags:x:y:pixelX:pixelY:)``
 - ``sendMotion(buttonFlags:x:y:pixelX:pixelY:)``
+- ``sendHostMouse(action:button:modifiers:col:row:pixelX:pixelY:)``
+- ``hostPointerModes``
+
+### Host Input
+
+- ``hostInputModes``
+- ``sendHostKey(key:code:modifiers:eventType:text:shiftedKey:baseLayoutKey:)``
+- ``sendHostText(_:)``
+- ``sendHostTextPaste(_:allowUnsafe:)``
+
+### Viewport and Selection
+
+- ``viewportState()``
+- ``scrollViewport(_:absolute:)``
+- ``updateSelection(_:action:column:row:mode:)``
+- ``selectionState(_:)``
+- ``selectionText(_:)``
 
 ### Titles
 

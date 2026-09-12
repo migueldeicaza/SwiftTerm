@@ -5,7 +5,7 @@
 //  Serializes access to a Terminal and its view-layer services.
 //
 
-#if !SWIFTTERM_EMBEDDED
+#if !SWIFTTERM_EMBEDDED && !os(WASI)
 import Foundation
 
 /// Serializes access to a `Terminal` and its view-layer services.
