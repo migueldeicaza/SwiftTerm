@@ -99,6 +99,7 @@ Use the narrowest read API that gives the data you need:
 | Grid size | ``TerminalView/terminalDimensions`` | A copied `TerminalDimensions` value with columns and rows. |
 | Status or visible screen | ``TerminalView/terminalStateSnapshot()`` | A copied ``TerminalViewStateSnapshot``. It includes dimensions, cursor state, viewport row, palette state, and visible rows. |
 | Text from the active, normal, or alternate buffer | ``TerminalView/getBufferAsData(kind:encoding:)`` | A copied `Data` value. Select the required ``Terminal/BufferKind``. |
+| Whether the application enabled the kitty keyboard protocol | ``TerminalView/keyboardEnhancementFlags`` | A copied `KittyKeyboardFlags`. Read it before a host event monitor rebinds a key the view would otherwise encode itself. |
 | A terminal event outside the displayed content | `TerminalView.observeOscEvents(_:)` | A copied ``TerminalOscEvent`` goes to an `@Sendable` handler. Retain its ``TerminalOscObservation`` token for the required lifetime. |
 
 `TerminalView.observeOscEvents(_:)` is for passive observation, such as OSC 9,
@@ -240,6 +241,7 @@ Before you release the updated application:
 - ``Terminal/registerOscHandler(code:handler:)``
 - ``TerminalView/terminalDimensions``
 - ``TerminalView/terminalStateSnapshot()``
+- ``TerminalView/keyboardEnhancementFlags``
 - ``TerminalView/getBufferAsData(kind:encoding:)``
 - ``TerminalView/feedSender``
 - ``TerminalView/send(data:)``

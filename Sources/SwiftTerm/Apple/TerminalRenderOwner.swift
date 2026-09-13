@@ -298,6 +298,15 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func keyboardEnhancementFlags() -> KittyKeyboardFlags {
+        guard let terminal = currentSession()?.terminal else {
+            return []
+        }
+        return terminal.terminalLock.withLock {
+            terminal.keyboardEnhancementFlags
+        }
+    }
+
     func bufferData(kind: Terminal.BufferKind,
                     encoding: String.Encoding) -> Data {
         guard let terminal = currentSession()?.terminal else { return Data() }

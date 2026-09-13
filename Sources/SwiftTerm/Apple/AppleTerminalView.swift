@@ -1625,6 +1625,20 @@ extension TerminalView {
         renderOwner.dimensions()
     }
 
+    /// The kitty keyboard protocol flags the running application has enabled, as a copied value.
+    ///
+    /// A host that handles key events in front of the view needs this to know when SwiftTerm
+    /// will encode a key itself. `keyDown` is `public override` rather than `open`, so an
+    /// application that rebinds a chord does it in an event monitor ahead of the view; when the
+    /// application running in the terminal has enabled the protocol, that monitor has to stand
+    /// down and let SwiftTerm produce the real encoding. The view's own key handling reads the
+    /// same flags for the same decision.
+    ///
+    /// The flags are per-buffer: switching to the alternate buffer swaps in its own state.
+    public nonisolated var keyboardEnhancementFlags: KittyKeyboardFlags {
+        renderOwner.keyboardEnhancementFlags()
+    }
+
     /// Returns copied terminal state for status displays and diagnostics.
     public nonisolated func terminalStateSnapshot() -> TerminalViewStateSnapshot {
         renderOwner.stateSnapshot()
