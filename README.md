@@ -118,6 +118,8 @@ with the `Embedded` package trait. It omits the Apple views, local-process
 host, image decoders, and Kitty Clipboard. Swift 6.2 or later is required;
 Xcode builds require Xcode 26 or later. The portable host APIs are documented
 in the [DocC guide](Sources/SwiftTerm/Documentation.docc/PortableHosting.md).
+See the [Embedded Swift build and integration guide](Docs/embedded-swift.md)
+for trait, compiler, and target settings.
 
 ## WebAssembly
 

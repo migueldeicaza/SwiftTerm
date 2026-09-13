@@ -17,6 +17,10 @@ mouse, selection, and viewport operations. The bundled `Web/` TypeScript
 package builds on that API for browsers, workers, and Node.js; its host supplies
 the renderer and process transport.
 
+For the `Embedded` and `Wasm` package traits, build requirements, and portable
+core limitations, see <doc:PortableBuilds>. For renderer and input integration,
+see <doc:PortableHosting>.
+
 The library has been used in several commercially available SSH clients, including
 [Secure Shellfish](https://apps.apple.com/us/app/secure-shellfish-ssh-files/id1336634154),
 [La Terminal](https://apps.apple.com/us/app/la-terminal-ssh-client/id1629902861),
@@ -58,6 +62,7 @@ testing, and screen-scraping terminal output.
 - Selection and search with a built-in macOS find bar and programmable search APIs
 - Thread-safe ``Terminal`` instances
 - Terminal session recording and playback with `termcast`
+- Foundation-free portable builds for Embedded Swift and WASI WebAssembly — see <doc:PortableBuilds>
 
 ## Topics
 
@@ -89,6 +94,7 @@ testing, and screen-scraping terminal output.
 
 ### Portable and Web Hosts
 
+- <doc:PortableBuilds>
 - <doc:PortableHosting>
 - ``TerminalRenderSnapshot``
 - ``TerminalViewportState``
@@ -110,6 +116,7 @@ testing, and screen-scraping terminal output.
 - <doc:KittyGraphicsProtocol>
 - <doc:KittyClipboardProtocol>
 - <doc:SSHIntegration>
+- <doc:PortableBuilds>
 - <doc:PortableHosting>
 
 ### Terminal Delegate
