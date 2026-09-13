@@ -66,7 +66,46 @@ struct GlyphMetricsParityTests {
             cellDimension: cellDimension,
             baselineFromBottom: CellGeometry.baselineOffset(normalFont: normalFont,
                                                             cellHeight: cellDimension.height),
-            renderingScale: renderingScale)
+            renderingScale: renderingScale,
+            fitSingleCell: columnWidth == 1 && GlyphSlotFit.requiresFit(
+                font: glyphFont, normalFont: normalFont, columnWidth: columnWidth))
+    }
+
+    @Test func asymmetricSingleCellInkStaysInsideSlot() {
+        for origin: CGFloat in [-2, 4] {
+            let metrics = GlyphMetrics(inkBounds: CGRect(x: origin, y: 0, width: 12, height: 10),
+                                       horizontalAdvance: 16, fontSize: 16, fitInkSizeScale: 1)
+            let fit = GlyphSlotFit.calculate(metrics: metrics, columnWidth: 1,
+                cellDimension: CGSize(width: 8, height: 20), baselineFromBottom: 3,
+                renderingScale: 1, fitSingleCell: true)
+            #expect(metrics.fitInkBounds.minX * fit.scale + fit.dx >= -tolerance)
+            #expect(metrics.fitInkBounds.maxX * fit.scale + fit.dx <= 8 + tolerance)
+        }
+    }
+
+    @Test func substitutedSingleCellGlyphFitsAndMatchesScaledMetrics() throws {
+        let normal = font()
+        // A system symbol face keeps the regression independent of installed Nerd Fonts.
+        let (symbolFont, glyph) = try shapedGlyph("●", base: font("Apple Symbols", size: 32))
+        #expect((CTFontCopyFamilyName(symbolFont) as String) != (CTFontCopyFamilyName(normal) as String))
+        let metrics = GlyphMetrics.measure(font: symbolFont, glyph: glyph)
+        let cell = CGSize(width: 8, height: 20)
+        #expect(metrics.fitInkBounds.width > cell.width)
+        let fit = GlyphSlotFit.calculate(font: symbolFont, glyph: glyph, columnWidth: 1,
+                                         cellDimension: cell, normalFont: normal)
+        #expect(fit.scale < 1)
+        #expect(metrics.fitInkBounds.minX * fit.scale + fit.dx >= -tolerance)
+        #expect(metrics.fitInkBounds.maxX * fit.scale + fit.dx <= cell.width + tolerance)
+        for scale: CGFloat in [1, 1.5, 2, 3] {
+            expectEqual(scaledFit(font: symbolFont, glyph: glyph, columnWidth: 1,
+                                  cellDimension: cell, normalFont: normal, renderingScale: scale), fit)
+        }
+        for name in ["Menlo-Regular", "Menlo-Bold", "Menlo-Italic"] {
+            let (primary, letter) = try shapedGlyph("W", base: font(name))
+            #expect(!GlyphSlotFit.requiresFit(font: primary, normalFont: normal, columnWidth: 1))
+            #expect(GlyphSlotFit.calculate(font: primary, glyph: letter, columnWidth: 1,
+                                           cellDimension: cell, normalFont: normal).isIdentity)
+        }
     }
 
     @Test func scaledMetricsFitMatchesCoreTextReference() throws {
