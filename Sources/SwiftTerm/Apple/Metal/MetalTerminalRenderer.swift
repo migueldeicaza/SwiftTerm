@@ -1354,11 +1354,14 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
                         }
                         let glyphColumn = shaped.segment.column + (ordinal * shaped.segment.columnWidth)
                         // Center full-width (CJK) and substituted glyphs within
-                        // their multi-cell slot instead of pinning them to the
-                        // cell's left edge, mirroring the CoreGraphics path. The
-                        // decoration loops below keep using the grid column, so
-                        // underlines/strikethroughs stay cell-aligned.
+                        // their slot instead of pinning them to the cell's left
+                        // edge, mirroring the CoreGraphics path. A substituted
+                        // face is asked at one cell wide too: its glyph is an em
+                        // wide whatever the cell is. The decoration loops below
+                        // keep using the grid column, so underlines and
+                        // strikethroughs stay cell-aligned.
                         let fit = shaped.segment.columnWidth >= 2
+                            || terminalView.isSubstitutedFace(glyphRun.font)
                             ? terminalView.glyphSlotFit(font: glyphRun.font,
                                                         glyph: glyph,
                                                         columnWidth: shaped.segment.columnWidth)

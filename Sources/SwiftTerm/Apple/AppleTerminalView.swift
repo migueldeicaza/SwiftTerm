@@ -439,16 +439,40 @@ extension TerminalView {
         return CellDimension(width: max(1, snappedWidth), height: max(min(snappedHeight, 8192), 1))
     }
 
+    /// Whether `font` is a substituted face rather than the terminal's own.
+    ///
+    /// A fallback face is designed on its own em square, not on the terminal's
+    /// cell: a symbol or emoji font advances a full em, so one of its glyphs is
+    /// as wide as the font size while a monospace cell is about 0.6 of that.
+    /// The terminal's own face, including the bold and italic derivations of
+    /// it, is designed to the cell and must stay on the untouched path.
+    ///
+    /// Family name is the test because a derived face keeps its family while a
+    /// fallback does not. It is asked once per run, not per glyph.
+    func isSubstitutedFace (_ font: CTFont) -> Bool
+    {
+        guard let family = CTFontCopyFamilyName(font) as String?,
+              let primary = CTFontCopyFamilyName(fontSet.normal) as String?
+        else { return false }
+        return family != primary
+    }
+
     /// Computes how to center `glyph` within its `columnWidth`-cell slot (and
     /// scale it down if its ink overflows). Returns ``GlyphSlotFit/identity`` for
-    /// ordinary single-cell glyphs, so Latin text in a monospace font is rendered
-    /// exactly as before and the hot path stays untouched. Shared by the
-    /// CoreGraphics and Metal glyph renderers so they stay pixel-consistent.
+    /// ordinary single-cell glyphs in the terminal's own face, so Latin text in
+    /// a monospace font is rendered exactly as before and the hot path stays
+    /// untouched. Shared by the CoreGraphics and Metal glyph renderers so they
+    /// stay pixel-consistent.
     func glyphSlotFit (font: CTFont, glyph: CGGlyph, columnWidth: Int) -> GlyphSlotFit
     {
-        // Only wide cells need adjusting: a single-width glyph in a monospace
-        // font already fills its cell, so we skip the metric lookups entirely.
-        guard columnWidth >= 2, cellDimension != nil else { return .identity }
+        // A single-width glyph in the terminal's own face already fills its
+        // cell, so that path skips the metric lookups entirely. A substituted
+        // face is the case this exists for even at one cell wide: a symbol
+        // fallback advances a full em, so at font size 13 its glyph is 13pt
+        // wide in an 8.06pt cell and its ink overhangs the next character by
+        // most of a cell.
+        guard cellDimension != nil else { return .identity }
+        guard columnWidth >= 2 || isSubstitutedFace(font) else { return .identity }
 
         let cellWidth = cellDimension.width
         let cellHeight = cellDimension.height
@@ -472,7 +496,12 @@ extension TerminalView {
         // Center the (scaled) advance box horizontally in the slot. Centering by
         // advance rather than ink keeps glyphs that are intentionally off-center
         // within their em square — e.g. the CJK comma `、` — in their place.
-        let dx = (slotWidth - advance.width * scale) / 2
+        var dx = (slotWidth - advance.width * scale) / 2
+        if columnWidth == 1, ink.width > 0 {
+            // A fitted asymmetric symbol can still overhang when centered by
+            // advance. Keep its ink inside the cell without moving wide punctuation.
+            dx = min(max(dx, -ink.minX * scale), slotWidth - ink.maxX * scale)
+        }
 
         // Preserve the natural Latin baseline unless the glyph was scaled, in
         // which case center its ink vertically so it doesn't sit too low/high.
@@ -2226,7 +2255,10 @@ extension TerminalView {
                     let ctRunFont = runFont as CTFont
                     var glyphPositions = positions
                     var scaledFits: [GlyphSlotFit]? = nil
-                    if prepared.segment.columnWidth >= 2 {
+                    // Wide slots, and single cells drawn in a substituted face:
+                    // a symbol fallback's glyph is an em wide whatever the cell
+                    // is. Ordinary text in the terminal's own face never asks.
+                    if prepared.segment.columnWidth >= 2 || isSubstitutedFace(ctRunFont) {
                         var computed = [GlyphSlotFit](repeating: .identity, count: runGlyphsCount)
                         var anyScaled = false
                         for i in 0..<runGlyphsCount {
