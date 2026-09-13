@@ -318,6 +318,20 @@ final class CellArena {
     private var attributeCountValue = 1
     private var attributeIdentifiers: [InternedAttributeKey: UInt16] = [:]
 
+    /// Direct-mapped cache in front of `attributeIdentifiers`. SGR-heavy
+    /// output interns an attribute for nearly every run, and hashing the
+    /// two-word key through `Dictionary` (plus the exclusivity check on this
+    /// class property) was ~11% of the parse thread on dense_cells. An entry
+    /// only ever holds a pair that is also in the dictionary, and neither is
+    /// ever removed, so a hit is always correct.
+    private struct AttributeCacheEntry {
+        var word0: UInt64
+        var word1: UInt64
+        var identifierPlusOne: UInt32
+    }
+    private static let attributeCacheSize = 1 << 10
+    private let attributeCache: UnsafeMutablePointer<AttributeCacheEntry>
+
     private let graphemeBlocks: UnsafeMutablePointer<UnsafeMutablePointer<[UInt32]?>?>
     private let graphemeCapacity: Int
     private let graphemeBlockCapacity: Int
@@ -343,6 +357,7 @@ final class CellArena {
         attributes = .allocate(capacity: attributeCapacity + 1)
         attributes.initialize(to: CharData.defaultAttr)
         attributeIdentifiers[InternedAttributeKey(CharData.defaultAttr)] = 0
+        attributeCache = Self.makeAttributeCache()
 
         self.graphemeCapacity = min(max(graphemeCapacity, 0), Self.maximumGraphemeID)
         graphemeBlockCapacity = max(1, (self.graphemeCapacity + Self.graphemeBlockSize - 1) /
@@ -372,6 +387,7 @@ final class CellArena {
         // Snapshot rows decode existing cells. Keep only the default reverse
         // lookup that the out-of-range blank-cell path can request.
         attributeIdentifiers = [InternedAttributeKey(CharData.defaultAttr): 0]
+        attributeCache = Self.makeAttributeCache()
 
         graphemeCapacity = source.graphemeCapacity
         graphemeBlockCapacity = source.graphemeBlockCapacity
@@ -466,6 +482,8 @@ final class CellArena {
     deinit {
         attributes.deinitialize(count: attributeCountValue)
         attributes.deallocate()
+        attributeCache.deinitialize(count: Self.attributeCacheSize)
+        attributeCache.deallocate()
 
         for blockIndex in 0..<allocatedGraphemeBlockCount {
             if let block = graphemeBlocks[blockIndex] {
@@ -480,9 +498,29 @@ final class CellArena {
     var attributeCount: Int { attributeCountValue - 1 }
     var graphemeCount: Int { Int(graphemeCountValue) }
 
+    private static func makeAttributeCache() -> UnsafeMutablePointer<AttributeCacheEntry> {
+        let cache = UnsafeMutablePointer<AttributeCacheEntry>.allocate(capacity: attributeCacheSize)
+        cache.initialize(repeating: AttributeCacheEntry(word0: 0, word1: 0, identifierPlusOne: 0),
+                         count: attributeCacheSize)
+        return cache
+    }
+
+    @inline(__always)
+    private static func attributeCacheSlot(_ key: InternedAttributeKey) -> Int {
+        let mixed = (key.word0 ^ (key.word1 &* 0x9E37_79B9_7F4A_7C15)) &* 0xBF58_476D_1CE4_E5B9
+        return Int(truncatingIfNeeded: mixed >> 54)
+    }
+
     func intern(attribute: Attribute) -> UInt16? {
         let key = InternedAttributeKey(attribute)
+        let slot = Self.attributeCacheSlot(key)
+        let cached = attributeCache[slot]
+        if cached.identifierPlusOne != 0, cached.word0 == key.word0, cached.word1 == key.word1 {
+            return UInt16(truncatingIfNeeded: cached.identifierPlusOne &- 1)
+        }
         if let identifier = attributeIdentifiers[key] {
+            attributeCache[slot] = AttributeCacheEntry(word0: key.word0, word1: key.word1,
+                                                       identifierPlusOne: UInt32(identifier) + 1)
             return identifier
         }
         guard !isSnapshotCopy else {
@@ -496,6 +534,8 @@ final class CellArena {
         attributes.advanced(by: attributeCountValue).initialize(to: attribute)
         attributeCountValue += 1
         attributeIdentifiers[key] = identifier
+        attributeCache[slot] = AttributeCacheEntry(word0: key.word0, word1: key.word1,
+                                                   identifierPlusOne: UInt32(identifier) + 1)
         return identifier
     }
 
