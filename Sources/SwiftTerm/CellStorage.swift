@@ -330,7 +330,7 @@ final class CellArena {
         var identifierPlusOne: UInt32
     }
     private static let attributeCacheSize = 1 << 10
-    private let attributeCache: UnsafeMutablePointer<AttributeCacheEntry>
+    @exclusivity(unchecked) private var attributeCache: [AttributeCacheEntry]
 
     private let graphemeBlocks: UnsafeMutablePointer<UnsafeMutablePointer<[UInt32]?>?>
     private let graphemeCapacity: Int
@@ -482,8 +482,6 @@ final class CellArena {
     deinit {
         attributes.deinitialize(count: attributeCountValue)
         attributes.deallocate()
-        attributeCache.deinitialize(count: Self.attributeCacheSize)
-        attributeCache.deallocate()
 
         for blockIndex in 0..<allocatedGraphemeBlockCount {
             if let block = graphemeBlocks[blockIndex] {
@@ -498,11 +496,9 @@ final class CellArena {
     var attributeCount: Int { attributeCountValue - 1 }
     var graphemeCount: Int { Int(graphemeCountValue) }
 
-    private static func makeAttributeCache() -> UnsafeMutablePointer<AttributeCacheEntry> {
-        let cache = UnsafeMutablePointer<AttributeCacheEntry>.allocate(capacity: attributeCacheSize)
-        cache.initialize(repeating: AttributeCacheEntry(word0: 0, word1: 0, identifierPlusOne: 0),
-                         count: attributeCacheSize)
-        return cache
+    private static func makeAttributeCache() -> [AttributeCacheEntry] {
+        Array(repeating: AttributeCacheEntry(word0: 0, word1: 0, identifierPlusOne: 0),
+              count: attributeCacheSize)
     }
 
     @inline(__always)
