@@ -318,12 +318,20 @@ final class CellArena {
     private var attributeCountValue = 1
     private var attributeIdentifiers: [InternedAttributeKey: UInt16] = [:]
 
+    private let graphemeBlocks: UnsafeMutablePointer<UnsafeMutablePointer<[UInt32]?>?>
+    private let graphemeCapacity: Int
+    private let graphemeBlockCapacity: Int
+    private var allocatedGraphemeBlockCount = 0
+    private var graphemeCountValue: UInt32 = 0
+    private var graphemeIdentifiers: [[UInt32]: UInt32] = [:]
+
     /// Direct-mapped cache in front of `attributeIdentifiers`. SGR-heavy
     /// output interns an attribute for nearly every run, and hashing the
     /// two-word key through `Dictionary` (plus the exclusivity check on this
-    /// class property) was ~11% of the parse thread on dense_cells. An entry
-    /// only ever holds a pair that is also in the dictionary, and neither is
-    /// ever removed, so a hit is always correct.
+    /// class property) was ~11% of the parse thread on dense_cells. Keep this
+    /// after the grapheme state so adding it does not move Unicode-hot fields.
+    /// An entry only ever holds a pair that is also in the dictionary, and
+    /// neither is ever removed, so a hit is always correct.
     private struct AttributeCacheEntry {
         var word0: UInt64
         var word1: UInt64
@@ -331,13 +339,6 @@ final class CellArena {
     }
     private static let attributeCacheSize = 1 << 10
     @exclusivity(unchecked) private var attributeCache: [AttributeCacheEntry]
-
-    private let graphemeBlocks: UnsafeMutablePointer<UnsafeMutablePointer<[UInt32]?>?>
-    private let graphemeCapacity: Int
-    private let graphemeBlockCapacity: Int
-    private var allocatedGraphemeBlockCount = 0
-    private var graphemeCountValue: UInt32 = 0
-    private var graphemeIdentifiers: [[UInt32]: UInt32] = [:]
 
 #if DEBUG
     private(set) var snapshotAttributeEntriesCopied = 0
@@ -509,6 +510,11 @@ final class CellArena {
 
     func intern(attribute: Attribute) -> UInt16? {
         let key = InternedAttributeKey(attribute)
+        // The default attribute is permanently identifier zero and encodes as
+        // an all-zero key. Avoid cache and dictionary lookups for this common case.
+        if key.word0 == 0, key.word1 == 0 {
+            return 0
+        }
         let slot = Self.attributeCacheSlot(key)
         let cached = attributeCache[slot]
         if cached.identifierPlusOne != 0, cached.word0 == key.word0, cached.word1 == key.word1 {
