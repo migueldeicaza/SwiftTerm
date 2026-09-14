@@ -811,9 +811,15 @@ struct GlyphSlotFit {
 
     var isIdentity: Bool { dx == 0 && dy == 0 && scaleX == 1 && scaleY == 1 }
 
+    /// Derived bold/italic faces keep the primary family; fallback faces do not.
+    static func requiresFit(font: CTFont, normalFont: CTFont, columnWidth: Int) -> Bool {
+        columnWidth >= 2 || (columnWidth == 1 &&
+            (CTFontCopyFamilyName(font) as String) != (CTFontCopyFamilyName(normalFont) as String))
+    }
+
     static func calculate (font: CTFont, glyph: CGGlyph, columnWidth: Int,
                            cellDimension: CGSize, normalFont: TTFont) -> GlyphSlotFit {
-        guard columnWidth >= 2 else { return .identity }
+        guard requiresFit(font: font, normalFont: normalFont, columnWidth: columnWidth) else { return .identity }
 
         let metrics = GlyphMetrics.measure(font: font, glyph: glyph)
         let baselineFromBottom = CellGeometry.baselineOffset(normalFont: normalFont,
@@ -822,7 +828,8 @@ struct GlyphSlotFit {
                          columnWidth: columnWidth,
                          cellDimension: cellDimension,
                          baselineFromBottom: baselineFromBottom,
-                         renderingScale: 1)
+                         renderingScale: 1,
+                         fitSingleCell: columnWidth == 1)
     }
 
     /// Calculates the fit from metrics measured on a font scaled for rendering.
@@ -832,8 +839,9 @@ struct GlyphSlotFit {
                           columnWidth: Int,
                           cellDimension: CGSize,
                           baselineFromBottom: CGFloat,
-                          renderingScale: CGFloat) -> GlyphSlotFit {
-        guard columnWidth >= 2, renderingScale > 0 else { return .identity }
+                          renderingScale: CGFloat,
+                          fitSingleCell: Bool = false) -> GlyphSlotFit {
+        guard (columnWidth >= 2 || (columnWidth == 1 && fitSingleCell)), renderingScale > 0 else { return .identity }
 
         let slotWidth = CGFloat(columnWidth) * cellDimension.width * renderingScale
         let cellHeight = cellDimension.height * renderingScale
@@ -848,7 +856,12 @@ struct GlyphSlotFit {
                                      cellHeight / ink.height), 1))
         }
 
-        let dxPixels = (slotWidth - advance * scale) / 2
+        var dxPixels = (slotWidth - advance * scale) / 2
+        if columnWidth == 1, fitSingleCell, ink.width > 0 {
+            // Preserve advance centering unless an asymmetric bearing would put
+            // the fitted ink outside the cell. Wide punctuation keeps its placement.
+            dxPixels = min(max(dxPixels, -ink.minX * scale), slotWidth - ink.maxX * scale)
+        }
         var dyPixels: CGFloat = 0
         if scale < 1, ink.height > 0 {
             let inkCenterFromBaseline = (ink.origin.y + ink.height / 2) * scale
@@ -3487,7 +3500,8 @@ extension TerminalView {
                     var glyphPositions = positions
                     var scaledFits: [GlyphSlotFit]? = nil
                     let glyphPolicy = preparedRun.glyphPolicy
-                    if glyphPolicy != nil || prepared.segment.columnWidth >= 2 {
+                    if glyphPolicy != nil || GlyphSlotFit.requiresFit(font: ctRunFont, normalFont: renderContext.fonts.normal,
+                                                                    columnWidth: prepared.segment.columnWidth) {
                         var computed = [GlyphSlotFit](repeating: .identity, count: runGlyphsCount)
                         var anyScaled = false
                         for i in 0..<runGlyphsCount {
