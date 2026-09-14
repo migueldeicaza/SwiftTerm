@@ -2,7 +2,7 @@ import SwiftTerm
 
 /// Encodes ABI 1 with explicit little-endian stores and checked size arithmetic.
 enum SnapshotEncoder {
-    static func color(_ value: RenderSnapshotColor) -> UInt32 {
+    static func color(_ value: Color) -> UInt32 {
         ABI.color(value.red, value.green, value.blue)
     }
     static func resolve(_ value: Attribute.Color, _ source: TerminalRenderSnapshot, foreground: Bool = true) -> UInt32 {

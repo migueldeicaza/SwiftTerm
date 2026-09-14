@@ -10,21 +10,20 @@ public struct RenderSnapshotRange: Equatable, Sendable {
     public let endY: Int
 }
 
-/// RGB components in the range 0...65535. No platform color object is retained.
-public struct RenderSnapshotColor: Equatable, Sendable {
-    public let red: UInt16
-    public let green: UInt16
-    public let blue: UInt16
+/// Width role of a cell. `PackedCell` is internal, so the snapshot keeps a
+/// public copy of its width state.
+public enum RenderSnapshotWidthState: Sendable {
+    case narrow, wide, spacerTail, spacerHead
 
-    init(_ color: Color) {
-        red = color.red
-        green = color.green
-        blue = color.blue
+    init(_ state: PackedCell.WidthState) {
+        switch state {
+        case .narrow: self = .narrow
+        case .wide: self = .wide
+        case .spacerTail: self = .spacerTail
+        case .spacerHead: self = .spacerHead
+        }
     }
 }
-
-public enum RenderSnapshotLineMode: Sendable { case single, doubleWidth, doubledTop, doubledDown }
-public enum RenderSnapshotWidthState: Sendable { case narrow, wide, spacerTail, spacerHead }
 
 public struct RenderSnapshotCursor: Equatable, Sendable {
     public let x: Int
@@ -55,12 +54,13 @@ public struct RenderSnapshotRow: Sendable {
     public let isWrapped: Bool
     /// True if the next buffer row continues this row.
     public let wrapsToNext: Bool
-    public let renderMode: RenderSnapshotLineMode
+    public let renderMode: BufferLine.RenderLineMode
     public let cells: [RenderSnapshotCell]
 }
 
 /// An atomic, owned copy of terminal render state. Colors and cell attributes
 /// retain their semantic values; a renderer resolves them after the copy.
+/// `Color` values are immutable, so the copy shares them with the terminal.
 public struct TerminalRenderSnapshot: Sendable {
     public let cols: Int
     public let rows: Int
@@ -68,10 +68,10 @@ public struct TerminalRenderSnapshot: Sendable {
     public let dirtyKind: RenderSnapshotDirtyKind
     public let dirtyRange: RenderSnapshotRange?
     public let scrollDirtyRange: RenderSnapshotRange?
-    public let foregroundColor: RenderSnapshotColor
-    public let backgroundColor: RenderSnapshotColor
-    public let cursorColor: RenderSnapshotColor?
-    public let palette: [RenderSnapshotColor]
+    public let foregroundColor: Color
+    public let backgroundColor: Color
+    public let cursorColor: Color?
+    public let palette: [Color]
     public let reverseVideo: Bool
     public let synchronizedOutputActive: Bool
     public let cursor: RenderSnapshotCursor
@@ -86,12 +86,12 @@ struct PortableRenderMetadata: Equatable {
     let alternate: Bool
     let yDisp: Int
     let linesTop: Int
-    let foreground: RenderSnapshotColor
-    let background: RenderSnapshotColor
-    let cursorColor: RenderSnapshotColor?
-    let palette: [RenderSnapshotColor]
+    let foreground: Color
+    let background: Color
+    let cursorColor: Color?
+    let palette: [Color]
     let reverse: Bool
-    let modes: [RenderSnapshotLineMode]
+    let modes: [BufferLine.RenderLineMode]
 }
 
 // Cache owned cell values only. Line metadata is copied on each snapshot.

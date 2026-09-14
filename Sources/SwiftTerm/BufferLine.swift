@@ -20,7 +20,7 @@ public final class BufferLine: CustomDebugStringConvertible {
 
     let renderIdentity = RenderIdentity()
 
-    public enum RenderLineMode {
+    public enum RenderLineMode: Sendable {
         /// Render each character using a single cell
         case single
         /// Render character using two cells

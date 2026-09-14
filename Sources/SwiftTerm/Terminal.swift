@@ -7502,9 +7502,9 @@ open class Terminal {
     /// Copies one active palette entry. Callers must serialize access as for
     /// other terminal getters. This method can run in a delegate callback
     /// that already holds the terminal lock.
-    public func paletteColor(index: Int) -> RenderSnapshotColor? {
+    public func paletteColor(index: Int) -> Color? {
         guard ansiColors.indices.contains(index) else { return nil }
-        return RenderSnapshotColor(ansiColors[index])
+        return ansiColors[index]
     }
 
     /// Copies render state under one terminal lock. Do not call this method
@@ -7512,11 +7512,11 @@ open class Terminal {
     public func makeRenderSnapshot(scope: RenderSnapshotScope) -> TerminalRenderSnapshot {
         terminalLock.withLock {
             let source = displayBuffer
-            let foreground = RenderSnapshotColor(foregroundColor)
-            let background = RenderSnapshotColor(backgroundColor)
-            let cursorColor = self.cursorColor.map(RenderSnapshotColor.init)
-            let palette = ansiColors.map(RenderSnapshotColor.init)
-            var modes: [RenderSnapshotLineMode] = []
+            let foreground = foregroundColor
+            let background = backgroundColor
+            let cursorColor = self.cursorColor
+            let palette = ansiColors
+            var modes: [BufferLine.RenderLineMode] = []
             modes.reserveCapacity(rows)
             for y in 0..<rows {
                 let index = source.yDisp + y
@@ -7524,12 +7524,7 @@ open class Terminal {
                     modes.append(.single)
                     continue
                 }
-                switch source.lines[index].renderMode {
-                case .single: modes.append(.single)
-                case .doubleWidth: modes.append(.doubleWidth)
-                case .doubledTop: modes.append(.doubledTop)
-                case .doubledDown: modes.append(.doubledDown)
-                }
+                modes.append(source.lines[index].renderMode)
             }
             let metadata = PortableRenderMetadata(
                 cols: cols, rows: rows, alternate: isCurrentBufferAlternate,
@@ -7611,16 +7606,9 @@ open class Terminal {
                                 continue
                             }
                             let cell = line.packedView(at: x)
-                            let widthState: RenderSnapshotWidthState
-                            switch cell.packed.widthState {
-                            case .narrow: widthState = .narrow
-                            case .wide: widthState = .wide
-                            case .spacerTail: widthState = .spacerTail
-                            case .spacerHead: widthState = .spacerHead
-                            }
                             cells.append(RenderSnapshotCell(
                                 text: cell.code == 0 || cell.width == 0 ? "" : cell.getText(),
-                                width: cell.width, widthState: widthState,
+                                width: cell.width, widthState: RenderSnapshotWidthState(cell.packed.widthState),
                                 attribute: cell.attribute, isProtected: cell.isProtected,
                                 semanticContent: cell.semanticContent,
                                 payloadID: cell.packed.payloadCode == 0 ? nil : cell.packed.payloadCode))
@@ -8413,9 +8401,6 @@ open class Terminal {
         }
 #else
         guard active else {
-            #if os(WASI)
-            hostEventQueue.cancelTimer(.synchronizedOutput)
-            #endif
             if let synchronizedOutputTimeoutItem {
                 synchronizedOutputTimeoutItem.cancel()
                 self.synchronizedOutputTimeoutItem = nil

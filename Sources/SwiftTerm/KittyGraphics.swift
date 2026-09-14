@@ -2513,9 +2513,6 @@ extension Terminal {
     }
 
     private func scheduleKittyAnimationTimer() {
-        #if os(WASI)
-        hostEventQueue.cancelTimer(.kittyAnimation)
-        #endif
         kittyAnimationTimerSerial &+= 1
         let serial = kittyAnimationTimerSerial
         let now = TerminalEventTime.now().uptimeNanoseconds
