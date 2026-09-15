@@ -48,6 +48,24 @@ struct SessionSignalTests {
         func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
     }
 
+    private class ProcessHost: LocalProcessTerminalViewDelegate {
+        var reports: [Terminal.ProgressReport] = []
+        var notifications: [(title: String, body: String)] = []
+
+        func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+        func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
+        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+        func processTerminated(source: TerminalView, exitCode: Int32?) {}
+
+        func progressReport(source: TerminalView, report: Terminal.ProgressReport) {
+            reports.append(report)
+        }
+
+        func notification(source: TerminalView, title: String, body: String) {
+            notifications.append((title, body))
+        }
+    }
+
     private func makeView() -> TerminalView {
         TerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 320))
     }
@@ -171,6 +189,22 @@ struct SessionSignalTests {
         await settle { !delegate.notifications.isEmpty }
 
         #expect(delegate.notifications.first?.body == "3 passed; 1 failed")
+    }
+
+    /// `LocalProcessTerminalView` is its own `TerminalViewDelegate`, so a host
+    /// that uses it can only hear these through its process delegate.
+    @Test func aLocalProcessViewForwardsToItsProcessDelegate() async {
+        let view = LocalProcessTerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 320))
+        let delegate = ProcessHost()
+        view.processDelegate = delegate
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        #expect(delegate.reports.first?.state == .set)
+
+        view.feed(text: "\u{1b}]777;notify;Build;Done\u{07}")
+        await settle { !delegate.notifications.isEmpty }
+        #expect(delegate.notifications.first?.title == "Build")
     }
 
     /// A delegate written against the previous release conforms unchanged, and
