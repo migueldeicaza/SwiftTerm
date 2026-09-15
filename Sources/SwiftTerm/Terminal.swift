@@ -396,24 +396,26 @@ open class Terminal {
         selections.append (WeakSelection (value: selection))
     }
 
-    /// Notifies attached selections that `lines` rows were shifted up in place
-    /// within the absolute row range `top...bottom`.
-    func selectionsAdjustForInPlaceScroll (top: Int, bottom: Int, lines: Int)
+    /// Notifies attached selections that `lines` rows were shifted in place
+    /// within the buffer-list slot range `top...bottom` (positive `lines`
+    /// moved content up, negative moved it down).
+    func selectionsAdjustForInPlaceScroll (top: Int, bottom: Int, lines: Int, linesTopDelta: Int = 0)
     {
         withStructuralSelectionChange {
             for entry in selections {
                 entry.value?.adjustForInPlaceScroll (top: top, bottom: bottom, lines: lines)
             }
         }
-        // Hosts tracking their own absolute row anchors get the same
-        // translation selections do, with the post-shift trim count so they
-        // can separate frame motion from content motion (see
-        // `onRowsShiftedInPlace`). One mirror point covers every present and
-        // future call site above. A closure rather than a delegate method:
-        // hosts embedding the SwiftTerm views inherit the delegate
-        // conformance, and protocol witnesses cannot be specialized from a
-        // subclass in another module.
-        onRowsShiftedInPlace? (top, bottom, lines, buffer.linesTop)
+        // Hosts tracking their own absolute row anchors get the same region
+        // and direction selections do, plus the per-shift trim-count delta
+        // so they can net out motion the trim count already accounts for
+        // (see `onRowsShiftedInPlace`). One mirror point covers every
+        // present and future call site above; sites that consume rows into
+        // the trim count pass that consumption, the rest default to 0. A
+        // closure rather than a delegate method: hosts embedding the
+        // SwiftTerm views inherit the delegate conformance, and protocol
+        // witnesses cannot be specialized from a subclass in another module.
+        onRowsShiftedInPlace? (top, bottom, lines, buffer.linesTop, linesTopDelta)
     }
 
     /// Notifies attached selections that cells moved horizontally within
@@ -583,21 +585,31 @@ open class Terminal {
      * Invoked after every in-place row shift the attached selections are
      * translated for, with the same region and direction, so hosts tracking
      * their own absolute row anchors (prompt markers, read cursors) can
-     * apply the same translation. `top`/`bottom` are buffer-list indices in
-     * post-shift positions; `lines` is positive when content moved up,
-     * negative when it moved down. `linesTop` is the buffer's trimmed-line
-     * count immediately after the shift: hosts holding absolute anchors
-     * (trim count plus buffer index) recover the pre-shift frame from the
-     * growth they have observed since their last sighting. A `linesTop`
-     * that went backwards means the frame was reset (scrollback cleared) —
-     * anchors cannot be translated across it and must be expired instead.
+     * apply the same translation. `top`/`bottom` are buffer-list slot
+     * indices naming the moved rows; `lines` is positive when content moved
+     * up, negative when it moved down. `linesTop` is the buffer's
+     * trimmed-line count immediately after the shift and `linesTopDelta`
+     * how much of it this shift consumed: 0 for pure in-place moves, 1 for
+     * a scrollback-consuming recycle, negative across a frame reset (3J
+     * clears the base). Hosts holding trim-count-plus-slot anchors
+     * translate with one law: membership in the pre-shift window (top +
+     * linesTop - linesTopDelta ... bottom + linesTop - linesTopDelta),
+     * motion = lines - linesTopDelta, landing in the post-shift window
+     * (top + linesTop ... bottom + linesTop); anchors inside move by
+     * -motion and are dropped when they land outside, anchors outside
+     * stay. The two frames keep frame resets exact: survivors land in the
+     * new frame, discards fall out of it. The motion already
+     * nets out motion the trim count accounts for, so a recycle that
+     * consumes its row into the base reports shift 0 and is never counted
+     * twice. The same law covers full recycles, partial and margin
+     * scrolls, insert/delete line, scrollback shrinks, and 3J clears.
      *
      * A closure rather than a delegate method: hosts embedding the
      * SwiftTerm views inherit the delegate conformance, and protocol
      * witnesses cannot be specialized from a subclass in another module.
      * Nil by default; invoked synchronously on the input-processing thread.
      */
-    public var onRowsShiftedInPlace: ((_ top: Int, _ bottom: Int, _ lines: Int, _ linesTop: Int) -> Void)?
+    public var onRowsShiftedInPlace: ((_ top: Int, _ bottom: Int, _ lines: Int, _ linesTop: Int, _ linesTopDelta: Int) -> Void)?
     private var curAttr: Attribute = CharData.defaultAttr
     private var charToIndexMap: [Character:Int32] = [:]
     private var indexToCharMap: [Int32: Character] = [:]
@@ -3485,12 +3497,15 @@ open class Terminal {
                     buffer.clearImagesFromLine (at: row)
                 }
                 buffer.lines.trimStart (count: scrollBackSize)
+                let linesTopDelta = 0 - buffer.linesTop
                 buffer.linesTop = 0
                 buffer.yBase = max (buffer.yBase - scrollBackSize, 0)
                 buffer.yDisp = max (buffer.yDisp - scrollBackSize, 0)
-                // Every surviving row moved up by the trimmed count; anchors in
-                // the discarded rows have nothing left to point at.
-                selectionsAdjustForInPlaceScroll (top: 0, bottom: previousLineCount - 1, lines: scrollBackSize)
+                // Survivors moved up by the trimmed count in slot terms while
+                // the trim count reset underneath them; the per-shift delta
+                // carries that frame reset so hosts translate survivors onto
+                // their new anchors and drop the discarded rows' anchors.
+                selectionsAdjustForInPlaceScroll (top: 0, bottom: previousLineCount - 1, lines: scrollBackSize, linesTopDelta: linesTopDelta)
                 reconcileKittyPlacementsAfterRowMutation ()
             }
             break;
@@ -6829,11 +6844,15 @@ open class Terminal {
                 // remaining row up without changing yDisp. When the region does
                 // not reach the end of the buffer, only the rows inside it move:
                 // splicing plus trimming leaves everything below at its original
-                // index.
+                // index. The recycle consumes one row into the trim count only
+                // when the buffer keeps scrollback; reporting that per-shift
+                // consumption keeps host anchors from counting the same row
+                // twice, once in the shift and once in the trim base.
                 selectionsAdjustForInPlaceScroll (
                     top: 0,
                     bottom: bottomRow == previousLineCount - 1 ? previousLineCount - 1 : bottomRow,
-                    lines: 1)
+                    lines: 1,
+                    linesTopDelta: hasScrollback ? 1 : 0)
 
                 // When the buffer is full and the user has scrolled up, keep the text
                 // stable unless ydisp is right at the top
@@ -7010,7 +7029,14 @@ open class Terminal {
     public func clearScrollback ()
     {
         // Only the normal buffer has scrollback
+        let trimmedLineCount = normalBuffer.yBase
         normalBuffer.clearScrollback ()
+        if buffer === normalBuffer, trimmedLineCount > 0 {
+            // Trimming moves every surviving row up without touching the trim
+            // count; without this mirror hosts keep anchors aimed at the
+            // wrong rows until something else reconciles them.
+            selectionsAdjustForInPlaceScroll (top: 0, bottom: normalBuffer.lines.count + trimmedLineCount - 1, lines: trimmedLineCount)
+        }
         refresh (startRow: 0, endRow: self.rows - 1)
     }
 
