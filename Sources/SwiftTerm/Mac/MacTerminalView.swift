@@ -1308,6 +1308,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    /// Controls the color of the OSC 9;4 progress bar while it is running, if not set
+    /// the bar will render with the system accent color.
+    ///
+    /// The error and paused states keep their system colors (red and orange) either
+    /// way, so a host that themes the terminal can tint the bar without losing the
+    /// meaning those two states carry. Setting this recolors a bar that is already
+    /// on screen.
+    public var progressBarColor: NSColor? {
+        get { progressBarView?.tint }
+        set { progressBarView?.tint = newValue }
+    }
+
     var _selectedTextBackgroundColor = NSColor(srgbRed: 0, green: 166.0 / 255.0, blue: 178.0 / 255.0, alpha: 1.0)
     /// The background color used to render the selection.
     public var selectedTextBackgroundColor: NSColor {

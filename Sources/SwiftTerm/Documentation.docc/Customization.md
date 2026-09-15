@@ -57,6 +57,16 @@ terminalView.caretColor = NSColor.systemGreen
 terminalView.caretTextColor = NSColor.black  // optional: text color under cursor
 ```
 
+### Progress Bar Color
+
+The OSC 9;4 progress bar follows the system accent color unless the host picks
+one, which keeps it in step with a themed terminal. The error and paused states
+keep their system red and orange either way:
+
+```swift
+terminalView.progressBarColor = NSColor.systemPurple  // nil restores the accent color
+```
+
 ## Cursor Style
 
 The cursor style is typically controlled by the remote application via escape
