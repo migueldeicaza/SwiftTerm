@@ -303,3 +303,8 @@ whether it becomes a banner, a badge, or nothing at all is the host's policy.
 
 Both are defaulted to do nothing, so neither is a breaking change for an
 existing delegate.
+
+``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so a host
+that uses it implements the same two methods on
+``LocalProcessTerminalViewDelegate`` instead; the view forwards them, and they
+are defaulted there too.
