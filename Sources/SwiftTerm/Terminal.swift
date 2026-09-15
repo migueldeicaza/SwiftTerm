@@ -104,7 +104,7 @@ public protocol TerminalDelegate: AnyObject {
      * The default implementation does nothing.
      */
     func selectionChanged (source: Terminal)
-    
+
     /**
      * This method should return `true` if operations that can read the buffer back should be allowed,
      * otherwise, return false.   This is useful to run some applications that attempt to checksum the
@@ -405,6 +405,15 @@ open class Terminal {
                 entry.value?.adjustForInPlaceScroll (top: top, bottom: bottom, lines: lines)
             }
         }
+        // Hosts tracking their own absolute row anchors get the same
+        // translation selections do, with the post-shift trim count so they
+        // can separate frame motion from content motion (see
+        // `onRowsShiftedInPlace`). One mirror point covers every present and
+        // future call site above. A closure rather than a delegate method:
+        // hosts embedding the SwiftTerm views inherit the delegate
+        // conformance, and protocol witnesses cannot be specialized from a
+        // subclass in another module.
+        onRowsShiftedInPlace? (top, bottom, lines, buffer.linesTop)
     }
 
     /// Notifies attached selections that cells moved horizontally within
@@ -567,6 +576,28 @@ open class Terminal {
     var gcharset: Int = 0
     var reverseWraparound: Bool = false
     weak var tdel: TerminalDelegate?
+
+    /**
+     * Rows of the current buffer moved within the buffer list.
+     *
+     * Invoked after every in-place row shift the attached selections are
+     * translated for, with the same region and direction, so hosts tracking
+     * their own absolute row anchors (prompt markers, read cursors) can
+     * apply the same translation. `top`/`bottom` are buffer-list indices in
+     * post-shift positions; `lines` is positive when content moved up,
+     * negative when it moved down. `linesTop` is the buffer's trimmed-line
+     * count immediately after the shift: hosts holding absolute anchors
+     * (trim count plus buffer index) recover the pre-shift frame from the
+     * growth they have observed since their last sighting. A `linesTop`
+     * that went backwards means the frame was reset (scrollback cleared) —
+     * anchors cannot be translated across it and must be expired instead.
+     *
+     * A closure rather than a delegate method: hosts embedding the
+     * SwiftTerm views inherit the delegate conformance, and protocol
+     * witnesses cannot be specialized from a subclass in another module.
+     * Nil by default; invoked synchronously on the input-processing thread.
+     */
+    public var onRowsShiftedInPlace: ((_ top: Int, _ bottom: Int, _ lines: Int, _ linesTop: Int) -> Void)?
     private var curAttr: Attribute = CharData.defaultAttr
     private var charToIndexMap: [Character:Int32] = [:]
     private var indexToCharMap: [Int32: Character] = [:]
@@ -976,8 +1007,13 @@ open class Terminal {
     }
     
     public func resetNormalBuffer() {
+        // A fresh object starts a new content frame with the same
+        // coordinates: carry the epoch forward so hosts can tell the reset
+        // buffer from the one it replaced.
+        let resetEpoch = normalBuffer.resetEpoch + 1
         normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth,
                               scrollback: options.scrollback, bidiState: currentBidiState)
+        normalBuffer.resetEpoch = resetEpoch
         configureCallbacks (for: normalBuffer)
 
         normalBuffer.fillViewportRows()
@@ -8325,7 +8361,7 @@ public extension TerminalDelegate {
     func selectionChanged (source: Terminal){
         // nothing
     }
-    
+
     func showCursor(source: Terminal) {
         // nothing
     }

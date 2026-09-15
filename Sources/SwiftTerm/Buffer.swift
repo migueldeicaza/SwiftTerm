@@ -26,6 +26,16 @@ public final class Buffer {
     // old lines.
     var linesTop: Int
 
+    /// Counts wholesale content replacements of this buffer (hard reset,
+    /// fresh wiring). Absolute row anchors (trim count plus buffer index)
+    /// from before a replacement name nothing afterwards: unlike trims,
+    /// which shift content within one frame, a replacement starts a new
+    /// frame with the same coordinates. Hosts comparing buffer fingerprints
+    /// across reads treat any change as a new generation. Fresh buffers
+    /// start at zero; only a replacement advances it, so equal epochs with
+    /// equal coordinates remain comparable.
+    public internal(set) var resetEpoch: Int = 0
+
     /// Monotonic count of lines that have been trimmed off the top of the
     /// scrollback since this buffer was created or reset. Increments by one
     /// each time output pushes a line out of a full scrollback buffer
@@ -718,6 +728,7 @@ public final class Buffer {
         yBase = 0
         xBase = 0
         linesTop = 0
+        resetEpoch += 1
         x = 0
         y = 0
 
