@@ -1213,7 +1213,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         guard let progressReportTimeout else { return }
         progressReportTimer = Timer.scheduledTimer(withTimeInterval: progressReportTimeout, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.clearProgressReport()
+                self?.expireProgressReport()
             }
         }
     }
@@ -1229,11 +1229,22 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private func handleProgressReport(_ report: Terminal.ProgressReport) {
         if report.state == .remove {
             clearProgressReport()
-            return
+        } else {
+            progressBarView?.apply(state: report.state, progress: report.progress)
+            resetProgressReportTimer()
         }
+        terminalDelegate?.progressReport(source: self, report: report)
+    }
 
-        progressBarView?.apply(state: report.state, progress: report.progress)
-        resetProgressReportTimer()
+    /// Ends a bar the application started and never removed.
+    ///
+    /// Routed through `handleProgressReport` rather than straight to
+    /// `clearProgressReport` so the host hears the silence as the removal it
+    /// stands for: a delegate that mirrors the bar's state would otherwise sit
+    /// on `set` forever.
+    @MainActor
+    func expireProgressReport() {
+        handleProgressReport(Terminal.ProgressReport(state: .remove, progress: nil))
     }
 
     /// Permanently releases UI drivers and renderer resources.
