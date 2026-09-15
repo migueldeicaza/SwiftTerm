@@ -140,7 +140,7 @@ final class RowShiftNotificationTests: XCTestCase {
     /// (-1 marks a dropped anchor and is preserved). Membership is tested
     /// in the pre-shift frame, the landing in the post-shift frame, motion
     /// is net of the per-shift trim consumption, and anchors outside the
-    /// window stay.
+    /// window absorb this shift's base share.
     private func applyHostLaw (_ anchors: [Int], shift: Shift) -> [Int] {
         let previousBase = shift.linesTop - shift.linesTopDelta
         let previousWindow = (shift.top + previousBase)...(shift.bottom + previousBase)
@@ -148,7 +148,7 @@ final class RowShiftNotificationTests: XCTestCase {
         let motion = shift.lines - shift.linesTopDelta
         return anchors.map { anchor in
             guard anchor >= 0, previousWindow.contains (anchor) else {
-                return anchor
+                return anchor >= 0 ? anchor + shift.linesTopDelta : anchor
             }
             let moved = anchor - motion
             return window.contains (moved) ? moved : -1
@@ -197,7 +197,7 @@ final class RowShiftNotificationTests: XCTestCase {
             recorder?.shifts.append (Shift (top: top, bottom: bottom, lines: lines, linesTop: linesTop, linesTopDelta: linesTopDelta))
         }
         let terminal: Terminal = headless.terminal
-        let plants = ["A", "B", "C", "D", "E", "F", "G"]
+        let plants = ["A", "B", "C", "D", "E", "F", "H", "G"]
         for plant in plants.prefix (6) {
             terminal.feed (text: "\(plant)\r\n")
         }
@@ -240,24 +240,32 @@ final class RowShiftNotificationTests: XCTestCase {
         ])
         XCTAssertEqual (anchors, [-1, -1, -1, -1, -1, 5])
 
+        // Plant H at the viewport bottom; the feed scrolls once more over
+        // the whole buffer.
+        terminal.feed (text: "\u{1b}[6;1HH\r\n")
+        consume ([Shift (top: 0, bottom: 13, lines: 1, linesTop: 6, linesTopDelta: 1)])
+        anchors.append (18)
+        check ()
+
         // A top-anchored region recycle: partial window, same consumption.
-        // F sits in the destroyed front slot and drops.
+        // F sits in the destroyed front slot and drops, while H below the
+        // window absorbs the base advance (its slots do not move).
         terminal.feed (text: "\u{1b}[1;4r\u{1b}[4;1H\r\n")
-        consume ([Shift (top: 0, bottom: 11, lines: 1, linesTop: 6, linesTopDelta: 1)])
-        XCTAssertEqual (anchors, [-1, -1, -1, -1, -1, -1])
+        consume ([Shift (top: 0, bottom: 11, lines: 1, linesTop: 7, linesTopDelta: 1)])
+        XCTAssertEqual (anchors, [-1, -1, -1, -1, -1, -1, 19])
 
         // Plant G at the viewport bottom (region reset first so the feed
         // scrolls); the feed scrolls once more.
         terminal.feed (text: "\u{1b}[r\u{1b}[6;1HG\r\n")
-        consume ([Shift (top: 0, bottom: 13, lines: 1, linesTop: 7, linesTopDelta: 1)])
-        anchors.append (19)
+        consume ([Shift (top: 0, bottom: 13, lines: 1, linesTop: 8, linesTopDelta: 1)])
+        anchors.append (20)
         check ()
 
-        // 3J: the frame resets; G lands exactly on its surviving row
-        // while the dropped plants stay dropped.
+        // 3J: the frame resets; H and G land exactly on their surviving
+        // rows while the dropped plants stay dropped.
         terminal.feed (text: "\u{1b}[3J")
-        consume ([Shift (top: 0, bottom: 13, lines: 8, linesTop: 0, linesTopDelta: -7)])
-        XCTAssertEqual (anchors, [-1, -1, -1, -1, -1, -1, 4])
+        consume ([Shift (top: 0, bottom: 13, lines: 8, linesTop: 0, linesTopDelta: -8)])
+        XCTAssertEqual (anchors, [-1, -1, -1, -1, -1, -1, 3, 4])
     }
 
     /// A true margin scroll moves only the region, then IL moves rows down:

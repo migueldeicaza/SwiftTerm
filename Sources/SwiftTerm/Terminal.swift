@@ -597,8 +597,11 @@ open class Terminal {
      * motion = lines - linesTopDelta, landing in the post-shift window
      * (top + linesTop ... bottom + linesTop); anchors inside move by
      * -motion and are dropped when they land outside, anchors outside
-     * stay. The two frames keep frame resets exact: survivors land in the
-     * new frame, discards fall out of it. The motion already
+     * absorb this shift's base share (+linesTopDelta): rows past the
+     * region keep their slots while the base advances underneath them
+     * (a full buffer splices the fresh row below the region and forgets
+     * the front row in the same shift). The two frames keep frame resets
+     * exact: survivors land in the new frame, discards fall out of it. The motion already
      * nets out motion the trim count accounts for, so a recycle that
      * consumes its row into the base reports shift 0 and is never counted
      * twice. The same law covers full recycles, partial and margin
