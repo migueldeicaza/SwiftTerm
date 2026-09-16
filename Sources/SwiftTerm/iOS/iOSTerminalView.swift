@@ -3300,7 +3300,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 if key.modifierFlags.contains ([.alternate, .command]) && key.charactersIgnoringModifiers == "o" {
                     optionAsMetaKey.toggle()
                 } else if (key.modifierFlags.contains (.alternate) && optionAsMetaKey) || metaModifier {
-                    data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
+                    // Meta prefixes the Control-transformed character for a
+                    // combined chord, just as in the enhanced keyboard encoder.
+                    if key.modifierFlags.contains(.control) {
+                        data = .bytes([0x1b] + applyControlToEventCharacters(key.charactersIgnoringModifiers))
+                    } else {
+                        data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
+                    }
                     metaModifier = false
                 } else if key.modifierFlags.contains (.control) {
                     let controlBytes = applyControlToEventCharacters(key.charactersIgnoringModifiers)
