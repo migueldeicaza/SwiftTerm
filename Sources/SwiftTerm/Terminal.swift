@@ -9212,8 +9212,8 @@ open class Terminal {
         let trailingSpacesAtEOL = #"(?: +(?= *$))?"#
         let dottedPathLookahead = #"(?=[\w\-.~:\/?#@!$&*+;=%]*\.)"#
         let nonDottedPathLookahead = #"(?![\w\-.~:\/?#@!$&*+;=%]*\.)"#
-        let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
-        let anyPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
+        let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)(?!\.{0,2}\/)(?!~\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
+        let anyPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)(?!\.{0,2}\/)(?!~\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
 
         // The body used to be `(?:IPV6|CHARS+SUFFIX?)+`: a `+` nested directly inside a `+`, so a
         // run of N body characters could be split across iterations in exponentially many ways.
