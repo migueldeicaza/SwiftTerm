@@ -52,6 +52,13 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     /// Reports a launch failure, separate from child exit.
     func processFailedToStart(source: TerminalView, error: LocalProcessError)
 
+    /// Invoked when the terminal rings the bell (BEL), subject to the view's
+    /// `bellStyle`. The default beeps, as the view did before this seam
+    /// existed; a host that shows the bell some other way overrides it.
+    ///
+    /// See ``TerminalViewDelegate/bell(source:)``.
+    func bell(source: TerminalView)
+
     // MARK: Kitty clipboard protocol, OSC 5522
     //
     // ``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so the
@@ -95,6 +102,8 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
 
 public extension LocalProcessTerminalViewDelegate {
     func processFailedToStart(source: TerminalView, error: LocalProcessError) {}
+
+    func bell(source: TerminalView) { NSSound.beep() }
 
     func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
         []
@@ -348,6 +357,13 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
 
     public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         processDelegate?.hostCurrentDirectoryUpdate(source: source, directory: directory)
+    }
+
+    /// The view is its own `terminalDelegate`, so the bell would otherwise
+    /// stop at the protocol's default beep with no way for the host to hear
+    /// it. `open`, so a subclass can also answer it directly.
+    open func bell(source: TerminalView) {
+        processDelegate?.bell(source: source)
     }
 
     // MARK: Kitty clipboard protocol, forwarded to the processDelegate
