@@ -1679,6 +1679,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             caretView?.caretTextColor = newValue
         }
     }
+
+    /// Controls the color of the OSC 9;4 progress bar while it is running, if not set
+    /// the bar will render with the view's tint color.
+    ///
+    /// The error and paused states keep their system colors (red and orange) either
+    /// way, so a host that themes the terminal can tint the bar without losing the
+    /// meaning those two states carry. Setting this recolors a bar that is already
+    /// on screen.
+    public var progressBarColor: UIColor? {
+        get { progressBarView?.tint }
+        set { progressBarView?.tint = newValue }
+    }
     
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
