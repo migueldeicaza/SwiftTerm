@@ -8,6 +8,25 @@ on:
   workflow_dispatch:
 
 jobs:
+  released-wasi:
+    name: Released Swift WASI smoke build
+    runs-on: ubuntu-latest
+    container: swift:6.3.3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the Swift WASM SDK
+        run: >-
+          swift sdk install
+          https://download.swift.org/swift-6.3.3-release/wasm-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_wasm.artifactbundle.tar.gz
+          --checksum cabfa08b73bb8ac783927ecd15fa386e99d0c139c5f232445067bcf58379cae7
+      - name: Build the WASI smoke program
+        env:
+          SWIFTTERM_WASM: "1"
+        run: >-
+          swift build -c release
+          --swift-sdk swift-6.3.3-RELEASE_wasm
+          --product SwiftTermWasmSmoke
+
   browser:
     runs-on: ubuntu-24.04
     steps:
