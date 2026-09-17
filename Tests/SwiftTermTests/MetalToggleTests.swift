@@ -132,5 +132,41 @@ struct MetalToggleTests {
             #expect(done.wait(timeout: .now() + 5) == .success)
         }
     }
+
+    /// A host can enable Metal before Auto Layout gives a new terminal its
+    /// size. Keep the selected opaque background visible until the first
+    /// drawable covers it instead of exposing the window's background.
+    @Test(.enabled(if: MetalToggleTests.metalIsUsable)) func opaqueBackgroundCoversAZeroSizedMetalSurface() throws {
+        let view = TerminalView(
+            frame: .zero,
+            font: nil,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 100))
+        defer { view.frameDriver.invalidate() }
+        let expected = NSColor(srgbRed: 0.84, green: 0.79, blue: 0.68, alpha: 1)
+        view.nativeBackgroundColor = expected
+
+        try view.setUseMetal(true)
+
+        let actual = try #require(view.layer?.backgroundColor)
+        #expect(actual == expected.cgColor)
+    }
+
+    /// A translucent background must not use the opaque first-frame fallback,
+    /// because the Metal clear color would apply its alpha a second time.
+    @Test(.enabled(if: MetalToggleTests.metalIsUsable)) func translucentMetalBackgroundKeepsTheHostLayerClear() throws {
+        let view = makeView()
+        defer { view.frameDriver.invalidate() }
+        view.nativeBackgroundColor = NSColor(
+            srgbRed: 0.20,
+            green: 0.25,
+            blue: 0.30,
+            alpha: 0.5)
+
+        try view.setUseMetal(true)
+
+        let actual = try #require(view.layer?.backgroundColor)
+        #expect(actual.alpha == 0)
+        #expect(view.metalView?.layer?.isOpaque == false)
+    }
 }
 #endif

@@ -670,9 +670,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             metalView = surface
             metalBoundWindow = window
             startRenderLoopIfNeeded()
-            // Metal's clear color paints the background; if the host layer
-            // painted it too, a translucent background would composite twice
-            layer?.backgroundColor = NSColor.clear.cgColor
+            updateBackingLayerBackground()
             needsDisplay = false
             surface.requestDisplay()
         } else {
@@ -692,7 +690,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         metalView = nil
         metalDrawDelegate = nil
         metalBoundWindow = nil
-        layer?.backgroundColor = effectiveNativeBackgroundColor.cgColor
+        updateBackingLayerBackground()
         if let caretView = caretView {
             caretView.isHidden = false
             caretView.updateCursorStyle()
@@ -1160,11 +1158,22 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         settingBg = true
         _nativeBg = newValue
         terminal.backgroundColor = newValue.getTerminalColor()
-        metalView?.layer?.isOpaque = newValue.cgColor.alpha >= 1.0
-        layer?.backgroundColor = metalView == nil
-            ? effectiveNativeBackgroundColor.cgColor : NSColor.clear.cgColor
+        updateBackingLayerBackground()
         refreshCachedViewState()
         settingBg = false
+    }
+
+    /// Keeps an opaque terminal color behind the Metal surface so a host does
+    /// not show through before that surface obtains its first drawable. A
+    /// translucent Metal background still needs a clear host layer; otherwise
+    /// Core Animation would composite the same color and alpha twice.
+    func updateBackingLayerBackground()
+    {
+        let background = effectiveNativeBackgroundColor
+        let isOpaque = background.cgColor.alpha >= 1.0
+        metalView?.layer?.isOpaque = isOpaque
+        layer?.backgroundColor = metalView == nil || isOpaque
+            ? background.cgColor : NSColor.clear.cgColor
     }
 
     func setNativeForegroundColorFromTerminal (_ newValue: NSColor)
@@ -1245,8 +1254,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         set {
             let clamped = max (0.0, min (1.0, newValue))
             nativeBackgroundColor = _nativeBg.withAlphaComponent (clamped)
-            // CAMetalLayer defaults to opaque; it must composite when translucent
-            metalView?.layer?.isOpaque = clamped >= 1.0
             colorsChanged ()
         }
     }

@@ -2072,9 +2072,7 @@ extension TerminalView {
         coreGraphicsRenderCache.clearColors()
 
 #if os(macOS)
-        if !isUsingMetalRenderer {
-            layer?.backgroundColor = effectiveNativeBackgroundColor.cgColor
-        }
+        updateBackingLayerBackground()
 #else
         if reverseColorsActiveValue() {
             let opacity = layer.backgroundColor?.alpha ?? 1
