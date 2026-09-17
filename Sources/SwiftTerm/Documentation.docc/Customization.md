@@ -276,3 +276,19 @@ custom overlay), set `notifyUpdateChanges` to `true` and implement
 ```swift
 terminalView.notifyUpdateChanges = true
 ```
+
+## Drawing the Progress Bar Yourself
+
+When a program reports progress with OSC 9;4, ``TerminalView`` draws a thin bar
+across the terminal's first line, which is the only place it can go. A host that
+wants progress in its own chrome — a toolbar, a status footer, a tab — turns the
+built-in bar off and draws from the reports it already receives:
+
+```swift
+terminalView.showsProgressBar = false
+```
+
+The reports keep arriving at any observer registered with
+``TerminalView/observeOscEvents(_:)`` either way; only the drawing stops. While
+it is off no report brings the bar back, and setting it to `true` again restores
+it — with the report still running, if there is one.
