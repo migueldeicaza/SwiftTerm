@@ -1511,6 +1511,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// need a way of toggling this behavior.
     public var allowMouseReporting: Bool = true
 
+    /// When `true`, a mouse event with the Option key held is never reported
+    /// to the application and works the view's own selection instead — the
+    /// way Shift already does, and the convention every other macOS terminal
+    /// follows (Terminal.app, iTerm2), which is what programs mean when they
+    /// print "option+click to select". Off by default, so nothing changes for
+    /// a host that has not asked; a host that turns it on should expect
+    /// programs relying on Option-modified mouse reports to lose them.
+    public var optionBypassesMouseReporting: Bool = false
+
     /// Controls how link tracking resolves hovered links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
     public var linkReporting: LinkReporting = .implicit
@@ -3523,7 +3532,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     private func shiftBypassesMouseReportingLocked(for event: NSEvent) -> Bool {
         terminal.terminalLock.preconditionLocked()
-        return event.modifierFlags.contains(.shift) && !terminal.mouseShiftCapture
+        let flags = event.modifierFlags
+        if flags.contains(.shift) && !terminal.mouseShiftCapture { return true }
+        return optionBypassesMouseReporting && flags.contains(.option)
     }
 
     private func semanticPromptModifiers(for event: NSEvent) -> SemanticPromptClickModifiers {
