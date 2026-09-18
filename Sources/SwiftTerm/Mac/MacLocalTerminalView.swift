@@ -363,7 +363,15 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     /// stop at the protocol's default beep with no way for the host to hear
     /// it. `open`, so a subclass can also answer it directly.
     open func bell(source: TerminalView) {
-        processDelegate?.bell(source: source)
+        guard let processDelegate else {
+            // No host to hear it, so the view answers the way it did before
+            // this seam existed: `TerminalViewDelegate`'s own default beeps,
+            // and this override would otherwise replace that beep with
+            // silence for every caller that never set a process delegate.
+            NSSound.beep()
+            return
+        }
+        processDelegate.bell(source: source)
     }
 
     // MARK: Kitty clipboard protocol, forwarded to the processDelegate
