@@ -613,6 +613,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         setupOptions()
         configureInputSender()
         configureFeedSender()
+        updateTerminalFocus()
         setupProgressBar()
     }
 
@@ -968,6 +969,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         super.viewDidMoveToWindow()
         guard uiShutdownState == .active else { return }
         frameDriver.bind(to: window == nil ? nil : self)
+        hasFocus = window?.firstResponder === self
+        updateTerminalFocus()
         refreshCachedViewState()
         frameDriver.markDirty()
         if window == nil {
@@ -1008,6 +1011,22 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         colorsChangedOnMain()
     }
     
+    /// AppKit keeps the first responder when a window loses key status. Terminal
+    /// focus therefore depends on both responder ownership and window activation.
+    private func updateTerminalFocus() {
+        guard uiShutdownState == .active, terminal != nil else { return }
+        let focused = hasFocus
+        // Releases can be lost when either the responder or the key window changes.
+        if !focused { kittyKeysWithoutReportedPress.removeAll() }
+        withTerminal { terminal in
+            if terminal.reportedFocusState != focused {
+                terminal.setTerminalFocus(focused)
+            }
+        }
+        caretView.updateCursorStyle()
+        frameDriver.markDirty()
+    }
+
     var becomeKeyObserver, resignKeyObserver: NSObjectProtocol?
     
     @MainActor
@@ -1018,10 +1037,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 forName: NSWindow.didBecomeKeyNotification,
                 object: nil,
                 queue: .main
-            ) { [weak self] _ in
+            ) { [weak self] notification in
+                let changedWindow = notification.object as? NSWindow
                 MainActor.assumeIsolated {
-                    self?.caretView.updateCursorStyle()
-                    self?.frameDriver.markDirty()
+                    guard let self, let changedWindow,
+                          self.window === changedWindow else { return }
+                    self.updateTerminalFocus()
                 }
             }
         }
@@ -1030,10 +1051,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 forName: NSWindow.didResignKeyNotification,
                 object: nil,
                 queue: .main
-            ) { [weak self] _ in
+            ) { [weak self] notification in
+                let changedWindow = notification.object as? NSWindow
                 MainActor.assumeIsolated {
-                    self?.caretView.updateCursorStyle()
-                    self?.frameDriver.markDirty()
+                    guard let self, let changedWindow,
+                          self.window === changedWindow else { return }
+                    self.updateTerminalFocus()
                 }
             }
         }
@@ -1744,8 +1767,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let response = super.becomeFirstResponder()
         if response {
             hasFocus = true
-            caretView.updateCursorStyle()
-            withTerminal { $0.setTerminalFocus(true) }
+            updateTerminalFocus()
         }
         return response
     }
@@ -1755,10 +1777,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if response {
             caretView.disableAnimations()
             hasFocus = false
-            withTerminal { $0.setTerminalFocus(false) }
-            // Key-up events for keys held across a focus change do not
-            // arrive. Do not let their entries suppress a later release.
-            kittyKeysWithoutReportedPress.removeAll()
+            updateTerminalFocus()
         }
         return response
     }
