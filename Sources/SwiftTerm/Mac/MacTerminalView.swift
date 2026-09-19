@@ -492,6 +492,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var markedTextOverlay: DictationOverlayTextView?
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
+    /// The report the bar is on, or would be on if ``showsProgressBar`` let it.
+    private var liveProgressReport: Terminal.ProgressReport?
     private enum UIShutdownState {
         case active
         case stopping
@@ -1082,7 +1084,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private func clearProgressReport() {
         progressReportTimer?.invalidate()
         progressReportTimer = nil
-        progressBarView?.apply(state: .remove, progress: nil)
+        liveProgressReport = nil
+        syncProgressBar()
     }
 
     @MainActor
@@ -1092,8 +1095,35 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
 
-        progressBarView?.apply(state: report.state, progress: report.progress)
+        liveProgressReport = report
+        syncProgressBar()
         resetProgressReportTimer()
+    }
+
+    /// Brings the bar in line with the live report and ``showsProgressBar`` —
+    /// the one place either of them reaches the bar view, so a host that turns
+    /// the bar off cannot be talked back into it by the next report.
+    @MainActor
+    private func syncProgressBar() {
+        guard showsProgressBar, let liveProgressReport else {
+            progressBarView?.apply(state: .remove, progress: nil)
+            return
+        }
+        progressBarView?.apply(state: liveProgressReport.state, progress: liveProgressReport.progress)
+    }
+
+    /// Controls whether the view draws the OSC 9;4 progress bar itself.
+    ///
+    /// The reports still reach an observer registered with
+    /// ``observeOscEvents(_:)``, so a host that draws progress in its own
+    /// chrome turns the built-in bar off without losing what it draws from.
+    /// While this is `false` no report brings the bar back; setting it to
+    /// `true` again restores it, and a report still live comes back with it.
+    public var showsProgressBar: Bool = true {
+        didSet {
+            guard showsProgressBar != oldValue else { return }
+            syncProgressBar()
+        }
     }
 
     /// Permanently releases UI drivers and renderer resources.
