@@ -2404,9 +2404,9 @@ extension TerminalView {
     {
         let capturedTitle = title
         let capturedBody = body
-        onMain {
-            let _ = capturedTitle
-            let _ = capturedBody
+        onMain { [weak self] in
+            guard let self else { return }
+            self.terminalDelegate?.notification(source: self, title: capturedTitle, body: capturedBody)
         }
     }
     
@@ -4916,6 +4916,12 @@ extension TerminalViewDelegate {
         request: KittyClipboardPermissionRequest
     ) -> KittyClipboardPermissionResult {
         .deny
+    }
+
+    public func progressReport(source: TerminalView, report: Terminal.ProgressReport) {
+    }
+
+    public func notification(source: TerminalView, title: String, body: String) {
     }
 }
 
