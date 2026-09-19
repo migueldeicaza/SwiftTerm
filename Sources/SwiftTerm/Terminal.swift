@@ -4409,7 +4409,11 @@ open class Terminal {
         if marginMode {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
-                let rowCount = buffer.scrollBottom-buffer.scrollTop
+                // Rows between the cursor and the bottom of the scroll region.
+                // The shift below starts at the cursor row, not at scrollTop,
+                // so using the region's full height here walks past the last
+                // line of the buffer.
+                let rowCount = buffer.scrollBottom-buffer.y
                 for i in 0...rowCount {
                     repairWideCellsForColumnRestrictedShift(row: row + i)
                 }
@@ -7144,9 +7148,14 @@ open class Terminal {
         let eraseBlank = currentEraseBlankCell
         
         if marginMode {
-            if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
+            // The non-margin branch below only acts when the cursor is inside
+            // the vertical scroll region; this branch has to agree with it.
+            if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight,
+               buffer.y >= buffer.scrollTop, buffer.y <= buffer.scrollBottom {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
-                let rowCount = buffer.scrollBottom-buffer.scrollTop
+                // Rows between the cursor and the bottom of the scroll region;
+                // see the matching comment in cmdInsertLines.
+                let rowCount = buffer.scrollBottom-buffer.y
                 for i in 0...rowCount {
                     repairWideCellsForColumnRestrictedShift(row: row + i)
                 }
