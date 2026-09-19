@@ -2085,6 +2085,7 @@ final class MetalTerminalRenderer {
                                                baselineFromBottom: yOffset,
                                                font: scaledFont,
                                                fittingFont: glyphRun.font,
+                                               normalFont: context.fonts.normal,
                                                renderingScale: scale,
                                                metricsFont: &metricsFont,
                                                policy: glyphPolicy,
@@ -2600,12 +2601,14 @@ final class MetalTerminalRenderer {
                               baselineFromBottom: CGFloat,
                               font: CTFont,
                               fittingFont: CTFont,
+                              normalFont: CTFont,
                               renderingScale: CGFloat,
                               metricsFont: inout GlyphMetricsFont?,
                               policy: TerminalGlyphPlacementPolicy? = nil,
                               iconHeight: CGFloat = 0) -> GlyphSlotFit {
         let resolution = resolvedGlyph.fitMetrics(columnWidth: columnWidth,
-                                                  required: policy != nil) {
+                                                  required: policy != nil || GlyphSlotFit.requiresFit(
+                                                    font: fittingFont, normalFont: normalFont, columnWidth: columnWidth)) {
             resolvedGlyphMetrics(font: font,
                                  fittingFont: fittingFont,
                                  renderingScale: renderingScale,
@@ -2638,7 +2641,8 @@ final class MetalTerminalRenderer {
                                       columnWidth: columnWidth,
                                       cellDimension: cellDimension,
                                       baselineFromBottom: baselineFromBottom,
-                                      renderingScale: renderingScale)
+                                      renderingScale: renderingScale,
+                                      fitSingleCell: columnWidth == 1)
     }
 
     private func cachePermanentEmpty(_ key: GlyphKey) {
@@ -3542,6 +3546,7 @@ final class MetalTerminalRenderer {
                                        baselineFromBottom: yOffset,
                                        font: scaledFont,
                                        fittingFont: ctFont,
+                                       normalFont: context.fonts.normal,
                                        renderingScale: scale,
                                        metricsFont: &metricsFont,
                                        policy: cursorGlyphPolicy,
