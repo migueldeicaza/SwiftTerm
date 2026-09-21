@@ -1965,9 +1965,36 @@ extension TerminalView {
         #endif
         // Snap to pixel grid to avoid sub-pixel seams between adjacent cells
         let scale = backingScaleFactor()
+        // Remembered so the grid can be re-snapped when the view moves to a
+        // screen with a different pixel density; see
+        // `remeasureCellDimensionIfBackingScaleChanged`.
+        cellDimensionBackingScale = scale
         let snappedWidth = (cellWidth * scale).rounded() / scale
         let snappedHeight = ceil(cellHeight * scale) / scale
         return CellDimension(width: max(1, snappedWidth), height: max(min(snappedHeight, 8192), 1))
+    }
+
+    /// Re-snaps the cell grid when the view's pixel density no longer matches
+    /// the one `computeFontDimensions` measured against.
+    ///
+    /// The cell width and height are snapped to the pixel grid of the screen
+    /// the view was on when the font was set. Without this, moving the window
+    /// to a screen with another backing scale (an external monitor to a
+    /// Retina laptop display, or back) kept drawing a grid snapped for the
+    /// old screen: cell edges fell between pixels, glyphs bled into their
+    /// neighbours and the column count no longer matched the width.
+    ///
+    /// Goes through `resetFont`, which recomputes the grid, resizes the
+    /// terminal to the columns and rows that now fit and refreshes the cached
+    /// view state. Returns whether it did so.
+    @discardableResult
+    func remeasureCellDimensionIfBackingScaleChanged () -> Bool
+    {
+        guard cellDimension != nil, backingScaleFactor() != cellDimensionBackingScale else {
+            return false
+        }
+        resetFont()
+        return true
     }
 
     /// ``CellGeometry/baselineOffset(normalFont:cellHeight:)`` for this view's
