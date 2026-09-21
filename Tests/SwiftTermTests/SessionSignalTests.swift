@@ -137,6 +137,50 @@ struct SessionSignalTests {
         #expect(progressBar(of: view)?.isHidden == true)
     }
 
+    /// Closing the view ends the session; a host that heard the `set` has to
+    /// hear the removal, or it stays busy with nothing left to be busy about.
+    @Test func closingTheViewRemovesALiveReport() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        view.updateUiClosed()
+
+        #expect(delegate.reports.count == 2)
+        #expect(delegate.reports.last?.state == .remove)
+        #expect(progressBar(of: view)?.isHidden == true)
+    }
+
+    /// With no bar up there is nothing to remove, and a removal the host never
+    /// asked for would read as the end of work it never started.
+    @Test func closingTheViewWithoutAReportSaysNothing() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+
+        view.updateUiClosed()
+        await settleBriefly()
+
+        #expect(delegate.reports.isEmpty)
+    }
+
+    /// Teardown is idempotent, and so is the removal it reports.
+    @Test func closingTheViewTwiceRemovesOnlyOnce() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        view.updateUiClosed()
+        view.updateUiClosed()
+        await settleBriefly()
+
+        #expect(delegate.reports.count == 2)
+    }
+
     /// Reporting to the host is an addition: the bar the view already drew has
     /// to behave exactly as it did.
     @Test func theBarStillDrawsWhileTheHostListens() async {
