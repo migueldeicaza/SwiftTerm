@@ -372,9 +372,13 @@ or surface a notification the application posted.
 ``TerminalViewDelegate/progressReport(source:report:)`` is called every time the
 view handles an OSC 9;4 progress report, with the report it just applied to the
 progress bar. `set` and `indeterminate` mean the application is working;
-`remove` means it is done. The view also sends a synthetic `remove` when its 15
-second silence timer clears a bar the application never removed, so the two
-always come in pairs:
+`remove` means it is done. A `set` or `indeterminate` is followed by a
+`remove`: from the application, from the 15 second silence timer that clears a
+bar the application never removed, or from the view closing
+(``TerminalView/updateUiClosed()``); the last two arrive as a synthetic report.
+That holds as long as the same delegate stays attached; a delegate attached
+while a report is live is not caught up on it, and one detached before the
+removal never hears it.
 
 ```swift
 func progressReport (source: TerminalView, report: Terminal.ProgressReport) {
