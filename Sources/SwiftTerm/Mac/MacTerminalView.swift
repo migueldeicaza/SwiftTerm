@@ -1287,9 +1287,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     /// Controls whether the view draws the OSC 9;4 progress bar itself.
     ///
-    /// The reports still reach an observer registered with
-    /// ``observeOscEvents(_:)``, so a host that draws progress in its own
-    /// chrome turns the built-in bar off without losing what it draws from.
+    /// The reports still reach ``TerminalViewDelegate/progressReport(source:report:)``,
+    /// so a host that draws progress in its own chrome turns the built-in bar off
+    /// without losing what it draws from; that callback also carries the synthetic
+    /// removals the view makes on its own, when the silence timer expires a bar and
+    /// when the view closes.
     /// While this is `false` no report brings the bar back; setting it to
     /// `true` again restores it, and a report still live comes back with it.
     public var showsProgressBar: Bool = true {

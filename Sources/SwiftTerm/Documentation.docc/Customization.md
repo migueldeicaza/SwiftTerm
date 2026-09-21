@@ -411,7 +411,13 @@ built-in bar off and draws from the reports it already receives:
 terminalView.showsProgressBar = false
 ```
 
-The reports keep arriving at any observer registered with
-``TerminalView/observeOscEvents(_:)`` either way; only the drawing stops. While
-it is off no report brings the bar back, and setting it to `true` again restores
-it — with the report still running, if there is one.
+Draw from ``TerminalViewDelegate/progressReport(source:report:)``, or from
+``LocalProcessTerminalViewDelegate/progressReport(source:report:)`` where the
+host uses ``LocalProcessTerminalView``. Those carry what the application sent
+and the removals the view makes on its own; a bar drawn from raw OSC input
+never hears the silence timer expire a report, or the view close on one, and
+stays busy with nothing behind it.
+
+The reports keep arriving either way; only the drawing stops. While it is off no
+report brings the bar back, and setting it to `true` again restores it — with the
+report still running, if there is one.

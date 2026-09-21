@@ -16,6 +16,23 @@ import Testing
 @MainActor
 struct ShowsProgressBarTests {
 
+    /// Records what the host is told, which is what a custom bar would draw
+    /// from.
+    private class HostDelegate: TerminalViewDelegate {
+        var reports: [Terminal.ProgressReport] = []
+
+        func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+        func setTerminalTitle(source: TerminalView, title: String) {}
+        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+        func send(source: TerminalView, data: ArraySlice<UInt8>) {}
+        func scrolled(source: TerminalView, position: Double) {}
+        func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+
+        func progressReport(source: TerminalView, report: Terminal.ProgressReport) {
+            reports.append(report)
+        }
+    }
+
     private func makeView() -> TerminalView {
         TerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 320))
     }
@@ -63,22 +80,61 @@ struct ShowsProgressBarTests {
     }
 
     /// The host still hears what it turned off, which is the whole point of
-    /// turning it off.
-    @Test func theObserverStillHearsTheReports() async {
+    /// turning it off. The delegate is what a custom bar draws from; the raw
+    /// OSC observer never sees the removals the view makes on its own.
+    @Test func theDelegateStillHearsTheReports() async {
         let view = makeView()
-        let received = Locked<[TerminalOscEvent]>([])
-        let observation = view.observeOscEvents { event in
-            guard event.code == 9 else { return }
-            received.withLock { $0.append(event) }
-        }
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
         view.showsProgressBar = false
 
         view.feed(text: "\u{1b}]9;4;1;40\u{07}")
-        await settle { received.withLock { $0.isEmpty } == false }
+        await settle { !delegate.reports.isEmpty }
 
-        #expect(received.withLock { $0.map { String(decoding: $0.payload, as: UTF8.self) } } == ["4;1;40"])
+        #expect(delegate.reports == [Terminal.ProgressReport(state: .set, progress: 40)])
         #expect(progressBar(of: view)?.isHidden != false)
-        withExtendedLifetime(observation) {}
+    }
+
+    /// The 15 second silence is the view's own decision, and a bar the host
+    /// draws has to hear it too.
+    @Test func expirationReachesTheHostWithTheBarOff() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+        view.showsProgressBar = false
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        view.expireProgressReport()
+
+        #expect(delegate.reports.count == 2)
+        #expect(delegate.reports.last?.state == .remove)
+        #expect(progressBar(of: view)?.isHidden != false)
+    }
+
+    /// A host that drops its delegate while a program is still working leaves
+    /// the view holding a report nobody is listening to. It still has to clean
+    /// up after itself, and the delegate that comes next starts empty.
+    @Test func droppingTheDelegateLeavesNothingBehind() async {
+        let view = makeView()
+        let first = HostDelegate()
+        view.terminalDelegate = first
+        view.showsProgressBar = false
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !first.reports.isEmpty }
+
+        view.terminalDelegate = nil
+        view.expireProgressReport()
+
+        let second = HostDelegate()
+        view.terminalDelegate = second
+        view.updateUiClosed()
+        await waitOut(0.3)
+
+        #expect(first.reports.count == 1)
+        #expect(second.reports.isEmpty)
+        #expect(progressBar(of: view)?.isHidden != false)
     }
 
     /// Turning it off mid-task takes the bar that is already on screen down.
