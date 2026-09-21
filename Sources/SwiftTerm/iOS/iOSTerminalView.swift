@@ -345,6 +345,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// mirroring the session is showing. Kept apart from `progressReportTimer`,
     /// which only exists while the silence clear is armed: a teardown owes the
     /// host a removal for the report, whether or not a timer is running.
+    /// It is also what the bar is drawn from, or would be if
+    /// ``showsProgressBar`` let it.
     private var liveProgressReport: Terminal.ProgressReport?
     
     /// Tracks the selection state of the terminal, and can be used to set it
@@ -639,7 +641,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         progressReportTimer?.invalidate()
         progressReportTimer = nil
         liveProgressReport = nil
-        progressBarView?.apply(state: .remove, progress: nil)
+        syncProgressBar()
     }
 
     private func handleProgressReport(_ report: Terminal.ProgressReport) {
@@ -647,7 +649,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             clearProgressReport()
         } else {
             liveProgressReport = report
-            progressBarView?.apply(state: report.state, progress: report.progress)
+            syncProgressBar()
             resetProgressReportTimer()
         }
         terminalDelegate?.progressReport(source: self, report: report)
@@ -674,6 +676,31 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             expireProgressReport()
         } else {
             clearProgressReport()
+        }
+    }
+
+    /// Brings the bar in line with the live report and ``showsProgressBar`` —
+    /// the one place either of them reaches the bar view, so a host that turns
+    /// the bar off cannot be talked back into it by the next report.
+    private func syncProgressBar() {
+        guard showsProgressBar, let liveProgressReport else {
+            progressBarView?.apply(state: .remove, progress: nil)
+            return
+        }
+        progressBarView?.apply(state: liveProgressReport.state, progress: liveProgressReport.progress)
+    }
+
+    /// Controls whether the view draws the OSC 9;4 progress bar itself.
+    ///
+    /// The reports still reach an observer registered with
+    /// ``observeOscEvents(_:)``, so a host that draws progress in its own
+    /// chrome turns the built-in bar off without losing what it draws from.
+    /// While this is `false` no report brings the bar back; setting it to
+    /// `true` again restores it, and a report still live comes back with it.
+    public var showsProgressBar: Bool = true {
+        didSet {
+            guard showsProgressBar != oldValue else { return }
+            syncProgressBar()
         }
     }
     
