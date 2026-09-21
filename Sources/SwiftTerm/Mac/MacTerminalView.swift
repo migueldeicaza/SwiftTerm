@@ -1143,6 +1143,21 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         handleProgressReport(Terminal.ProgressReport(state: .remove, progress: nil))
     }
 
+    /// Ends a live report when the view is torn down.
+    ///
+    /// A host that heard a `set` has to hear the matching `remove`, or it stays
+    /// busy after the session it was mirroring is gone. So the closing view
+    /// reports the removal when a bar is still up, and only clears its own
+    /// state when there is nothing to report.
+    @MainActor
+    private func shutdownProgressReport() {
+        if progressReportTimer != nil {
+            expireProgressReport()
+        } else {
+            clearProgressReport()
+        }
+    }
+
     /// Permanently releases UI drivers and renderer resources.
     ///
     /// An owner must call this method when it permanently releases the view.
@@ -1168,7 +1183,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         stopWindowMouseMovedFallback()
         stopFocusNotifications()
         stopTextBlinking()
-        clearProgressReport()
+        shutdownProgressReport()
         overlayScrollerHideTimer?.invalidate()
         overlayScrollerHideTimer = nil
         renderOwner.invalidateSynchronizedOutputWatchdog()

@@ -192,9 +192,11 @@ public protocol TerminalViewDelegate: AnyObject {
      * an editor that holds back input until the command finishes. The view keeps its own
      * state, so an implementation only has to mirror what it is told.
      *
-     * The view sends a synthetic ``Terminal/ProgressReport`` with the
-     * ``Terminal/ProgressReportState/remove`` state when the 15 second silence timer clears
-     * a bar the application never removed, so `set` and `remove` always come in pairs.
+     * A `set` or `indeterminate` is followed by a `remove`: from the application, from the
+     * 15 second silence timer, or from the view closing — the last two arrive as a synthetic
+     * ``Terminal/ProgressReport`` with the ``Terminal/ProgressReportState/remove`` state. That
+     * holds as long as the same delegate stays attached; a delegate attached while a report is
+     * live is not caught up on it, and one detached before the removal never hears it.
      *
      * The default implementation does nothing.
      */

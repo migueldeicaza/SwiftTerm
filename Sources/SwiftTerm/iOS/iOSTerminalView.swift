@@ -653,6 +653,20 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     func expireProgressReport() {
         handleProgressReport(Terminal.ProgressReport(state: .remove, progress: nil))
     }
+
+    /// Ends a live report when the view is torn down.
+    ///
+    /// A host that heard a `set` has to hear the matching `remove`, or it stays
+    /// busy after the session it was mirroring is gone. So the closing view
+    /// reports the removal when a bar is still up, and only clears its own
+    /// state when there is nothing to report.
+    private func shutdownProgressReport() {
+        if progressReportTimer != nil {
+            expireProgressReport()
+        } else {
+            clearProgressReport()
+        }
+    }
     
     /// Permanently releases UI drivers and renderer resources.
     ///
@@ -675,7 +689,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
 #endif
         stopTextBlinking()
-        clearProgressReport()
+        shutdownProgressReport()
         renderOwner.invalidateSynchronizedOutputWatchdog()
         uiShutdownState = .stopped
         return true
