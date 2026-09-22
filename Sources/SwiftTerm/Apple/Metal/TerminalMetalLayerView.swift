@@ -181,7 +181,7 @@ final class TerminalMetalLayerView: TerminalMetalLayerViewBase {
 #else
     override func layoutSubviews() {
         super.layoutSubviews()
-        renderContentsScale = window?.screen.scale ?? contentScaleFactor
+        renderContentsScale = traitCollection.displayScale
         onNeedsDisplay?()
     }
 #endif
