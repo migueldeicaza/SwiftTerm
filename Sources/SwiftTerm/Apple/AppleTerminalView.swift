@@ -1639,6 +1639,21 @@ extension TerminalView {
         renderOwner.keyboardEnhancementFlags()
     }
 
+    /// The text of the visible rows in `rows`, as copied values.
+    ///
+    /// For a host that reads a few rows often — a prompt detector watching the bottom of the
+    /// screen on a timer, a click that needs the row under the pointer. It takes the same lock
+    /// as ``terminalStateSnapshot()`` but copies only the rows asked for, where the snapshot
+    /// copies every visible row with its cell widths. Each row reads as
+    /// ``TerminalVisibleRowSnapshot/text`` does: cells never written are dropped from the end,
+    /// spaces the application wrote are kept. Rows are zero-based from the top of the viewport
+    /// and clamped to the screen; an empty or fully off-screen range yields no rows.
+    ///
+    /// - Parameter rows: The visible rows to copy, `0..<rows` being the whole screen.
+    public nonisolated func visibleRowsText(_ rows: Range<Int>) -> [String] {
+        renderOwner.visibleRowsText(rows)
+    }
+
     /// Returns copied terminal state for status displays and diagnostics.
     public nonisolated func terminalStateSnapshot() -> TerminalViewStateSnapshot {
         renderOwner.stateSnapshot()

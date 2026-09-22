@@ -307,6 +307,14 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func visibleRowsText(_ rows: Range<Int>) -> [String] {
+        guard let terminal = currentSession()?.terminal else { return [] }
+        return terminal.terminalLock.withLock {
+            let screen = 0..<max(0, terminal.rows)
+            return rows.clamped(to: screen).compactMap { terminal.getLine(row: $0)?.translateToString(trimRight: true) }
+        }
+    }
+
     func bufferData(kind: Terminal.BufferKind,
                     encoding: String.Encoding) -> Data {
         guard let terminal = currentSession()?.terminal else { return Data() }
