@@ -29,6 +29,20 @@ struct TerminalViewVisibleRowsTests {
         #expect(view.visibleRowsText(0..<3) == view.terminalStateSnapshot().visibleRows.prefix(3).map(\.text))
     }
 
+    /// A wide glyph occupies two cells and reads as one character; a cursor jump leaves unwritten
+    /// cells before the text, which read as spaces. Neither yields a NUL, and both match the
+    /// snapshot exactly.
+    @MainActor
+    @Test func wideGlyphsAndCursorJumpsReadAsTheSnapshotReadsThem() {
+        let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 640, height: 320)))
+        view.feed(text: "界x\r\n\u{1b}[10Gx")
+        let expected = ["界x", "         x"]
+        let seen = rows(view, 0..<2, equal: expected)
+        #expect(seen == expected)
+        #expect(seen == view.terminalStateSnapshot().visibleRows.prefix(2).map(\.text))
+        #expect(!seen.contains { $0.contains("\u{0}") })
+    }
+
     @MainActor
     @Test func rangesAreClampedToTheScreen() {
         let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 640, height: 320)))
