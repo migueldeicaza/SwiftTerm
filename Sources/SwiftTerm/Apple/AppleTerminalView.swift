@@ -1984,16 +1984,29 @@ extension TerminalView {
     /// old screen: cell edges fell between pixels, glyphs bled into their
     /// neighbours and the column count no longer matched the width.
     ///
-    /// Goes through `resetFont`, which recomputes the grid, resizes the
-    /// terminal to the columns and rows that now fit and refreshes the cached
-    /// view state. Returns whether it did so.
+    /// Only runs while the view has a window: a detached view would measure
+    /// against `NSScreen.main`, so it keeps its grid until it is attached.
+    ///
+    /// Unlike `resetFont`, this does not go through `resize(cols:rows:)`,
+    /// whose `softReset()` would clear modes set by the running program.
+    /// `processSizeChange` resizes the terminal only when the rows or columns
+    /// change, and otherwise just updates the pixel geometry. Returns whether
+    /// the grid was re-measured.
     @discardableResult
     func remeasureCellDimensionIfBackingScaleChanged () -> Bool
     {
-        guard cellDimension != nil, backingScaleFactor() != cellDimensionBackingScale else {
+        guard window != nil, cellDimension != nil, backingScaleFactor() != cellDimensionBackingScale else {
             return false
         }
-        resetFont()
+        cellDimension = computeFontDimensions()
+        refreshCachedViewState()
+        processSizeChange(newSize: frame.size)
+        updateCaretView()
+        #if os(macOS)
+        needsDisplay = true
+        #else
+        setNeedsDisplay(frame)
+        #endif
         return true
     }
 

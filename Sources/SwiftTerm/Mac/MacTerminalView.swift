@@ -975,6 +975,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         updateTerminalFocus()
         // A view created before it had a window measured its cells against
         // the main screen; the window it lands in may be on another one.
+        // On detach the helper does nothing, so the view keeps its grid until
+        // it joins a window instead of re-measuring against the main screen.
         remeasureCellDimensionIfBackingScaleChanged()
         refreshCachedViewState()
         frameDriver.markDirty()
@@ -1006,7 +1008,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         guard uiShutdownState == .active else { return }
         // This also fires for color space changes, where the grid is still
         // right and a full re-measure (and the resize it can imply) would be
-        // wrong; `resetFont` refreshes the cached view state itself.
+        // wrong. The re-measure refreshes the cached view state itself, and
+        // does nothing while the view has no window.
         if !remeasureCellDimensionIfBackingScaleChanged() {
             refreshCachedViewState()
         }
