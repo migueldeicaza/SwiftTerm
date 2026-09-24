@@ -1695,7 +1695,30 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     
     public override func cursorUpdate(with event: NSEvent)
     {
-        NSCursor.iBeam.set ()
+        let hit = calculateMouseHit(with: event).grid
+        let hasCommandModifier = commandActive || event.modifierFlags.contains(.command)
+        linkCursor(at: hit, hasCommandModifier: hasCommandModifier).set()
+    }
+
+    func linkCursor(at position: Position, hasCommandModifier: Bool) -> NSCursor
+    {
+        let match: Terminal.LinkMatch?
+        switch linkHighlightMode {
+        case .hover, .hoverWithModifier:
+            // Reuse the hover lookup so cursor updates do not run the implicit-link
+            // regular expression twice.
+            match = updateHoverLink(at: position, commandOverride: hasCommandModifier)
+        case .always, .alwaysWithModifier:
+            // Implicit links are never visible in these modes.
+            match = withTerminal { terminal in
+                terminal.linkMatch(at: .buffer(position), mode: .explicitOnly)
+            }
+        }
+        guard let match,
+              linkVisibleForClick(match: match, hasCommandModifier: hasCommandModifier) else {
+            return .iBeam
+        }
+        return .pointingHand
     }
     
     func makeFirstResponder ()
@@ -3888,7 +3911,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
-    func updateHoverLink(at position: Position, commandOverride: Bool? = nil)
+    @discardableResult
+    func updateHoverLink(
+        at position: Position,
+        commandOverride: Bool? = nil
+    ) -> Terminal.LinkMatch?
     {
         let hoverModes: [LinkHighlightMode] = [.hover, .hoverWithModifier]
         guard hoverModes.contains(linkHighlightMode) else {
@@ -3898,7 +3925,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
                 frameDriver.markDirty()
             }
-            return
+            return nil
         }
         let effectiveCommandActive = commandOverride ?? commandActive
         if linkHighlightMode == .hoverWithModifier && !effectiveCommandActive {
@@ -3908,7 +3935,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 invalidateLinkHighlight(oldRange: oldRange, newRange: nil)
                 frameDriver.markDirty()
             }
-            return
+            return nil
         }
         let match = withTerminal { terminal in
             terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit)
@@ -3920,6 +3947,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             invalidateLinkHighlight(oldRange: oldRange, newRange: newRange)
             frameDriver.markDirty()
         }
+        return match
     }
 
     func currentMouseHit() -> Position?
