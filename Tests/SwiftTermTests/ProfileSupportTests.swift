@@ -225,6 +225,41 @@ final class BackgroundOpacityTests {
         #expect (view.backgroundOpacity == 0.0)
     }
 
+    /// iTerm2-style translucency: with `translucentCellBackgrounds` on, explicit
+    /// cell backgrounds take the default background's alpha; text, reverse
+    /// video and the default (opaque) case are untouched.
+    @Test func explicitCellBackgroundsFollowOpacityWhenEnabled () {
+        let view = TerminalView (frame: CGRect (x: 0, y: 0, width: 400, height: 300))
+        view.backgroundOpacity = 0.4
+        let red = Attribute.Color.ansi256 (code: 1)
+        let teal = Attribute.Color.trueColor (red: 10, green: 120, blue: 130)
+        // mapColor reads the palette; it is only reachable under the terminal lock.
+        func alpha (_ color: Attribute.Color, isFg: Bool) -> CGFloat {
+            view.terminal.terminalLock.withLock {
+                view.mapColor (color: color, isFg: isFg, isBold: false).alphaComponent
+            }
+        }
+
+        // Default: Terminal.app behavior — explicit backgrounds stay opaque.
+        #expect (view.translucentCellBackgrounds == false)
+        #expect (alpha (red, isFg: false) == 1)
+        #expect (alpha (teal, isFg: false) == 1)
+
+        view.translucentCellBackgrounds = true
+        #expect (abs (alpha (red, isFg: false) - 0.4) < 0.001)
+        #expect (abs (alpha (teal, isFg: false) - 0.4) < 0.001)
+        // The same palette entry as FOREGROUND stays opaque (shared cache).
+        #expect (alpha (red, isFg: true) == 1)
+        #expect (alpha (teal, isFg: true) == 1)
+        // Reverse-video highlight stays the one opaque block.
+        #expect (alpha (.defaultInvertedColor, isFg: false) == 1)
+
+        // A fully opaque terminal is unchanged by the option.
+        view.backgroundOpacity = 1.0
+        #expect (alpha (red, isFg: false) == 1)
+        #expect (alpha (teal, isFg: false) == 1)
+    }
+
     @Test func alphaBearingBackgroundReadsAsOpacity () {
         let view = TerminalView (frame: CGRect (x: 0, y: 0, width: 400, height: 300))
         view.nativeBackgroundColor = NSColor (srgbRed: 0, green: 0, blue: 0, alpha: 0.85)
