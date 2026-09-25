@@ -153,6 +153,23 @@ struct SessionSignalTests {
         #expect(progressBar(of: view)?.isHidden == true)
     }
 
+    /// The removal is owed for the report, not for the timer: a host can have
+    /// the silence clear off, so a live report may have no timer behind it.
+    @Test func closingTheViewRemovesALiveReportWithNoTimerRunning() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        view.progressReportTimer?.invalidate()
+        view.progressReportTimer = nil
+        view.updateUiClosed()
+
+        #expect(delegate.reports.count == 2)
+        #expect(delegate.reports.last?.state == .remove)
+    }
+
     /// With no bar up there is nothing to remove, and a removal the host never
     /// asked for would read as the end of work it never started.
     @Test func closingTheViewWithoutAReportSaysNothing() async {
