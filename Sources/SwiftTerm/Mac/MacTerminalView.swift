@@ -497,6 +497,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var progressBarView: TerminalProgressBarView?
     private(set) var progressReportTimer: Timer?
     var schedulesProgressReportTimer = true
+    /// The report the application has up and has not removed — what a host
+    /// mirroring the session is showing. Kept apart from `progressReportTimer`,
+    /// which only exists while the silence clear is armed: a teardown owes the
+    /// host a removal for the report, whether or not a timer is running.
+    private var liveProgressReport: Terminal.ProgressReport?
     private enum UIShutdownState {
         case active
         case stopping
@@ -1227,6 +1232,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private func clearProgressReport() {
         progressReportTimer?.invalidate()
         progressReportTimer = nil
+        liveProgressReport = nil
         progressBarView?.apply(state: .remove, progress: nil)
     }
 
@@ -1235,6 +1241,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if report.state == .remove {
             clearProgressReport()
         } else {
+            liveProgressReport = report
             progressBarView?.apply(state: report.state, progress: report.progress)
             resetProgressReportTimer()
         }
@@ -1256,11 +1263,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     ///
     /// A host that heard a `set` has to hear the matching `remove`, or it stays
     /// busy after the session it was mirroring is gone. So the closing view
-    /// reports the removal when a bar is still up, and only clears its own
+    /// reports the removal while a report is live, and only clears its own
     /// state when there is nothing to report.
     @MainActor
     private func shutdownProgressReport() {
-        if progressReportTimer != nil {
+        if liveProgressReport != nil {
             expireProgressReport()
         } else {
             clearProgressReport()
