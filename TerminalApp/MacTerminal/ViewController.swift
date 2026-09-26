@@ -203,11 +203,15 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
             // The library default is empty. This app serves both directions,
             // each one still behind the permission prompt above.
             kittyClipboardPolicy: .all)
-        terminal = SampleLocalProcessTerminalView(frame: view.frame, options: options)
-        // Let programs that enable the enhanced keyboard protocol receive
-        // Command keys, even when the MacTerminal menu has a matching shortcut.
-        // In legacy keyboard mode, the menu shortcuts still work.
-        terminal.shouldSendCommandKeyToTerminal = { _ in true }
+        let terminalView = SampleLocalProcessTerminalView(frame: view.frame, options: options)
+        terminal = terminalView
+        // Give Command keys to programs that use the enhanced keyboard
+        // protocol. Keep Command-C for menu Copy when text is selected.
+        terminalView.shouldSendCommandKeyToTerminal = { [weak terminalView] event in
+            let isCopy = event.modifierFlags.intersection([.command, .option, .control, .shift]) == [.command]
+                && event.charactersIgnoringModifiers?.lowercased() == "c"
+            return !(isCopy && terminalView?.selectionActive == true)
+        }
         terminal.bellStyle = .none
         // Overridable for measurement: SWIFTTERM_BUFFERING=perRowPersistent
         terminal.metalBufferingMode =
