@@ -702,6 +702,45 @@ final class LocalProcessLifecycleTests: XCTestCase {
         XCTAssertNil(delegate.exitCode)
     }
 
+#if os(macOS)
+    func testChildDoesNotInheritHostDescriptors() throws {
+        // Inheritable, as every pipe(2) is on Darwin until its owner marks it
+        // close-on-exec; another thread can be in that window at any fork.
+        var descriptors: [Int32] = [-1, -1]
+        XCTAssertEqual(pipe(&descriptors), 0)
+        let reader = descriptors[0]
+        var writer = descriptors[1]
+        defer {
+            close(reader)
+            if writer >= 0 { close(writer) }
+        }
+        XCTAssertEqual(fcntl(writer, F_GETFD) & FD_CLOEXEC, 0)
+
+        let delegate = LifecycleDelegate()
+        let process = LocalProcess(
+            delegate: delegate,
+            dispatchQueue: DispatchQueue(label: "SwiftTerm.LocalProcessLifecycle.descriptors"))
+        defer { process.terminate() }
+        try process.startProcessChecked(
+            executable: "/bin/sh",
+            args: ["-c", "if [ -e /dev/fd/\(writer) ]; then echo INHERITED; fi; echo READY; read line"]
+        ).get()
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            String(decoding: delegate.receivedData, as: UTF8.self).contains("READY")
+        })
+        XCTAssertFalse(String(decoding: delegate.receivedData, as: UTF8.self).contains("INHERITED"))
+
+        // Closing the host's writer must reach EOF while the child still runs:
+        // a child holding a copy would keep the reader waiting as long as it lives.
+        close(writer)
+        writer = -1
+        XCTAssertNotEqual(fcntl(reader, F_SETFL, fcntl(reader, F_GETFL) | O_NONBLOCK), -1)
+        var byte: UInt8 = 0
+        XCTAssertEqual(read(reader, &byte, 1), 0, "The PTY child must not hold the host's pipe writer")
+        XCTAssertEqual(kill(process.shellPid, 0), 0)
+    }
+#endif
+
     private func waitUntil(
         timeout: TimeInterval,
         interval: TimeInterval = 0.001,
