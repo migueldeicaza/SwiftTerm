@@ -15,9 +15,27 @@ private func appKitTestsEnabled() -> Bool {
     ProcessInfo.processInfo.environment["RUN_APPKIT_TESTS"] == "1"
 }
 
-@Suite(.enabled(if: appKitTestsEnabled()))
+@Suite(.enabled(if: appKitTestsEnabled()), .serialized)
 @MainActor
 final class KittyKeyboardAppKitReproductionTests {
+    private final class TrackingShortcutView: TerminalView {
+        var copiedText: String?
+        var handledShortcut: String?
+
+        override func copy(_ sender: Any) {
+            copiedText = getSelection()
+        }
+
+        @objc func handleTestShortcut(_ sender: NSMenuItem) {
+            handledShortcut = sender.title
+        }
+
+        override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+            if item.action == #selector(handleTestShortcut(_:)) { return true }
+            return super.validateUserInterfaceItem(item)
+        }
+    }
+
     private final class CapturingDelegate: TerminalViewDelegate {
         var sent: [UInt8] = []
 
@@ -168,7 +186,7 @@ final class KittyKeyboardAppKitReproductionTests {
         #expect(capture.sent.isEmpty)
     }
 
-    @Test func unhandledCommandKeyDoesNotReportARelease() {
+    @Test func commandKeyWithoutMenuReportsPressAndRelease() {
         let (view, capture, _) = configuredView(flags: 10) // reportEvents + reportAllKeys
         view.keyDown(with: keyEvent(modifiers: [.command],
                                     characters: "k",
@@ -179,7 +197,242 @@ final class KittyKeyboardAppKitReproductionTests {
                                   characters: "k",
                                   charactersIgnoringModifiers: "k",
                                   keyCode: 40))
+        #expect(capture.sent == Array("\u{1b}[107;9u\u{1b}[107;9:3u".utf8))
+    }
+
+    private func withCopyMenu(for view: TerminalView, body: () -> Void) {
+        _ = NSApplication.shared
+        let previousMenu = NSApp.mainMenu
+        let menu = NSMenu()
+        let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        let editMenu = NSMenu(title: "Edit")
+        let copyItem = NSMenuItem(title: "Copy", action: #selector(TerminalView.copy(_:)), keyEquivalent: "c")
+        copyItem.target = view
+        editMenu.addItem(copyItem)
+        menu.addItem(editItem)
+        menu.setSubmenu(editMenu, for: editItem)
+        NSApp.mainMenu = menu
+        defer { NSApp.mainMenu = previousMenu }
+        body()
+    }
+
+    private func withShortcutMenu(for view: TrackingShortcutView,
+                                  key: String,
+                                  modifiers: NSEvent.ModifierFlags = [.command],
+                                  body: () -> Void) {
+        _ = NSApplication.shared
+        let previousMenu = NSApp.mainMenu
+        let menu = NSMenu()
+        let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
+        let editMenu = NSMenu(title: "Edit")
+        let shortcutItem = NSMenuItem(title: key,
+                                      action: #selector(TrackingShortcutView.handleTestShortcut(_:)),
+                                      keyEquivalent: key)
+        shortcutItem.keyEquivalentModifierMask = modifiers
+        shortcutItem.target = view
+        editMenu.addItem(shortcutItem)
+        menu.addItem(editItem)
+        menu.setSubmenu(editMenu, for: editItem)
+        NSApp.mainMenu = menu
+        defer { NSApp.mainMenu = previousMenu }
+        body()
+    }
+
+    @Test func hostMenuHandlesOtherCommandShortcuts() {
+        let shortcuts: [(String, String, NSEvent.ModifierFlags, UInt16)] = [
+            ("a", "a", [.command], 0),
+            ("v", "v", [.command], 9),
+            ("f", "f", [.command], 3),
+            ("g", "g", [.command], 5),
+            ("G", "G", [.command, .shift], 5),
+            ("e", "e", [.command], 14)
+        ]
+        for flags in [0, 10] { // legacy and reportEvents + reportAllKeys
+            for (key, unmodified, modifiers, keyCode) in shortcuts {
+                let view = TrackingShortcutView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+                let capture = CapturingDelegate()
+                view.terminalDelegate = capture
+                view.feed(text: "\u{1b}[>\(flags)u")
+                withShortcutMenu(for: view, key: key, modifiers: modifiers) {
+                    view.keyDown(with: keyEvent(modifiers: modifiers,
+                                                characters: key,
+                                                charactersIgnoringModifiers: unmodified,
+                                                keyCode: keyCode))
+                    #expect(view.handledShortcut == key)
+                    view.keyUp(with: keyEvent(type: .keyUp,
+                                              modifiers: [],
+                                              characters: unmodified,
+                                              charactersIgnoringModifiers: unmodified,
+                                              keyCode: keyCode))
+                    #expect(capture.sent.isEmpty)
+                }
+            }
+        }
+    }
+
+    @Test func hostMenuCopiesSelectionBeforeKeyDownClearsIt() {
+        for flags in [0, 10] { // legacy and reportEvents + reportAllKeys
+            let view = TrackingShortcutView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+            let capture = CapturingDelegate()
+            view.terminalDelegate = capture
+            view.feed(text: "copy me")
+            view.feed(text: "\u{1b}[>\(flags)u")
+            view.selectAll()
+            capture.sent.removeAll()
+
+            withCopyMenu(for: view) {
+                view.keyDown(with: keyEvent(modifiers: [.command],
+                                            characters: "c",
+                                            charactersIgnoringModifiers: "c",
+                                            keyCode: 8))
+                #expect(view.copiedText?.contains("copy me") == true)
+                #expect(view.getSelection() != nil)
+                view.keyUp(with: keyEvent(type: .keyUp,
+                                          modifiers: [], // Command was released first.
+                                          characters: "c",
+                                          charactersIgnoringModifiers: "c",
+                                          keyCode: 8))
+                #expect(capture.sent.isEmpty)
+            }
+        }
+    }
+
+    @Test func hostCanGiveCommandShortcutToTheTerminal() {
+        let view = TrackingShortcutView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        let capture = CapturingDelegate()
+        view.terminalDelegate = capture
+        view.feed(text: "\u{1b}[>10u") // reportEvents + reportAllKeys
+        view.shouldSendCommandKeyToTerminal = { $0.charactersIgnoringModifiers == "c" }
+        let window = keyWindow(containing: [view])
+        window.makeFirstResponder(view)
+
+        withCopyMenu(for: view) {
+            let down = keyEvent(modifiers: [.command],
+                                characters: "c",
+                                charactersIgnoringModifiers: "c",
+                                keyCode: 8)
+            #expect(view.performKeyEquivalent(with: down))
+            #expect(view.copiedText == nil)
+            #expect(capture.sent == Array("\u{1b}[99;9u".utf8))
+            let pressCount = capture.sent.count
+            view.keyUp(with: keyEvent(type: .keyUp,
+                                      modifiers: [.command],
+                                      characters: "c",
+                                      charactersIgnoringModifiers: "c",
+                                      keyCode: 8))
+            #expect(capture.sent.count > pressCount)
+        }
+    }
+
+    /// A test process cannot make a window key, so this window says it is.
+    private final class KeyWindow: NSWindow {
+        override var isKeyWindow: Bool { true }
+    }
+
+    private func keyWindow(containing views: [NSView]) -> NSWindow {
+        _ = NSApplication.shared
+        let window = KeyWindow(contentRect: CGRect(x: 0, y: 0, width: 800, height: 200),
+                              styleMask: [.titled],
+                              backing: .buffered,
+                              defer: false)
+        for view in views {
+            window.contentView?.addSubview(view)
+        }
+        return window
+    }
+
+    @Test func unfocusedTerminalDoesNotTakeCommandShortcut() {
+        let focused = TrackingShortcutView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        let unfocused = TrackingShortcutView(frame: CGRect(x: 400, y: 0, width: 400, height: 200))
+        let focusedCapture = CapturingDelegate()
+        let unfocusedCapture = CapturingDelegate()
+        focused.terminalDelegate = focusedCapture
+        unfocused.terminalDelegate = unfocusedCapture
+        unfocused.feed(text: "select me")
+        unfocused.feed(text: "\u{1b}[>10u") // reportEvents + reportAllKeys
+        unfocused.selectAll()
+        unfocused.shouldSendCommandKeyToTerminal = { _ in true }
+        unfocusedCapture.sent.removeAll()
+
+        let window = keyWindow(containing: [focused, unfocused])
+        window.makeFirstResponder(focused)
+
+        let down = keyEvent(modifiers: [.command],
+                            characters: "c",
+                            charactersIgnoringModifiers: "c",
+                            keyCode: 8)
+        #expect(!unfocused.performKeyEquivalent(with: down))
+        #expect(unfocusedCapture.sent.isEmpty)
+        #expect(unfocused.getSelection() != nil)
+
+        unfocused.keyUp(with: keyEvent(type: .keyUp,
+                                       modifiers: [.command],
+                                       characters: "c",
+                                       charactersIgnoringModifiers: "c",
+                                       keyCode: 8))
+        #expect(unfocusedCapture.sent.isEmpty)
+    }
+
+    @Test func disabledCopyMenuDoesNotCopyOrSendInput() {
+        let view = TrackingShortcutView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        let capture = CapturingDelegate()
+        view.terminalDelegate = capture
+        view.feed(text: "\u{1b}[>10u")
+
+        withCopyMenu(for: view) {
+            view.keyDown(with: keyEvent(modifiers: [.command],
+                                        characters: "c",
+                                        charactersIgnoringModifiers: "c",
+                                        keyCode: 8))
+            #expect(view.copiedText == nil)
+            #expect(capture.sent.isEmpty)
+        }
+    }
+
+    @Test func reportedPressKeepsItsReleaseAfterCommandIsPressed() {
+        let (view, capture, _) = configuredView(flags: 10) // reportEvents + reportAllKeys
+        view.keyDown(with: keyEvent(modifiers: [],
+                                    characters: "a",
+                                    charactersIgnoringModifiers: "a",
+                                    keyCode: 0))
+        if capture.sent.isEmpty {
+            view.insertText("a", replacementRange: NSRange(location: NSNotFound, length: 0))
+        }
+        let pressCount = capture.sent.count
+        #expect(pressCount > 0)
+
+        view.keyUp(with: keyEvent(type: .keyUp,
+                                  modifiers: [.command],
+                                  characters: "a",
+                                  charactersIgnoringModifiers: "a",
+                                  keyCode: 0))
+        #expect(capture.sent.count > pressCount)
+    }
+
+    @Test func releaseWithoutAReportedPressIsNotSent() {
+        let (view, capture, _) = configuredView(flags: 10) // reportEvents + reportAllKeys
+        // AppKit handled the key equivalent before the view saw keyDown.
+        view.keyUp(with: keyEvent(type: .keyUp,
+                                  modifiers: [], // Command was released first.
+                                  characters: "v",
+                                  charactersIgnoringModifiers: "v",
+                                  keyCode: 9))
         #expect(capture.sent.isEmpty)
+    }
+
+    @Test func commandKeyWithoutAHostShortcutReachesTheTerminal() {
+        let view = TrackingShortcutView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        let capture = CapturingDelegate()
+        view.terminalDelegate = capture
+        view.feed(text: "\u{1b}[>10u")
+
+        withCopyMenu(for: view) {
+            view.keyDown(with: keyEvent(modifiers: [.command],
+                                        characters: "f",
+                                        charactersIgnoringModifiers: "f",
+                                        keyCode: 3))
+            #expect(capture.sent == Array("\u{1b}[102;9u".utf8))
+        }
     }
 
     @Test func kittyControlCUsesTheLayoutWithoutControlTranslation() {

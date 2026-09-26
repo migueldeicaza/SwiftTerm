@@ -204,6 +204,10 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
             // each one still behind the permission prompt above.
             kittyClipboardPolicy: .all)
         terminal = SampleLocalProcessTerminalView(frame: view.frame, options: options)
+        // Let programs that enable the enhanced keyboard protocol receive
+        // Command keys, even when the MacTerminal menu has a matching shortcut.
+        // In legacy keyboard mode, the menu shortcuts still work.
+        terminal.shouldSendCommandKeyToTerminal = { _ in true }
         terminal.bellStyle = .none
         // Overridable for measurement: SWIFTTERM_BUFFERING=perRowPersistent
         terminal.metalBufferingMode =
