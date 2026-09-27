@@ -104,6 +104,23 @@ struct MouseTrackingTests {
         #expect(range.1 == Position(col: range.2 - 1, row: dragRow))
     }
 
+    @Test @MainActor func currentMouseModeFollowsTheProgram() async {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        #expect(view.currentMouseMode == .off)
+
+        view.feed(text: "\(esc)[?1000h")
+        await waitForTerminalViewCallbacks()
+        #expect(view.currentMouseMode == .vt200)
+
+        view.feed(text: "\(esc)[?1003h")
+        await waitForTerminalViewCallbacks()
+        #expect(view.currentMouseMode == .anyEvent)
+
+        view.feed(text: "\(esc)[?1003l")
+        await waitForTerminalViewCallbacks()
+        #expect(view.currentMouseMode == .off)
+    }
+
     @Test @MainActor func trackingAreaAvoidsMouseMovedOnTahoe() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         view.feed(text: "\(esc)[?1003h")
