@@ -55,8 +55,8 @@ private final class LocalProcessChildReaper: @unchecked Sendable {
 
 #if canImport(Darwin) || canImport(Glibc) || canImport(Musl)
     func wait() -> Int32? {
-        // Two callers can wait concurrently. Both observe with waitid; the
-        // lock serializes the reap, and the caller that loses the race gets nil.
+        // Call this from one thread only. After the reap, the kernel can give
+        // the PID to a new child, and a second wait could reap that child.
         // Observe exit without reaping. The zombie keeps its PID reserved
         // until the lock protects both the final waitpid and signalAllowed.
         var info = siginfo_t()
@@ -383,74 +383,19 @@ public class LocalProcess {
     }
 
     deinit {
-#if os(macOS)
-        let resources = session.withLock { state -> (
-            pipeline: TerminalIOPipeline?,
-            writeChannel: DispatchIO?,
-            reaper: LocalProcessChildReaper?,
-            monitor: DispatchSourceProcess?,
-            killEscalationDelay: TimeInterval
-        ) in
-            let resources = (
-                state.pipeline,
-                state.writeChannel,
-                state.reaper,
-                state.childMonitor,
-                state.killEscalationDelay
-            )
-            state = LocalProcessSessionState()
-            return resources
+        // The exit trigger of a running child holds the session. After the
+        // reap, it does the teardown. Until then, the pipeline continues to
+        // read, and queued input continues to reach the child. On Darwin, a
+        // controlling process cannot complete exit while its output is unread.
+        let release = session.withLock { state in
+            (reaper: state.reaper, killEscalationDelay: state.killEscalationDelay)
         }
-#else
-        let resources = session.withLock { state -> (
-            pipeline: TerminalIOPipeline?,
-            writeChannel: DispatchIO?,
-            reaper: LocalProcessChildReaper?,
-            killEscalationDelay: TimeInterval
-        ) in
-            let resources = (
-                state.pipeline,
-                state.writeChannel,
-                state.reaper,
-                state.killEscalationDelay
-            )
-            state = LocalProcessSessionState()
-            return resources
-        }
-#endif
-
-        // Keep the master open until the child reaps. Closing after a write
-        // reaches the kernel can discard bytes the slave has not read yet.
-        if let pipeline = resources.pipeline {
-            // A synchronous join can deadlock when the last owner releases the
-            // process on the delivery queue while parsing waits in queue.sync.
-            DispatchQueue.global(qos: .utility).async {
-                pipeline.shutdown()
-            }
-        }
-#if os(macOS)
-        // Deinit cancels the source before detached reaping. The exit event may
-        // not have fired, and reaping while the source is armed can crash when
-        // libdispatch tries to re-arm the vanished knote.
-        resources.monitor?.cancel()
-#endif
-
-        if let reaper = resources.reaper {
-            reaper.signal(SIGTERM)
-            DispatchQueue.global(qos: .utility).asyncAfter(
-                deadline: .now() + resources.killEscalationDelay
-            ) {
-                reaper.signal(SIGKILL)
-            }
-            let writeChannel = resources.writeChannel
-            Self.startChildWaiter {
-                _ = reaper.wait()
-                // A descendant can keep the slave open after this child exits.
-                // End any blocked writes once the graceful attempt is over.
-                writeChannel?.close(flags: .stop)
-            }
-        } else {
-            resources.writeChannel?.close(flags: .stop)
+        guard let reaper = release.reaper else { return }
+        reaper.signal(SIGTERM)
+        DispatchQueue.global(qos: .utility).asyncAfter(
+            deadline: .now() + release.killEscalationDelay
+        ) {
+            reaper.signal(SIGKILL)
         }
     }
 
@@ -467,7 +412,15 @@ public class LocalProcess {
         return (status >> 8) & 0xff
     }
 
-    private func childDidExit(generation: UInt64, status: Int32?) {
+    /// Ends the session after the reap. It also runs for a released process,
+    /// so it does not use the instance.
+    private static func childDidExit(
+        session: Locked<LocalProcessSessionState>,
+        lifecycleReference: Locked<WeakLocalProcessReference>,
+        dispatchQueue: DispatchQueue,
+        generation: UInt64,
+        status: Int32?
+    ) {
         let drain = session.withLock { state -> (
             pipeline: TerminalIOPipeline?,
             timeout: TimeInterval
@@ -505,7 +458,6 @@ public class LocalProcess {
         guard teardown.accepted else { return }
         teardown.writeChannel?.close(flags: .stop)
 
-        let lifecycleReference = lifecycleReference
         dispatchQueue.async {
             lifecycleReference.withLock { $0.value }?.finishTermination(
                 generation: generation,
@@ -651,6 +603,13 @@ public class LocalProcess {
         session.withLock { $0.pipeline = pipeline }
         pipeline.start()
 
+        // The exit trigger holds the session, not the process. This gives a
+        // released process the same teardown after the reap.
+        let session = session
+        let lifecycleReference = lifecycleReference
+        let dispatchQueue = dispatchQueue
+        let reaper = launch.reaper
+        let generation = launch.generation
 #if os(macOS)
         let childMonitor: DispatchSourceProcess? = DispatchSource.makeProcessSource(
             identifier: shellPid, eventMask: .exit, queue: dispatchQueue)
@@ -660,14 +619,12 @@ public class LocalProcess {
             // delivered at most once. If a fast child's event arrives before
             // the handler is set, it is dropped and never delivered again.
             // Also resume the pre-10.12 source because it starts suspended.
-            let lifecycleReference = lifecycleReference
-            let reaper = launch.reaper
-            let generation = launch.generation
+            // The session holds the source, and the handler holds the session.
+            // The waiter cancels the source after the reap, which ends this cycle.
             childMonitor.setEventHandler {
                 Self.startChildWaiter {
                     let status = reaper.wait()
-                    let process = lifecycleReference.withLock { $0.value }
-                    let monitor = process?.session.withLock { state -> DispatchSourceProcess? in
+                    let monitor = session.withLock { state -> DispatchSourceProcess? in
                         guard state.generation == generation else { return nil }
                         let monitor = state.childMonitor
                         state.childMonitor = nil
@@ -676,7 +633,12 @@ public class LocalProcess {
                     // Normal exit reaps first, then cancels the source. Reaping
                     // destroys the knote that the process source watches.
                     monitor?.cancel()
-                    process?.childDidExit(generation: generation, status: status)
+                    Self.childDidExit(
+                        session: session,
+                        lifecycleReference: lifecycleReference,
+                        dispatchQueue: dispatchQueue,
+                        generation: generation,
+                        status: status)
                 }
             }
             if #available(macOS 10.12, *) {
@@ -686,13 +648,14 @@ public class LocalProcess {
             }
         }
 #else
-        let lifecycleReference = lifecycleReference
-        let reaper = launch.reaper
-        let generation = launch.generation
         Self.startChildWaiter {
             let status = reaper.wait()
-            let process = lifecycleReference.withLock { $0.value }
-            process?.childDidExit(generation: generation, status: status)
+            Self.childDidExit(
+                session: session,
+                lifecycleReference: lifecycleReference,
+                dispatchQueue: dispatchQueue,
+                generation: generation,
+                status: status)
         }
 #endif
 

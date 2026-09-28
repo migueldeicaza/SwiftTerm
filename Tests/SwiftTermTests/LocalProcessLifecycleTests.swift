@@ -424,7 +424,23 @@ final class LocalProcessLifecycleTests: XCTestCase {
         })
     }
 
-    func testDeinitEscalatesWhenChildIgnoresTermination() {
+    func testDeinitEscalatesWhenChildIgnoresTermination() throws {
+        try checkReleaseReapsChild(
+            script: "trap '' HUP TERM; echo ready; while :; do :; done")
+    }
+
+#if os(macOS)
+    // Darwin makes a controlling process wait in exit until its terminal
+    // output is read. Linux does not, so this test cannot fail there.
+    func testDeinitReapsControllingProcessWithUnreadOutput() throws {
+        try checkReleaseReapsChild(
+            script: "trap '' HUP TERM; echo ready; while :; do echo output; done")
+    }
+#endif
+
+    /// Releases a shell that ignores SIGHUP and SIGTERM after its first output.
+    /// Requires deinit to escalate and the child to be reaped.
+    private func checkReleaseReapsChild(script: String) throws {
         let ready = expectation(description: "signal traps installed")
         let delegate = LifecycleDelegate()
         delegate.onData = { ready.fulfill() }
@@ -432,21 +448,27 @@ final class LocalProcessLifecycleTests: XCTestCase {
         var process: LocalProcess? = LocalProcess(
             delegate: delegate,
             dispatchQueue: DispatchQueue(label: "SwiftTerm.LocalProcessLifecycle.deinit-escalation"))
-        process?.startProcess(
-            executable: "/bin/sh",
-            args: ["-c", "trap '' HUP TERM; echo ready; while :; do :; done"],
-            environment: nil,
-            execName: "sh")
-        let pid = process?.shellPid ?? 0
+        let launched = process!.startProcessChecked(
+            executable: "/bin/sh", args: ["-c", script], execName: "sh")
+        if case .failure(.forkFailed(let code)) = launched,
+           code == EPERM || code == EACCES || code == ENXIO {
+            throw XCTSkip("PTY launch is unavailable in this environment: errno \(code)")
+        }
+        try launched.get()
+        let pid = process!.shellPid
+        XCTAssertGreaterThan(pid, 0)
+        // kill(0, _) would signal the test runner's own process group.
+        defer { if pid > 0 { _ = kill(-pid, SIGKILL) } }
         releasedProcess = process
 
         wait(for: [ready], timeout: 5)
         process = nil
 
-        XCTAssertNil(releasedProcess)
+        // A delivery in flight holds the process until its callback returns.
+        XCTAssertTrue(waitUntil(timeout: 5, interval: 0.01) { releasedProcess == nil })
         XCTAssertTrue(waitUntil(timeout: 5, interval: 0.01) {
             kill(pid, 0) == -1 && errno == ESRCH
-        })
+        }, "The released child must be reaped")
     }
 
     func testStartProcessWhileRunningIsRefused() {
