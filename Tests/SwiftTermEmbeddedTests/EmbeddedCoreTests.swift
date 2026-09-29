@@ -20,6 +20,53 @@ private final class EmbeddedTerminalDelegate: TerminalDelegate {
     #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == "hello\nworld\n")
 }
 
+@Test(arguments: ["界x", "😀x", "e\u{301}x", "👩🏽‍💻x"])
+func embeddedBufferExportPreservesCharacters(_ text: String) {
+    let delegate = EmbeddedTerminalDelegate()
+    let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 12, rows: 1, scrollback: 0))
+    defer { terminal.close() }
+    terminal.feed(text: text)
+
+    #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == text + "\n")
+}
+
+@Test func embeddedBufferExportConvertsEmptyCellsToSpaces() {
+    let delegate = EmbeddedTerminalDelegate()
+    let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 12, rows: 1, scrollback: 0))
+    defer { terminal.close() }
+    terminal.feed(text: "\u{1b}[10Gx")
+
+    #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == "         x\n")
+}
+
+@Test func embeddedBufferExportPreservesSpacesAndRows() {
+    let delegate = EmbeddedTerminalDelegate()
+    let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 4, rows: 3, scrollback: 0))
+    defer { terminal.close() }
+    terminal.feed(text: " a  bc\r\n")
+
+    #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == " a  \nbc\n\n")
+}
+
+@Test func embeddedBufferExportSelectsBuffersAndIncludesScrollback() {
+    let delegate = EmbeddedTerminalDelegate()
+    let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 12, rows: 2, scrollback: 5))
+    defer { terminal.close() }
+    terminal.feed(text: "界x\r\nline\r\n\u{1b}[10Gx")
+    let normalText = "界x\nline\n         x\n"
+    #expect(terminal.normalBuffer.yBase > 0)
+    #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == normalText)
+
+    terminal.feed(text: "\u{1b}[?1049h\u{1b}[Halt 界")
+    let altText = "alt 界\n\n"
+    #expect(String(decoding: terminal.getBufferAsData(kind: .normal), as: UTF8.self) == normalText)
+    #expect(String(decoding: terminal.getBufferAsData(kind: .alt), as: UTF8.self) == altText)
+    #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == altText)
+
+    terminal.feed(text: "\u{1b}[?1049l")
+    #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == normalText)
+}
+
 @Test func embeddedCoreHandlesClipboardBase64() {
     let delegate = EmbeddedTerminalDelegate()
     delegate.clipboardBytes = [0, 1, 2, 253, 254, 255]

@@ -8918,7 +8918,8 @@ open class Terminal {
         var result: [UInt8] = []
         let b = bufferFromKind(kind: kind)
         for row in 0..<b.lines.count {
-            result.append(contentsOf: b.lines[row].translateToString(trimRight: true).utf8)
+            let str = translateBufferLineToString(buffer: b, line: row, start: 0, end: -1)
+            result.append(contentsOf: str.utf8)
             result.append(10)
         }
         return result
@@ -8934,8 +8935,7 @@ open class Terminal {
         let b = bufferFromKind(kind: kind)
         let newLine = Data([10])
         for row in 0..<b.lines.count {
-            let bufferLine = b.lines [row]
-            let str = bufferLine.translateToString(trimRight: true)
+            let str = translateBufferLineToString (buffer: b, line: row, start: 0, end: -1)
             if let encoded = str.data(using: encoding) {
                 result.append (encoded)
                 result.append (newLine)

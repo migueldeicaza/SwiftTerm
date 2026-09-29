@@ -16,6 +16,52 @@ final class BufferTests: TerminalDelegate {
         // Required by TerminalDelegate
     }
 
+    @Test(arguments: ["界x", "😀x", "e\u{301}x", "👩🏽‍💻x"])
+    func getBufferAsDataPreservesCharacters(_ text: String) {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 12, rows: 1, scrollback: 0))
+        terminal.feed(text: text)
+
+        #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == text + "\n")
+    }
+
+    @Test func getBufferAsDataConvertsEmptyCellsToSpaces() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 12, rows: 1, scrollback: 0))
+        terminal.feed(text: "\u{1b}[10Gx")
+
+        #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == "         x\n")
+    }
+
+    @Test func getBufferAsDataPreservesSpacesAndRows() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 4, rows: 3, scrollback: 0))
+        terminal.feed(text: " a  bc\r\n")
+
+        #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == " a  \nbc\n\n")
+    }
+
+    @Test func getBufferAsDataSelectsBuffersAndIncludesScrollback() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 12, rows: 2, scrollback: 5))
+        terminal.feed(text: "界x\r\nline\r\n\u{1b}[10Gx")
+        let normalText = "界x\nline\n         x\n"
+        #expect(terminal.normalBuffer.yBase > 0)
+        #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == normalText)
+
+        terminal.feed(text: "\u{1b}[?1049h\u{1b}[Halt 界")
+        let altText = "alt 界\n\n"
+        #expect(String(decoding: terminal.getBufferAsData(kind: .normal), as: UTF8.self) == normalText)
+        #expect(String(decoding: terminal.getBufferAsData(kind: .alt), as: UTF8.self) == altText)
+        #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == altText)
+
+        terminal.feed(text: "\u{1b}[?1049l")
+        #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self) == normalText)
+    }
+
+    @Test func getBufferAsDataUsesRequestedEncoding() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 12, rows: 1, scrollback: 0))
+        terminal.feed(text: "café")
+
+        #expect(terminal.getBufferAsData(encoding: .isoLatin1) == Data([0x63, 0x61, 0x66, 0xe9, 0x0a]))
+    }
+
     @Test func resizeGrowthUsesTheBuffersDefaultBidiState() {
         let initialState = BidiPresentationState(supportMode: .explicit,
                                                  autodetectDirection: false,
