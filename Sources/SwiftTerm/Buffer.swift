@@ -68,6 +68,17 @@ public final class Buffer {
     /// so a pixel-based anchor drifts by one row per trimmed line.
     public var totalLinesTrimmed: Int { linesTop }
 
+    /// Counts wholesale content replacements of this buffer (hard reset,
+    /// fresh wiring).
+    ///
+    /// An absolute row anchor — ``totalLinesTrimmed`` plus a buffer index —
+    /// names nothing after a replacement: unlike a trim, which shifts content
+    /// within one frame, a replacement starts a new frame with the same
+    /// coordinates, so a host comparing anchors across reads cannot tell the
+    /// two apart from the counters alone. Fresh buffers start at zero and only
+    /// a replacement advances it, so equal epochs with equal coordinates stay
+    /// comparable.
+    public internal(set) var resetEpoch: Int = 0
 
     /// This is the index into the `lines` array that corresponds to the top row of displayed
     /// content in the terminal when the scroll is zero.   So the terminal contents that the application
@@ -848,6 +859,7 @@ public final class Buffer {
         yBase = 0
         xBase = 0
         linesTop = 0
+        resetEpoch += 1
         x = 0
         y = 0
 
