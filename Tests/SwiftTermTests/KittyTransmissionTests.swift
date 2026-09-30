@@ -15,7 +15,12 @@ import Musl
 
 final class KittyTransmissionTests {
     #if !os(Windows)
+    #if canImport(Darwin)
+    // Darwin's public shm_open is variadic; call the fixed-arity syscall shim.
+    @_silgen_name("__shm_open")
+    #else
     @_silgen_name("shm_open")
+    #endif
     private static func swiftShmOpen(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t) -> Int32
     #endif
 
