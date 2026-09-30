@@ -278,8 +278,10 @@ public class LocalProcess {
      * pipeline parse thread instead of synchronously hopping to `dispatchQueue`.
      */
     public convenience init (delegate: LocalProcessDelegate, dispatchQueue: DispatchQueue? = nil, directDelivery: Bool = false) {
+        // Embedders can protect childfd, but cannot reach this private alias,
+        // so it must not leak into later child processes.
         self.init(delegate: delegate, dispatchQueue: dispatchQueue, directDelivery: directDelivery,
-                  duplicateDescriptor: dup)
+                  duplicateDescriptor: { fcntl($0, F_DUPFD_CLOEXEC, 0) })
     }
 
     // Separate descriptor acquisition so launch failure can be tested without
