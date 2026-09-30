@@ -31,10 +31,38 @@ if [[ "$compiler_version" != *"$SWIFTTERM_COMPILER_REVISION"* ]]; then
     echo 'Set SWIFTTERM_SWIFT to its usr/bin/swift executable.' >&2
     exit 1
 fi
-sdk_dir=${SWIFTTERM_SWIFT_SDKS_PATH:-$HOME/.swiftpm/swift-sdks}
+sdk_bundle_name="${SWIFTTERM_TOOLCHAIN_ID}_wasm.artifactbundle"
+if [[ -n "${SWIFTTERM_SWIFT_SDKS_PATH:-}" ]]; then
+    sdk_dir="$SWIFTTERM_SWIFT_SDKS_PATH"
+else
+    sdk_dir=
+    sdk_candidates=()
+    if [[ -n "${XDG_CONFIG_HOME:-}" ]]; then
+        sdk_candidates+=("$XDG_CONFIG_HOME/swiftpm/swift-sdks")
+    fi
+    sdk_candidates+=(
+        "$HOME/.swiftpm/swift-sdks"
+        "$HOME/Library/org.swift.swiftpm/swift-sdks"
+        "$HOME/.config/swiftpm/swift-sdks"
+    )
+    for candidate in "${sdk_candidates[@]}"; do
+        if [[ -d "$candidate/$sdk_bundle_name" ]]; then
+            sdk_dir="$candidate"
+            break
+        fi
+    done
+    if [[ -z "$sdk_dir" ]]; then
+        sdk_dir="$HOME/.swiftpm/swift-sdks"
+    fi
+fi
 sdk_base="$sdk_dir/${SWIFTTERM_TOOLCHAIN_ID}_wasm.artifactbundle/${SWIFTTERM_TOOLCHAIN_ID}_wasm/wasm32-unknown-wasip1"
 if [[ ! -f "$sdk_base/swift-sdk.json" || ! -f "$sdk_base/embedded-swift-sdk.json" ]]; then
     echo "Matching WASM SDK missing: ${SWIFTTERM_TOOLCHAIN_ID}_wasm" >&2
+    if [[ -n "${SWIFTTERM_SWIFT_SDKS_PATH:-}" ]]; then
+        echo "Searched SDK root: $sdk_dir" >&2
+    else
+        echo "Searched SDK roots: ${sdk_candidates[*]}" >&2
+    fi
     echo 'Set SWIFTTERM_SWIFT_SDKS_PATH to the directory that contains the artifact bundle.' >&2
     exit 1
 fi
