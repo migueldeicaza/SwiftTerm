@@ -222,10 +222,15 @@ final class SynchronizedOutputTests {
         )
         terminal.synchronizedOutputTimeoutSeconds = 0.1
         let esc = "\u{1b}"
+        func feed(_ text: String) {
+            terminal.terminalLock.withLock {
+                terminal.feed(text: text)
+            }
+        }
 
-        terminal.feed(text: "\(esc)[?2026$p")
-        terminal.feed(text: "\(esc)[?2026h\(esc)[?2026$p")
-        terminal.feed(text: "\(esc)[?2026l\(esc)[?2026$p")
+        feed("\(esc)[?2026$p")
+        feed("\(esc)[?2026h\(esc)[?2026$p")
+        feed("\(esc)[?2026l\(esc)[?2026$p")
 
         let syncEnded = DispatchSemaphore(value: 0)
         delegate.syncChangeHandler = { active in
@@ -233,10 +238,10 @@ final class SynchronizedOutputTests {
                 syncEnded.signal()
             }
         }
-        terminal.feed(text: "\(esc)[?2026h")
+        feed("\(esc)[?2026h")
         #expect(syncEnded.wait(timeout: .now() + 2) == .success)
         #expect(delegate.sentData.count == 3)
-        terminal.feed(text: "\(esc)[?2026$p")
+        feed("\(esc)[?2026$p")
 
         let responses = delegate.sentData.map { String(decoding: $0, as: UTF8.self) }
         #expect(responses == [

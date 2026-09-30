@@ -19,13 +19,16 @@ struct TerminalEmbeddingSnapshotTests {
 
     @Test func copiedModesReflectActiveBuffer() throws {
         let view = makeView()
-        view.feed(text: "\u{1b}[?1049h\u{1b}[?1h\u{1b}[?1002h\u{1b}[>8u")
+        view.feed(text: "\u{1b}=\u{1b}[?1049h\u{1b}[?1h\u{1b}[?1002h\u{1b}[?2004h\u{1b}[?1004h\u{1b}[>8u")
         let input = try #require(view.terminalInputStateSnapshot())
         #expect(input.dimensions == view.terminalDimensions)
         #expect(input.isAlternateBuffer)
         #expect(input.applicationCursor)
+        #expect(input.applicationKeypad)
+        #expect(input.bracketedPasteMode)
         #expect(input.mouseMode == .buttonEventTracking)
         #expect(input.keyboardEnhancementFlags.contains(.reportAllKeys))
+        #expect(input.focusReportingEnabled)
         view.feed(text: "\u{1b}[?1049l")
         #expect(view.terminalInputStateSnapshot()?.isAlternateBuffer == false)
         #expect(view.terminalInputStateSnapshot()?.keyboardEnhancementFlags.isEmpty == true)
@@ -45,7 +48,7 @@ struct TerminalEmbeddingSnapshotTests {
         #expect(row.cells[1].width == 2)
         #expect(row.cells[2].text == "\u{0}")
         #expect(row.cells[2].width == 0)
-        #expect(row.text == placeholder + "界\u{0}e\u{301}")
+        #expect(row.text == placeholder + "界e\u{301}")
         let copiedRows = snapshot.rows
         view.feed(text: "\u{1b}[2J\u{1b}[Hreplacement\r\nmore\r\nrows\r\ntrim\r\nold")
         view.resize(cols: 8, rows: 2)
@@ -67,13 +70,13 @@ struct TerminalEmbeddingSnapshotTests {
         ("", ""),
         ("A", "A"),
         ("A  ", "A  "),
-        ("A\u{1b}[3GX", "A\u{0}X"),
-        ("界", "界\u{0}"),
-        ("界 ", "界\u{0} "),
-        ("1234567890界", "1234567890界\u{0}"),
+        ("A\u{1b}[3GX", "A X"),
+        ("界", "界"),
+        ("界 ", "界 "),
+        ("1234567890界", "1234567890界"),
         ("12345678901界", "12345678901"),
         ("e\u{301}", "e\u{301}"),
-        ("\u{A98F}\u{A9C0}\u{A994}\u{A9B8}", "\u{A98F}\u{A9C0}\u{A994}\u{A9B8}\u{0}"),
+        ("\u{A98F}\u{A9C0}\u{A994}\u{A9B8}", "\u{A98F}\u{A9C0}\u{A994}\u{A9B8}"),
         ("\u{1b}[44m\u{1b}[2K", ""),
     ])
     func computedRowTextMatchesBufferTrimming(sample: (String, String)) throws {
@@ -81,8 +84,11 @@ struct TerminalEmbeddingSnapshotTests {
         view.feed(text: sample.0)
         let row = try #require(view.terminalContentSnapshot(region: .viewport)?.rows.first)
         let reference = view.withTerminal { terminal in
-            terminal.getLine(row: 0)?.translateToString(
-                trimRight: true, skipNullCellsFollowingWide: false)
+            terminal.translateBufferLineToString(
+                buffer: terminal.displayBuffer,
+                line: terminal.displayBuffer.yDisp,
+                start: 0,
+                end: -1)
         }
         #expect(row.text == reference)
         #expect(row.text == sample.1)

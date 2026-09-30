@@ -271,15 +271,15 @@ Click translation uses one traversal for all strategies:
 ## R6 — View integration: one arbiter
 
 - The views collect `(hit, modifiers, snapshot)` and delegate the decision
-  to one shared core-side arbiter. `snapshot` is captured in
-  mouseDown/touch-begin, **before** any handler mutates state:
-  `selectionWasActive`, `didDrag`, `clickCount`. Guards that test live view
-  state after earlier handlers changed it are a known defect class.
-- Precedence, identical on macOS and iOS:
+  to one shared core-side arbiter. The snapshot records press eligibility,
+  press-time selection state, click count, and whether the gesture made a
+  selection or drag by release. A fresh single press can clear an old
+  selection and route at release if no selection remains.
+- Precedence for a click that reaches the shared arbiter:
   1. Hyperlink under an unmodified or command click.
   2. Application mouse reporting, only if the child enabled a mouse mode.
-  3. Selection gestures: drag, shift-extend, double- and triple-click, and
-     the click that dismisses an active selection (per `snapshot`).
+  3. Selection gestures: a real drag, shift-extend, double- and triple-click,
+     and any selection that is still active at release.
   4. iOS near-cursor context menu, with the cursor row computed from
      `yBase`, not `yDisp`.
   5. Semantic prompt click.
@@ -290,6 +290,18 @@ Click translation uses one traversal for all strategies:
 - Under the default `.enabled` policy, a click that carries any modifier the
   view uses for its own gestures (command, control, shift, option) is not a
   semantic prompt click.
+- macOS routes an eligible single click on mouse-up. In a double-click or
+  triple-click, the first click can send cursor keys before the next press
+  selects a word or row. AppKit's click count still controls those later
+  selections. A drag event within the press screen cell is ignored until
+  pointer travel reaches the local drag threshold. Movement to another screen
+  cell starts a selection. A click after an old selection clears it on press
+  and can route on release. iOS uses the same rule for a local single tap;
+  its near-cursor menu keeps precedence.
+- On iOS, a tap with an old selection and application mouse reporting active
+  still clears that selection locally. A tap with no reporting can clear the
+  old selection and then use the semantic route. A tap near the cursor only
+  clears the old selection; it does not open the context menu.
 
 ## R7 — Invariants and test discipline
 

@@ -4,6 +4,7 @@
 //  Drives terminal snapshot refreshes at the display cadence.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS) || os(tvOS)
 import Foundation
 import QuartzCore
@@ -719,3 +720,5 @@ final class FrameDriver {
 #endif
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

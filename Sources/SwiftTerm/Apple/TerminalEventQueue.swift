@@ -22,6 +22,7 @@
 //  mailbox does not do.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 /// A notification that can be collapsed: repeated occurrences within one
@@ -166,3 +167,5 @@ final class TerminalEventQueue: Sendable {
         return TerminalEvent.allCases.filter { events & $0.mask != 0 }
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

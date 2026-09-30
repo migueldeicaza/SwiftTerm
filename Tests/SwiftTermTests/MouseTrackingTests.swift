@@ -36,17 +36,6 @@ struct MouseTrackingTests {
     private let esc = "\u{1b}"
 
 #if os(macOS)
-    // The deadline must exceed the longest deliberate main-queue block in the
-    // suite: the synchronized-output tests hold the main queue for up to two
-    // seconds while they prove the watchdog fires off-main.
-    @MainActor private func waitForSemanticClick(in view: TerminalView) async {
-        let deadline = ContinuousClock.now + .seconds(5)
-        while view.semanticClickPendingForTesting, ContinuousClock.now < deadline {
-            await Task.yield()
-        }
-        #expect(!view.semanticClickPendingForTesting, "The semantic click did not finish")
-    }
-
     @MainActor private func waitForTerminalViewCallbacks() async {
         await withCheckedContinuation { continuation in
             DispatchQueue.main.async { continuation.resume() }
@@ -115,6 +104,23 @@ struct MouseTrackingTests {
         #expect(range.1 == Position(col: range.2 - 1, row: dragRow))
     }
 
+    @Test @MainActor func currentMouseModeFollowsTheProgram() async {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        #expect(view.currentMouseMode == .off)
+
+        view.feed(text: "\(esc)[?1000h")
+        await waitForTerminalViewCallbacks()
+        #expect(view.currentMouseMode == .vt200)
+
+        view.feed(text: "\(esc)[?1003h")
+        await waitForTerminalViewCallbacks()
+        #expect(view.currentMouseMode == .anyEvent)
+
+        view.feed(text: "\(esc)[?1003l")
+        await waitForTerminalViewCallbacks()
+        #expect(view.currentMouseMode == .off)
+    }
+
     @Test @MainActor func trackingAreaAvoidsMouseMovedOnTahoe() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         view.feed(text: "\(esc)[?1003h")
@@ -161,7 +167,6 @@ struct MouseTrackingTests {
     /// must not gate arrow-key emission from a semantic prompt click.
     @Test @MainActor func disabledMouseReportingStillRoutesSemanticPromptClicks() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-        view.semanticClickCoalescingDelay = 0.01
         let window = NSWindow(
             contentRect: view.frame,
             styleMask: .borderless,
@@ -203,15 +208,12 @@ struct MouseTrackingTests {
 
         view.mouseDown(with: down)
         view.mouseUp(with: up)
-        await waitForSemanticClick(in: view)
         await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
     }
 
-    // F.5: with no OSC 133 ever seen, a plain click schedules no deferral
-    // (no retained line, no armed timer); once a prompt is armed, it does.
-    @Test @MainActor func mouseUpPreGatesDeferralWithoutArmedPrompt() {
+    @Test @MainActor func mouseUpRoutesOnlyWithArmedPrompt() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
                               backing: .buffered, defer: false)
@@ -221,8 +223,9 @@ struct MouseTrackingTests {
         view.feed(text: "plain terminal output")
 
         func click(count: Int) -> (NSEvent, NSEvent) {
+            let screenRow = view.withTerminal { $0.buffer.y }
             let point = CGPoint(x: 1.5 * view.cellDimension.width,
-                                y: view.frame.height - 0.5 * view.cellDimension.height)
+                                y: view.frame.height - (CGFloat(screenRow) + 0.5) * view.cellDimension.height)
             let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point,
                                           modifierFlags: [], timestamp: 0,
                                           windowNumber: window.windowNumber, context: nil,
@@ -237,20 +240,20 @@ struct MouseTrackingTests {
         let (d1, u1) = click(count: 1)
         view.mouseDown(with: d1)
         view.mouseUp(with: u1)
-        #expect(view.semanticDeferralScheduleCount == 0)
+        await waitForTerminalViewCallbacks()
+        #expect(delegate.sentData.isEmpty)
 
-        // Now arm a prompt; the identical click schedules the deferral.
+        // The same click routes after a prompt is armed.
         view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hi")
         let (d2, u2) = click(count: 1)
         view.mouseDown(with: d2)
         view.mouseUp(with: u2)
-        #expect(view.semanticDeferralScheduleCount == 1)
-        withExtendedLifetime(delegate) {}
+        await waitForTerminalViewCallbacks()
+        #expect(!delegate.sentData.isEmpty)
     }
 
     @Test @MainActor func shiftSelectionDoesNotBecomeSemanticPromptClick() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-        view.semanticClickCoalescingDelay = 0.01
         let window = NSWindow(
             contentRect: view.frame,
             styleMask: .borderless,
@@ -291,7 +294,6 @@ struct MouseTrackingTests {
 
         view.mouseDown(with: down)
         view.mouseUp(with: up)
-        await waitForSemanticClick(in: view)
         await waitForTerminalViewCallbacks()
 
         #expect(!view.withTerminal { _ in view.selection.active })
@@ -300,7 +302,6 @@ struct MouseTrackingTests {
 
     @Test @MainActor func requiredShiftModifierRoutesSemanticPromptClick() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-        view.semanticClickCoalescingDelay = 0.01
         let window = NSWindow(
             contentRect: view.frame,
             styleMask: .borderless,
@@ -342,15 +343,13 @@ struct MouseTrackingTests {
 
         view.mouseDown(with: down)
         view.mouseUp(with: up)
-        await waitForSemanticClick(in: view)
         await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
     }
 
-    @Test @MainActor func clickThatClearsSelectionDoesNotMovePromptCursor() async {
+    @Test @MainActor func clickThatClearsSelectionMovesPromptCursor() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-        view.semanticClickCoalescingDelay = 0.01
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
                               backing: .buffered, defer: false)
         window.contentView = view
@@ -372,16 +371,15 @@ struct MouseTrackingTests {
 
         view.mouseDown(with: down)
         view.mouseUp(with: up)
-        await waitForSemanticClick(in: view)
+        await waitForTerminalViewCallbacks()
 
         #expect(!view.withTerminal { _ in view.selection.active })
-        #expect(delegate.sentData.isEmpty)
+        #expect(!delegate.sentData.isEmpty)
     }
 
     @Test @MainActor func enabledPolicyDoesNotStealCommandOrControlClick() async {
         for modifier: NSEvent.ModifierFlags in [.command, .control] {
             let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-            view.semanticClickCoalescingDelay = 0.01
             let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
                                   backing: .buffered, defer: false)
             window.contentView = view
@@ -402,7 +400,7 @@ struct MouseTrackingTests {
 
             view.mouseDown(with: down)
             view.mouseUp(with: up)
-            await waitForSemanticClick(in: view)
+            await waitForTerminalViewCallbacks()
 
             #expect(delegate.sentData.isEmpty)
         }
@@ -410,7 +408,6 @@ struct MouseTrackingTests {
 
     @Test @MainActor func selectionDragDoesNotOpenLinkAndClearsDragState() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-        view.semanticClickCoalescingDelay = 0.01
         let window = NSWindow(
             contentRect: view.frame,
             styleMask: .borderless,
@@ -447,6 +444,14 @@ struct MouseTrackingTests {
         #expect(delegate.openedLinks.isEmpty)
         #expect(!view.didSelectionDrag)
 
+        let linkDown = NSEvent.mouseEvent(with: .leftMouseDown, location: linkPoint,
+                                          modifierFlags: [], timestamp: 0,
+                                          windowNumber: window.windowNumber, context: nil,
+                                          eventNumber: 2, clickCount: 1, pressure: 1)!
+        view.mouseDown(with: linkDown)
+        view.mouseUp(with: linkUp)
+        #expect(delegate.openedLinks == ["https://example.com"])
+
         let promptPoint = CGPoint(
             x: 1.5 * view.cellDimension.width,
             y: view.frame.height - 1.5 * view.cellDimension.height
@@ -475,15 +480,13 @@ struct MouseTrackingTests {
         )!
         view.mouseDown(with: promptDown)
         view.mouseUp(with: promptUp)
-        await waitForSemanticClick(in: view)
         await waitForTerminalViewCallbacks()
 
         #expect(!delegate.sentData.isEmpty)
     }
 
-    @Test @MainActor func doubleClickCancelsPendingSemanticClick() async {
+    @Test @MainActor func laterClicksSelectWordAndRowAfterFirstClickRoutes() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-        view.semanticClickCoalescingDelay = 0.01
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
                               backing: .buffered, defer: false)
         window.contentView = view
@@ -493,7 +496,8 @@ struct MouseTrackingTests {
         let point = CGPoint(x: 3.5 * view.cellDimension.width,
                             y: view.frame.height - 0.5 * view.cellDimension.height)
 
-        for clickCount in 1...2 {
+        var firstClickData: [[UInt8]] = []
+        for clickCount in 1...3 {
             let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point,
                                           modifierFlags: [], timestamp: Double(clickCount),
                                           windowNumber: window.windowNumber, context: nil,
@@ -506,17 +510,150 @@ struct MouseTrackingTests {
                                         clickCount: clickCount, pressure: 0)!
             view.mouseDown(with: down)
             view.mouseUp(with: up)
+            if clickCount == 1 {
+                await waitForTerminalViewCallbacks()
+                #expect(!delegate.sentData.isEmpty)
+                firstClickData = delegate.sentData
+            } else if clickCount == 2 {
+                #expect(view.withTerminal { _ in view.selection.active })
+                #expect(view.withTerminal { _ in view.selection.getSelectedText() } == "hello")
+            }
         }
-        await waitForSemanticClick(in: view)
+        await waitForTerminalViewCallbacks()
 
-        #expect(delegate.sentData.isEmpty)
+        #expect(delegate.sentData == firstClickData)
         #expect(view.withTerminal { _ in view.selection.active })
-        #expect(view.withTerminal { _ in view.selection.getSelectedText() } == "hello")
+        #expect(view.withTerminal { _ in view.selection.selectionMode } == .row)
     }
 
-    @Test @MainActor func singleClickRoutesAfterCoalescingDelay() async {
+    @Test @MainActor func sameCellPointerJitterStillRoutesPromptClick() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-        view.semanticClickCoalescingDelay = 0.01
+        let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.contentView = view
+        let delegate = MouseMotionCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hello")
+        let press = CGPoint(x: 2.5 * view.cellDimension.width,
+                            y: view.frame.height - 0.5 * view.cellDimension.height)
+        let jitter = CGPoint(x: press.x + 1, y: press.y)
+        let down = NSEvent.mouseEvent(with: .leftMouseDown, location: press,
+                                      modifierFlags: [], timestamp: 0,
+                                      windowNumber: window.windowNumber, context: nil,
+                                      eventNumber: 1, clickCount: 1, pressure: 1)!
+        let drag = NSEvent.mouseEvent(with: .leftMouseDragged, location: jitter,
+                                      modifierFlags: [], timestamp: 0,
+                                      windowNumber: window.windowNumber, context: nil,
+                                      eventNumber: 2, clickCount: 1, pressure: 1)!
+        let up = NSEvent.mouseEvent(with: .leftMouseUp, location: jitter,
+                                    modifierFlags: [], timestamp: 0,
+                                    windowNumber: window.windowNumber, context: nil,
+                                    eventNumber: 3, clickCount: 1, pressure: 0)!
+
+        view.mouseDown(with: down)
+        view.mouseDragged(with: drag)
+        #expect(!view.withTerminal { _ in view.selection.active })
+        view.mouseUp(with: up)
+        await waitForTerminalViewCallbacks()
+
+        #expect(!view.withTerminal { _ in view.selection.active })
+        #expect(!delegate.sentData.isEmpty)
+    }
+
+    @Test @MainActor func outputScrollDoesNotTurnStationaryClickIntoDrag() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.contentView = view
+        let delegate = MouseMotionCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.linkHighlightMode = .always
+        let linkLine = "\(esc)]8;;https://example.com\(esc)\\link\(esc)]8;;\(esc)\\\r\n"
+        let rowCount = view.withTerminal { $0.rows }
+        view.feed(text: String(repeating: linkLine, count: rowCount + 2))
+
+        let point = CGPoint(x: 1.5 * view.cellDimension.width,
+                            y: view.frame.height - 0.5 * view.cellDimension.height)
+        let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point,
+                                      modifierFlags: [], timestamp: 0,
+                                      windowNumber: window.windowNumber, context: nil,
+                                      eventNumber: 1, clickCount: 1, pressure: 1)!
+        let drag = NSEvent.mouseEvent(with: .leftMouseDragged, location: point,
+                                      modifierFlags: [], timestamp: 0,
+                                      windowNumber: window.windowNumber, context: nil,
+                                      eventNumber: 2, clickCount: 1, pressure: 1)!
+        let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point,
+                                    modifierFlags: [], timestamp: 0,
+                                    windowNumber: window.windowNumber, context: nil,
+                                    eventNumber: 3, clickCount: 1, pressure: 0)!
+
+        view.mouseDown(with: down)
+        let firstYDisp = view.withTerminal { $0.displayBuffer.yDisp }
+        view.feed(text: linkLine)
+        #expect(view.withTerminal { $0.displayBuffer.yDisp } > firstYDisp)
+        view.mouseDragged(with: drag)
+        #expect(!view.withTerminal { _ in view.selection.active })
+        view.mouseUp(with: up)
+
+        #expect(!view.withTerminal { _ in view.selection.active })
+        #expect(delegate.openedLinks == ["https://example.com"])
+    }
+
+    @Test @MainActor func dragAcrossCellsSelectsWithoutRoutingPromptClick() async {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.contentView = view
+        let delegate = MouseMotionCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.feed(text: "\(esc)]133;A;cl=line\u{07}>\(esc)]133;B\u{07}hello")
+        let press = CGPoint(x: 2.5 * view.cellDimension.width,
+                            y: view.frame.height - 0.5 * view.cellDimension.height)
+        let release = CGPoint(x: 4.5 * view.cellDimension.width, y: press.y)
+        let down = NSEvent.mouseEvent(with: .leftMouseDown, location: press,
+                                      modifierFlags: [], timestamp: 0,
+                                      windowNumber: window.windowNumber, context: nil,
+                                      eventNumber: 1, clickCount: 1, pressure: 1)!
+        let drag = NSEvent.mouseEvent(with: .leftMouseDragged, location: release,
+                                      modifierFlags: [], timestamp: 0,
+                                      windowNumber: window.windowNumber, context: nil,
+                                      eventNumber: 2, clickCount: 1, pressure: 1)!
+        let up = NSEvent.mouseEvent(with: .leftMouseUp, location: release,
+                                    modifierFlags: [], timestamp: 0,
+                                    windowNumber: window.windowNumber, context: nil,
+                                    eventNumber: 3, clickCount: 1, pressure: 0)!
+
+        view.mouseDown(with: down)
+        view.mouseDragged(with: drag)
+        view.mouseUp(with: up)
+        await waitForTerminalViewCallbacks()
+
+        #expect(view.withTerminal { _ in view.selection.active })
+        #expect(view.withTerminal { _ in view.selection.start.col } == 2)
+        #expect(view.withTerminal { _ in view.selection.end.col } == 4)
+        #expect(delegate.sentData.isEmpty)
+
+        // A release in another cell also selects when AppKit sends no drag event.
+        let secondDown = NSEvent.mouseEvent(with: .leftMouseDown, location: press,
+                                            modifierFlags: [], timestamp: 1,
+                                            windowNumber: window.windowNumber, context: nil,
+                                            eventNumber: 4, clickCount: 1, pressure: 1)!
+        let secondUp = NSEvent.mouseEvent(with: .leftMouseUp, location: release,
+                                          modifierFlags: [], timestamp: 1,
+                                          windowNumber: window.windowNumber, context: nil,
+                                          eventNumber: 5, clickCount: 1, pressure: 0)!
+        view.mouseDown(with: secondDown)
+        view.mouseUp(with: secondUp)
+        await waitForTerminalViewCallbacks()
+
+        #expect(view.withTerminal { _ in view.selection.active })
+        #expect(view.withTerminal { _ in view.selection.start.col } == 2)
+        #expect(view.withTerminal { _ in view.selection.end.col } == 4)
+        #expect(delegate.sentData.isEmpty)
+    }
+
+    @Test @MainActor func singleClickRoutesOnMouseUp() async {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
                               backing: .buffered, defer: false)
         window.contentView = view
@@ -536,16 +673,12 @@ struct MouseTrackingTests {
 
         view.mouseDown(with: down)
         view.mouseUp(with: up)
-        #expect(delegate.sentData.isEmpty)
-        await waitForSemanticClick(in: view)
         await waitForTerminalViewCallbacks()
-
         #expect(!delegate.sentData.isEmpty)
     }
 
     @Test @MainActor func mouseModeEnabledBeforeReleaseReportsReleaseOnly() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-        view.semanticClickCoalescingDelay = 0.01
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
                               backing: .buffered, defer: false)
         window.contentView = view
@@ -576,7 +709,6 @@ struct MouseTrackingTests {
 
     @Test @MainActor func shiftBypassedPressStillReportsUnshiftedRelease() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-        view.semanticClickCoalescingDelay = 0.01
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
                               backing: .buffered, defer: false)
         window.contentView = view
@@ -607,7 +739,6 @@ struct MouseTrackingTests {
 
     @Test @MainActor func reportedPressCannotFallThroughToSemanticRelease() async {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-        view.semanticClickCoalescingDelay = 0.01
         let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
                               backing: .buffered, defer: false)
         window.contentView = view
@@ -631,7 +762,6 @@ struct MouseTrackingTests {
         delegate.sentData.removeAll()
         view.feed(text: "\(esc)[?1000l")
         view.mouseUp(with: up)
-        await waitForSemanticClick(in: view)
         await waitForTerminalViewCallbacks()
 
         #expect(delegate.sentData.isEmpty)
@@ -960,6 +1090,32 @@ struct MouseTrackingTests {
         sentString = String(bytes: delegate.sentData.flatMap { $0 }, encoding: .utf8)
         #expect(sentString == "\(esc)[<33;80;24M")
     }
+
+    @Test func sgrPixelEncodingUsesOneBasedDevicePixelCoordinates() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
+        terminal.feed(text: "\(esc)[?1002h\(esc)[?1006h\(esc)[?1016h")
+        delegate.clearSentData()
+
+        terminal.sendMotion(buttonFlags: 0, x: 0, y: 0, pixelX: 0, pixelY: 0)
+        terminal.sendMotion(buttonFlags: 0, x: 0, y: 0, pixelX: 287, pixelY: 426)
+
+        let responses = delegate.sentData.map {
+            String(bytes: $0, encoding: .utf8) ?? ""
+        }
+        #expect(responses == [
+            "\(esc)[<32;1;1M",
+            "\(esc)[<32;288;427M",
+        ])
+    }
+
+#if os(macOS)
+    @Test func terminalDevicePixelIndexScalesAndClampsCoordinates() {
+        #expect(terminalDevicePixelIndex(pointOffset: 143.5, scale: 2, pixelCount: 2_790) == 287)
+        #expect(terminalDevicePixelIndex(pointOffset: 213, scale: 2, pixelCount: 1_860) == 426)
+        #expect(terminalDevicePixelIndex(pointOffset: -1, scale: 2, pixelCount: 1_860) == 0)
+        #expect(terminalDevicePixelIndex(pointOffset: 930, scale: 2, pixelCount: 1_860) == 1_859)
+    }
+#endif
 
     @Test func encodeButtonScrollUp() {
         let (terminal, _) = TerminalTestHarness.makeTerminal()

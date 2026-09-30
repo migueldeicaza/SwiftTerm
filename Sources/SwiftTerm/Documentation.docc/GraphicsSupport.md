@@ -132,3 +132,7 @@ For layer order, cache keys, virtual placements, and snapshot lifetime, see
 
 The bundled AppKit and UIKit views implement both of these automatically and
 handle slicing images across terminal rows for rendering.
+
+For a portable or browser host, see <doc:PortableHosting>. Full WASM builds
+copy graphics through the Web ABI; Embedded WASM intentionally omits graphics
+and Kitty Clipboard support.

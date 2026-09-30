@@ -581,6 +581,25 @@ final class SwiftTermOsc {
         #expect(!terminal.handleSemanticPromptClick(at: Position(col: 1, row: 0), modifiers: .control))
     }
 
+    @Test func testOscPointerSnapshotUsesSelectionAtRelease() {
+        let delegate = SemanticDelegate()
+        let terminal = Terminal(delegate: delegate,
+                                options: TerminalOptions(cols: 20, rows: 4, scrollback: 0))
+        terminal.feed(text: "\u{1b}]133;A;click_events=1\u{07}>\u{1b}]133;B\u{07}hi")
+        let target = Position(col: 1, row: 0)
+        let oldSelection = SemanticPromptPointerSnapshot(
+            selectionWasActive: true, didDrag: false, clickCount: 1,
+            pressWasSemanticEligible: true)
+        #expect(!terminal.mightRouteSemanticPromptClick(modifiers: [], snapshot: oldSelection))
+        #expect(!terminal.handleSemanticPromptClick(at: target, modifiers: [], snapshot: oldSelection))
+
+        var clearedSelection = oldSelection
+        clearedSelection.selectionIsActiveAtRelease = false
+        #expect(terminal.mightRouteSemanticPromptClick(modifiers: [], snapshot: clearedSelection))
+        #expect(terminal.handleSemanticPromptClick(at: target, modifiers: [], snapshot: clearedSelection))
+        #expect(String(bytes: delegate.sentData, encoding: .utf8) == "\u{1b}[<0;2;1M")
+    }
+
     @Test func testOscAbsoluteClickEventsIgnoreScrollPosition() {
         let delegate = SemanticDelegate()
         let terminal = Terminal(delegate: delegate,

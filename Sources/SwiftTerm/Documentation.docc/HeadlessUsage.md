@@ -54,6 +54,31 @@ for row in 0..<terminal.rows {
 }
 ```
 
+## Copying a Frame for a Custom Renderer
+
+When a headless process needs to drive a renderer, use an owned render snapshot
+instead of retaining mutable buffer lines. A `.full` frame includes the visible
+grid; `.dirty` includes only changed rows. Draw the snapshot after it returns,
+then clear terminal damage only after the draw succeeds.
+
+```swift
+let terminal = headless.terminal!
+let frame = terminal.makeRenderSnapshot(scope: .dirty)
+draw(frame)
+terminal.terminalLock.withLock {
+    terminal.clearUpdateRange()
+}
+```
+
+For bounded text inspection rather than renderer input, use
+``HeadlessTerminal/terminalInputStateSnapshot()`` and
+``HeadlessTerminal/terminalContentSnapshot(region:)``. These methods take the
+terminal lock themselves; do not call them while already holding
+``Terminal/terminalLock`` or from a terminal delegate callback.
+
+See <doc:PortableHosting> for cell-width rules, semantic input, pointer input,
+selection, and scrollback support in a custom host.
+
 ## Sending Input
 
 Send keystrokes or text to the running process through the terminal:

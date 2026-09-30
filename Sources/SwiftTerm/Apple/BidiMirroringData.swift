@@ -6,6 +6,7 @@
 //  https://www.unicode.org/Public/17.0.0/ucd/BidiMirroring.txt
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
 extension TerminalBidi {
     static let unicode17Mirror: [UInt32: UInt32] = [
@@ -440,3 +441,5 @@ extension TerminalBidi {
     ]
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

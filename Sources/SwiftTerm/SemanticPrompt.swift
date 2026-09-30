@@ -10,7 +10,9 @@
 //  offsets — is derived on demand.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /// The shell-defined role of content written to the terminal by OSC 133.
 /// Values are attached to cells as they are written and survive scrollback.
@@ -151,13 +153,14 @@ public enum SemanticPromptClickBehavior: Equatable, Sendable {
     case requireModifier(SemanticPromptClickModifiers)
 }
 
-/// The gesture state a view captured at pointer-press time, before any
-/// handler mutated it. The shared arbiter uses it to decide whether a
-/// completed primary click may be routed to the semantic prompt.
+/// Gesture state used to decide whether a completed primary click may be
+/// routed to the semantic prompt. The press fields are captured before the
+/// view changes its selection. The release field reflects the final selection.
 public struct SemanticPromptPointerSnapshot: Equatable, Sendable {
-    /// Whether a selection was active when the press began; the click that
-    /// dismisses a selection is not a prompt click.
+    /// Whether a selection was active when the press began.
     public var selectionWasActive: Bool
+    /// Whether a selection is active when the click is released.
+    public var selectionIsActiveAtRelease: Bool
     /// Whether the press turned into a drag before release.
     public var didDrag: Bool
     /// The click count reported for the press.
@@ -166,8 +169,9 @@ public struct SemanticPromptPointerSnapshot: Equatable, Sendable {
     public var pressWasSemanticEligible: Bool
 
     public init(selectionWasActive: Bool, didDrag: Bool, clickCount: Int,
-                pressWasSemanticEligible: Bool) {
+                pressWasSemanticEligible: Bool, selectionIsActiveAtRelease: Bool? = nil) {
         self.selectionWasActive = selectionWasActive
+        self.selectionIsActiveAtRelease = selectionIsActiveAtRelease ?? selectionWasActive
         self.didDrag = didDrag
         self.clickCount = clickCount
         self.pressWasSemanticEligible = pressWasSemanticEligible

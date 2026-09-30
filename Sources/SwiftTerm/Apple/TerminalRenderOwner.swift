@@ -5,6 +5,7 @@
 //  Owns the mutable snapshot and Metal renderer used by one terminal view.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
 import Foundation
 import CoreGraphics
@@ -297,57 +298,20 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
-    private func inputStateLocked(_ terminal: Terminal) -> TerminalInputStateSnapshot {
-        terminal.terminalLock.preconditionLocked()
-        return TerminalInputStateSnapshot(
-            dimensions: TerminalDimensions(cols: terminal.cols, rows: terminal.rows),
-            isAlternateBuffer: terminal.isCurrentBufferAlternate,
-            applicationCursor: terminal.applicationCursor,
-            mouseMode: terminal.mouseMode,
-            keyboardEnhancementFlags: terminal.keyboardEnhancementFlags)
-    }
-
     func inputStateSnapshot() -> TerminalInputStateSnapshot? {
-        guard let session = currentSession() else { return nil }
-        return session.terminal.terminalLock.withLock {
-            inputStateLocked(session.terminal)
-        }
+        currentSession()?.terminal.inputStateSnapshot()
     }
 
     func contentSnapshot(region: TerminalContentRegion) -> TerminalContentSnapshot? {
-        guard let session = currentSession() else { return nil }
-        let terminal = session.terminal
+        currentSession()?.terminal.contentSnapshot(region: region)
+    }
+
+    func keyboardEnhancementFlags() -> KittyKeyboardFlags {
+        guard let terminal = currentSession()?.terminal else {
+            return []
+        }
         return terminal.terminalLock.withLock {
-            let buffer = terminal.buffer
-            let count = buffer.lines.count
-            let screenRows = min(max(0, terminal.rows), count)
-            let liveStart = count - screenRows
-            let start: Int
-            let end: Int
-            switch region {
-            case .viewport:
-                start = min(max(0, buffer.yDisp), count)
-                end = start + min(screenRows, count - start)
-            case .history(let maximumScrollbackRows):
-                start = liveStart - min(max(0, maximumScrollbackRows), liveStart)
-                end = count
-            }
-            let rows = (start..<end).map { index in
-                let line = buffer.lines[index]
-                let cells = (0..<line.count).map { column in
-                    let cell = line[column]
-                    return TerminalCellSnapshot(
-                        text: cell.getText(), width: Int(cell.width),
-                        attribute: cell.attribute)
-                }
-                return TerminalContentRowSnapshot(
-                    absoluteRow: buffer.linesTop + index, cells: cells)
-            }
-            return TerminalContentSnapshot(
-                inputState: inputStateLocked(terminal),
-                capturedRange: (buffer.linesTop + start)..<(buffer.linesTop + end),
-                liveTopRow: buffer.linesTop + liveStart,
-                rows: rows)
+            terminal.keyboardEnhancementFlags
         }
     }
 
@@ -356,6 +320,13 @@ final class TerminalRenderOwner: Sendable {
         guard let terminal = currentSession()?.terminal else { return Data() }
         return terminal.terminalLock.withLock {
             terminal.getBufferAsData(kind: kind, encoding: encoding)
+        }
+    }
+
+    func setCursorStyle(_ style: CursorStyle) {
+        guard let terminal = currentSession()?.terminal else { return }
+        terminal.terminalLock.withLock {
+            terminal.setCursorStyle(style)
         }
     }
 
@@ -387,6 +358,7 @@ final class TerminalRenderOwner: Sendable {
                 dimensions: TerminalDimensions(cols: 0, rows: 0),
                 cursor: Position(col: 0, row: 0),
                 viewportRow: 0,
+                bracketedPasteMode: false,
                 currentBidiState: .default,
                 bidiArrowKeySwap: false,
                 cursorStyle: .blinkBlock,
@@ -419,6 +391,7 @@ final class TerminalRenderOwner: Sendable {
                         cols: terminal.cols, rows: terminal.rows),
                     cursor: Position(col: buffer.x, row: buffer.y),
                     viewportRow: buffer.yDisp,
+                    bracketedPasteMode: terminal.bracketedPasteMode,
                     currentBidiState: terminal.currentBidiState,
                     bidiArrowKeySwap: terminal.bidiArrowKeySwap,
                     cursorStyle: terminal.options.cursorStyle,
@@ -945,3 +918,5 @@ final class TerminalRenderOwner: Sendable {
 #endif
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

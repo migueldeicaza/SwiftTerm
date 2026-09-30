@@ -5,6 +5,7 @@
 //  Created by Miguel de Icaza on 3/5/20.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 class AccessibilityService {
@@ -13,3 +14,5 @@ class AccessibilityService {
         
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

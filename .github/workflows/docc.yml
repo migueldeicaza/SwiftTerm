@@ -24,6 +24,8 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Generate DocC
+        env:
+          SWIFTTERM_DOCC: "1"
         run: |
           mkdir -p docs
           swift package --allow-writing-to-directory "$PWD/docs" generate-documentation \

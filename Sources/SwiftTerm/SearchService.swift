@@ -5,6 +5,7 @@
 //  Ported and adapted from the xterm.js search addon infrastructure.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 /// Search state is guarded by `terminal.terminalLock`; callers must hold it.
@@ -137,3 +138,5 @@ final class SearchService {
         return Position(col: newCol, row: newRow)
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED
