@@ -213,7 +213,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
 
     func processFailedToStart(_ source: LocalProcess, error: LocalProcessError) {
         let handler = failureHandler
-        Task { @MainActor in handler(error) }
+        deliverProcessCallbackOnMain { handler(error) }
     }
 
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {

@@ -16,7 +16,8 @@ import Foundation
 /// use the `Locked` suffix and call `preconditionLocked()`.
 ///
 /// Reentry rules:
-/// 1. Never call `DispatchQueue.main.sync` from the parse/feed path.
+/// 1. Never call `DispatchQueue.main.sync` from the terminal parse/feed path
+///    while this lock is held; lock-free process callbacks may hop to main.
 /// 2. Delegate callbacks may fire with the lock held; handlers must not
 ///    synchronously call APIs that take this lock.
 /// 3. Never enter the render domain while this lock is held. The render path

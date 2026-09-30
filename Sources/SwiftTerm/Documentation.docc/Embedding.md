@@ -110,7 +110,9 @@ order and backpressure. Feed each batch or put it in bounded storage before
 returning; never synchronously wait for more process output or termination.
 Direct calls to `feed` bypass the consumer. Buffering raw bytes does not start
 the parser's synchronized-output watchdog; feeding them uses the normal feed
-transaction and watchdog behavior.
+transaction and watchdog behavior. Buffered terminal queries are also buffered:
+programs waiting for device-status, cursor-position or OSC replies will remain
+blocked until the host feeds the relevant bytes or provides its own response.
 
 The view's process adapter retains the consumer. Capture `[weak view]` when
 feeding it, not `unowned`: the adapter can outlive the view.
@@ -122,12 +124,13 @@ try view.setProcessOutputConsumer { [weak view] bytes in
 ```
 
 Process termination is also handed off synchronously on the main actor, after
-earlier output callbacks return and before a callback-driven relaunch. This
-observable ordering keeps the previous process's output and termination ahead
-of the next process's output, even when main-actor delivery delays draining.
-`setProcessOutputHandler` runs on the process parse thread after the consumer
-returns, which means the batch was handled, not necessarily parsed if the
-consumer buffered it.
+earlier admitted output callbacks return and before a callback-driven relaunch.
+`LocalProcess.drainTimeout` still bounds child-exit draining: output not yet
+delivered when that timeout expires may be dropped, just like the default
+parser path. Increase the timeout when post-exit completeness matters more
+than prompt termination. `setProcessOutputHandler` runs on the process parse
+thread after the consumer returns, which means the batch was handled, not
+necessarily parsed if the consumer buffered it.
 
 ## Topics
 

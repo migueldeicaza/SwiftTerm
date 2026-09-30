@@ -87,6 +87,34 @@ struct ProcessOutputConsumerTests {
         try view.setProcessOutputConsumer(nil)
     }
 
+    @Test func consumerDeliveryAppliesBackpressureAcrossManyBatches() async throws {
+        let view = LocalProcessTerminalView(frame: .zero)
+        let delegate = Delegate()
+        view.processDelegate = delegate
+        let capture = Capture()
+        let handled = Locked(0)
+        let expected = Array(String(repeating: "0123456789abcdef", count: 16_384).utf8)
+        try view.setProcessOutputConsumer { bytes in
+            #expect(Thread.isMainThread)
+            #expect(handled.withLock { $0 } == capture.batches)
+            capture.bytes += bytes
+            capture.batches += 1
+        }
+        view.setProcessOutputHandler { handled.withLock { $0 += 1 } }
+        view.startProcess(
+            executable: "/usr/bin/env",
+            args: [
+                "python3",
+                "-c",
+                "import sys; sys.stdout.buffer.write((b'0123456789abcdef') * 16384)"
+            ],
+            environment: [])
+        await waitForExit(delegate)
+        #expect(capture.bytes == expected)
+        #expect(capture.batches > 1)
+        #expect(handled.withLock { $0 } == capture.batches)
+    }
+
     @Test func blockedMainTimeoutKeepsOutputBeforeTerminationAndRelaunch() async throws {
         let view = LocalProcessTerminalView(frame: .zero)
         let delegate = Delegate()
