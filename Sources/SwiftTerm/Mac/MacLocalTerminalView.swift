@@ -358,6 +358,9 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     /// It must feed the bytes or place them in its own bounded storage before
     /// returning. The parse worker waits, preserving FIFO and backpressure;
     /// consumers must not synchronously wait for process output or termination.
+    /// If `LocalProcess.drainTimeout` expires at child exit, output not yet
+    /// delivered may be dropped, and one batch already leaving the reader may
+    /// still reach the consumer after termination.
     /// Direct calls to feed do not invoke the consumer. With nil, the existing
     /// borrowed-byte parser path remains unchanged and makes no extra copy.
     public func setProcessOutputConsumer(_ consumer: ProcessOutputConsumer?) throws {

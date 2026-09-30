@@ -91,22 +91,27 @@ struct ProcessOutputConsumerTests {
         let view = LocalProcessTerminalView(frame: .zero)
         let delegate = Delegate()
         view.processDelegate = delegate
+        view.process.drainTimeout = 5
         let capture = Capture()
         let handled = Locked(0)
-        let expected = Array(String(repeating: "0123456789abcdef", count: 16_384).utf8)
+        let expectedText = (0..<32_768).map { String(format: "%08x", $0) }.joined()
+        let expected = Array(expectedText.utf8)
         try view.setProcessOutputConsumer { bytes in
             #expect(Thread.isMainThread)
             #expect(handled.withLock { $0 } == capture.batches)
             capture.bytes += bytes
             capture.batches += 1
         }
-        view.setProcessOutputHandler { handled.withLock { $0 += 1 } }
+        view.setProcessOutputHandler {
+            #expect(!Thread.isMainThread)
+            handled.withLock { $0 += 1 }
+        }
         view.startProcess(
             executable: "/usr/bin/env",
             args: [
                 "python3",
                 "-c",
-                "import sys; sys.stdout.buffer.write((b'0123456789abcdef') * 16384)"
+                "import sys; sys.stdout.write(''.join(f'{i:08x}' for i in range(32768)))"
             ],
             environment: [])
         await waitForExit(delegate)

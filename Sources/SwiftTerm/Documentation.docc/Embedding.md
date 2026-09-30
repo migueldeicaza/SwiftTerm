@@ -124,13 +124,15 @@ try view.setProcessOutputConsumer { [weak view] bytes in
 ```
 
 Process termination is also handed off synchronously on the main actor, after
-earlier admitted output callbacks return and before a callback-driven relaunch.
-`LocalProcess.drainTimeout` still bounds child-exit draining: output not yet
-delivered when that timeout expires may be dropped, just like the default
-parser path. Increase the timeout when post-exit completeness matters more
-than prompt termination. `setProcessOutputHandler` runs on the process parse
-thread after the consumer returns, which means the batch was handled, not
-necessarily parsed if the consumer buffered it.
+output callbacks already queued on the main actor return and before a
+callback-driven relaunch. `LocalProcess.drainTimeout` still bounds child-exit
+draining: output not yet delivered when that timeout expires may be dropped,
+and one batch already leaving the reader can still reach the consumer after
+termination, just like the default direct-delivery contract. Increase the
+timeout when post-exit completeness matters more than prompt termination.
+`setProcessOutputHandler` runs on the process parse thread after the consumer
+returns, which means the batch was handled, not necessarily parsed if the
+consumer buffered it.
 
 ## Topics
 
