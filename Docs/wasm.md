@@ -19,13 +19,12 @@ entry point. The TypeScript loader supplies the required WASI imports and calls
 
 Use the exact compiler and SDK pair in
 [`scripts/wasm-toolchain.env`](../scripts/wasm-toolchain.env):
-`swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-14-a`, Swift revision
-`424cae54c1a10da`. Install its WASM artifact bundle. It contains the SDK IDs
-`swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-14-a_wasm` and
-`swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-14-a_wasm-embedded`.
+`swift-6.4.0-RELEASE`, Swift revision `swift-6.4-RELEASE`. Install its WASM
+artifact bundle. It contains the SDK IDs `swift-6.4.0-RELEASE_wasm` and
+`swift-6.4.0-RELEASE_wasm-embedded`.
 Use the [Swift installation page](https://www.swift.org/install/macos/) and
 [WASM SDK guide](https://www.swift.org/documentation/articles/wasm-getting-started.html)
-for installation steps. Do not mix an Xcode compiler with a snapshot SDK.
+for installation steps. Do not mix an Xcode compiler with the Swift.org WASM SDK.
 
 Install Node.js 22 or later, then run:
 
