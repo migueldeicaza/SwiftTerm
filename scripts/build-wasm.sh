@@ -45,6 +45,8 @@ export SWIFTTERM_WASM_EMBEDDED_LIBDIR="$sdk_base/swift.xctoolchain/usr/lib/swift
 export SWIFTTERM_EXCLUDE_APPLE=1
 export SWIFTTERM_WASM=0
 export SWIFTTERM_WEB_WASM=0
+export SWIFTTERM_EMBEDDED_WASM=0
+if [[ "$variant" == embedded ]]; then export SWIFTTERM_EMBEDDED_WASM=1; fi
 if [[ "$mode" == browser ]]; then export SWIFTTERM_WEB_WASM=1; product=SwiftTermWebWasm
 else export SWIFTTERM_WASM=1; product=SwiftTermWasmSmoke; fi
 scratch="$PWD/.build/wasm-$variant"
