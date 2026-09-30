@@ -6,7 +6,9 @@
 //  in an arena that is shared by all lines of a terminal.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /// The fixed-size value that SwiftTerm stores for each terminal cell.
 ///
@@ -323,6 +325,21 @@ final class CellArena {
     private var graphemeCountValue: UInt32 = 0
     private var graphemeIdentifiers: [[UInt32]: UInt32] = [:]
 
+    /// Direct-mapped cache in front of `attributeIdentifiers`. SGR-heavy
+    /// output interns an attribute for nearly every run, and hashing the
+    /// two-word key through `Dictionary` (plus the exclusivity check on this
+    /// class property) was ~11% of the parse thread on dense_cells. Keep this
+    /// after the grapheme state so adding it does not move Unicode-hot fields.
+    /// An entry only ever holds a pair that is also in the dictionary, and
+    /// neither is ever removed, so a hit is always correct.
+    private struct AttributeCacheEntry {
+        var word0: UInt64
+        var word1: UInt64
+        var identifierPlusOne: UInt32
+    }
+    private static let attributeCacheSize = 1 << 10
+    @exclusivity(unchecked) private var attributeCache: [AttributeCacheEntry]
+
 #if DEBUG
     private(set) var snapshotAttributeEntriesCopied = 0
     private(set) var snapshotGraphemeEntriesCopied = 0
@@ -341,6 +358,7 @@ final class CellArena {
         attributes = .allocate(capacity: attributeCapacity + 1)
         attributes.initialize(to: CharData.defaultAttr)
         attributeIdentifiers[InternedAttributeKey(CharData.defaultAttr)] = 0
+        attributeCache = Self.makeAttributeCache()
 
         self.graphemeCapacity = min(max(graphemeCapacity, 0), Self.maximumGraphemeID)
         graphemeBlockCapacity = max(1, (self.graphemeCapacity + Self.graphemeBlockSize - 1) /
@@ -370,6 +388,7 @@ final class CellArena {
         // Snapshot rows decode existing cells. Keep only the default reverse
         // lookup that the out-of-range blank-cell path can request.
         attributeIdentifiers = [InternedAttributeKey(CharData.defaultAttr): 0]
+        attributeCache = Self.makeAttributeCache()
 
         graphemeCapacity = source.graphemeCapacity
         graphemeBlockCapacity = source.graphemeBlockCapacity
@@ -478,9 +497,32 @@ final class CellArena {
     var attributeCount: Int { attributeCountValue - 1 }
     var graphemeCount: Int { Int(graphemeCountValue) }
 
+    private static func makeAttributeCache() -> [AttributeCacheEntry] {
+        Array(repeating: AttributeCacheEntry(word0: 0, word1: 0, identifierPlusOne: 0),
+              count: attributeCacheSize)
+    }
+
+    @inline(__always)
+    private static func attributeCacheSlot(_ key: InternedAttributeKey) -> Int {
+        let mixed = (key.word0 ^ (key.word1 &* 0x9E37_79B9_7F4A_7C15)) &* 0xBF58_476D_1CE4_E5B9
+        return Int(truncatingIfNeeded: mixed >> 54)
+    }
+
     func intern(attribute: Attribute) -> UInt16? {
         let key = InternedAttributeKey(attribute)
+        // The default attribute is permanently identifier zero and encodes as
+        // an all-zero key. Avoid cache and dictionary lookups for this common case.
+        if key.word0 == 0, key.word1 == 0 {
+            return 0
+        }
+        let slot = Self.attributeCacheSlot(key)
+        let cached = attributeCache[slot]
+        if cached.identifierPlusOne != 0, cached.word0 == key.word0, cached.word1 == key.word1 {
+            return UInt16(truncatingIfNeeded: cached.identifierPlusOne &- 1)
+        }
         if let identifier = attributeIdentifiers[key] {
+            attributeCache[slot] = AttributeCacheEntry(word0: key.word0, word1: key.word1,
+                                                       identifierPlusOne: UInt32(identifier) + 1)
             return identifier
         }
         guard !isSnapshotCopy else {
@@ -494,6 +536,8 @@ final class CellArena {
         attributes.advanced(by: attributeCountValue).initialize(to: attribute)
         attributeCountValue += 1
         attributeIdentifiers[key] = identifier
+        attributeCache[slot] = AttributeCacheEntry(word0: key.word0, word1: key.word1,
+                                                   identifierPlusOne: UInt32(identifier) + 1)
         return identifier
     }
 
@@ -522,7 +566,7 @@ final class CellArena {
               payloadCode: UInt16 = 0, semanticContentCode: UInt8 = 0,
               isProtected: Bool = false) -> PackedCell?
     {
-        pack(styleID: styleID, scalars: character.unicodeScalars.map(\.value),
+        pack(styleID: styleID, scalars: character.unicodeScalars.map { $0.value },
              widthState: widthState, payloadCode: payloadCode,
              semanticContentCode: semanticContentCode, isProtected: isProtected)
     }
@@ -765,7 +809,7 @@ final class CellArena {
               payloadCode: UInt16 = 0, semanticContentCode: UInt8 = 0,
               isProtected: Bool = false) -> PackedCell?
     {
-        let scalars = character.unicodeScalars.map(\.value)
+        let scalars = character.unicodeScalars.map { $0.value }
         if scalars.count == 1, let scalar = scalars.first {
             return pack(attribute: attribute, scalar: scalar, widthState: widthState,
                         payloadCode: payloadCode,
@@ -890,7 +934,11 @@ final class CellArena {
 /// snapshot that produced the view must outlive it.
 struct PackedCellView {
     let packed: PackedCell
+#if SWIFTTERM_EMBEDDED
+    let arena: CellArena
+#else
     unowned(unsafe) let arena: CellArena
+#endif
 
     @inline(__always) var code: Int32 { arena.logicalCode(for: packed) }
     @inline(__always) var width: Int8 { arena.width(for: packed) }
@@ -917,8 +965,13 @@ struct PackedCellView {
         arena.scalarValues(for: packed, appending: scalar)
     }
 
+#if SWIFTTERM_EMBEDDED
+    @inline(__always)
+    func getPayload() -> String? { TinyAtom.stored(code: packed.payloadCode).target }
+#else
     @inline(__always)
     func getPayload() -> (any Sendable)? { TinyAtom.stored(code: packed.payloadCode).target }
+#endif
 
     @inline(__always)
     func expanded() -> CharData { arena.unpack(packed) }
@@ -1150,7 +1203,7 @@ final class CellStoragePage {
     var hasStyles: Bool { cells.contains { $0.styleID != 0 } }
     var hasGraphemes: Bool { cells.contains { $0.contentTag == .grapheme } }
     var hasPayloads: Bool { cells.contains { $0.payloadCode != 0 } }
-    var styleCount: Int { Set(cells.lazy.map(\.styleID).filter { $0 != 0 }).count }
+    var styleCount: Int { Set(cells.lazy.map { $0.styleID }.filter { $0 != 0 }).count }
     var graphemeCount: Int { cells.lazy.filter { $0.contentTag == .grapheme }.count }
     var payloadCount: Int { cells.lazy.filter { $0.payloadCode != 0 }.count }
 

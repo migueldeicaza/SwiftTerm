@@ -106,7 +106,7 @@ struct GhosttyFuzzCorpusTests {
                 "APC bound exceeded after \(input)")
         #expect(parser._pars.count <= EscapeSequenceParser.maximumParameterCount,
                 "Parameter bound exceeded after \(input)")
-        #expect(parser._pars.allSatisfy { $0 <= EscapeSequenceParser.maximumParameterValue },
+        #expect(parser._pars.withView { $0.allSatisfy { $0 <= EscapeSequenceParser.maximumParameterValue } },
                 "Parameter value bound exceeded after \(input)")
     }
 

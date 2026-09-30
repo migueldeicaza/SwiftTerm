@@ -5,6 +5,7 @@
 //  Created by Miguel de Icaza on 3/6/20.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS)
 import Foundation
 import AppKit
@@ -67,6 +68,87 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
      * - Parameter exitCode: the normalized exit status from 0 through 255, or nil when the process ended because of a signal or the wait failed
      */
     func processTerminated (source: TerminalView, exitCode: Int32?)
+
+    /// Reports a launch failure, separate from child exit.
+    func processFailedToStart(source: TerminalView, error: LocalProcessError)
+
+    // MARK: Kitty clipboard protocol, OSC 5522
+    //
+    // ``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so the
+    // host cannot answer these ``TerminalViewDelegate`` hooks directly. The
+    // view forwards them here. The defaults deny every service, which makes
+    // DEC private mode 5522 report as unrecognized. See
+    // <doc:KittyClipboardProtocol>.
+
+    /// Returns the Kitty clipboard services that this host explicitly supports.
+    func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities
+
+    /// Returns available MIME types for an OSC 5522 read or a paste event.
+    /// Return `nil` to use the platform pasteboard.
+    func kittyClipboardAvailableMimeTypes(
+        source: TerminalView,
+        location: KittyClipboardLocation
+    ) -> [String]?
+
+    /// Reads one MIME representation for an OSC 5522 read or a paste event.
+    /// Return `nil` to use the platform pasteboard.
+    func kittyClipboardRead(
+        source: TerminalView,
+        location: KittyClipboardLocation,
+        mimeType: String
+    ) -> KittyClipboardReadResult?
+
+    /// Publishes every OSC 5522 representation and alias as one atomic update.
+    /// Return ``KittyClipboardWriteResult/unsupported`` to use the platform pasteboard.
+    func kittyClipboardWrite(
+        source: TerminalView,
+        location: KittyClipboardLocation,
+        content: KittyClipboardWriteContent
+    ) -> KittyClipboardWriteResult
+
+    /// Requests user permission for an OSC 5522 operation.
+    func kittyClipboardRequestPermission(
+        source: TerminalView,
+        request: KittyClipboardPermissionRequest
+    ) -> KittyClipboardPermissionResult
+}
+
+public extension LocalProcessTerminalViewDelegate {
+    func processFailedToStart(source: TerminalView, error: LocalProcessError) {}
+
+    func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
+        []
+    }
+
+    func kittyClipboardAvailableMimeTypes(
+        source: TerminalView,
+        location: KittyClipboardLocation
+    ) -> [String]? {
+        nil
+    }
+
+    func kittyClipboardRead(
+        source: TerminalView,
+        location: KittyClipboardLocation,
+        mimeType: String
+    ) -> KittyClipboardReadResult? {
+        nil
+    }
+
+    func kittyClipboardWrite(
+        source: TerminalView,
+        location: KittyClipboardLocation,
+        content: KittyClipboardWriteContent
+    ) -> KittyClipboardWriteResult {
+        .unsupported
+    }
+
+    func kittyClipboardRequestPermission(
+        source: TerminalView,
+        request: KittyClipboardPermissionRequest
+    ) -> KittyClipboardPermissionResult {
+        .deny
+    }
 }
 
 private final class LocalProcessTerminalViewProcessAdapter:
@@ -92,17 +174,20 @@ private final class LocalProcessTerminalViewProcessAdapter:
     private let outputConsumer = Locked<OutputConsumerBox?>(nil)
     private let windowSize = Locked(winsize())
     private let inputProcess = Locked(WeakLocalProcessInputReference())
+    private let failureHandler: @MainActor @Sendable (LocalProcessError) -> Void
     private let terminationHandler: @MainActor @Sendable (Int32?) -> Void
 
     init(renderOwner: TerminalRenderOwner,
          frameSignal: FrameDriverSignal,
          diagnosticsState: Locked<TerminalView.Diagnostics>,
          outputHandler: LockedVoidCallback,
+         failureHandler: @escaping @MainActor @Sendable (LocalProcessError) -> Void,
          terminationHandler: @escaping @MainActor @Sendable (Int32?) -> Void) {
         self.renderOwner = renderOwner
         self.frameSignal = frameSignal
         self.diagnosticsState = diagnosticsState
         self.outputHandler = outputHandler
+        self.failureHandler = failureHandler
         self.terminationHandler = terminationHandler
     }
 
@@ -124,6 +209,11 @@ private final class LocalProcessTerminalViewProcessAdapter:
     func setOutputConsumer(_ consumer: ProcessOutputConsumer?) {
         let next = consumer.map(OutputConsumerBox.init)
         outputConsumer.withLock { $0 = next }
+    }
+
+    func processFailedToStart(_ source: LocalProcess, error: LocalProcessError) {
+        let handler = failureHandler
+        Task { @MainActor in handler(error) }
     }
 
     func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
@@ -231,6 +321,10 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
             frameSignal: frameSignal,
             diagnosticsState: diagnosticsState,
             outputHandler: processOutputHandler,
+            failureHandler: { [weak self] error in
+                guard let self, let process = self.process else { return }
+                self.processFailedToStart(process, error: error)
+            },
             terminationHandler: { [weak self] exitCode in
                 guard let self, let process = self.process else { return }
                 self.processTerminated(process, exitCode: exitCode)
@@ -274,17 +368,25 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     }
     
     /**
-     * The `processDelegate` is used to deliver messages and information relevant t
+     * The `processDelegate` is used to deliver messages and information relevant to
+     * the process and the host: window size, title, the current directory, process
+     * termination, and the Kitty clipboard services that the host serves.
      */
-    public weak var processDelegate: LocalProcessTerminalViewDelegate?
-    
+    public weak var processDelegate: LocalProcessTerminalViewDelegate? {
+        didSet {
+            // The clipboard capability set is cached, so a new host must be
+            // consulted again or mode 5522 keeps the previous answer.
+            refreshKittyClipboardCapabilities()
+        }
+    }
+
     /**
      * This method is invoked to notify the client of the new columsn and rows that have been set by the UI
      */
     public func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
         var size = getWindowSize()
         processAdapter.updateWindowSize(size)
-        guard process.updateWindowSize(&size) else { return }
+        _ = process.updateWindowSize(&size)
         
         processDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
     }
@@ -313,6 +415,45 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
 
     public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         processDelegate?.hostCurrentDirectoryUpdate(source: source, directory: directory)
+    }
+
+    // MARK: Kitty clipboard protocol, forwarded to the processDelegate
+    //
+    // These are `open` so a subclass can also answer them directly.
+
+    open func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
+        processDelegate?.kittyClipboardCapabilities(source: source) ?? []
+    }
+
+    open func kittyClipboardAvailableMimeTypes(
+        source: TerminalView,
+        location: KittyClipboardLocation
+    ) -> [String]? {
+        processDelegate?.kittyClipboardAvailableMimeTypes(source: source, location: location)
+    }
+
+    open func kittyClipboardRead(
+        source: TerminalView,
+        location: KittyClipboardLocation,
+        mimeType: String
+    ) -> KittyClipboardReadResult? {
+        processDelegate?.kittyClipboardRead(source: source, location: location, mimeType: mimeType)
+    }
+
+    open func kittyClipboardWrite(
+        source: TerminalView,
+        location: KittyClipboardLocation,
+        content: KittyClipboardWriteContent
+    ) -> KittyClipboardWriteResult {
+        processDelegate?.kittyClipboardWrite(source: source, location: location, content: content)
+            ?? .unsupported
+    }
+
+    open func kittyClipboardRequestPermission(
+        source: TerminalView,
+        request: KittyClipboardPermissionRequest
+    ) -> KittyClipboardPermissionResult {
+        processDelegate?.kittyClipboardRequestPermission(source: source, request: request) ?? .deny
     }
 
     /**
@@ -376,6 +517,11 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     /**
      * Implements the LocalProcessDelegate method.
      */
+    open func processFailedToStart(_ source: LocalProcess, error: LocalProcessError) {
+        feed(text: "\r\nProcess launch failed: \(error)\r\n")
+        processDelegate?.processFailedToStart(source: self, error: error)
+    }
+
     open func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         processDelegate?.processTerminated(source: self, exitCode: exitCode)
     }
@@ -403,3 +549,5 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
 }
 
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

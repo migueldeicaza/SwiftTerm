@@ -14,6 +14,7 @@
 //  coalescing flag, and it knows nothing about terminals or Metal.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
 import Foundation
 
@@ -182,3 +183,5 @@ final class RenderLoop: Sendable {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

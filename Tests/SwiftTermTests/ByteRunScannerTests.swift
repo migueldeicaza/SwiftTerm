@@ -61,6 +61,79 @@ final class ByteRunScannerTests {
         }
     }
 
+    // The parser feeds the `Span` overloads directly, so they need their own
+    // coverage: on Swift 6.3 the `ArraySlice` overloads take a different path.
+    @Test func spanScannersMatchScalarSearchesForAllShortLengthsAndStarts() {
+        for length in 0...65 {
+            var storage = Array(repeating: UInt8(0x41), count: length + 11)
+            let lowerBound = 5
+            let upperBound = lowerBound + length
+
+            if length > 2 {
+                storage[lowerBound + length / 3] = 0x1f
+                storage[lowerBound + (length * 2) / 3] = 0x80
+                storage[lowerBound + length / 2] = 0x3b
+            }
+            let bytes = storage[lowerBound..<upperBound]
+
+            for start in 0...length {
+                #expect(ByteRunScanner.firstC0Byte(in: bytes.span, from: start) ==
+                        scalarFirstC0Byte(in: bytes, from: lowerBound + start) - lowerBound)
+                #expect(ByteRunScanner.firstNonASCIIByte(in: bytes.span, from: start) ==
+                        scalarFirstNonASCIIByte(in: bytes, from: lowerBound + start) - lowerBound)
+                #expect(ByteRunScanner.firstC0OrByte(0x3b, in: bytes.span, from: start) ==
+                        scalarFirstC0OrByte(0x3b, in: bytes, from: lowerBound + start) - lowerBound)
+            }
+        }
+    }
+
+    @Test func spanScannersFindMatchesInEveryVectorLane() {
+        let lowerBound = 3
+        for matchOffset in 0..<64 {
+            var storage = Array(repeating: UInt8(0x41), count: 70)
+            storage[lowerBound + matchOffset] = 0x1f
+            #expect(ByteRunScanner.firstC0Byte(
+                in: storage[lowerBound..<(lowerBound + 64)].span, from: 0) == matchOffset)
+
+            storage[lowerBound + matchOffset] = 0x80
+            #expect(ByteRunScanner.firstNonASCIIByte(
+                in: storage[lowerBound..<(lowerBound + 64)].span, from: 0) == matchOffset)
+
+            storage[lowerBound + matchOffset] = 0x3b
+            #expect(ByteRunScanner.firstC0OrByte(
+                0x3b, in: storage[lowerBound..<(lowerBound + 64)].span, from: 0) == matchOffset)
+        }
+    }
+
+    @Test func spanScannersMatchScalarSearchesForRandomInput() {
+        var generator = DeterministicByteGenerator(state: 0x5350_414e_5343_414e)
+
+        for iteration in 0..<1_000 {
+            let prefixCount = iteration % 8
+            let length = (iteration * 73) % 258
+            var storage = Array(repeating: UInt8(0), count: prefixCount + length + 3)
+            for index in storage.indices {
+                storage[index] = generator.next()
+            }
+
+            let bytes = storage[prefixCount..<(prefixCount + length)]
+            let start = length == 0 ? 0 : iteration % (length + 1)
+            #expect(ByteRunScanner.firstC0Byte(in: bytes.span, from: start) ==
+                    scalarFirstC0Byte(in: bytes, from: prefixCount + start) - prefixCount)
+            #expect(ByteRunScanner.firstNonASCIIByte(in: bytes.span, from: start) ==
+                    scalarFirstNonASCIIByte(in: bytes, from: prefixCount + start) - prefixCount)
+            #expect(ByteRunScanner.firstC0OrByte(0x07, in: bytes.span, from: start) ==
+                    scalarFirstC0OrByte(0x07, in: bytes, from: prefixCount + start) - prefixCount)
+        }
+    }
+
+    private func scalarFirstC0OrByte(_ value: UInt8, in bytes: ArraySlice<UInt8>, from start: Int) -> Int {
+        for index in start..<bytes.endIndex where bytes[index] < 0x20 || bytes[index] == value {
+            return index
+        }
+        return bytes.endIndex
+    }
+
     private func scalarFirstC0Byte(in bytes: ArraySlice<UInt8>, from start: Int) -> Int {
         for index in start..<bytes.endIndex where bytes[index] < 0x20 {
             return index

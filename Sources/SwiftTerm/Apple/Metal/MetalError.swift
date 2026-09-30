@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 
@@ -50,3 +51,5 @@ public enum MetalError: Error, CustomStringConvertible {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

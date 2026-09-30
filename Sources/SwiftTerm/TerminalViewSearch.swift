@@ -5,6 +5,7 @@
 //  Search integration for TerminalView.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 
@@ -153,3 +154,5 @@ extension TerminalView {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

@@ -323,7 +323,7 @@ struct GhosttyFuzzRegressionTests {
 private final class CountingDcsHandler: DcsHandler {
     var hookCount = 0
 
-    func hook(collect: cstring, parameters: [Int], flag: UInt8) {
+    func hook(collect: cstring, parameters: CsiParameters, flag: UInt8) {
         hookCount += 1
     }
 

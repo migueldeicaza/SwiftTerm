@@ -6,7 +6,9 @@
 //  Copyright © 2019 Miguel de Icaza. All rights reserved.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 struct ControlCodes  {
     static let NUL : UInt8 = 0x00

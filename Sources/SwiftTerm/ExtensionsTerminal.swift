@@ -5,7 +5,16 @@
 //  Created by Miguel de Icaza on 4/17/21.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
+
+extension String {
+    func leftPadding(toLength: Int, withPad pad: Character) -> String {
+        guard count < toLength else { return self }
+        return String(repeating: String(pad), count: toLength - count) + self
+    }
+}
 
 extension ArraySlice where Element == UInt8 {
     func hasPrefix(_ string: String) -> Bool {

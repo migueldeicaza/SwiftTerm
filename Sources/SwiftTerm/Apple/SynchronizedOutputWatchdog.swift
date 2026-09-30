@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 //
 //  SynchronizedOutputWatchdog.swift
 //  SwiftTerm
@@ -191,4 +192,6 @@ final class SynchronizedOutputWatchdog: @unchecked Sendable {
         target.fire()
     }
 }
+#endif
+
 #endif

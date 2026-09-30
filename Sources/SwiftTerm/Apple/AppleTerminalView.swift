@@ -5,6 +5,7 @@
 //
 //  Created by Miguel de Icaza on 4/21/20.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 import CoreGraphics
@@ -29,6 +30,20 @@ private func cellPixelDimension(_ points: CGFloat, scale: CGFloat) -> Int {
     guard value.isFinite else { return Int.max }
     guard value < CGFloat(Int.max) else { return Int.max }
     return max(1, Int(value))
+}
+
+func terminalPixelCount(cells: Int, cellPoints: CGFloat, scale: CGFloat) -> Int {
+    let cellPixels = cellPixelDimension(cellPoints, scale: scale)
+    let result = cells.multipliedReportingOverflow(by: cellPixels)
+    return result.overflow ? Int.max : max(1, result.partialValue)
+}
+
+func terminalDevicePixelIndex(pointOffset: CGFloat, scale: CGFloat, pixelCount: Int) -> Int {
+    guard pointOffset.isFinite, scale.isFinite, pixelCount > 1 else { return 0 }
+    let value = (pointOffset * scale).rounded(.down)
+    guard value > 0 else { return 0 }
+    guard value < CGFloat(pixelCount) else { return pixelCount - 1 }
+    return Int(value)
 }
 
 #if os(iOS) || os(visionOS)
@@ -1029,6 +1044,8 @@ public struct TerminalViewStateSnapshot: Sendable {
     public let dimensions: TerminalDimensions
     public let cursor: Position
     public let viewportRow: Int
+    /// Whether DEC private mode 2004 (bracketed paste) is enabled.
+    public let bracketedPasteMode: Bool
     public let currentBidiState: BidiPresentationState
     public let bidiArrowKeySwap: Bool
     public let cursorStyle: CursorStyle
@@ -1210,18 +1227,21 @@ final class AppleKittyClipboardBridge: Sendable {
 extension TerminalView {
 
     /// Refreshes capabilities after the current delegate changes its host policy.
+    ///
+    /// The core protocol state is refreshed too: losing the complete
+    /// standard-clipboard service resets mode 5522 and revokes every grant,
+    /// paste token, and active write.
     public func refreshKittyClipboardCapabilities() {
         kittyClipboardBridge.capabilities.withLock {
             $0 = terminalDelegate?.kittyClipboardCapabilities(source: self) ?? []
         }
-    }
-
-    @MainActor
-    func kittyPasteEventPossible() -> Bool {
-        guard kittyClipboardBridge.capabilities.withLock({ $0.contains(.read) }) else {
-            return false
+        // The lock is not re-entrant, so a caller that already holds it -- a
+        // delegate assigned from inside `withTerminal` -- refreshes in place.
+        if terminal.terminalLock.isLockedByCurrentThread {
+            terminal.refreshKittyClipboardCapabilities()
+        } else {
+            withTerminal { $0.refreshKittyClipboardCapabilities() }
         }
-        return withTerminal { $0.kittyPasteEventsEnabled }
     }
 
     public nonisolated func kittyClipboardCapabilities(
@@ -1236,7 +1256,11 @@ extension TerminalView {
         location: KittyClipboardLocation,
         completion: @escaping @Sendable ([String]?) -> Void
     ) -> Bool {
-        guard kittyClipboardCapabilities(source: source).contains(.read) else { return false }
+        guard kittyClipboardCapabilities(source: source)
+            .allows(direction: .read, location: location)
+        else {
+            return false
+        }
         onMain { [weak self] in
             guard let self else {
                 completion(nil)
@@ -1255,19 +1279,23 @@ extension TerminalView {
         source: Terminal,
         location: KittyClipboardLocation,
         mimeType: String,
-        completion: @escaping @Sendable (Data?) -> Void
+        completion: @escaping @Sendable (KittyClipboardReadResult) -> Void
     ) -> Bool {
-        guard kittyClipboardCapabilities(source: source).contains(.read) else { return false }
+        guard kittyClipboardCapabilities(source: source)
+            .allows(direction: .read, location: location)
+        else {
+            return false
+        }
         onMain { [weak self] in
             guard let self else {
-                completion(nil)
+                completion(.unavailable)
                 return
             }
             let custom = self.terminalDelegate?.kittyClipboardRead(
                 source: self,
                 location: location,
                 mimeType: mimeType)
-            completion(custom ?? self.kittyClipboardPlatformRead(
+            completion(custom ?? self.kittyPlatformRead(
                 location: location,
                 mimeType: mimeType))
         }
@@ -1278,10 +1306,14 @@ extension TerminalView {
     public nonisolated func kittyClipboardWrite(
         source: Terminal,
         location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation],
+        content: KittyClipboardWriteContent,
         completion: @escaping @Sendable (KittyClipboardWriteResult) -> Void
     ) -> Bool {
-        guard kittyClipboardCapabilities(source: source).contains(.write) else { return false }
+        guard kittyClipboardCapabilities(source: source)
+            .allows(direction: .write, location: location)
+        else {
+            return false
+        }
         onMain { [weak self] in
             guard let self else {
                 completion(.ioError)
@@ -1290,14 +1322,12 @@ extension TerminalView {
             let custom = self.terminalDelegate?.kittyClipboardWrite(
                 source: self,
                 location: location,
-                representations: representations) ?? .unsupported
+                content: content) ?? .unsupported
             guard case .unsupported = custom else {
                 completion(custom)
                 return
             }
-            completion(self.kittyClipboardPlatformWrite(
-                location: location,
-                representations: representations))
+            completion(self.kittyPlatformWrite(location: location, content: content))
         }
         return true
     }
@@ -1308,11 +1338,11 @@ extension TerminalView {
         request: KittyClipboardPermissionRequest,
         completion: @escaping @Sendable (KittyClipboardPermissionResult) -> Void
     ) -> Bool {
-        let capabilities = kittyClipboardCapabilities(source: source)
-        let available = request.direction == .read
-            ? capabilities.contains(.read)
-            : capabilities.contains(.write)
-        guard available else { return false }
+        guard kittyClipboardCapabilities(source: source)
+            .allows(direction: request.direction, location: request.location)
+        else {
+            return false
+        }
         onMain { [weak self] in
             guard let self, let delegate = self.terminalDelegate else {
                 completion(.deny)
@@ -1595,6 +1625,20 @@ extension TerminalView {
         renderOwner.dimensions()
     }
 
+    /// The kitty keyboard protocol flags the running application has enabled, as a copied value.
+    ///
+    /// A host that handles key events in front of the view needs this to know when SwiftTerm
+    /// will encode a key itself. `keyDown` is `public override` rather than `open`, so an
+    /// application that rebinds a chord does it in an event monitor ahead of the view; when the
+    /// application running in the terminal has enabled the protocol, that monitor has to stand
+    /// down and let SwiftTerm produce the real encoding. The view's own key handling reads the
+    /// same flags for the same decision.
+    ///
+    /// The flags are per-buffer: switching to the alternate buffer swaps in its own state.
+    public nonisolated var keyboardEnhancementFlags: KittyKeyboardFlags {
+        renderOwner.keyboardEnhancementFlags()
+    }
+
     /// Returns copied terminal state for status displays and diagnostics.
     public nonisolated func terminalStateSnapshot() -> TerminalViewStateSnapshot {
         renderOwner.stateSnapshot()
@@ -1606,6 +1650,22 @@ extension TerminalView {
         encoding: String.Encoding = .utf8
     ) -> Data {
         renderOwner.bufferData(kind: kind, encoding: encoding)
+    }
+
+    /// Observes copied OSC sequences as the view's terminal encounters them,
+    /// without changing how the view handles them.
+    ///
+    /// This forwards to ``Terminal/observeOscEvents(_:)`` on the terminal the
+    /// view owns, so a host can react to sequences the view does not surface
+    /// itself — desktop notifications sent with OSC 9, 99 or 777, for
+    /// instance — without access to the mutable terminal. Events are delivered
+    /// asynchronously on a private serial queue in encounter order. Retain the
+    /// returned token for as long as events are needed.
+    @MainActor
+    public func observeOscEvents(
+        _ handler: @escaping @Sendable (TerminalOscEvent) -> Void
+    ) -> TerminalOscObservation {
+        terminal.observeOscEvents(handler)
     }
 
     /// Records the light/dark preference represented by the current palette and optionally
@@ -1645,6 +1705,12 @@ extension TerminalView {
     /// Performs RIS through the normal parser feed path.
     public nonisolated func resetToInitialState() {
         feedSender.feed(text: "\u{1b}c")
+    }
+
+    /// Changes the cursor style without sending data to the host.
+    public func setCursorStyle(_ style: CursorStyle) {
+        renderOwner.setCursorStyle(style)
+        frameSignal.markDirty()
     }
 
     /// Strategy used to derive palette entries 16 through 255.
@@ -2006,9 +2072,7 @@ extension TerminalView {
         coreGraphicsRenderCache.clearColors()
 
 #if os(macOS)
-        if !isUsingMetalRenderer {
-            layer?.backgroundColor = effectiveNativeBackgroundColor.cgColor
-        }
+        updateBackingLayerBackground()
 #else
         if reverseColorsActiveValue() {
             let opacity = layer.backgroundColor?.alpha ?? 1
@@ -4446,14 +4510,28 @@ extension TerminalView {
         send (data: (bytes)[...])
     }
     
-    func sendKeyUp ()
+    /// Sends the Up key with the active terminal modes.
+    public func sendKeyUp ()
     {
         send (withTerminal { $0.applicationCursor } ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
     }
     
-    func sendKeyDown ()
+    /// Sends the Down key with the active terminal modes.
+    public func sendKeyDown ()
     {
         send (withTerminal { $0.applicationCursor } ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
+    }
+
+    /// Sends the Home key with the active cursor-key mode.
+    public func sendKeyHome() {
+        send(withTerminal { $0.applicationCursor }
+             ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
+    }
+
+    /// Sends the End key with the active cursor-key mode.
+    public func sendKeyEnd() {
+        send(withTerminal { $0.applicationCursor }
+             ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
     }
 
     private func sendHorizontalKey(left: Bool) {
@@ -4472,12 +4550,14 @@ extension TerminalView {
         send(sequence)
     }
     
-    func sendKeyLeft()
+    /// Sends the Left key with the active terminal modes.
+    public func sendKeyLeft()
     {
         sendHorizontalKey(left: true)
     }
     
-    func sendKeyRight ()
+    /// Sends the Right key with the active terminal modes.
+    public func sendKeyRight ()
     {
         sendHorizontalKey(left: false)
     }
@@ -4688,6 +4768,121 @@ extension TerminalView {
 
 }
 
+/// Token bucket shared by macOS wheel and iOS finger-to-wheel reporting, and by the cursor keys
+/// Alternate Scroll Mode generates in their place.
+///
+/// Accelerated gestures can represent hundreds of lines in one event. Bounding generated input
+/// keeps a slow terminal application from being overwhelmed while preserving a small immediate
+/// burst for a deliberate gesture.
+struct WheelReportBudget {
+    static let reportsPerSecond: Double = 100
+    static let burst = 6
+
+    private var allowance: Double = Double(Self.burst)
+    private var stampNanoseconds: UInt64
+
+    init(nowNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds) {
+        stampNanoseconds = nowNanoseconds
+    }
+
+    /// A classic wheel event is one notch however far acceleration says it travelled, because a
+    /// mouse report is a notch and the application chooses how far a notch scrolls.
+    static func requestedReports(lineCount: Int, isPrecise: Bool) -> Int {
+        guard lineCount != 0 else { return 0 }
+        return isPrecise ? requestedKeys(lineCount: lineCount) : 1
+    }
+
+    /// A cursor key carries its own distance, so an accelerated event keeps its line count up to
+    /// the burst and only the rate is bounded.
+    static func requestedKeys(lineCount: Int) -> Int {
+        Int(min(lineCount.magnitude, UInt(burst)))
+    }
+
+    mutating func grant(
+        _ wanted: Int,
+        nowNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds
+    ) -> Int {
+        guard wanted > 0 else { return 0 }
+        let elapsedNanoseconds: UInt64
+        if nowNanoseconds >= stampNanoseconds {
+            elapsedNanoseconds = nowNanoseconds - stampNanoseconds
+            stampNanoseconds = nowNanoseconds
+        } else {
+            elapsedNanoseconds = 0
+        }
+        let elapsed = Double(elapsedNanoseconds) / 1_000_000_000
+        allowance = min(
+            Double(Self.burst),
+            allowance + elapsed * Self.reportsPerSecond)
+        let granted = min(wanted, Int(allowance))
+        allowance -= Double(granted)
+        return granted
+    }
+}
+
+/// Fractional wheel or finger travel retained only within one gesture and one route.
+///
+/// Sub-cell movement is banked for the route that produced it. Travel that was reported to the
+/// application must not scroll locally when a modifier arrives, and travel that was handled
+/// locally must not become part of a report when the modifier lifts, so a change of route starts
+/// the bank over.
+struct WheelDistanceAccumulator<Route: Equatable> {
+    private(set) var remainder: CGFloat = 0
+    private var route: Route?
+
+    mutating func reset() {
+        remainder = 0
+        route = nil
+    }
+
+    mutating func takeWholeLines(distance: CGFloat, cellHeight: CGFloat, route: Route) -> Int {
+        guard cellHeight > 0 else { return 0 }
+        if route != self.route {
+            remainder = 0
+            self.route = route
+        }
+        remainder += distance
+        let lines = Int(remainder / cellHeight)
+        remainder -= CGFloat(lines) * cellHeight
+        return lines
+    }
+}
+
+enum ProgramScrollRoute: Equatable {
+    case mouse
+    case cursorKeys
+    case none
+}
+
+struct ProgramScrollRouting {
+    static func route(
+        allowMouseReporting: Bool,
+        shiftBypassesMouseReporting: Bool,
+        mouseTracking: Bool,
+        alternateBuffer: Bool,
+        alternateScrollMode: Bool
+    ) -> ProgramScrollRoute {
+        guard allowMouseReporting, !shiftBypassesMouseReporting else { return .none }
+        if mouseTracking {
+            return .mouse
+        }
+        if alternateBuffer && alternateScrollMode {
+            return .cursorKeys
+        }
+        return .none
+    }
+
+    /// An alternate buffer is captured even when Alternate Scroll Mode is reset. It has no local
+    /// scrollback, so allowing UIScrollView to pan it only exposes empty space.
+    static func capturesGesture(
+        allowMouseReporting: Bool,
+        mouseTracking: Bool,
+        alternateBuffer: Bool
+    ) -> Bool {
+        allowMouseReporting && (mouseTracking || alternateBuffer)
+    }
+}
+
 extension TerminalViewDelegate {
     public func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
         []
@@ -4704,14 +4899,14 @@ extension TerminalViewDelegate {
         source: TerminalView,
         location: KittyClipboardLocation,
         mimeType: String
-    ) -> Data? {
+    ) -> KittyClipboardReadResult? {
         nil
     }
 
     public func kittyClipboardWrite(
         source: TerminalView,
         location: KittyClipboardLocation,
-        representations: [KittyClipboardRepresentation]
+        content: KittyClipboardWriteContent
     ) -> KittyClipboardWriteResult {
         .unsupported
     }
@@ -4736,3 +4931,5 @@ extension TerminalViewDelegate {
 #endif
 
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

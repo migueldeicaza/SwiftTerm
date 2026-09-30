@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 #if canImport(UIKit)
@@ -110,3 +111,5 @@ class TextSelectionRect: UITextSelectionRect {
   }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

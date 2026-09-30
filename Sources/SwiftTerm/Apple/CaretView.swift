@@ -5,6 +5,7 @@
 //  Created by Miguel de Icaza on 4/16/23.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 import CoreText
 
@@ -117,3 +118,5 @@ extension CaretView {
         context.restoreGState()
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

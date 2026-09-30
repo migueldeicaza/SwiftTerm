@@ -4,6 +4,7 @@
 //
 //  Created by Miguel de Icaza on 4/15/20.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 
@@ -29,3 +30,5 @@ extension NSRange {
 }
 
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

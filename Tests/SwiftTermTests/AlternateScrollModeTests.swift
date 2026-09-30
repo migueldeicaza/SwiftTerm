@@ -11,6 +11,12 @@ import Testing
 @testable import SwiftTerm
 
 #if os(macOS)
+    @MainActor private func drainMainQueue() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+
 import AppKit
 #endif
 
@@ -169,7 +175,125 @@ final class AlternateScrollModeTests: TerminalDelegate {
         #expect(delegate.sent.isEmpty, "a single sub-line delta must not move the cursor on its own")
     }
 
-    private static func makeWheelEvent(lines: Int32) -> NSEvent? {
+    @MainActor @Test func classicMouseWheelEventSendsOneReport() async {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\u{1b}[?1000h")
+        guard let wheel = Self.makeWheelEvent(lines: -40) else {
+            Issue.record("could not synthesize a scroll wheel event")
+            return
+        }
+
+        view.scrollWheel(with: wheel)
+        await drainMainQueue()
+
+        #expect(delegate.sent.count == 1)
+    }
+
+    @MainActor @Test func preciseMouseWheelEventIsLimitedToTheInitialBurst() async {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\u{1b}[?1000h")
+        guard let cellHeight = view.cellDimension?.height,
+              let wheel = Self.makePreciseWheelEvent(
+                pixels: Int32((cellHeight * 40).rounded())) else {
+            Issue.record("could not synthesize a precise scroll wheel event")
+            return
+        }
+
+        view.scrollWheel(with: wheel)
+        await drainMainQueue()
+
+        #expect(delegate.sent.count == WheelReportBudget.burst)
+    }
+
+    /// Cursor keys are not notches: an accelerated classic event keeps its line count.
+    @MainActor @Test func classicWheelEventOnTheAlternateScreenKeepsItsLineCount() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\u{1b}[?1049h")
+        guard let wheel = Self.makeWheelEvent(lines: -4) else {
+            Issue.record("could not synthesize a scroll wheel event")
+            return
+        }
+
+        view.scrollWheel(with: wheel)
+
+        #expect(delegate.sent == Array(repeating: Array(EscapeSequences.moveDownNormal), count: 4))
+    }
+
+    /// The same flick that is bounded as mouse reports is bounded as cursor keys.
+    @MainActor @Test func preciseWheelEventOnTheAlternateScreenIsLimitedToTheInitialBurst() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\u{1b}[?1049h")
+        guard let cellHeight = view.cellDimension?.height,
+              let wheel = Self.makePreciseWheelEvent(
+                pixels: -Int32((cellHeight * 40).rounded())) else {
+            Issue.record("could not synthesize a precise scroll wheel event")
+            return
+        }
+
+        view.scrollWheel(with: wheel)
+
+        #expect(delegate.sent.count == WheelReportBudget.burst)
+        #expect(delegate.sent.allSatisfy { $0 == Array(EscapeSequences.moveDownNormal) })
+    }
+
+    @MainActor @Test func optionWheelUsesLocalScrollbackDuringMouseTracking() {
+        let view = TerminalView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 160),
+            font: nil,
+            options: TerminalOptions(cols: 40, rows: 5, scrollback: 100))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        for index in 1...20 {
+            view.terminal.feed(text: "line-\(index)\r\n")
+        }
+        view.terminal.feed(text: "\u{1b}[?1000h")
+        let before = view.terminal.displayBuffer.yDisp
+        guard let wheel = Self.makeWheelEvent(lines: 1, modifiers: .maskAlternate) else {
+            Issue.record("could not synthesize an option scroll wheel event")
+            return
+        }
+
+        view.scrollWheel(with: wheel)
+
+        #expect(delegate.sent.isEmpty)
+        #expect(view.terminal.displayBuffer.yDisp < before)
+    }
+
+    @MainActor @Test func localHandlingModifiersDoNotBecomeAlternateScrollInput() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\u{1b}[?1049h\u{1b}[?1000h")
+
+        for (name, modifier) in [
+            ("Option", CGEventFlags.maskAlternate),
+            ("Shift", CGEventFlags.maskShift),
+        ] {
+            delegate.sent = []
+            guard let wheel = Self.makeWheelEvent(lines: 1, modifiers: modifier) else {
+                Issue.record("could not synthesize a \(name) scroll wheel event")
+                return
+            }
+
+            view.scrollWheel(with: wheel)
+
+            #expect(delegate.sent.isEmpty,
+                    "\(name)-wheel requested local handling and must not send cursor keys")
+        }
+    }
+
+    private static func makeWheelEvent(
+        lines: Int32,
+        modifiers: CGEventFlags = []
+    ) -> NSEvent? {
         guard let cg = CGEvent(scrollWheelEvent2Source: nil,
                                units: .line,
                                wheelCount: 1,
@@ -179,11 +303,15 @@ final class AlternateScrollModeTests: TerminalDelegate {
             return nil
         }
         cg.location = CGPoint(x: 10, y: 10)
+        cg.flags = modifiers
         return NSEvent(cgEvent: cg)
     }
 
     /// Pixel units give `hasPreciseScrollingDeltas`, i.e. the accumulating path.
-    private static func makePreciseWheelEvent(pixels: Int32) -> NSEvent? {
+    private static func makePreciseWheelEvent(
+        pixels: Int32,
+        modifiers: CGEventFlags = []
+    ) -> NSEvent? {
         guard let cg = CGEvent(scrollWheelEvent2Source: nil,
                                units: .pixel,
                                wheelCount: 1,
@@ -193,7 +321,87 @@ final class AlternateScrollModeTests: TerminalDelegate {
             return nil
         }
         cg.location = CGPoint(x: 10, y: 10)
+        cg.flags = modifiers
         return NSEvent(cgEvent: cg)
+    }
+
+    /// A mouse-tracking view over twenty lines of scrollback, with precise events worth three
+    /// quarters and half of a cell in each route. Either pair crosses a cell only if the bank
+    /// leaks between routes.
+    @MainActor private static func makeRouteBoundaryFixture() -> (
+        view: TerminalView,
+        delegate: WheelCapturingDelegate,
+        reportedMost: NSEvent, reportedHalf: NSEvent,
+        localMost: NSEvent, localHalf: NSEvent
+    )? {
+        let view = TerminalView(
+            frame: CGRect(x: 0, y: 0, width: 320, height: 160),
+            font: nil,
+            options: TerminalOptions(cols: 40, rows: 5, scrollback: 100))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        for index in 1...20 {
+            view.terminal.feed(text: "line-\(index)\r\n")
+        }
+        view.terminal.feed(text: "\u{1b}[?1000h")
+        guard let cellHeight = view.cellDimension?.height, cellHeight > 4 else { return nil }
+        let most = Int32((cellHeight * 0.75).rounded())
+        let half = Int32((cellHeight * 0.5).rounded())
+        guard let reportedMost = makePreciseWheelEvent(pixels: most),
+              let reportedHalf = makePreciseWheelEvent(pixels: half),
+              let localMost = makePreciseWheelEvent(pixels: most, modifiers: .maskAlternate),
+              let localHalf = makePreciseWheelEvent(pixels: half, modifiers: .maskAlternate) else {
+            return nil
+        }
+        return (view, delegate, reportedMost, reportedHalf, localMost, localHalf)
+    }
+
+    /// Travel banked for a mouse report belongs to the application. Holding Option to scroll
+    /// the scrollback starts from nothing rather than spending it locally.
+    @MainActor @Test func subCellMouseReportingTravelDoesNotBecomeLocalScrolling() async {
+        guard let fixture = Self.makeRouteBoundaryFixture() else {
+            Issue.record("could not build the route boundary fixture")
+            return
+        }
+        let before = fixture.view.terminal.displayBuffer.yDisp
+
+        fixture.view.scrollWheel(with: fixture.reportedMost)
+        await drainMainQueue()
+        #expect(fixture.delegate.sent.isEmpty, "three quarters of a cell is not a report yet")
+
+        fixture.view.scrollWheel(with: fixture.localHalf)
+        #expect(fixture.view.terminal.displayBuffer.yDisp == before,
+                "half a cell under Option must not add the reported three quarters and scroll")
+
+        fixture.view.scrollWheel(with: fixture.localMost)
+        #expect(fixture.view.terminal.displayBuffer.yDisp < before,
+                "the Option half and three quarters add up to one local line")
+        #expect(fixture.delegate.sent.isEmpty)
+    }
+
+    /// The reverse: travel scrolled locally under Option stays local. Releasing Option must not
+    /// hand the application a report that includes it.
+    @MainActor @Test func subCellLocalScrollingDoesNotBecomeAMouseReport() async {
+        guard let fixture = Self.makeRouteBoundaryFixture() else {
+            Issue.record("could not build the route boundary fixture")
+            return
+        }
+        let before = fixture.view.terminal.displayBuffer.yDisp
+
+        fixture.view.scrollWheel(with: fixture.localMost)
+        #expect(fixture.view.terminal.displayBuffer.yDisp == before,
+                "three quarters of a cell is not a local line yet")
+
+        fixture.view.scrollWheel(with: fixture.reportedHalf)
+        await drainMainQueue()
+        #expect(fixture.delegate.sent.isEmpty,
+                "half a cell without Option must not add the local three quarters and report")
+
+        fixture.view.scrollWheel(with: fixture.reportedMost)
+        await drainMainQueue()
+        #expect(fixture.delegate.sent.count == 1,
+                "the reported half and three quarters add up to one report")
+        #expect(fixture.view.terminal.displayBuffer.yDisp == before)
     }
 
     @MainActor private static func waitForTerminalViewCallbacks() async {

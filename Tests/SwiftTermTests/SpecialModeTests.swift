@@ -226,11 +226,9 @@ struct TerminalPasteTests {
         delegate.terminalControlBytesForPasteValue = [0x01]
         let terminal = Terminal(delegate: delegate)
 
-        let result = terminal.paste(TerminalPasteRequest(
-            source: .text,
-            text: "\u{01}\u{03}"))
+        let result = terminal.paste(TerminalPasteRequest(text: "\u{01}\u{03}"))
 
-        #expect(result == .text)
+        #expect(result == .textSent)
         #expect(delegate.sentData == [[0x20, 0x03]])
     }
 

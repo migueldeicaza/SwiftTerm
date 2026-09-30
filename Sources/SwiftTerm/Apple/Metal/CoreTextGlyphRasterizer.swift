@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import CoreGraphics
 import CoreText
@@ -109,3 +110,5 @@ final class CoreTextGlyphRasterizer {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED
