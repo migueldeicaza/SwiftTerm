@@ -1,3 +1,7 @@
+#if SWIFTTERM_EMBEDDED_NEEDS_SWIFT_6_3
+#error("SwiftTerm's Embedded trait requires Swift 6.3 or later.")
+#endif
+
 #if !SWIFTTERM_EMBEDDED
 import Foundation
 public typealias TerminalTemporaryDirectory = URL

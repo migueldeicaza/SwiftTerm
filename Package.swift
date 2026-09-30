@@ -48,9 +48,19 @@ let graphicsDependencies: [Target.Dependency] = [
 
 var portableTraitSettings: [SwiftSetting] = [
     .define("SWIFTTERM_EMBEDDED", .when(traits: ["Embedded"])),
-    .enableExperimentalFeature("Embedded", .when(traits: ["Embedded"])),
     .define("SWIFTTERM_WASM", .when(traits: ["Wasm"])),
 ]
+
+#if compiler(>=6.3)
+portableTraitSettings.append(.enableExperimentalFeature("Embedded", .when(traits: ["Embedded"])))
+#else
+// SwiftPM 6.2 treats any Embedded feature setting as active when it plans a
+// target, even when the setting is trait-conditioned, and then injects the
+// Embedded-only mergeable-symbols workaround into normal debug builds.
+// Omit the setting on that toolchain so Xcode 26 users stay on the normal
+// linker path; true Embedded trait builds require SwiftPM 6.3 or later.
+portableTraitSettings.append(.define("SWIFTTERM_EMBEDDED_NEEDS_SWIFT_6_3", .when(traits: ["Embedded"])))
+#endif
 
 // SwiftPM symbol graph generation enables all package traits. Suppress the
 // portable compiler modes so DocC builds the normal host API.

@@ -18,7 +18,8 @@ or Kitty graphics transport. Unsupported graphics sequences are ignored.
 | WASI | `Wasm` | Full Swift runtime |
 | Embedded WASI | `Embedded`, `Wasm` | Embedded Swift |
 
-Swift 6.2 or later is required. Xcode builds require Xcode 26 or later.
+Embedded builds require Swift 6.3 or later. Full-runtime WASI builds require a
+matching WASM SDK.
 
 ## Integration
 
