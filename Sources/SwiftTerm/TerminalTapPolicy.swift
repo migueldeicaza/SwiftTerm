@@ -7,6 +7,7 @@
 //  covered by the macOS/Linux test suite without standing up a UIKit gesture pipeline.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 /// The action a tap over the terminal grid resolves to.
@@ -15,23 +16,25 @@ enum TerminalTapAction: Equatable {
     case selectWord
     /// Triple tap: select the whole line under the tap.
     case selectLine
-    /// Single tap that clears an existing selection (and re-enables scroll forwarding).
+    /// Single tap that clears a selection while an application owns mouse input.
     case dismissSelection
     /// Single tap forwarded to the application as a mouse click (mouse reporting is on).
     case forwardClick
-    /// Single tap with no selection and no mouse reporting: handled locally (e.g. cursor menu).
+    /// Single tap with no mouse reporting: handled locally (e.g. cursor menu).
     case localSingleTap
 }
 
 enum TerminalTapPolicy {
+    /// A tap that clears a selection does not also open the cursor menu.
+    static func showsContextMenu(nearCursor: Bool, clearedSelection: Bool) -> Bool {
+        nearCursor && !clearedSelection
+    }
+
     /// Resolves a tap to an action.
     ///
-    /// Previously every tap was forwarded to the application whenever it had mouse reporting on,
-    /// so a word or line could never be selected inside a full-screen app (vim, htop, a TUI) and
-    /// an existing selection could not be cleared by tapping. This policy lets a double or triple
-    /// tap select locally regardless of mouse reporting, and lets a single tap dismiss a live
-    /// selection before any click is forwarded. A single tap with nothing selected still forwards
-    /// the click, so interaction with mouse-reporting applications stays intact.
+    /// Double and triple taps select text. With no application mouse reporting,
+    /// a single tap clears an old selection and can route to a prompt. A tap
+    /// clears an old selection when application mouse reporting is active.
     ///
     /// - Parameters:
     ///   - tapCount: number of taps in the gesture (1, 2 or 3).
@@ -45,10 +48,12 @@ enum TerminalTapPolicy {
         case 2:
             return .selectWord
         default:
-            if hasActiveSelection {
+            if hasActiveSelection && mouseReportingActive {
                 return .dismissSelection
             }
             return mouseReportingActive ? .forwardClick : .localSingleTap
         }
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

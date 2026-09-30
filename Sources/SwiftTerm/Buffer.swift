@@ -6,7 +6,9 @@
 //  Copyright © 2019 Miguel de Icaza. All rights reserved.
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
 
 /**
  * The buffer represents the contents shown to the user.
@@ -32,7 +34,11 @@ import Foundation
 /// clears ``buffer``, so a reader that outlives the buffer sees nil rather than
 /// a dangling pointer.
 final class BufferRef {
+#if SWIFTTERM_EMBEDDED
+    var buffer: Buffer?
+#else
     unowned(unsafe) var buffer: Buffer?
+#endif
     init (_ buffer: Buffer) { self.buffer = buffer }
 }
 
@@ -86,7 +92,7 @@ public final class Buffer {
         set {
             if _yDisp < 0 {
                 #if DEBUG
-                abort()
+                fatalError("yDisp must not be negative")
                 #else
                 return
                 #endif
@@ -105,7 +111,7 @@ public final class Buffer {
         set(newValue) {
             if newValue < 0 {
                 #if DEBUG
-                abort()
+                fatalError("x must not be negative")
                 #else
                 return
                 #endif
@@ -122,7 +128,7 @@ public final class Buffer {
         set(newValue) {
             if newValue < 0 {
                 #if DEBUG
-                abort()
+                fatalError("y must not be negative")
                 #else
                 return
                 #endif
@@ -140,7 +146,7 @@ public final class Buffer {
         set {
             if newValue < 0 {
                 #if DEBUG
-                abort()
+                fatalError("scrollBottom must not be negative")
                 #else
                 return
                 #endif
@@ -500,8 +506,8 @@ public final class Buffer {
     }
 
     /// The current absolute row of a line, by identity, or nil if it has
-    /// been trimmed or recycled away. Used to re-resolve a deferred click's
-    /// target after scrollback may have shifted every index. Reuses the one
+    /// been trimmed or recycled away. Hosts can use this to re-resolve a
+    /// stored target after scrollback has shifted row indexes. Reuses the one
     /// identity-scan implementation, hinted near the origin cache (E.5).
     func absoluteRow(of line: BufferLine) -> Int? {
         findRow(near: semanticPromptStartRowCache, where: { $0 === line })
@@ -660,12 +666,26 @@ public final class Buffer {
     ///
     /// `unowned(unsafe)` is sound because a buffer is a stored property of its
     /// terminal and cannot outlive it. See `Docs/io-cpu-profile.md` §3.1.
+#if SWIFTTERM_EMBEDDED
+    var terminal: Terminal? = nil
+#else
     unowned(unsafe) var terminal: Terminal! = nil
+#endif
 
     /// Scrolls the terminal that owns this buffer.
     @inline(__always)
     func scroll (_ isWrapped: Bool) {
+#if SWIFTTERM_EMBEDDED
+        // Embedded uses a breakable optional back-reference so `Terminal.close()`
+        // can release its object graph.
+        terminal?.scroll (isWrapped: isWrapped)
+#else
+        // This is a row-level hot path. Keep the normal-build back-reference
+        // direct: using the Embedded optional dispatch here caused a measurable
+        // scrolling regression. The buffer is owned by its terminal, so the
+        // `unowned(unsafe)` reference above is valid for this build.
         terminal.scroll (isWrapped: isWrapped)
+#endif
     }
 
 
@@ -723,6 +743,18 @@ public final class Buffer {
         // now reads nil instead of a dangling pointer.
         selfRef?.buffer = nil
     }
+
+#if SWIFTTERM_EMBEDDED
+    func releaseEmbeddedReferences() {
+        terminal = nil
+        _lines.owner = nil
+        _lines.isLive = false
+        selfRef?.buffer = nil
+        for line in _lines.getArray() {
+            line?.owningBufferRef = nil
+        }
+    }
+#endif
 
 
     public func getCorrectBufferLength (_ rows: Int) -> Int
@@ -1003,7 +1035,7 @@ public final class Buffer {
                 let line = lines [i]
                 if line.count < newCols {
                     print ("stop here newCols=\(newCols) but the element has: \(line.count)")
-                    abort ()
+                    fatalError("A resized line is shorter than the buffer width")
                 }
             }
         }
@@ -1663,8 +1695,9 @@ public final class Buffer {
         recalculateLinesWithImagesCount()
     }
     
+#if !SWIFTTERM_EMBEDDED
     private static let dumpSequence = Locked(0)
-    
+
     func dump ()
     {
         let sequence = Buffer.dumpSequence.withLock { sequence in
@@ -1683,8 +1716,8 @@ public final class Buffer {
                 txt = "<empty>"
             }
             let flag = i >= yDisp ? ">>" : "  "
-            let istr = String (format: "%03d", i)
-            let cstr = String (format: "%03d", _lines.debugGetCyclicIndex(i))
+            let istr = String(i).leftPadding(toLength: 3, withPad: "0")
+            let cstr = String(_lines.debugGetCyclicIndex(i)).leftPadding(toLength: 3, withPad: "0")
             str += "[\(istr):\(cstr)]\(flag)\(txt)\n"
         }
         let file = "/Users/miguel/Downloads/Logs/dump-\(sequence)"
@@ -1695,6 +1728,7 @@ public final class Buffer {
             print ("Could not log the dump() contents to \(file)")
         }
     }
+#endif
     
     @inline(__always)
     var allowsBulkInsert: Bool { !insertMode }
@@ -1893,16 +1927,18 @@ public final class Buffer {
         
     }
     
+#if !SWIFTTERM_EMBEDDED
     func dumpConsole ()
     {
         let debugBuffer = self
         for y in 0..<debugBuffer._lines.maxLength {
             let flag = y == debugBuffer.yDisp ? "D" : " "
             let yb   = y == debugBuffer.yBase ? "B" : " "
-            let istr = String (format: "%03d", y)
-            let cstr = String (format: "%03d", debugBuffer._lines.debugGetCyclicIndex(y))
+            let istr = String(y).leftPadding(toLength: 3, withPad: "0")
+            let cstr = String(debugBuffer._lines.debugGetCyclicIndex(y)).leftPadding(toLength: 3, withPad: "0")
         
             print ("[\(istr):\(cstr)]\(flag)\(yb) \(debugBuffer._lines.getArray() [y].debugDescription)")
         }
     }    
+#endif
 }

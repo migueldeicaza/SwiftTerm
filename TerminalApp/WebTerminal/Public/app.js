@@ -1,0 +1,309 @@
+import { ClipboardController } from './clipboard.js';
+const encoder = new TextEncoder();
+export const MAX_INPUT_BYTES = 64 * 1024;
+export const MAX_BUFFERED_BYTES = 1024 * 1024;
+const RESUME_BUFFERED_BYTES = 256 * 1024;
+const MAX_PROCESS_BYTES = 16 * 1024 * 1024;
+const FONT = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+
+export function gridDimensions(width, height, cellWidth, cellHeight) {
+  return {
+    cols: Math.max(2, Math.min(500, Math.floor(width / cellWidth) || 2)),
+    rows: Math.max(2, Math.min(300, Math.floor(height / cellHeight) || 2))
+  };
+}
+
+/** A successful send means the browser accepted the bytes into its send buffer. */
+export function sendBytes(socket, bytes) {
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_INPUT_BYTES) return { ok: false, reason: 'size' };
+  if (socket.readyState !== 1) return { ok: false, reason: 'closed' };
+  if (socket.bufferedAmount + bytes.byteLength > MAX_BUFFERED_BYTES) return { ok: false, reason: 'backpressure' };
+  try { socket.send(bytes); return { ok: true }; }
+  catch { return { ok: false, reason: 'closed' }; }
+}
+
+export function decodeServerMessage(text) {
+  if (typeof text !== 'string' || text.length > 16 * 1024) throw new Error('Invalid server message.');
+  let message;
+  try { message = JSON.parse(text); } catch { throw new Error('Invalid server message.'); }
+  if (!message || typeof message !== 'object') throw new Error('Invalid server message.');
+  if (message.type === 'ready') return { type: 'ready' };
+  if (message.type === 'exit' && (message.code === null || Number.isInteger(message.code))) return { type: 'exit', code: message.code };
+  if (message.type === 'error' && typeof message.message === 'string') return { type: 'error', message: message.message.slice(0, 2048) };
+  throw new Error('Unknown server message.');
+}
+
+export class ShellClient {
+  constructor(module, Renderer, elements, Socket = WebSocket, InputController, browserShortcut) {
+    this.module = module;
+    this.Renderer = Renderer;
+    this.InputController = InputController;
+    this.browserShortcut = browserShortcut;
+    this.elements = elements;
+    this.Socket = Socket;
+    this.connection = null;
+    this.disposed = false;
+    this.resizeFrame = 0;
+    this.listeners = new AbortController();
+    const { screen, reconnect } = elements, signal = this.listeners.signal;
+    reconnect.addEventListener('click', () => this.connect(), { signal });
+    elements.pasteAllow?.addEventListener('click', () => {
+      const pending = this.pendingPaste; this.pendingPaste = null; elements.pastePanel.hidden = true;
+      if (pending?.connection === this.connection) this.paste(pending.text, true);
+    }, { signal });
+    elements.pasteDeny?.addEventListener('click', () => { this.pendingPaste = null; elements.pastePanel.hidden = true; }, { signal });
+    this.observer = new ResizeObserver(() => {
+      if (!this.resizeFrame) this.resizeFrame = requestAnimationFrame(() => { this.resizeFrame = 0; this.resize(); });
+    });
+    this.observer.observe(screen);
+  }
+
+  status(text, state = 'connecting') {
+    this.elements.status.textContent = text;
+    this.elements.status.dataset.state = state;
+  }
+
+  connect() {
+    if (this.disposed) return;
+    this.disconnect();
+    this.status('Connecting to the local shell…');
+    this.elements.title.textContent = 'Local shell';
+    const measuring = this.elements.canvas.getContext('2d');
+    measuring.font = `15px ${FONT}`;
+    const cellWidth = Math.min(200, Math.max(1, Math.ceil(measuring.measureText('M').width))), cellHeight = 20;
+    const size = gridDimensions(this.elements.screen.clientWidth, this.elements.screen.clientHeight, cellWidth, cellHeight);
+    let terminal, renderer, socket;
+    try {
+      terminal = this.module.createTerminal({ ...size, scrollback: 10000 });
+      renderer = new this.Renderer(this.elements.canvas, terminal, cellWidth, cellHeight, FONT);
+      const url = new URL('/terminal', location.href); url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      socket = new this.Socket(url);
+    } catch (error) {
+      renderer?.dispose(); terminal?.dispose();
+      this.status(error.message || 'Cannot open the terminal.', 'error');
+      this.elements.reconnect.disabled = false;
+      return;
+    }
+    socket.binaryType = 'arraybuffer';
+    const connection = { terminal, renderer, socket, cellWidth, cellHeight, ...size, ready: false, ended: false, paused: false, rejectedInput: false, resizePending: true, replyPending: false, timer: 0 };
+    this.connection = connection;
+    try {
+      if (!this.InputController) throw new Error('The input controller is missing. Rebuild the Web assets.');
+      connection.input = new this.InputController(terminal, this.elements.canvas, this.elements.input, {
+        geometry: () => ({ ...renderer.inputGeometry, cols: connection.cols, rows: connection.rows }),
+        canInput: () => {
+          this.pump();
+          return this.connection === connection && connection.ready && !connection.ended && !connection.paused;
+        },
+        onInput: () => { renderer.requestFrame(); this.pump(); },
+        onSelection: state => renderer.setSelection(state),
+        onError: error => this.inputFailed(error),
+        onPaste: text => { connection.clipboard?.capturePaste(text); this.paste(text); },
+        shortcut: event => {
+          if (event.key === 'Escape' && event.shiftKey && !event.isComposing) {
+            event.preventDefault(); this.elements.reconnect.focus(); return true;
+          }
+          return this.browserShortcut?.(event) ?? false;
+        },
+      });
+      renderer.onDraw = () => connection.input?.refresh();
+    } catch (error) { this.fail(error.message); return; }
+    if (this.elements.clipboard) connection.clipboard = new ClipboardController(terminal, this.elements.clipboard, () => this.pump(), globalThis.navigator?.clipboard, globalThis.ClipboardItem, !!(this.module.capabilities & 512));
+    this.elements.reconnect.disabled = false;
+    socket.addEventListener('open', () => {
+      if (this.connection !== connection) return;
+      this.resize(true);
+    });
+    socket.addEventListener('message', event => {
+      if (this.connection !== connection || connection.ended) return;
+      try {
+        if (typeof event.data === 'string') {
+          const message = decodeServerMessage(event.data);
+          if (message.type === 'ready') {
+            connection.ready = true; this.status('Connected · Local shell', 'connected'); this.pump();
+            if (!this.elements.input.disabled) this.elements.input.focus({ preventScroll: true });
+          } else if (message.type === 'exit') {
+            connection.ended = true; connection.ready = false;
+            this.status(message.code === null ? 'Shell exited. Reconnect to start a new shell.' : `Shell exited with code ${message.code}. Reconnect to start a new shell.`, 'closed');
+            this.updateInput();
+          } else this.fail(message.message);
+        } else {
+          if (!(event.data instanceof ArrayBuffer) || event.data.byteLength > MAX_PROCESS_BYTES) throw new Error('The server sent an invalid output frame.');
+          terminal.write(new Uint8Array(event.data));
+          renderer.requestFrame();
+          this.events(connection);
+          this.pump();
+        }
+      } catch (error) { this.fail(error.message || 'Terminal processing failed.'); }
+    });
+    socket.addEventListener('error', () => {
+      if (this.connection === connection && !connection.ended) this.fail('The shell connection failed. Check the server, then reconnect.');
+    });
+    socket.addEventListener('close', () => {
+      if (this.connection !== connection) return;
+      if (!connection.ended) this.status('Disconnected. Reconnect to start a new shell.', 'closed');
+      connection.ready = false; connection.ended = true; this.updateInput();
+    });
+    connection.timer = window.setInterval(() => this.pump(), 50);
+    this.resize(); this.updateInput();
+  }
+
+  resize(force = false) {
+    const connection = this.connection;
+    if (!connection || connection.ended) return;
+    try {
+      const size = gridDimensions(this.elements.screen.clientWidth, this.elements.screen.clientHeight, connection.cellWidth, connection.cellHeight);
+      if (force || size.cols !== connection.cols || size.rows !== connection.rows) {
+        Object.assign(connection, size);
+        connection.terminal.resize(size.cols, size.rows, connection.cellWidth, connection.cellHeight);
+        connection.renderer.requestFrame(); connection.resizePending = true;
+      }
+      this.elements.geometry.textContent = `${size.cols} × ${size.rows}`;
+      this.sendResize();
+    } catch (error) { this.fail(error.message || 'Cannot resize the terminal.'); }
+  }
+
+  sendResize() {
+    const c = this.connection;
+    if (!c || !c.resizePending || c.socket.readyState !== 1) return;
+    const message = JSON.stringify({ type: 'resize', cols: c.cols, rows: c.rows, cellWidth: c.cellWidth, cellHeight: c.cellHeight });
+    if (c.socket.bufferedAmount + encoder.encode(message).length > MAX_BUFFERED_BYTES) return;
+    c.socket.send(message); c.resizePending = false;
+  }
+
+  pump() {
+    const c = this.connection;
+    if (this.pumping || !c || c.ended || c.socket.readyState !== 1) return;
+    this.pumping = true;
+    try {
+      if (this.module.capabilities & 8192) { if (c.terminal.poll()) c.renderer.requestFrame(); }
+      this.events(c); c.clipboard?.expire();
+      this.sendResize();
+      const output = c.terminal.readOutput();
+      let offset = 0;
+      while (offset < output.length) {
+        const bytes = output.subarray(offset, Math.min(offset + MAX_INPUT_BYTES, output.length));
+        const result = sendBytes(c.socket, bytes);
+        if (!result.ok) break;
+        // A failed send leaves these reply bytes in the engine queue for the next poll.
+        c.terminal.consumeOutput(bytes.length); offset += bytes.length;
+      }
+      c.replyPending = offset < output.length;
+      if (c.replyPending || c.socket.bufferedAmount >= MAX_BUFFERED_BYTES) c.paused = true;
+      else if (c.paused && c.socket.bufferedAmount <= RESUME_BUFFERED_BYTES) c.paused = false;
+      this.updateInput();
+    } catch (error) { this.fail(error.message || 'Cannot send terminal replies.'); }
+    finally { this.pumping = false; }
+  }
+
+  events(connection) {
+    for (const item of connection.terminal.drainEvents()) {
+      if (item.type === 'title') this.elements.title.textContent = item.text.slice(0, 200) || 'Local shell';
+      else if (item.type === 'clipboardWrite' || item.type === 'clipboardRequest') connection.clipboard?.accept(item);
+    }
+  }
+
+  paste(text, allowUnsafe = false) {
+    const c = this.connection;
+    if (!c || !c.ready || c.ended) return;
+    if (text.length > MAX_INPUT_BYTES || encoder.encode(text).length > MAX_INPUT_BYTES) { this.status('Paste was not sent. Send at most 64 KiB at a time.', 'error'); return; }
+    this.pump(); if (c.paused) { c.rejectedInput = true; this.updateInput(); return; }
+    try {
+      if (!(this.module.capabilities & 256)) { this.status('This artifact has no paste API. Rebuild the WASM assets.', 'error'); return; }
+      c.terminal.paste(text, { clipboard: true, allowUnsafe });
+      this.pump();
+    } catch (error) {
+      if (error.code === 'INVALID_ARGUMENT' && !allowUnsafe && /approval/.test(error.message)) {
+        this.pendingPaste = { connection: c, text };
+        if (this.elements.pastePanel) this.elements.pastePanel.hidden = false;
+        this.status('Paste needs approval. Newlines can run shell commands.', 'paused');
+      } else this.status(error.message || 'Paste failed.', 'error');
+    }
+  }
+
+  updateInput() {
+    const c = this.connection;
+    const enabled = !!c && c.ready && !c.ended && !c.paused && c.socket.readyState === 1;
+    const wasDisabled = this.elements.input.disabled;
+    this.elements.input.disabled = !enabled;
+    c?.input?.refresh();
+    if (c?.paused && !c.ended) this.status(c.rejectedInput ? 'Input paused. The last input was not sent; send it again after the connection resumes.' : 'Input paused while the connection sends queued data.', 'paused');
+    else if (enabled && this.elements.status.dataset.state === 'paused') {
+      this.status(c.rejectedInput ? 'Connected. The last input was not sent; send it again.' : 'Connected · Local shell', 'connected');
+      if (wasDisabled) this.elements.input.focus({ preventScroll: true });
+    }
+  }
+
+  sendInput(text) {
+    const c = this.connection;
+    if (!text) return;
+    if (!c || !c.ready || c.ended || c.socket.readyState !== 1) { this.status('Input was not sent. Connect to a shell first.', 'closed'); return; }
+    if (text.length > MAX_INPUT_BYTES) { this.status('Input was not sent. Send at most 64 KiB at a time.', 'error'); return; }
+    const bytes = encoder.encode(text);
+    if (bytes.length > MAX_INPUT_BYTES) { this.status('Input was not sent. Send at most 64 KiB at a time.', 'error'); return; }
+    this.pump();
+    if (c.paused) { c.rejectedInput = true; this.updateInput(); return; }
+    try { c.terminal.sendText(text); c.renderer.requestFrame(); this.pump(); }
+    catch (error) { this.inputFailed(error); }
+  }
+
+  /** One rejected key, pointer, or selection call must not end the shell. */
+  inputFailed(error) {
+    if (!this.connection) return;
+    const message = error?.code === 'UNSUPPORTED'
+      ? 'This build is missing an input API. Rebuild the WASM assets.'
+      : error?.message || 'Terminal input failed.';
+    this.status(message, 'error');
+  }
+
+  fail(message) {
+    const c = this.connection;
+    if (c) { c.ended = true; c.ready = false; if (c.socket.readyState < 2) c.socket.close(); }
+    this.status(message, 'error'); this.updateInput();
+  }
+
+  disconnect() {
+    const c = this.connection;
+    this.connection = null;
+    this.elements.input.disabled = true; this.elements.input.value = '';
+    this.pendingPaste = null; if (this.elements.pastePanel) this.elements.pastePanel.hidden = true;
+    if (!c) return;
+    clearInterval(c.timer);
+    c.input?.dispose(); c.clipboard?.dispose(); c.renderer.dispose(); c.terminal.dispose();
+    if (c.socket.readyState < 2) c.socket.close();
+  }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true; this.disconnect(); this.observer.disconnect(); this.listeners.abort();
+    if (this.resizeFrame) cancelAnimationFrame(this.resizeFrame);
+  }
+}
+
+async function start() {
+  const elements = {
+    canvas: document.querySelector('#terminal-canvas'), input: document.querySelector('#terminal-input'),
+    screen: document.querySelector('#screen'), status: document.querySelector('#status'),
+    clipboard: { enable: document.querySelector('#clipboard-enable'), panel: document.querySelector('#clipboard-panel'), message: document.querySelector('#clipboard-message'), allow: document.querySelector('#clipboard-allow'), deny: document.querySelector('#clipboard-deny') },
+    pastePanel: document.querySelector('#paste-panel'), pasteAllow: document.querySelector('#paste-allow'), pasteDeny: document.querySelector('#paste-deny'),
+    reconnect: document.querySelector('#reconnect'), title: document.querySelector('#session-title'), geometry: document.querySelector('#geometry')
+  };
+  const variant = new URL(location.href).searchParams.get('variant') === 'embedded' ? 'embedded' : 'full';
+  document.querySelector('#engine').textContent = `${variant === 'full' ? 'Full' : 'Embedded'} WASM`;
+  let client, gone = false;
+  window.addEventListener('pagehide', () => { gone = true; client?.dispose(); }, { once: true });
+  try {
+    const [{ loadSwiftTerm, TerminalInputController, defaultKeyboardShortcut }, { CanvasTerminalRenderer }] = await Promise.all([
+      import('/assets/index.js'), import('/assets/example/canvas2d.js')
+    ]);
+    const module = await loadSwiftTerm({ wasmURL: `/assets/swiftterm-${variant}.wasm` });
+    if (gone) return;
+    client = new ShellClient(module, CanvasTerminalRenderer, elements, WebSocket, TerminalInputController, defaultKeyboardShortcut); client.connect();
+  } catch (error) {
+    elements.status.textContent = `Cannot load the terminal: ${error.message}`;
+    elements.status.dataset.state = 'error';
+    elements.reconnect.textContent = 'Reload'; elements.reconnect.disabled = false;
+    elements.reconnect.addEventListener('click', () => location.reload());
+  }
+}
+if (typeof document !== 'undefined') void start();

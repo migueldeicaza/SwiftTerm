@@ -6,6 +6,7 @@
 // the coverage check against the requested face and the placement math; the
 // host owns the fallback font asset and the per-codepoint placement data.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 import CoreGraphics
@@ -155,3 +156,5 @@ enum GlyphFallbackResolver {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

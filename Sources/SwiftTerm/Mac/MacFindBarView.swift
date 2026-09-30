@@ -3,6 +3,7 @@
 //  SwiftTerm
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS)
 import AppKit
 
@@ -165,3 +166,5 @@ final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

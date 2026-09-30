@@ -5,6 +5,7 @@
 //  Owns the mutable snapshot and Metal renderer used by one terminal view.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
 import Foundation
 import CoreGraphics
@@ -296,8 +297,8 @@ final class TerminalRenderOwner: Sendable {
         default: return nil
         }
         guard col >= 0, row >= 0, col <= Int.max - 33, row <= Int.max - 33,
-              pixelX.map({ $0 >= 0 }) ?? true,
-              pixelY.map({ $0 >= 0 }) ?? true,
+              pixelX.map({ $0 >= 0 && $0 < Int.max }) ?? true,
+              pixelY.map({ $0 >= 0 && $0 < Int.max }) ?? true,
               let session = currentSession() else { return nil }
         let terminal = session.terminal
         precondition(!terminal.terminalLock.isLockedByCurrentThread,
@@ -319,11 +320,27 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func keyboardEnhancementFlags() -> KittyKeyboardFlags {
+        guard let terminal = currentSession()?.terminal else {
+            return []
+        }
+        return terminal.terminalLock.withLock {
+            terminal.keyboardEnhancementFlags
+        }
+    }
+
     func bufferData(kind: Terminal.BufferKind,
                     encoding: String.Encoding) -> Data {
         guard let terminal = currentSession()?.terminal else { return Data() }
         return terminal.terminalLock.withLock {
             terminal.getBufferAsData(kind: kind, encoding: encoding)
+        }
+    }
+
+    func setCursorStyle(_ style: CursorStyle) {
+        guard let terminal = currentSession()?.terminal else { return }
+        terminal.terminalLock.withLock {
+            terminal.setCursorStyle(style)
         }
     }
 
@@ -355,6 +372,7 @@ final class TerminalRenderOwner: Sendable {
                 dimensions: TerminalDimensions(cols: 0, rows: 0),
                 cursor: Position(col: 0, row: 0),
                 viewportRow: 0,
+                bracketedPasteMode: false,
                 currentBidiState: .default,
                 bidiArrowKeySwap: false,
                 cursorStyle: .blinkBlock,
@@ -387,6 +405,7 @@ final class TerminalRenderOwner: Sendable {
                         cols: terminal.cols, rows: terminal.rows),
                     cursor: Position(col: buffer.x, row: buffer.y),
                     viewportRow: buffer.yDisp,
+                    bracketedPasteMode: terminal.bracketedPasteMode,
                     currentBidiState: terminal.currentBidiState,
                     bidiArrowKeySwap: terminal.bidiArrowKeySwap,
                     cursorStyle: terminal.options.cursorStyle,
@@ -913,3 +932,5 @@ final class TerminalRenderOwner: Sendable {
 #endif
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

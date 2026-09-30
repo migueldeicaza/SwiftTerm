@@ -11,6 +11,7 @@
 //  Created by Miguel de Icaza on 3/4/20.
 //
 
+#if !SWIFTTERM_EMBEDDED
 struct IOSKittyInputPolicy {
     static func isModifierKey(_ key: KittyFunctionalKey) -> Bool {
         key.isKittyModifierKey
@@ -95,6 +96,15 @@ public extension Notification.Name {
  *
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
+ *
+ * ## Terminal ownership
+ *
+ * `TerminalView` owns its mutable `Terminal`. It does not expose that terminal.
+ * Parsing, rendering, and input can occur on different threads. Use copied reads
+ * such as ``terminalDimensions``, ``terminalStateSnapshot()``, and
+ * ``getBufferAsData(kind:encoding:)``. Use ``feed(byteArray:)`` for received
+ * output and ``send(data:)`` for user input. Use ``pasteText(_:)`` for text
+ * paste. See <doc:MigratingFrom1To2> for the complete access map.
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate, UIPointerInteractionDelegate {
     let coreGraphicsRenderCache = CoreGraphicsRenderCache()
@@ -826,10 +836,24 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
         terminal.terminalLock.preconditionLocked()
         func toInt (_ p: CGPoint) -> Position {
-            
-            let x = min (max (p.x, 0), bounds.width)
-            let y = min (max (p.y, 0), bounds.height)
-            return Position (col: Int (x), row: Int (y))
+            let scale = backingScaleFactor()
+            let width = terminalPixelCount(
+                cells: terminal.cols,
+                cellPoints: cellDimension.width,
+                scale: scale)
+            let height = terminalPixelCount(
+                cells: terminal.rows,
+                cellPoints: cellDimension.height,
+                scale: scale)
+            return Position(
+                col: terminalDevicePixelIndex(
+                    pointOffset: p.x - bounds.minX,
+                    scale: scale,
+                    pixelCount: width),
+                row: terminalDevicePixelIndex(
+                    pointOffset: p.y - bounds.minY,
+                    scale: scale,
+                    pixelCount: height))
         }
 
         let col = Int (point.x / cellDimension.width)
@@ -992,7 +1016,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                     selectionWasActive: selection.active,
                     didDrag: false,
                     clickCount: 1,
-                    pressWasSemanticEligible: true)
+                    pressWasSemanticEligible: true,
+                    selectionIsActiveAtRelease: false)
                 let hadSelection = selection.active
                 if selection.active {
                     selection.selectNone()
@@ -1006,9 +1031,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             } else {
                 let location = gestureRecognizer.location(in: gestureRecognizer.view)
                 let tapLoc = calculateTapHit(gesture: gestureRecognizer).grid
-                if abs(tapLoc.col - state.cursor.col) < 4 && abs(tapLoc.row - state.cursor.row) < 2 {
+                let nearCursor = abs(tapLoc.col - state.cursor.col) < 4 &&
+                    abs(tapLoc.row - state.cursor.row) < 2
+                if TerminalTapPolicy.showsContextMenu(
+                    nearCursor: nearCursor, clearedSelection: state.hadSelection) {
                     showContextMenu (forRegion: makeContextMenuRegionForTap (point: location), pos: tapLoc)
-                } else {
+                } else if !nearCursor {
                     _ = withTerminal { terminal in
                         terminal.handleSemanticPromptClick(
                             at: tapHit,
@@ -2964,7 +2992,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Starts auto-repeat for `keyCode`. As with a hardware keyboard, only
     /// the most recent key repeats, so any other repeat stops first. The
     /// release of a different key does not stop this repeat.
-    private func startKeyRepeat(for keyCode: UIKeyboardHIDUsage,
+    private final func startKeyRepeat(for keyCode: UIKeyboardHIDUsage,
                                 _ tick: @escaping @MainActor @Sendable (TerminalView) -> Void) {
         stopAllKeyRepeats()
         let timer = Timer(fire: Date(timeInterval: 0.4, since: Date()),
@@ -3276,7 +3304,19 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 if key.modifierFlags.contains ([.alternate, .command]) && key.charactersIgnoringModifiers == "o" {
                     optionAsMetaKey.toggle()
                 } else if (key.modifierFlags.contains (.alternate) && optionAsMetaKey) || metaModifier {
-                    data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
+                    // Meta prefixes the Control-transformed character for a
+                    // combined chord, just as in the enhanced keyboard encoder.
+                    if key.modifierFlags.contains(.control) {
+                        let controlBytes = applyControlToEventCharacters(key.charactersIgnoringModifiers)
+                        if controlBytes.isEmpty {
+                            // Keep the legacy Meta input for keys with no Control mapping.
+                            data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
+                        } else {
+                            data = .bytes([0x1b] + controlBytes)
+                        }
+                    } else {
+                        data = .text("\u{1b}\(key.charactersIgnoringModifiers)")
+                    }
                     metaModifier = false
                 } else if key.modifierFlags.contains (.control) {
                     let controlBytes = applyControlToEventCharacters(key.charactersIgnoringModifiers)
@@ -3992,3 +4032,5 @@ extension TerminalView: UIAccessibilityReadingContent {
 #endif
 
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

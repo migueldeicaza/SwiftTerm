@@ -19,6 +19,7 @@
 //          --instrument os_signpost --launch -- <binary>
 //
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
 
 #if canImport(os)
@@ -202,7 +203,7 @@ struct ProfilingInterval {
 
     private func recordDuration() {
         guard ProfilingStats.enabled else { return }
-        let now = DispatchTime.now().uptimeNanoseconds
+        let now = TerminalEventTime.now().uptimeNanoseconds
         ProfilingStats.shared.record(event, owner: event.isOwnerTagged ? owner : nil,
                                      nanoseconds: now &- startNs)
     }
@@ -555,7 +556,7 @@ enum Profiling {
     @inline(__always)
     static func begin(_ event: ProfilingEvent, owner: ProfilingOwner? = nil) -> ProfilingInterval {
         guard enabled else { return ProfilingInterval(inactive: event) }
-        let start = DispatchTime.now().uptimeNanoseconds
+        let start = TerminalEventTime.now().uptimeNanoseconds
 #if canImport(os)
         var id = OSSignpostID.invalid
         if signpostsEnabled {
@@ -576,7 +577,7 @@ enum Profiling {
     @inline(__always)
     static func begin(_ event: ProfilingEvent, _ format: StaticString, _ a: CVarArg) -> ProfilingInterval {
         guard enabled else { return ProfilingInterval(inactive: event) }
-        let start = DispatchTime.now().uptimeNanoseconds
+        let start = TerminalEventTime.now().uptimeNanoseconds
 #if canImport(os)
         var id = OSSignpostID.invalid
         if signpostsEnabled {
@@ -589,3 +590,5 @@ enum Profiling {
 #endif
     }
 }
+
+#endif // !SWIFTTERM_EMBEDDED

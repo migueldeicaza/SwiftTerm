@@ -8,6 +8,9 @@ SwiftTerm provides terminal emulation for macOS, iOS, and visionOS applications.
 This guide walks through adding the dependency and embedding a terminal view on
 each platform.
 
+For a Foundation-free, headless build targeting Embedded Swift or WASI
+WebAssembly, see <doc:PortableBuilds>.
+
 ## Adding SwiftTerm to Your Project
 
 Add SwiftTerm as a Swift Package Manager dependency. In your `Package.swift`:
@@ -175,6 +178,10 @@ print(String(data: output, encoding: .utf8) ?? "")
 See <doc:HeadlessUsage> for more detail.
 
 ## Platform Availability
+
+Embedded Swift and WASI WebAssembly use the portable headless core rather than
+the view and local-process APIs listed below. See <doc:PortableBuilds> for the
+required package traits and build settings.
 
 | Feature | macOS 13+ | iOS 13+ | visionOS 1+ | Linux | Windows |
 |---------|-----------|---------|-------------|-------|---------|

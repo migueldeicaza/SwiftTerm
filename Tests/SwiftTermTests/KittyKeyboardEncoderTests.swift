@@ -86,9 +86,7 @@ final class KittyKeyboardEncoderTests: XCTestCase {
                      expected: "\u{1b}[99;5:2u")
     }
 
-    func testPureTextWithReportAllAndReportTextStaysUtf8() {
-        // The protocol has no key code for committed text. Ghostty and kitty
-        // send it as UTF-8 in every mode.
+    func testPureTextWithReportAllAndReportTextUsesKeyZero() {
         let event = KittyKeyEvent(key: .none,
                                   modifiers: [],
                                   eventType: .press,
@@ -97,10 +95,10 @@ final class KittyKeyboardEncoderTests: XCTestCase {
                                   baseLayoutKey: nil)
         assertEncode(event,
                      flags: [.reportAllKeys, .reportText],
-                     expected: "é")
+                     expected: "\u{1b}[0;;233u")
     }
 
-    func testPureMultiScalarTextWithReportAllAndReportTextStaysUtf8() {
+    func testPureMultiScalarTextWithReportAllAndReportTextUsesKeyZero() {
         let event = KittyKeyEvent(key: .none,
                                   modifiers: [],
                                   eventType: .press,
@@ -109,7 +107,7 @@ final class KittyKeyboardEncoderTests: XCTestCase {
                                   baseLayoutKey: nil)
         assertEncode(event,
                      flags: [.reportAllKeys, .reportText, .reportEvents],
-                     expected: "한글")
+                     expected: "\u{1b}[0;;54620:44544u")
     }
 
     func testPureTextWithReportAllWithoutReportTextStaysUtf8() {

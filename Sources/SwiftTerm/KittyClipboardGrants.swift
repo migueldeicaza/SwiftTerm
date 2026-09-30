@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 //
 // KittyClipboardGrants.swift
 //
@@ -61,3 +62,5 @@ struct KittyClipboardGrants: Sendable {
 }
 
 extension KittyClipboardPermissionDirection: Hashable {}
+
+#endif

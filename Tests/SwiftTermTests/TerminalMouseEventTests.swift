@@ -47,7 +47,7 @@ struct TerminalMouseEventTests {
         case 1005: #expect(delegate.writes.first == [27, 91, 77, 60, 0xc6, 0xb1, 41])
         case 1006: #expect(delegate.writes.first == Array("\u{1b}[<28;401;9M".utf8))
         case 1015: #expect(delegate.writes.first == Array("\u{1b}[60;401;9M".utf8))
-        case 1016: #expect(delegate.writes.first == Array("\u{1b}[<28;90;100M".utf8))
+        case 1016: #expect(delegate.writes.first == Array("\u{1b}[<28;91;101M".utf8))
         default: Issue.record("Unexpected test protocol")
         }
     }
@@ -110,6 +110,18 @@ struct TerminalMouseEventTests {
         view.sendMouseEvent(button: 0, release: false, col: 0, row: Int.max)
         view.sendMouseEvent(button: 0, release: false, col: 0, row: 0, pixelY: -1)
         #expect(delegate.writes.isEmpty)
+    }
+
+    @Test func pixelCoordinatesAtIntMaxDoNotTrapOrSend() {
+        let view = TerminalView(frame: .zero)
+        let delegate = Delegate()
+        view.terminalDelegate = delegate
+        view.feed(text: "\u{1b}[?1000h\u{1b}[?1016h")
+        view.sendMouseEvent(button: 0, release: false, col: 0, row: 0, pixelX: Int.max, pixelY: 0)
+        view.sendMouseEvent(button: 0, release: false, col: 0, row: 0, pixelX: 0, pixelY: Int.max)
+        #expect(delegate.writes.isEmpty)
+        view.sendMouseEvent(button: 0, release: false, col: 0, row: 0, pixelX: Int.max - 1, pixelY: 0)
+        #expect(delegate.writes == [Array("\u{1b}[<0;\(Int.max);1M".utf8)])
     }
 }
 #endif

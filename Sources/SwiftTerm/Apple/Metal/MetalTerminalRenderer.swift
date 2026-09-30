@@ -1,3 +1,4 @@
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 #if canImport(os)
@@ -4092,8 +4093,8 @@ final class MetalTerminalRenderer {
 
     /// Whether a shader library can be built here at all.
     ///
-    /// Exposed for tests that optionally exercise Metal. Cheap and cached —
-    /// building the library once is the only honest way to answer this.
+    /// Exposed for tests. The result is cached because the library build is the
+    /// only reliable way to answer this.
     static let shaderLibraryIsAvailable: Bool = {
         guard let device = MTLCreateSystemDefaultDevice() else { return false }
         return (try? makeLibrary(device: device)) != nil
@@ -4104,21 +4105,8 @@ final class MetalTerminalRenderer {
            libraryHasRequiredFunctions(library) {
             return library
         }
-        if let url = findMetallibURL() {
-            do {
-                let library = try device.makeLibrary(URL: url)
-                if libraryHasRequiredFunctions(library) {
-                    return library
-                }
-            } catch {
-                throw MetalError.shaderLibraryLoadFailed(String(describing: error))
-            }
-        }
-        guard let source = loadShaderSource() else {
-            throw MetalError.shaderSourceMissing("Apple/Metal/Shaders.metal")
-        }
         do {
-            let library = try device.makeLibrary(source: source, options: nil)
+            let library = try device.makeLibrary(source: swiftTermMetalShaderSource, options: nil)
             if libraryHasRequiredFunctions(library) {
                 return library
             }
@@ -4151,74 +4139,7 @@ final class MetalTerminalRenderer {
         ]
     }
 
-    private static func loadShaderSource() -> String? {
-        for bundle in candidateBundles() {
-            if let url = bundle.url(forResource: "Shaders", withExtension: "metal"),
-               let source = try? String(contentsOf: url, encoding: .utf8) {
-                return source
-            }
-        }
-        return nil
-    }
-
-    private static func findMetallibURL() -> URL? {
-        for bundle in candidateBundles() {
-            if let url = bundle.url(forResource: "default", withExtension: "metallib") {
-                return url
-            }
-            if let resourceURL = bundle.resourceURL,
-               let urls = try? FileManager.default.contentsOfDirectory(at: resourceURL,
-                                                                       includingPropertiesForKeys: nil,
-                                                                       options: [.skipsHiddenFiles]) {
-                if let match = urls.first(where: { $0.pathExtension == "metallib" }) {
-                    return match
-                }
-            }
-        }
-        return nil
-    }
-
-    private static func candidateBundles() -> [Bundle] {
-        var bundles: [Bundle] = []
-        #if SWIFT_PACKAGE
-        // Deliberately not `Bundle.module`: SwiftPM's generated accessor for
-        // executable targets calls `fatalError` (aborting the whole process,
-        // not throwing) instead of returning nil when it can't locate
-        // `SwiftTerm_SwiftTerm.bundle`. Its only two candidates are
-        // `Bundle.main.bundleURL` (the .app's *root*, not `Contents/Resources`
-        // where a packaged .app actually puts SwiftPM resource bundles) and
-        // the build machine's absolute `.build/.../SwiftTerm_SwiftTerm.bundle`
-        // path baked into the binary at compile time. That means any app that
-        // bundles this package and ships the resource bundle correctly still
-        // crashes the instant Metal rendering is requested on a machine other
-        // than the one that built it. Probe for the same bundle name
-        // ourselves — mirroring the accessor's own main-bundle-relative
-        // lookup, plus the `Contents/Resources` location it misses — so a
-        // missing bundle falls through to the next candidate instead of
-        // aborting the process.
-        let bundleName = "SwiftTerm_SwiftTerm.bundle"
-        if let url = Bundle.main.resourceURL?.appendingPathComponent(bundleName),
-           let resourceBundle = Bundle(url: url) {
-            bundles.append(resourceBundle)
-        }
-        if let url = Bundle.main.bundleURL.appendingPathComponent(bundleName) as URL?,
-           let resourceBundle = Bundle(url: url) {
-            bundles.append(resourceBundle)
-        }
-        // SwiftPM puts resources beside the .xctest bundle, which may be
-        // loaded by a separate runner. Never search arbitrary app siblings.
-        for bundle in [Bundle.main, Bundle(for: MetalTerminalRenderer.self)]
-            where bundle.bundleURL.pathExtension == "xctest" {
-            let url = bundle.bundleURL.deletingLastPathComponent()
-                .appendingPathComponent(bundleName)
-            if let resourceBundle = Bundle(url: url) {
-                bundles.append(resourceBundle)
-            }
-        }
-        #endif
-        bundles.append(Bundle(for: MetalTerminalRenderer.self))
-        bundles.append(Bundle.main)
-        return bundles
-    }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

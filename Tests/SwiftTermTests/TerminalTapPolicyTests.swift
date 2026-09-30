@@ -15,11 +15,19 @@ struct TerminalTapPolicyTests {
         #expect(TerminalTapPolicy.action(tapCount: 3, hasActiveSelection: false, mouseReportingActive: false) == .selectLine)
     }
 
-    /// A single tap dismisses a live selection before any click is forwarded, even under reporting,
-    /// matching the basic-shell behaviour.
-    @Test func singleTapDismissesActiveSelectionEvenUnderMouseReporting() {
+    /// With mouse reporting active, a tap can still clear local selection.
+    @Test func singleTapDismissesSelectionUnderMouseReporting() {
         #expect(TerminalTapPolicy.action(tapCount: 1, hasActiveSelection: true, mouseReportingActive: true) == .dismissSelection)
-        #expect(TerminalTapPolicy.action(tapCount: 1, hasActiveSelection: true, mouseReportingActive: false) == .dismissSelection)
+    }
+
+    @Test func singleTapAfterSelectionCanRouteLocally() {
+        #expect(TerminalTapPolicy.action(tapCount: 1, hasActiveSelection: true, mouseReportingActive: false) == .localSingleTap)
+    }
+
+    @Test func tapThatClearsSelectionDoesNotOpenContextMenu() {
+        #expect(!TerminalTapPolicy.showsContextMenu(nearCursor: true, clearedSelection: true))
+        #expect(TerminalTapPolicy.showsContextMenu(nearCursor: true, clearedSelection: false))
+        #expect(!TerminalTapPolicy.showsContextMenu(nearCursor: false, clearedSelection: false))
     }
 
     /// With nothing selected and reporting on, a single tap forwards the click so the application

@@ -7,6 +7,7 @@
 //  getTerminalColor/make helpers, which clamp to sRGB); only the property
 //  names differ, matching each platform's conventions.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS)
 import AppKit
 
@@ -44,3 +45,5 @@ public extension Color {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

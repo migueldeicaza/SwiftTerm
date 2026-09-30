@@ -4,6 +4,7 @@
 //
 //  Created by Miguel de Icaza on 3/22/20.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS)
 import Foundation
 import AppKit
@@ -162,3 +163,5 @@ public class TerminalDebugView: NSView {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

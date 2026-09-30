@@ -8,7 +8,15 @@
 // TODO: review every place that sets cursor to use setCursor
 // TODO: audit every location to use restrictCursor
 
+#if !SWIFTTERM_EMBEDDED
 import Foundation
+#endif
+
+#if SWIFTTERM_EMBEDDED
+public typealias TerminalData = [UInt8]
+#else
+public typealias TerminalData = Data
+#endif
 
 /// The light/dark preference represented by the terminal's current color palette.
 ///
@@ -92,6 +100,8 @@ public protocol TerminalDelegate: AnyObject {
     /// Invoked when synchronized output mode is toggled on or off.
     /// The default implementation does nothing.
     func synchronizedOutputChanged (source: Terminal, active: Bool)
+
+    func scheduleSynchronizedOutputTimeout (source: Terminal, afterMilliseconds: UInt32)
     
     /// Should raise the bell
     /// The default implementation does nothing.
@@ -200,7 +210,7 @@ public protocol TerminalDelegate: AnyObject {
      *  - content: the data to place on the clipboard
      * The default implementation does nothing.
      */
-    func clipboardCopy(source: Terminal, content: Data)
+    func clipboardCopy(source: Terminal, content: TerminalData)
     
     /**
      * This method is invoked when the client application has issued an OSC 52
@@ -215,7 +225,12 @@ public protocol TerminalDelegate: AnyObject {
      * - Parameter source: identifies the instance of the terminal that sent this request
      * - Returns: the current clipboard contents, or `nil` to deny the request
      */
-    func clipboardRead(source: Terminal) -> Data?
+    func clipboardRead(source: Terminal) -> TerminalData?
+
+    /// Accept an asynchronous OSC 52 read. Return false to use clipboardRead.
+    /// Complete an accepted read on the terminal host executor.
+    /// The default preserves the synchronous delegate used by existing hosts.
+    func clipboardReadRequest(source: Terminal, selection: String) -> Bool
 
     /**
      * Returns the active terminal-driver special bytes that must become spaces
@@ -231,6 +246,7 @@ public protocol TerminalDelegate: AnyObject {
      */
     func terminalControlBytesForPaste(source: Terminal) -> Set<UInt8>
 
+#if !SWIFTTERM_EMBEDDED
     /// Returns the OSC 5522 services that this host can serve completely.
     func kittyClipboardCapabilities(source: Terminal) -> KittyClipboardCapabilities
 
@@ -274,6 +290,7 @@ public protocol TerminalDelegate: AnyObject {
         request: KittyClipboardPermissionRequest,
         completion: @escaping @Sendable (KittyClipboardPermissionResult) -> Void
     ) -> Bool
+#endif
     
     /**
      * Invoked when client application issues OSC 777 to show notification.
@@ -319,7 +336,7 @@ public protocol TerminalDelegate: AnyObject {
      *  - height: the height requested, it contains an enumeration describing what the request was
      *  - preserveAspectRatio: if set, one of the dimensions will track the hardcoded setting set for the other.
      */
-    func createImage (source: Terminal, data: Data, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool)
+    func createImage (source: Terminal, data: TerminalData, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool)
 }
 
 /// Enumeration passed to the TerminalDelegate.createImage to configure
@@ -428,7 +445,11 @@ open class Terminal {
     // path skip the registry entirely in the overwhelmingly common case where
     // nothing is selected.
     private struct SelectionSlot {
+#if SWIFTTERM_EMBEDDED
+        let value: SelectionService
+#else
         unowned(unsafe) let value: SelectionService
+#endif
     }
     private var selections: [SelectionSlot] = []
 
@@ -558,11 +579,16 @@ open class Terminal {
     /// blocked main queue, another needs it long enough not to fire in the
     /// middle of an unrelated assertion. Both were timing-fragile against a
     /// fixed 1 s.
-    var synchronizedOutputTimeoutSeconds: TimeInterval = 1.0
+    var synchronizedOutputTimeoutSeconds: Double = 1.0
     public private(set) var synchronizedOutputActive: Bool = false
     private(set) var synchronizedOutputGeneration: UInt64 = 0
     private var synchronizedOutputWatchdogDirty = false
-    private var synchronizedOutputTimeoutItem: DispatchWorkItem?
+#if !SWIFTTERM_EMBEDDED
+    private var synchronizedOutputTimeoutItem: TerminalEventWorkItem?
+#if os(WASI)
+    let hostEventQueue = TerminalCallbackQueue(label: "terminal-host-events")
+#endif
+#endif
     private(set) var synchronizedOutputWatchdogCounters = SynchronizedOutputWatchdogCounters()
 
     var displayBuffer: Buffer {
@@ -675,7 +701,11 @@ open class Terminal {
     private var gCharsets: [[UInt8:String]?] = [CharSets.defaultCharset, nil, nil, nil]
     var gcharset: Int = 0
     var reverseWraparound: Bool = false
+#if SWIFTTERM_EMBEDDED
+    var tdel: TerminalDelegate?
+#else
     weak var tdel: TerminalDelegate?
+#endif
     private var curAttr: Attribute = CharData.defaultAttr
     /// Arena identifier for `curAttr`. It changes only when SGR state changes.
     private var curStyleID: UInt16 = 0
@@ -744,6 +774,10 @@ open class Terminal {
     var hasKittyPlacements = false
     var kittyAnimationTimerSerial: UInt64 = 0
     
+    private var portableRenderMetadata: PortableRenderMetadata?
+    private var portableRenderCursor: RenderSnapshotCursor?
+    private var portableRenderCells: [PortableRenderCellCache?] = []
+
     var refreshStart = Int.max
     var refreshEnd = -1
     var scrollInvariantRefreshStart = Int.max
@@ -973,13 +1007,13 @@ open class Terminal {
         /// Returns true if you should send a button press event (separate from release)
         func sendButtonPress () -> Bool
         {
-            self == .vt200 || self == .buttonEventTracking || self == .anyEvent
+            self != .off
         }
         
         /// Returns true if you should send the button release event
         func sendButtonRelease () -> Bool
         {
-            self != .off
+            self == .vt200 || self == .buttonEventTracking || self == .anyEvent
         }
         
         /// Returns true if you should send a motion event when a button is pressed
@@ -1098,9 +1132,31 @@ open class Terminal {
     }
 
     deinit {
+#if os(WASI) && !SWIFTTERM_EMBEDDED
+        hostEventQueue.clear()
+        oscEventDispatcher.clearHostEvents()
+#endif
+#if !SWIFTTERM_EMBEDDED
         kittyClipboardProtocol?.terminalDestroyed()
+#endif
         TinyAtom.release(codes: payloadCodes)
     }
+
+#if SWIFTTERM_EMBEDDED
+    /// Breaks strong reference cycles used in the portable object graph.
+    public func close() {
+        parser.activeDcsHandler = nil
+        parser.oscHandlers.removeAll()
+        oscEventDispatcher.clearEmbeddedOscObservers()
+        normalBuffer.releaseEmbeddedReferences()
+        altBuffer.releaseEmbeddedReferences()
+        selections.removeAll()
+        tdel = nil
+        activeHyperlink = nil
+        TinyAtom.release(codes: payloadCodes)
+        payloadCodes.removeAll()
+    }
+#endif
 
     /// Installs the new colors as the default colors and recomputes the
     /// current and ansi palette.   This will not change the UI layer, for that it is better
@@ -1306,7 +1362,9 @@ open class Terminal {
         _ = applyDECPrivateMode(SpecialDECPrivateMode.kittyPasteEvents.rawValue, value: false)
         if isReset {
             savedPrivateModes.removeAll()
+#if !SWIFTTERM_EMBEDDED
             kittyClipboardProtocol?.clear()
+#endif
         }
 
         keyboardModeNormal = KeyboardModeState()
@@ -1448,7 +1506,11 @@ open class Terminal {
         // Nested lifetime: this handler is created per XTGETTCAP sequence and
         // held in the parser's `activeDcsHandler` for the duration of that one
         // sequence, well inside the terminal's life.
+#if SWIFTTERM_EMBEDDED
+        var terminal: Terminal
+#else
         unowned(unsafe) var terminal: Terminal
+#endif
 
         public init (terminal: Terminal)
         {
@@ -1569,7 +1631,11 @@ open class Terminal {
         // Nested lifetime: this handler is created per DECRQSS sequence and
         // held in the parser's `activeDcsHandler` for the duration of that one
         // sequence, well inside the terminal's life.
+#if SWIFTTERM_EMBEDDED
+        var terminal: Terminal
+#else
         unowned(unsafe) var terminal: Terminal
+#endif
 
         public init (terminal: Terminal)
         {
@@ -1591,7 +1657,7 @@ open class Terminal {
         
         func unhook ()
         {
-            let newData = String (bytes: data, encoding: .ascii)
+            let newData = terminalStringASCII(data[...])
             var ok = 1 // 0 means the request is valid according to docs, but tests expect 0?
             var result: String
             switch (newData) {
@@ -1655,7 +1721,11 @@ open class Terminal {
 
     /// Enqueues one copied event before synchronous parser dispatch continues.
     func publishOscEvent(code: Int, payload: ArraySlice<UInt8>) {
-        oscEventDispatcher.publish(code: code, payload: payload)
+        oscEventDispatcher.publish(
+            code: code,
+            payload: payload,
+            cursor: Position(col: buffer.x, row: buffer.y)
+        )
     }
     
     func cmdSet8BitControls ()
@@ -1735,13 +1805,13 @@ open class Terminal {
         var candidate = existingText
         candidate.unicodeScalars.append(scalar)
         if candidate.count == 1 {
-            return candidate.unicodeScalars.map(\.value)
+            return candidate.unicodeScalars.map { $0.value }
         }
 
         let incomingBreak = UnicodeUtil.indicConjunctBreak(scalar.value)
         if existingText.count > 1,
            incomingBreak == .extend || incomingBreak == .linker {
-            return candidate.unicodeScalars.map(\.value)
+            return candidate.unicodeScalars.map { $0.value }
         }
         guard incomingBreak == .consonant else {
             return nil
@@ -1755,7 +1825,7 @@ open class Terminal {
                 foundLinker = true
             case .consonant:
                 guard foundLinker else { return nil }
-                return candidate.unicodeScalars.map(\.value)
+                return candidate.unicodeScalars.map { $0.value }
             case .none:
                 return nil
             }
@@ -2741,21 +2811,16 @@ open class Terminal {
     }
 
     /// The current buffer-absolute row of a line captured earlier, or nil if
-    /// scrollback trimming or recycling has since destroyed it. A deferred
-    /// pointer click captures the clicked line's identity **and its
-    /// `recycleGeneration`**, and re-resolves here at fire time: identity
-    /// alone is insufficient because `CircularList.recycle` keeps the trimmed
-    /// object in the array as the new bottom row, so a generation mismatch
-    /// means the object was reused for different content and the click is
-    /// dropped.
+    /// scrollback trimming or recycling has since destroyed it. Hosts that
+    /// defer an action can use the line identity and `recycleGeneration` to
+    /// check that the line still holds the same content.
     public func semanticRow(forLineIdentity line: BufferLine,
                             recycleGeneration: UInt64) -> Int? {
         guard line.recycleGeneration == recycleGeneration else { return nil }
         return buffer.absoluteRow(of: line)
     }
 
-    /// The `BufferLine` at a buffer-absolute row, for a view to capture a
-    /// click target's identity before deferring.
+    /// The `BufferLine` at a buffer-absolute row.
     public func bufferLine(atRow row: Int) -> BufferLine? {
         guard row >= 0, row < buffer.lines.count else { return nil }
         return buffer.lines[row]
@@ -3132,16 +3197,16 @@ open class Terminal {
         return data.isEmpty ? nil : data
     }
 
-    /// R6: the shared arbiter entry point for the views. The snapshot was
-    /// captured at press time, before any handler mutated view state; the
-    /// click that dismisses a selection, a drag, and multi-clicks are
-    /// selection gestures and never reach the semantic route.
+    /// R6: the shared arbiter entry point for the views. A fresh single click
+    /// can clear an old selection and route if no selection remains at release.
+    /// A drag, an active selection at release, and multi-clicks cannot route.
     @discardableResult
     public func handleSemanticPromptClick(at position: Position,
                                           modifiers: SemanticPromptClickModifiers,
                                           snapshot: SemanticPromptPointerSnapshot) -> Bool {
         guard snapshot.pressWasSemanticEligible,
-              snapshot.clickCount == 1, !snapshot.didDrag, !snapshot.selectionWasActive else {
+              snapshot.clickCount == 1, !snapshot.didDrag,
+              !snapshot.selectionIsActiveAtRelease else {
             return false
         }
         return handleSemanticPromptClick(at: position, modifiers: modifiers)
@@ -3149,17 +3214,15 @@ open class Terminal {
 
     /// A cheap pre-check (no geometry, no routing) of whether a completed
     /// primary click could possibly route to the semantic prompt: the press
-    /// was semantic-eligible and single, no drag or active selection, the
-    /// modifier policy allows it, we are on the normal buffer, the buffer is
-    /// armed, and a click mode is set. Views use it to avoid scheduling a
-    /// deferral (retaining a line, arming a timer) when routing can never
-    /// apply — for example before any OSC 133 has been seen (F.5).
+    /// was semantic-eligible and single, no drag or active selection at
+    /// release, the modifier policy allows it, we are on the normal buffer,
+    /// the buffer is armed, and a click mode is set.
     public func mightRouteSemanticPromptClick(modifiers: SemanticPromptClickModifiers,
                                               snapshot: SemanticPromptPointerSnapshot) -> Bool {
         guard snapshot.pressWasSemanticEligible,
               snapshot.clickCount == 1,
               !snapshot.didDrag,
-              !snapshot.selectionWasActive,
+              !snapshot.selectionIsActiveAtRelease,
               semanticPromptModifiersAllow(modifiers),
               !isCurrentBufferAlternate,
               buffer.semanticInput == .armed,
@@ -3306,7 +3369,7 @@ open class Terminal {
     // or malformed values, are ignored entirely.
     func oscSemanticPrompt(_ data: ArraySlice<UInt8>) {
         guard !isCurrentBufferAlternate,
-              let text = String(bytes: data, encoding: .utf8),
+              let text = terminalStringUTF8(data),
               !text.isEmpty else { return }
         let fields = text.split(separator: ";", omittingEmptySubsequences: false)
         guard let actionField = fields.first, actionField.count == 1,
@@ -3424,7 +3487,7 @@ open class Terminal {
         if data == [] {
             resetAllColors()
         } else {
-            if let param = String (bytes: data, encoding: .ascii) {
+            if let param = terminalStringASCII(data) {
                 let colors = param.split(separator: ";")
                 for color in colors {
                     guard let n = Int (color) else { continue }
@@ -3440,9 +3503,9 @@ open class Terminal {
         if !(tdel?.isProcessTrusted(source: self) ?? false) {
             return
         }
-        var s = String (bytes:data, encoding: .utf8)
+        var s = terminalStringUTF8(data)
         if s == nil {
-            s = String (bytes:data, encoding: .ascii)
+            s = terminalStringASCII(data)
         }
         if let txt = s {
             hostCurrentDirectory = txt
@@ -3456,9 +3519,9 @@ open class Terminal {
         if !(tdel?.isProcessTrusted(source: self) ?? false) {
             return
         }
-        var s = String (bytes:data, encoding: .utf8)
+        var s = terminalStringUTF8(data)
         if s == nil {
-            s = String (bytes:data, encoding: .ascii)
+            s = terminalStringASCII(data)
         }
         if let txt = s {
             hostCurrentDocument = txt
@@ -3505,6 +3568,13 @@ open class Terminal {
     /// ``garbageCollectPayload()`` releases the atom after it is no longer present in
     /// either terminal buffer. The terminal also releases its remaining atoms when it
     /// is deinitialized.
+#if SWIFTTERM_EMBEDDED
+    public func makePayload(value: String) -> TinyAtom? {
+        guard let atom = TinyAtom.lookup(value: value) else { return nil }
+        payloadCodes.insert(atom.code)
+        return atom
+    }
+#else
     public func makePayload<Value: Sendable>(value: Value) -> TinyAtom? {
         guard let atom = TinyAtom.lookup(value: value) else {
             return nil
@@ -3512,13 +3582,14 @@ open class Terminal {
         payloadCodes.insert(atom.code)
         return atom
     }
+#endif
 
     func oscHyperlink (_ data: ArraySlice<UInt8>)
     {
         if data.count == 1 && data [data.startIndex] == UInt8 (ascii: ";") {
             activeHyperlink = nil
         } else {
-            let payload = String(bytes: data, encoding: .ascii) ?? ""
+            let payload = terminalStringASCII(data) ?? ""
             activeHyperlink = .pending(payload)
         }
     }
@@ -3540,27 +3611,28 @@ open class Terminal {
         let selectionSlice = data[data.startIndex..<sepIdx]
         let selectionChars = selectionSlice.isEmpty
             ? "c"
-            : (String(bytes: selectionSlice, encoding: .ascii) ?? "c")
+            : (terminalStringASCII(selectionSlice) ?? "c")
 
         let payload = data[(sepIdx + 1)...]
 
         if payload.count == 1 && payload[payload.startIndex] == UInt8(ascii: "?") {
+            if tdel?.clipboardReadRequest(source: self, selection: selectionChars) == true { return }
             // Read / query – ask the delegate for clipboard contents.
             guard let content = tdel?.clipboardRead(source: self) else {
                 return
             }
-            let base64 = content.base64EncodedString()
+            let base64 = terminalBase64Encode(content)
             sendResponse(cc.OSC, "52;\(selectionChars);\(base64)", cc.ST)
         } else {
             // Write – decode the base64 payload and hand it to the delegate.
-            let base64 = Data(payload)
-            guard let content = Data(base64Encoded: base64) else {
+            guard let content = terminalBase64Decode(payload) else {
                 return
             }
             tdel?.clipboardCopy(source: self, content: content)
         }
     }
 
+#if !SWIFTTERM_EMBEDDED
     /// Delivers a clipboard paste event or a text paste according to modes 5522 and 2004.
     @discardableResult
     public func paste(
@@ -3605,15 +3677,20 @@ open class Terminal {
         kittyClipboardProtocol = value
         return value
     }
+#endif
     
+#if SWIFTTERM_EMBEDDED
+    func oscKittyClipboard(_ data: ArraySlice<UInt8>) {}
+#endif
+
     // Notifications:
     //    ESC ] 777 ; notify ; [title] ; [body] \a
     func oscNotification(_ data: ArraySlice<UInt8>) {
-        guard let text = String(bytes: data, encoding: .utf8) else {
+        guard let text = terminalStringUTF8(data) else {
             return
         }
         
-        let parts = text.components(separatedBy: ";")
+        let parts = text.split(separator: ";", omittingEmptySubsequences: false).map(String.init)
         guard parts.count >= 3,
               parts[0] == "notify" else {
             return
@@ -3635,7 +3712,7 @@ open class Terminal {
     }
 
     private func parseProgressReport(_ data: ArraySlice<UInt8>) -> ProgressReport? {
-        guard let text = String(bytes: data, encoding: .ascii) else {
+        guard let text = terminalStringASCII(data) else {
             return nil
         }
 
@@ -3699,10 +3776,10 @@ open class Terminal {
                 guard let equalIdx = data [current..<next].firstIndex(where: { b in b == UInt8 (ascii: "=")}) else {
                     break
                 }
-                guard let key = String (bytes: data[current..<equalIdx], encoding: .utf8) else {
+                guard let key = terminalStringUTF8(data[current..<equalIdx]) else {
                     break
                 }
-                guard let value = String (bytes: data[equalIdx+1..<next], encoding: .utf8) else {
+                guard let value = terminalStringUTF8(data[equalIdx+1..<next]) else {
                     break
                 }
                 kv [key] = value
@@ -3737,7 +3814,7 @@ open class Terminal {
             return
         }
         
-        guard let key = String(bytes: data[data.startIndex..<equalIdx], encoding: .utf8) else {
+        guard let key = terminalStringUTF8(data[data.startIndex..<equalIdx]) else {
             return
         }
         switch key {
@@ -3754,7 +3831,7 @@ open class Terminal {
                 break
             }
             
-            guard let imgData = Data(base64Encoded: Data(data [colonIdx+1..<data.endIndex])) else {
+            guard let imgData = terminalBase64Decode(data [colonIdx+1..<data.endIndex]) else {
                 return
             }
             let width = parseDimension (kv, key: "width")
@@ -4325,7 +4402,11 @@ open class Terminal {
         if marginMode {
             if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
-                let rowCount = buffer.scrollBottom-buffer.scrollTop
+                // Rows between the cursor and the bottom of the scroll region.
+                // The shift below starts at the cursor row, not at scrollTop,
+                // so using the region's full height here walks past the last
+                // line of the buffer.
+                let rowCount = buffer.scrollBottom-buffer.y
                 for i in 0...rowCount {
                     repairWideCellsForColumnRestrictedShift(row: row + i)
                 }
@@ -4507,7 +4588,7 @@ open class Terminal {
     // escape sequences and returns validated top, left, bottom, right in our 0-based
     // internal coordinates
     //
-    func getRectangleFromRequest<Parameters: RandomAccessCollection>(_ pars: Parameters)
+    final func getRectangleFromRequest<Parameters: RandomAccessCollection>(_ pars: Parameters)
         -> (top: Int, left: Int, bottom: Int, right: Int)?
         where Parameters.Element == Int, Parameters.Index == Int
     {
@@ -4690,7 +4771,7 @@ open class Terminal {
                     }
                 }
             }
-            result = String(format: "%04x", checksum)
+            result = String(checksum, radix: 16).leftPadding(toLength: 4, withPad: "0")
         }
         sendResponse (cc.DCS, "\(rid)!~\(result)", cc.ST)
     }
@@ -4917,7 +4998,7 @@ open class Terminal {
         case [7]:
             tdel.windowCommand(source: self, command: .refreshWindow)
         case _ where pars.count == 3 && pars.first == 8:
-            tdel.windowCommand(source: self, command: .resizeTerminal(cols: pars [1], rows: pars [2]))
+            tdel.windowCommand(source: self, command: .resizeTerminal(cols: pars [2], rows: pars [1]))
         case [9, 0]:
             tdel.windowCommand(source: self, command: .restoreMaximizedWindow)
         case [9, 1]:
@@ -5377,6 +5458,7 @@ open class Terminal {
                 reportInBandSizeIfAvailable()
             }
         case SpecialDECPrivateMode.kittyPasteEvents.rawValue:
+#if !SWIFTTERM_EMBEDDED
             if value {
                 // Observe any host capability change first, so that the stored
                 // bit describes the support state at DECSET time. This also
@@ -5387,6 +5469,7 @@ open class Terminal {
                 getKittyClipboardProtocol().refreshCapabilities()
             }
             kittyPasteEventsEnabled = value
+#endif
         case 1243:
             bidiArrowKeySwap = value
         case 2500:
@@ -5406,11 +5489,15 @@ open class Terminal {
         if mode == SpecialDECPrivateMode.graphemeClustering.rawValue {
             return .permanentlySet
         }
+#if SWIFTTERM_EMBEDDED
+        if mode == SpecialDECPrivateMode.kittyPasteEvents.rawValue { return .notRecognized }
+#else
         if mode == SpecialDECPrivateMode.kittyPasteEvents.rawValue,
            !getKittyClipboardProtocol().isModeSupported()
         {
             return .notRecognized
         }
+#endif
         guard let value = readDECPrivateMode(mode) else {
             return nil
         }
@@ -7054,9 +7141,14 @@ open class Terminal {
         let eraseBlank = currentEraseBlankCell
         
         if marginMode {
-            if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight {
+            // The non-margin branch below only acts when the cursor is inside
+            // the vertical scroll region; this branch has to agree with it.
+            if buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight,
+               buffer.y >= buffer.scrollTop, buffer.y <= buffer.scrollBottom {
                 let columnCount = buffer.marginRight-buffer.marginLeft+1
-                let rowCount = buffer.scrollBottom-buffer.scrollTop
+                // Rows between the cursor and the bottom of the scroll region;
+                // see the matching comment in cmdInsertLines.
+                let rowCount = buffer.scrollBottom-buffer.y
                 for i in 0...rowCount {
                     repairWideCellsForColumnRestrictedShift(row: row + i)
                 }
@@ -7164,11 +7256,31 @@ open class Terminal {
     {
         tdel?.send (source: self, data: ([UInt8] (text.utf8))[...])
     }
+
+    public func sendResponse(_ text: String) { sendResponse(text: text) }
+    public func sendResponse(_ bytes: [UInt8]) { tdel?.send(source: self, data: bytes[...]) }
+    public func sendResponse(_ prefix: [UInt8], _ text: String) {
+        var response = prefix
+        response.append(contentsOf: text.utf8)
+        tdel?.send(source: self, data: response[...])
+    }
+    public func sendResponse(_ prefix: [UInt8], _ bytes: [UInt8]) {
+        var response = prefix
+        response.append(contentsOf: bytes)
+        tdel?.send(source: self, data: response[...])
+    }
+    public func sendResponse(_ prefix: [UInt8], _ text: String, _ suffix: [UInt8]) {
+        var response = prefix
+        response.append(contentsOf: text.utf8)
+        response.append(contentsOf: suffix)
+        tdel?.send(source: self, data: response[...])
+    }
     
     /**
      * Sends the provided text to the connected backend, takes a variable list of arguments
      * that could be either [UInt8], Strings, or a single UInt8 value.
      */
+#if !SWIFTTERM_EMBEDDED
     public func sendResponse (_ items: Any ...)
     {
         var buffer: [UInt8] = []
@@ -7186,6 +7298,7 @@ open class Terminal {
         }
         tdel?.send (source: self, data: buffer[...])
     }
+#endif
     
 #if DEBUG
     public var silentLog = false
@@ -7388,6 +7501,144 @@ open class Terminal {
         scrollInvariantRefreshEnd = buffer.yDisp + rows
     }
     
+    /// Copies one active palette entry. Callers must serialize access as for
+    /// other terminal getters. This method can run in a delegate callback
+    /// that already holds the terminal lock.
+    public func paletteColor(index: Int) -> Color? {
+        guard ansiColors.indices.contains(index) else { return nil }
+        return ansiColors[index]
+    }
+
+    /// Copies render state under one terminal lock. Do not call this method
+    /// while you hold `terminalLock`. The copy does not clear pending damage.
+    public func makeRenderSnapshot(scope: RenderSnapshotScope) -> TerminalRenderSnapshot {
+        terminalLock.withLock {
+            let source = displayBuffer
+            let foreground = foregroundColor
+            let background = backgroundColor
+            let cursorColor = self.cursorColor
+            let palette = ansiColors
+            var modes: [BufferLine.RenderLineMode] = []
+            modes.reserveCapacity(rows)
+            for y in 0..<rows {
+                let index = source.yDisp + y
+                guard index >= 0 && index < source.lines.count else {
+                    modes.append(.single)
+                    continue
+                }
+                modes.append(source.lines[index].renderMode)
+            }
+            let metadata = PortableRenderMetadata(
+                cols: cols, rows: rows, alternate: isCurrentBufferAlternate,
+                yDisp: source.yDisp, linesTop: source.linesTop,
+                foreground: foreground, background: background,
+                cursorColor: cursorColor, palette: palette,
+                reverse: reverseColors, modes: modes)
+            if portableRenderMetadata != metadata {
+                updateFullScreen()
+            }
+            let style = options.cursorStyle
+            let styleBlinks: Bool
+            switch style {
+            case .blinkBlock, .blinkBar, .blinkUnderline: styleBlinks = true
+            case .steadyBlock, .steadyBar, .steadyUnderline: styleBlinks = false
+            }
+            let viewportCursorRow = source.yBase + source.y - source.yDisp
+            let cursorIsOffscreen = viewportCursorRow < 0 || viewportCursorRow >= rows
+            let cursor = RenderSnapshotCursor(
+                x: max(0, min(cols, source.x)),
+                y: max(0, min(rows - 1, viewportCursorRow)),
+                hidden: cursorHidden || cursorIsOffscreen, style: style, blink: styleBlinks || cursorBlink)
+            if portableRenderCursor != cursor {
+                if let old = portableRenderCursor, old.y >= 0 && old.y < rows {
+                    updateRange(old.y)
+                }
+                if cursor.y >= 0 && cursor.y < rows {
+                    updateRange(cursor.y)
+                }
+            }
+            portableRenderMetadata = metadata
+            portableRenderCursor = cursor
+
+            let range: RenderSnapshotRange?
+            if scope == .full {
+                range = RenderSnapshotRange(startY: 0, endY: rows - 1)
+            } else if let pending = getUpdateRange(),
+                      pending.endY >= 0, pending.startY < rows {
+                range = RenderSnapshotRange(startY: max(0, pending.startY),
+                                            endY: min(rows - 1, pending.endY))
+            } else {
+                range = nil
+            }
+            let dirtyKind: RenderSnapshotDirtyKind
+            if let range {
+                dirtyKind = range.startY == 0 && range.endY == rows - 1 ? .full : .partial
+            } else {
+                dirtyKind = .clean
+            }
+            let scrollRange = getScrollInvariantUpdateRange().map {
+                // updateFullScreen uses a one-past-end sentinel in both
+                // ranges. Keep absolute coordinates and normalize that case.
+                let end = $0.startY == source.yDisp && $0.endY == source.yDisp + rows
+                    ? $0.endY - 1 : $0.endY
+                return RenderSnapshotRange(startY: $0.startY, endY: end)
+            }
+            if portableRenderCells.count != rows {
+                portableRenderCells = Array(repeating: nil, count: rows)
+            }
+            var copiedRows: [RenderSnapshotRow] = []
+            if let range {
+                copiedRows.reserveCapacity(range.endY - range.startY + 1)
+                for y in range.startY...range.endY {
+                    let index = source.yDisp + y
+                    let line = index >= 0 && index < source.lines.count ? source.lines[index] : nil
+                    var cells: [RenderSnapshotCell]
+                    if let line, let cached = portableRenderCells[y],
+                       cached.identity === line.renderIdentity,
+                       cached.generation == line.generation, cached.cells.count == cols {
+                        cells = cached.cells
+                    } else {
+                        cells = []
+                        cells.reserveCapacity(cols)
+                        for x in 0..<cols {
+                            guard let line, x < line.count else {
+                                cells.append(RenderSnapshotCell(text: "", width: 1,
+                                    widthState: .narrow, attribute: CharData.defaultAttr,
+                                    isProtected: false, semanticContent: .none, payloadID: nil))
+                                continue
+                            }
+                            let cell = line.packedView(at: x)
+                            cells.append(RenderSnapshotCell(
+                                text: cell.code == 0 || cell.width == 0 ? "" : cell.getText(),
+                                width: cell.width, widthState: RenderSnapshotWidthState(cell.packed.widthState),
+                                attribute: cell.attribute, isProtected: cell.isProtected,
+                                semanticContent: cell.semanticContent,
+                                payloadID: cell.packed.payloadCode == 0 ? nil : cell.packed.payloadCode))
+                        }
+                        if let line {
+                            portableRenderCells[y] = PortableRenderCellCache(
+                                identity: line.renderIdentity, generation: line.generation, cells: cells)
+                        } else {
+                            portableRenderCells[y] = nil
+                        }
+                    }
+                    let next = index + 1
+                    copiedRows.append(RenderSnapshotRow(y: y,
+                        isWrapped: line?.isWrapped ?? false,
+                        wrapsToNext: next >= 0 && next < source.lines.count && source.lines[next].isWrapped,
+                        renderMode: modes[y], cells: cells))
+                }
+            }
+            return TerminalRenderSnapshot(cols: cols, rows: rows,
+                isAlternateScreen: isCurrentBufferAlternate, dirtyKind: dirtyKind,
+                dirtyRange: range, scrollDirtyRange: scrollRange,
+                foregroundColor: foreground, backgroundColor: background,
+                cursorColor: cursorColor, palette: palette, reverseVideo: reverseColors,
+                synchronizedOutputActive: synchronizedOutputActive,
+                cursor: cursor, lines: copiedRows)
+        }
+    }
+
     /**
      * Returns the starting and ending lines that need to be redrawn, or nil
      * if no part of the screen needs to be updated.   Alternatively, you can
@@ -7872,7 +8123,7 @@ open class Terminal {
         updateRange(borrowing: buffer, startLine: scrollTop, endLine: scrollBottom)
         recordScrollNotification()
     }
-        
+
     //
     // ESC n
     // ESC o
@@ -8146,6 +8397,11 @@ open class Terminal {
     }
 
     func applySynchronizedOutputWatchdog(active: Bool, generation: UInt64) {
+#if SWIFTTERM_EMBEDDED
+        if active {
+            tdel?.scheduleSynchronizedOutputTimeout(source: self, afterMilliseconds: 1_000)
+        }
+#else
         guard active else {
             if let synchronizedOutputTimeoutItem {
                 synchronizedOutputTimeoutItem.cancel()
@@ -8173,18 +8429,51 @@ open class Terminal {
         // reference by at most `synchronizedOutputTimeoutSeconds` (1 s). Unlike
         // any unowned scheme, this cannot race teardown.
         // See Docs/io-cpu-profile.md §3.1.
-        let workItem = DispatchWorkItem {
+        #if os(WASI)
+        let workItem = TerminalEventWorkItem { [weak self] in
+            self?.synchronizedOutputWatchdogFired(generation: generation)
+        }
+        #else
+        let workItem = TerminalEventWorkItem {
             self.synchronizedOutputWatchdogFired(generation: generation)
         }
+        #endif
         synchronizedOutputTimeoutItem = workItem
         // Not the main queue: this is the valve that unfreezes a display an
         // application left frozen with DECSET 2026, and the main thread is the
         // one most likely to be stuck when it is needed (io-gaps.md G5c). The
         // handler already takes the terminal lock, so it is safe anywhere.
-        IOTimerQueue.shared.asyncAfter(deadline: .now() + synchronizedOutputTimeoutSeconds,
-                                       execute: workItem)
+        scheduleEventTimer(.synchronizedOutput,
+            deadline: .now() + synchronizedOutputTimeoutSeconds, execute: workItem)
+#endif
     }
 
+    public func expireSynchronizedOutput() { endSynchronizedOutput() }
+#if os(WASI) && !SWIFTTERM_EMBEDDED
+    /// Cancel pending browser callbacks before the host releases this terminal.
+    public func cancelHostEvents() {
+        hostEventQueue.clear()
+        oscEventDispatcher.clearHostEvents()
+        kittyClipboardProtocol?.terminalDestroyed()
+        kittyClipboardProtocol = nil
+    }
+
+    public func takeHostEventOverflow() -> Bool {
+        let timers = hostEventQueue.takeOverflow()
+        let osc = oscEventDispatcher.takeHostEventOverflow()
+        let clipboard = kittyClipboardProtocol?.takeHostEventOverflow() ?? false
+        return timers || osc || clipboard
+    }
+
+    /// Run host callbacks and timers between serialized terminal operations.
+    public func pollHostEvents() -> Bool {
+        let timers = hostEventQueue.poll()
+        let osc = oscEventDispatcher.pollHostEvents()
+        let clipboard = kittyClipboardProtocol?.pollHostEvents() ?? false
+        return timers || osc || clipboard
+    }
+#endif
+#if !SWIFTTERM_EMBEDDED
     func synchronizedOutputWatchdogFired(generation: UInt64) {
         terminalLock.withLock {
             guard synchronizedOutputActive,
@@ -8197,6 +8486,7 @@ open class Terminal {
             endSynchronizedOutput()
         }
     }
+#endif
 
     func setViewYDisp (_ newValue: Int)
     {
@@ -8265,13 +8555,18 @@ open class Terminal {
     }
 
     /**
-     * Encodes the button action in the format expected by the client
+     * Encodes the button action for `sendEvent` or `sendMotion`.
      * - Parameter button: The button to encode
      * - Parameter release: `true` if this is a mouse release event
      * - Parameter shift: `true` if the shift key is pressed
      * - Parameter meta: `true` if the meta/alt key is pressed
      * - Parameter control: `true` if the control key is pressed
-     * - Returns: the encoded value
+     * - Returns: the Cb value in the low byte, with release button metadata
+     *   in the high bits. Pass the complete value to `sendEvent`.
+     *
+     * The protocol has no press encoding for button 3: a Cb of 3 without the
+     * motion bit is a release. Button 3 and every unknown button therefore
+     * encode as the left button.
      */
     public func encodeButton (button: Int, release: Bool, shift: Bool, meta: Bool, control: Bool) -> Int
     {
@@ -8279,6 +8574,9 @@ open class Terminal {
 
         if release {
             value = 3
+            // Keep the original release button for sendEvent. The low byte
+            // remains the legacy Cb value; the high bits are local metadata.
+            if button == 1 || button == 2 { value |= button << 8 }
         } else {
             switch (button) {
             case 0:
@@ -8291,6 +8589,10 @@ open class Terminal {
                 value = 64
             case 5:
                 value = 65
+            case 6:
+                value = 66
+            case 7:
+                value = 67
             default:
                 value = 0
             }
@@ -8315,9 +8617,11 @@ open class Terminal {
     
     /**
      * Sends a mouse event for a specific button at the specific location
-     * - Parameter buttonFlags: Button flags encoded in Cb mode.
-     * - Parameter x: X coordinate for the event
-     * - Parameter y: Y coordinate for the event
+     * - Parameter buttonFlags: Cb flags, or the complete result of `encodeButton`.
+     * - Parameter x: Zero-based cell column for the event.
+     * - Parameter y: Zero-based cell row for the event.
+     * - Parameter pixelX: Zero-based horizontal device-pixel coordinate for the event.
+     * - Parameter pixelY: Zero-based vertical device-pixel coordinate for the event.
      */
     public func sendEvent (buttonFlags: Int, x: Int, y: Int, pixelX: Int, pixelY: Int)
     {
@@ -8329,20 +8633,35 @@ open class Terminal {
     /// under TerminalLock and deliver it after releasing the lock.
     func mouseEventBytes(buttonFlags: Int, x: Int, y: Int,
                          pixelX: Int, pixelY: Int) -> [UInt8] {
+        let originalButton = (buttonFlags >> 8) & 3
+        let buttonFlags = buttonFlags & 255
+        let isRelease = (buttonFlags & 3) == 3 && (buttonFlags & (32 | 64)) == 0
+        return mousePacketBytes(buttonFlags: buttonFlags, release: isRelease,
+                                originalButton: originalButton, x: x, y: y,
+                                pixelX: pixelX, pixelY: pixelY)
+    }
+
+    private func sendMousePacket(buttonFlags: Int, release: Bool, originalButton: Int,
+                                 x: Int, y: Int, pixelX: Int, pixelY: Int) {
+        sendResponse(mousePacketBytes(buttonFlags: buttonFlags, release: release,
+                                      originalButton: originalButton, x: x, y: y,
+                                      pixelX: pixelX, pixelY: pixelY))
+    }
+
+    private func mousePacketBytes(buttonFlags: Int, release: Bool, originalButton: Int,
+                                  x: Int, y: Int, pixelX: Int, pixelY: Int) -> [UInt8] {
         switch mouseProtocol {
         case .x10:
             return cc.CSI + [UInt8(ascii: "M"), UInt8(min(buttonFlags+32, 255)),
-                             UInt8(min(32+x+1, 255)), UInt8(min(32+y+1, 255))]
+                             UInt8(max(0, min(x, 222))+33), UInt8(max(0, min(y, 222))+33)]
         case .sgr:
-            let isRelease = (buttonFlags & 3) == 3 && (buttonFlags & 32) == 0
-            let bflags = isRelease ? (buttonFlags & ~3) : buttonFlags
-            let m = isRelease ? "m" : "M"
+            let bflags = release ? (buttonFlags & ~3) | originalButton : buttonFlags
+            let m = release ? "m" : "M"
             return cc.CSI + Array("<\(bflags);\(x+1);\(y+1)\(m)".utf8)
         case .sgrPixel:
-            let isRelease = (buttonFlags & 3) == 3 && (buttonFlags & 32) == 0
-            let bflags = isRelease ? (buttonFlags & ~3) : buttonFlags
-            let m = isRelease ? "m" : "M"
-            return cc.CSI + Array("<\(bflags);\(pixelX);\(pixelY)\(m)".utf8)
+            let bflags = release ? (buttonFlags & ~3) | originalButton : buttonFlags
+            let m = release ? "m" : "M"
+            return cc.CSI + Array("<\(bflags);\(pixelX+1);\(pixelY+1)\(m)".utf8)
         case .urxvt:
             return cc.CSI + Array("\(buttonFlags+32);\(x+1);\(y+1)M".utf8)
         case .utf8:
@@ -8365,11 +8684,72 @@ open class Terminal {
         sendEvent(buttonFlags: buttonFlags+32, x: x, y: y, pixelX: pixelX, pixelY: pixelY)
     }
     
+    /// Bits 0...2: tracking (off, X10, VT200, button, any).
+    /// Bits 3...5: encoding (legacy, UTF-8, SGR, URXVT, SGR pixel).
+    /// Bit 6: Shift capture; bit 7: alternate scroll; bit 8: alternate screen.
+    public var hostPointerModes: UInt32 {
+        let tracking: UInt32
+        switch mouseMode {
+        case .off: tracking = 0
+        case .x10: tracking = 1
+        case .vt200: tracking = 2
+        case .buttonEventTracking: tracking = 3
+        case .anyEvent: tracking = 4
+        }
+        let encoding: UInt32
+        switch mouseProtocol {
+        case .x10: encoding = 0
+        case .utf8: encoding = 1
+        case .sgr: encoding = 2
+        case .urxvt: encoding = 3
+        case .sgrPixel: encoding = 4
+        }
+        return tracking | (encoding << 3) | (mouseShiftCapture ? 64 : 0)
+            | (alternateScrollMode ? 128 : 0) | (isCurrentBufferAlternate ? 256 : 0)
+    }
+
+    /// Send a semantic mouse event on the terminal processing executor.
+    /// All positions are zero based. Pixels use the host's logical screen size.
+    /// Modifier bits are Shift=1, Alt=2, Control=4, Super=8. Super is ignored.
+    /// The host owns gesture routing, including Shift selection policy.
+    @discardableResult
+    public func sendHostMouse(action: TerminalMouseAction, button: TerminalMouseButton,
+                              modifiers: UInt32, col: Int, row: Int,
+                              pixelX: Int, pixelY: Int) -> Bool {
+        guard col >= 0, col < cols, row >= 0, row < rows,
+              pixelX >= 0, pixelX < Int.max, pixelY >= 0, pixelY < Int.max,
+              modifiers <= 15 else { return false }
+        let buttonValue = Int(button.rawValue)
+        switch action {
+        case .press:
+            guard buttonValue < 3, mouseMode.sendButtonPress() else { return false }
+        case .release:
+            guard buttonValue < 3, mouseMode.sendButtonRelease() else { return false }
+        case .move:
+            guard buttonValue <= 3,
+                  button == .none ? mouseMode.sendMotionEvent() : mouseMode.sendButtonTracking()
+            else { return false }
+        case .wheel:
+            guard buttonValue >= 4, mouseMode.sendButtonPress() else { return false }
+        }
+        // Motion with no button held is the one case that needs a Cb of 3, and
+        // it is only unambiguous once the motion bit is set.
+        let noButton = action == .move && button == .none
+        var flags = encodeButton(button: noButton ? 0 : buttonValue, release: action == .release,
+            shift: modifiers & 1 != 0, meta: modifiers & 2 != 0, control: modifiers & 4 != 0) & 255
+        if action == .move { flags |= 32 }
+        if noButton { flags |= 3 }
+        sendMousePacket(buttonFlags: flags, release: action == .release,
+                        originalButton: buttonValue, x: col, y: row,
+                        pixelX: pixelX, pixelY: pixelY)
+        return true
+    }
+
     static let matchColorCache : [Int:Int] = [:]
     func matchColor (_ r1: Int, _ g1: Int, _ b1: Int) -> Int32
     {
         // TODO
-        abort ()
+        fatalError("Color matching is not implemented")
     }
     
     var terminalTitle: String = ""              // The Xterm terminal title
@@ -8487,12 +8867,14 @@ open class Terminal {
         
         // Without this, tools like "vi" produce sequences that are not UTF-8 friendly
         l.append ("LANG=en_US.UTF-8")
+#if !SWIFTTERM_EMBEDDED
         let env = ProcessInfo.processInfo.environment
         for x in ["LOGNAME", "USER", "DISPLAY", "LC_TYPE", "USER", "HOME" /* "PATH" */ ] {
             if env.keys.contains(x) {
                 l.append ("\(x)=\(env[x]!)")
             }
         }
+#endif
         return l
     }
     
@@ -8547,6 +8929,18 @@ open class Terminal {
         }
     }
     
+#if SWIFTTERM_EMBEDDED
+    public func getBufferAsData(kind: BufferKind = .active) -> TerminalData {
+        var result: [UInt8] = []
+        let b = bufferFromKind(kind: kind)
+        for row in 0..<b.lines.count {
+            let str = translateBufferLineToString(buffer: b, line: row, start: 0, end: -1)
+            result.append(contentsOf: str.utf8)
+            result.append(10)
+        }
+        return result
+    }
+#else
     /// Returns the contents of the specified terminal buffer encoded as UTF8 in the provided Data buffer
     /// - Parameter kind: which buffer to retrive the data for
     /// - Parameter encoding: which encoding to use for the returned value, defaults to utf8
@@ -8557,8 +8951,7 @@ open class Terminal {
         let b = bufferFromKind(kind: kind)
         let newLine = Data([10])
         for row in 0..<b.lines.count {
-            let bufferLine = b.lines [row]
-            let str = bufferLine.translateToString(trimRight: true)
+            let str = translateBufferLineToString (buffer: b, line: row, start: 0, end: -1)
             if let encoded = str.data(using: encoding) {
                 result.append (encoded)
                 result.append (newLine)
@@ -8566,6 +8959,7 @@ open class Terminal {
         }
         return result
     }
+#endif
     
     /// Returns the text between the specified range
     ///
@@ -8625,7 +9019,7 @@ open class Terminal {
     private func explicitLink(at position: Position, in buffer: Buffer) -> String?
     {
         let line = buffer.lines[position.row]
-        guard let payload = line.packedView(at: position.col).getPayload() as? String else {
+        guard let payload = stringPayload(from: line.packedView(at: position.col)) else {
             return nil
         }
         return parseHyperlinkPayload(payload)
@@ -8638,6 +9032,14 @@ open class Terminal {
             return nil
         }
         return String(split[1])
+    }
+
+    private func stringPayload(from cell: PackedCellView) -> String? {
+#if SWIFTTERM_EMBEDDED
+        return cell.getPayload()
+#else
+        return cell.getPayload() as? String
+#endif
     }
 
     private func explicitLinkMatch(at position: Position, in buffer: Buffer) -> LinkMatch?
@@ -8661,8 +9063,8 @@ open class Terminal {
         guard start < end else {
             return nil
         }
-        let rawPayload = line.packedView(at: position.col).getPayload() as? String
-            ?? line.packedView(at: max(0, position.col - 1)).getPayload() as? String
+        let rawPayload = stringPayload(from: line.packedView(at: position.col))
+            ?? stringPayload(from: line.packedView(at: max(0, position.col - 1)))
         guard let payload = rawPayload, let url = parseHyperlinkPayload(payload) else {
             return nil
         }
@@ -8677,6 +9079,9 @@ open class Terminal {
 
     private func implicitLinkMatch(at position: Position, in buffer: Buffer) -> LinkMatch?
     {
+#if SWIFTTERM_EMBEDDED
+        return nil
+#else
         guard let lineMap = buildGhosttyImplicitLineMap(at: position, in: buffer) else {
             return nil
         }
@@ -8757,6 +9162,7 @@ open class Terminal {
             )
         }
         return nil
+#endif
     }
 
     private func payloadCode(at position: Position, in buffer: Buffer) -> UInt16?
@@ -8783,6 +9189,7 @@ open class Terminal {
         return nil
     }
 
+#if !SWIFTTERM_EMBEDDED
     private struct GhosttyImplicitCellRef: Sendable {
         let row: Int
         let col: Int
@@ -8823,8 +9230,8 @@ open class Terminal {
         let trailingSpacesAtEOL = #"(?: +(?= *$))?"#
         let dottedPathLookahead = #"(?=[\w\-.~:\/?#@!$&*+;=%]*\.)"#
         let nonDottedPathLookahead = #"(?![\w\-.~:\/?#@!$&*+;=%]*\.)"#
-        let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
-        let anyPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
+        let dottedPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)(?!\.{0,2}\/)(?!~\/)[\w\-.~:\/?#@!$&*+;=%]*[\/.])*"#
+        let anyPathSpaceSegments = #"(?:(?<!:) (?!\w+:\/\/)(?!\.{0,2}\/)(?!~\/)[\w\-.~:\/?#@!$&*+;=%]+)*"#
 
         // The body used to be `(?:IPV6|CHARS+SUFFIX?)+`: a `+` nested directly inside a `+`, so a
         // run of N body characters could be split across iterations in exponentially many ways.
@@ -9217,6 +9624,7 @@ open class Terminal {
         return text[text.index(before: range.lowerBound)] == "$"
     }
 
+#endif
     func getText (start: Position, end: Position, buffer: Buffer) -> String
     {
         let lines = getSelectedLines(p1: start, p2: end, buffer: buffer)
@@ -9356,7 +9764,7 @@ open class Terminal {
     
     func translateBufferLineToString (buffer: Buffer, line: Int, start: Int, end: Int) -> String
     {
-        buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, textProvider: { self.getText(for: $0) }).replacingOccurrences(of: "\u{0}", with: " ")
+        terminalReplacingNulls(buffer.translateBufferLineToString(lineIndex: line, trimRight: true, startCol: start, endCol: end, skipNullCellsFollowingWide: true, textProvider: { self.getText(for: $0) }))
     }
 
     // Stored properties added after the hot fields are declared last, so that
@@ -9377,6 +9785,7 @@ open class Terminal {
     /// The last complete pixel layout committed by the host. RIS preserves this value.
     public private(set) var pixelGeometry: TerminalPixelGeometry?
 
+#if !SWIFTTERM_EMBEDDED
     private var kittyClipboardProtocol: KittyClipboardProtocol?
 
     /// Paste-token source. Tests replace it to model an entropy failure.
@@ -9386,10 +9795,12 @@ open class Terminal {
 
     /// Monotonic nanosecond clock used for paste-token expiry. Tests replace it.
     var kittyClipboardClock: @Sendable () -> UInt64 = {
-        DispatchTime.now().uptimeNanoseconds
+        TerminalEventTime.now().uptimeNanoseconds
     }
+#endif
 }
 
+#if !SWIFTTERM_EMBEDDED
 /// Terminal used by the built-in Apple views.
 ///
 /// The public delegate does not expose view-only scroll events. This subclass
@@ -9418,9 +9829,12 @@ final class ViewTerminal: Terminal {
         scrollHandler(self)
     }
 }
+#endif
 
 // Default implementations
 public extension TerminalDelegate {
+    func clipboardReadRequest(source: Terminal, selection: String) -> Bool { false }
+
     func cursorStyleChanged (source: Terminal, newStyle: CursorStyle)
     {
         // Do nothing
@@ -9511,10 +9925,12 @@ public extension TerminalDelegate {
     func iTermContent (source: Terminal, content: ArraySlice<UInt8>) {
     }
     
-    func clipboardCopy(source: Terminal, content: Data) {
+    func scheduleSynchronizedOutputTimeout(source: Terminal, afterMilliseconds: UInt32) {}
+
+    func clipboardCopy(source: Terminal, content: TerminalData) {
     }
     
-    func clipboardRead(source: Terminal) -> Data? {
+    func clipboardRead(source: Terminal) -> TerminalData? {
         return nil
     }
 
@@ -9522,6 +9938,7 @@ public extension TerminalDelegate {
         TerminalPasteControls.approximateTerminalControlBytes
     }
 
+#if !SWIFTTERM_EMBEDDED
     func kittyClipboardCapabilities(source: Terminal) -> KittyClipboardCapabilities {
         []
     }
@@ -9568,6 +9985,7 @@ public extension TerminalDelegate {
     ) -> Bool {
         false
     }
+#endif
     
     func notify(source: Terminal, title: String, body: String) {
     }
@@ -9578,6 +9996,6 @@ public extension TerminalDelegate {
     func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int){
     }
 
-    func createImage (source: Terminal, data: Data, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool) {
+    func createImage (source: Terminal, data: TerminalData, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool) {
     }    
 }

@@ -4,6 +4,7 @@
 //
 //  Created by Miguel de Icaza on 7/13/21.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(iOS) || os(visionOS)
 
 import Foundation
@@ -182,3 +183,5 @@ class DoubleButton: UIControl {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

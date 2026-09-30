@@ -5,6 +5,7 @@
 //
 //  Created by Miguel de Icaza on 4/21/20.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 import CoreGraphics
@@ -29,6 +30,20 @@ private func cellPixelDimension(_ points: CGFloat, scale: CGFloat) -> Int {
     guard value.isFinite else { return Int.max }
     guard value < CGFloat(Int.max) else { return Int.max }
     return max(1, Int(value))
+}
+
+func terminalPixelCount(cells: Int, cellPoints: CGFloat, scale: CGFloat) -> Int {
+    let cellPixels = cellPixelDimension(cellPoints, scale: scale)
+    let result = cells.multipliedReportingOverflow(by: cellPixels)
+    return result.overflow ? Int.max : max(1, result.partialValue)
+}
+
+func terminalDevicePixelIndex(pointOffset: CGFloat, scale: CGFloat, pixelCount: Int) -> Int {
+    guard pointOffset.isFinite, scale.isFinite, pixelCount > 1 else { return 0 }
+    let value = (pointOffset * scale).rounded(.down)
+    guard value > 0 else { return 0 }
+    guard value < CGFloat(pixelCount) else { return pixelCount - 1 }
+    return Int(value)
 }
 
 #if os(iOS) || os(visionOS)
@@ -1029,6 +1044,8 @@ public struct TerminalViewStateSnapshot: Sendable {
     public let dimensions: TerminalDimensions
     public let cursor: Position
     public let viewportRow: Int
+    /// Whether DEC private mode 2004 (bracketed paste) is enabled.
+    public let bracketedPasteMode: Bool
     public let currentBidiState: BidiPresentationState
     public let bidiArrowKeySwap: Bool
     public let cursorStyle: CursorStyle
@@ -1608,6 +1625,20 @@ extension TerminalView {
         renderOwner.dimensions()
     }
 
+    /// The kitty keyboard protocol flags the running application has enabled, as a copied value.
+    ///
+    /// A host that handles key events in front of the view needs this to know when SwiftTerm
+    /// will encode a key itself. `keyDown` is `public override` rather than `open`, so an
+    /// application that rebinds a chord does it in an event monitor ahead of the view; when the
+    /// application running in the terminal has enabled the protocol, that monitor has to stand
+    /// down and let SwiftTerm produce the real encoding. The view's own key handling reads the
+    /// same flags for the same decision.
+    ///
+    /// The flags are per-buffer: switching to the alternate buffer swaps in its own state.
+    public nonisolated var keyboardEnhancementFlags: KittyKeyboardFlags {
+        renderOwner.keyboardEnhancementFlags()
+    }
+
     /// Returns copied terminal state for status displays and diagnostics.
     public nonisolated func terminalStateSnapshot() -> TerminalViewStateSnapshot {
         renderOwner.stateSnapshot()
@@ -1619,6 +1650,22 @@ extension TerminalView {
         encoding: String.Encoding = .utf8
     ) -> Data {
         renderOwner.bufferData(kind: kind, encoding: encoding)
+    }
+
+    /// Observes copied OSC sequences as the view's terminal encounters them,
+    /// without changing how the view handles them.
+    ///
+    /// This forwards to ``Terminal/observeOscEvents(_:)`` on the terminal the
+    /// view owns, so a host can react to sequences the view does not surface
+    /// itself — desktop notifications sent with OSC 9, 99 or 777, for
+    /// instance — without access to the mutable terminal. Events are delivered
+    /// asynchronously on a private serial queue in encounter order. Retain the
+    /// returned token for as long as events are needed.
+    @MainActor
+    public func observeOscEvents(
+        _ handler: @escaping @Sendable (TerminalOscEvent) -> Void
+    ) -> TerminalOscObservation {
+        terminal.observeOscEvents(handler)
     }
 
     /// Records the light/dark preference represented by the current palette and optionally
@@ -1658,6 +1705,12 @@ extension TerminalView {
     /// Performs RIS through the normal parser feed path.
     public nonisolated func resetToInitialState() {
         feedSender.feed(text: "\u{1b}c")
+    }
+
+    /// Changes the cursor style without sending data to the host.
+    public func setCursorStyle(_ style: CursorStyle) {
+        renderOwner.setCursorStyle(style)
+        frameSignal.markDirty()
     }
 
     /// Strategy used to derive palette entries 16 through 255.
@@ -2019,9 +2072,7 @@ extension TerminalView {
         coreGraphicsRenderCache.clearColors()
 
 #if os(macOS)
-        if !isUsingMetalRenderer {
-            layer?.backgroundColor = effectiveNativeBackgroundColor.cgColor
-        }
+        updateBackingLayerBackground()
 #else
         if reverseColorsActiveValue() {
             let opacity = layer.backgroundColor?.alpha ?? 1
@@ -4481,14 +4532,28 @@ extension TerminalView {
         terminalDelegate?.send(source: self, data: bytes[...])
     }
     
-    func sendKeyUp ()
+    /// Sends the Up key with the active terminal modes.
+    public func sendKeyUp ()
     {
         send (withTerminal { $0.applicationCursor } ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
     }
     
-    func sendKeyDown ()
+    /// Sends the Down key with the active terminal modes.
+    public func sendKeyDown ()
     {
         send (withTerminal { $0.applicationCursor } ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
+    }
+
+    /// Sends the Home key with the active cursor-key mode.
+    public func sendKeyHome() {
+        send(withTerminal { $0.applicationCursor }
+             ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
+    }
+
+    /// Sends the End key with the active cursor-key mode.
+    public func sendKeyEnd() {
+        send(withTerminal { $0.applicationCursor }
+             ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
     }
 
     private func sendHorizontalKey(left: Bool) {
@@ -4507,12 +4572,14 @@ extension TerminalView {
         send(sequence)
     }
     
-    func sendKeyLeft()
+    /// Sends the Left key with the active terminal modes.
+    public func sendKeyLeft()
     {
         sendHorizontalKey(left: true)
     }
     
-    func sendKeyRight ()
+    /// Sends the Right key with the active terminal modes.
+    public func sendKeyRight ()
     {
         sendHorizontalKey(left: false)
     }
@@ -4886,3 +4953,5 @@ extension TerminalViewDelegate {
 #endif
 
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

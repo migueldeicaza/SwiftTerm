@@ -54,8 +54,8 @@ struct BuildInfoGenerator {
             withIntermediateDirectories: true
         )
 
-        try write(source, to: outputFile)
-        try write(terminfoSource, to: terminfoOutputFile)
+        try write(guardedForHostBuild(source), to: outputFile)
+        try write(guardedForHostBuild(terminfoSource), to: terminfoOutputFile)
     }
 
     /// Writes only when the content changes, so an unchanged input does not
@@ -65,6 +65,18 @@ struct BuildInfoGenerator {
         if existingSource != source {
             try source.write(to: file, atomically: true, encoding: .utf8)
         }
+    }
+
+    /// EmbeddedSupport supplies small replacements for both generated types.
+    /// Keep the plugin active for every build, but compile its output only in
+    /// the full host library.
+    private static func guardedForHostBuild(_ source: String) -> String {
+        """
+        #if !SWIFTTERM_EMBEDDED
+        \(source)
+        #endif
+
+        """
     }
 
     private static func sourceFile(

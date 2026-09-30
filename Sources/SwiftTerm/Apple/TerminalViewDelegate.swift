@@ -4,6 +4,7 @@
 //
 //  Created by Miguel de Icaza on 4/15/20.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(iOS) || os(visionOS) || os(macOS)
 import Foundation
 
@@ -180,3 +181,5 @@ public protocol TerminalViewDelegate: AnyObject {
 
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

@@ -8,6 +8,7 @@
 //
 //  Created by Miguel de Icaza on 3/4/20.
 //
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS)
 import Foundation
 import AppKit
@@ -91,6 +92,15 @@ private final class OverlayScrollerIndicator: NSView {
  *
  * Use the `configureNativeColors()` to set the defaults colors for the view to match the OS
  * defaults, otherwise, this uses its own set of defaults colors.
+ *
+ * ## Terminal ownership
+ *
+ * `TerminalView` owns its mutable `Terminal`. It does not expose that terminal.
+ * Parsing, rendering, and input can occur on different threads. Use copied reads
+ * such as ``terminalDimensions``, ``terminalStateSnapshot()``, and
+ * ``getBufferAsData(kind:encoding:)``. Use ``feed(byteArray:)`` for received
+ * output and ``send(data:)`` for user input. Use ``pasteText(_:)`` for text
+ * paste. See <doc:MigratingFrom1To2> for the complete access map.
  */
 open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     let coreGraphicsRenderCache = CoreGraphicsRenderCache()
@@ -603,6 +613,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         setupOptions()
         configureInputSender()
         configureFeedSender()
+        updateTerminalFocus()
         setupProgressBar()
     }
 
@@ -660,9 +671,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             metalView = surface
             metalBoundWindow = window
             startRenderLoopIfNeeded()
-            // Metal's clear color paints the background; if the host layer
-            // painted it too, a translucent background would composite twice
-            layer?.backgroundColor = NSColor.clear.cgColor
+            updateBackingLayerBackground()
             needsDisplay = false
             surface.requestDisplay()
         } else {
@@ -682,7 +691,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         metalView = nil
         metalDrawDelegate = nil
         metalBoundWindow = nil
-        layer?.backgroundColor = effectiveNativeBackgroundColor.cgColor
+        updateBackingLayerBackground()
         if let caretView = caretView {
             caretView.isHidden = false
             caretView.updateCursorStyle()
@@ -960,6 +969,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         super.viewDidMoveToWindow()
         guard uiShutdownState == .active else { return }
         frameDriver.bind(to: window == nil ? nil : self)
+        hasFocus = window?.firstResponder === self
+        updateTerminalFocus()
         refreshCachedViewState()
         frameDriver.markDirty()
         if window == nil {
@@ -1000,6 +1011,22 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         colorsChangedOnMain()
     }
     
+    /// AppKit keeps the first responder when a window loses key status. Terminal
+    /// focus therefore depends on both responder ownership and window activation.
+    private func updateTerminalFocus() {
+        guard uiShutdownState == .active, terminal != nil else { return }
+        let focused = hasFocus
+        // Releases can be lost when either the responder or the key window changes.
+        if !focused { kittyKeysWithReportedPress.removeAll() }
+        withTerminal { terminal in
+            if terminal.reportedFocusState != focused {
+                terminal.setTerminalFocus(focused)
+            }
+        }
+        caretView.updateCursorStyle()
+        frameDriver.markDirty()
+    }
+
     var becomeKeyObserver, resignKeyObserver: NSObjectProtocol?
     
     @MainActor
@@ -1010,10 +1037,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 forName: NSWindow.didBecomeKeyNotification,
                 object: nil,
                 queue: .main
-            ) { [weak self] _ in
+            ) { [weak self] notification in
+                let changedWindow = notification.object as? NSWindow
                 MainActor.assumeIsolated {
-                    self?.caretView.updateCursorStyle()
-                    self?.frameDriver.markDirty()
+                    guard let self, let changedWindow,
+                          self.window === changedWindow else { return }
+                    self.updateTerminalFocus()
                 }
             }
         }
@@ -1022,10 +1051,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 forName: NSWindow.didResignKeyNotification,
                 object: nil,
                 queue: .main
-            ) { [weak self] _ in
+            ) { [weak self] notification in
+                let changedWindow = notification.object as? NSWindow
                 MainActor.assumeIsolated {
-                    self?.caretView.updateCursorStyle()
-                    self?.frameDriver.markDirty()
+                    guard let self, let changedWindow,
+                          self.window === changedWindow else { return }
+                    self.updateTerminalFocus()
                 }
             }
         }
@@ -1150,11 +1181,22 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         settingBg = true
         _nativeBg = newValue
         terminal.backgroundColor = newValue.getTerminalColor()
-        metalView?.layer?.isOpaque = newValue.cgColor.alpha >= 1.0
-        layer?.backgroundColor = metalView == nil
-            ? effectiveNativeBackgroundColor.cgColor : NSColor.clear.cgColor
+        updateBackingLayerBackground()
         refreshCachedViewState()
         settingBg = false
+    }
+
+    /// Keeps an opaque terminal color behind the Metal surface so a host does
+    /// not show through before that surface obtains its first drawable. A
+    /// translucent Metal background still needs a clear host layer; otherwise
+    /// Core Animation would composite the same color and alpha twice.
+    func updateBackingLayerBackground()
+    {
+        let background = effectiveNativeBackgroundColor
+        let isOpaque = background.cgColor.alpha >= 1.0
+        metalView?.layer?.isOpaque = isOpaque
+        layer?.backgroundColor = metalView == nil || isOpaque
+            ? background.cgColor : NSColor.clear.cgColor
     }
 
     func setNativeForegroundColorFromTerminal (_ newValue: NSColor)
@@ -1235,8 +1277,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         set {
             let clamped = max (0.0, min (1.0, newValue))
             nativeBackgroundColor = _nativeBg.withAlphaComponent (clamped)
-            // CAMetalLayer defaults to opaque; it must composite when translucent
-            metalView?.layer?.isOpaque = clamped >= 1.0
             colorsChanged ()
         }
     }
@@ -1727,8 +1767,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let response = super.becomeFirstResponder()
         if response {
             hasFocus = true
-            caretView.updateCursorStyle()
-            withTerminal { $0.setTerminalFocus(true) }
+            updateTerminalFocus()
         }
         return response
     }
@@ -1738,10 +1777,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if response {
             caretView.disableAnimations()
             hasFocus = false
-            withTerminal { $0.setTerminalFocus(false) }
-            // Key-up events for keys held across a focus change do not
-            // arrive. Do not let their entries suppress a later release.
-            kittyKeysWithoutReportedPress.removeAll()
+            updateTerminalFocus()
         }
         return response
     }
@@ -1970,7 +2006,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     private var pendingKittyKeyEvent: PendingKittyKeyEvent?
     private var kittyIsComposing = false
-    private var kittyKeysWithoutReportedPress: Set<UInt16> = []
     /// The key code of the last key that the input method interpreted
     /// during a preedit. Cleared by the next key down or by its key up.
     private var kittyComposingKeyCode: UInt16?
@@ -1987,20 +2022,57 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     // doCommand/noop: - but more research needs to take place to figure out the priority
     // of those keys.
     //
+    public override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // AppKit offers key equivalents to every view in the window, so only
+        // the focused terminal can take the key for its program.
+        guard event.type == .keyDown,
+              let window, window.isKeyWindow, window.firstResponder === self,
+              event.modifierFlags.contains(.command),
+              withTerminal({ !$0.keyboardEnhancementFlags.isEmpty }),
+              shouldSendCommandKeyToTerminal?(event) == true else {
+            return super.performKeyEquivalent(with: event)
+        }
+        keyDown(with: event)
+        return true
+    }
+
     public override func keyDown(with event: NSEvent) {
         kittyComposingKeyCode = nil
         if !event.isARepeat {
-            kittyKeysWithoutReportedPress.remove(event.keyCode)
+            kittyKeysWithReportedPress.remove(event.keyCode)
         }
+        let keyboardEnhancementFlags = withTerminal { $0.keyboardEnhancementFlags }
+        let terminalOwnsCommandKey = !keyboardEnhancementFlags.isEmpty
+            && event.modifierFlags.contains(.command)
+            && shouldSendCommandKeyToTerminal?(event) == true
+        // The host menu owns its shortcuts. If AppKit reaches keyDown before
+        // running a menu action, give the menu a chance before clearing the
+        // selection or encoding the key for the terminal application.
+        if event.modifierFlags.contains(.command),
+           !terminalOwnsCommandKey,
+           NSApp.mainMenu?.performKeyEquivalent(with: event) == true {
+            return
+        }
+        let previousKeyDownCode = kittyKeyDownCode
+        kittyKeyDownCode = event.keyCode
+        defer { kittyKeyDownCode = previousKeyDownCode }
         withTerminal { _ in
             selection.active = false
         }
         let eventFlags = event.modifierFlags
 
-        let terminalState = withTerminal { terminal in
-            (terminal.keyboardEnhancementFlags, terminal.applicationCursor)
+        let applicationCursor = withTerminal { $0.applicationCursor }
+
+        let isOptionAsMetaShortcut = eventFlags.contains([.option, .command])
+            && event.charactersIgnoringModifiers == "o"
+        if !keyboardEnhancementFlags.isEmpty,
+           eventFlags.contains(.command),
+           (!isOptionAsMetaShortcut || terminalOwnsCommandKey),
+           let kittyEvent = kittyKeyEvent(from: event,
+                                          eventType: event.isARepeat ? .repeatPress : .press),
+           sendKittyEvent(kittyEvent) {
+            return
         }
-        let keyboardEnhancementFlags = terminalState.0
 
         if keyboardEnhancementFlags.isEmpty,
            eventFlags.contains(.command),
@@ -2016,7 +2088,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
             let isUnmodifiedPageKey = (functionKey == .pageUp || functionKey == .pageDown)
                 && modifiers.intersection([.shift, .alt, .ctrl]).isEmpty
-                && !terminalState.1
+                && !applicationCursor
             if isUnmodifiedPageKey {
                 if functionKey == .pageUp {
                     pageUp()
@@ -2043,7 +2115,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 optionAsMetaKey.toggle()
                 // No press was reported for this key, so its release must
                 // not be reported either.
-                kittyKeysWithoutReportedPress.insert(event.keyCode)
                 return
             }
 
@@ -2056,7 +2127,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             // commit text or issue a command while it interprets this event. Do
             // not send the physical key as a second event.
             if kittyIsComposing {
-                kittyKeysWithoutReportedPress.insert(event.keyCode)
                 kittyComposingKeyCode = event.keyCode
                 interpretKeyEvents([event])
                 return
@@ -2224,14 +2294,14 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if kittyComposingKeyCode == event.keyCode {
             kittyComposingKeyCode = nil
         }
-        if kittyKeysWithoutReportedPress.remove(event.keyCode) != nil {
+        let hadReportedPress = kittyKeysWithReportedPress.remove(event.keyCode) != nil
+        if !hadReportedPress {
             super.keyUp(with: event)
             return
         }
         let flags = withTerminal { $0.keyboardEnhancementFlags }
         // Every key whose press reached the application gets a release,
-        // including plain text keys. Keys that sent no press are in
-        // kittyKeysWithoutReportedPress and returned above.
+        // including plain text keys.
         if flags.contains(.reportEvents),
            let kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
             if !flags.contains(.reportAllKeys),
@@ -2364,10 +2434,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         default:
             // Nothing is sent for this key. Under the kitty protocol its
             // release must not be reported without a press.
-            if let pending = pendingKittyKeyEvent {
-                kittyKeysWithoutReportedPress.insert(pending.event.keyCode)
-                pendingKittyKeyEvent = nil
-            }
+            pendingKittyKeyEvent = nil
             print ("Unhandle selector \(selector)")
         }
     }
@@ -2423,7 +2490,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                    !pendingEvent.event.modifierFlags.contains(.control),
                    !pendingEvent.event.modifierFlags.contains(.command),
                    isPlainPrintableText(text) {
-                    kittyKeysWithoutReportedPress.insert(pendingEvent.event.keyCode)
                     send(txt: text)
                     return
                 }
@@ -2436,7 +2502,16 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 } else {
                     kittyEvent = kittyTextEventFromText(text)
                 }
-                _ = sendKittyEvent(kittyEvent)
+                let wasSent = sendKittyEvent(kittyEvent)
+                if wasSent,
+                   terminalState.contains(.reportEvents),
+                   let pendingEvent {
+                    if case .none = kittyEvent.key {
+                        // Committed text has no physical key to release.
+                    } else {
+                        kittyKeysWithReportedPress.insert(pendingEvent.event.keyCode)
+                    }
+                }
                 return
             }
             send (txt: str as String)
@@ -2476,10 +2551,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     // NSTextInputClient protocol implementation
     open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        if let pendingKittyKeyEvent {
-            kittyKeysWithoutReportedPress.insert(pendingKittyKeyEvent.event.keyCode)
-            self.pendingKittyKeyEvent = nil
-        }
+        pendingKittyKeyEvent = nil
         switch string {
         case let attributed as NSAttributedString:
             markedTextStorage = attributed.length > 0 ? attributed : nil
@@ -3008,8 +3080,19 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     @discardableResult
     private func sendKittyEvent(_ event: KittyKeyEvent) -> Bool {
-        guard let bytes = kittyEncoder().encode(event) else { return false }
+        let encoder = kittyEncoder()
+        guard let bytes = encoder.encode(event) else { return false }
         send(bytes)
+        if encoder.flags.contains(.reportEvents),
+           event.eventType != .release,
+           let keyCode = kittyKeyDownCode {
+            switch event.key {
+            case .none:
+                break
+            default:
+                kittyKeysWithReportedPress.insert(keyCode)
+            }
+        }
         return true
     }
 
@@ -3023,10 +3106,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                                   baseLayoutKey: nil,
                                   composing: kittyIsComposing)
         guard sendKittyEvent(event) else { return false }
+        if eventType != .release,
+           withTerminal({ $0.keyboardEnhancementFlags.contains(.reportEvents) }),
+           let pending = pendingKittyKeyEvent {
+            kittyKeysWithReportedPress.insert(pending.event.keyCode)
+        }
         // The input method forwarded the key that ended the preedit as a
         // command. Its press is now reported, so its release must be too.
         if let composingKeyCode = kittyComposingKeyCode {
-            kittyKeysWithoutReportedPress.remove(composingKeyCode)
+            if withTerminal({ $0.keyboardEnhancementFlags.contains(.reportEvents) }) {
+                kittyKeysWithReportedPress.insert(composingKeyCode)
+            }
         }
         return true
     }
@@ -3398,10 +3488,24 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     {
         terminal.terminalLock.preconditionLocked()
         func toInt (_ p: NSPoint) -> Position {
-
-            let x = min (max (p.x, 0), bounds.width)
-            let y = min (max (p.y, 0), bounds.height)
-            return Position (col: Int (x), row: Int (bounds.height-y))
+            let scale = backingScaleFactor()
+            let width = terminalPixelCount(
+                cells: terminal.cols,
+                cellPoints: cellDimension.width,
+                scale: scale)
+            let height = terminalPixelCount(
+                cells: terminal.rows,
+                cellPoints: cellDimension.height,
+                scale: scale)
+            return Position(
+                col: terminalDevicePixelIndex(
+                    pointOffset: p.x - bounds.minX,
+                    scale: scale,
+                    pixelCount: width),
+                row: terminalDevicePixelIndex(
+                    pointOffset: bounds.maxY - p.y,
+                    scale: scale,
+                    pixelCount: height))
         }
         let displayBuffer = terminal.displayBuffer
         let col = Int (point.x / cellDimension.width)
@@ -3518,19 +3622,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var pointerPressSnapshot = SemanticPromptPointerSnapshot(
         selectionWasActive: false, didDrag: false, clickCount: 0,
         pressWasSemanticEligible: false)
-    private var pendingSemanticClick: DispatchWorkItem?
-    var semanticClickCoalescingDelay: TimeInterval = NSEvent.doubleClickInterval
-    /// Number of times a semantic-prompt click deferral was scheduled. Used by
-    /// tests to confirm the F.5 pre-gate skips scheduling when routing cannot
-    /// apply.
-    private(set) var semanticDeferralScheduleCount = 0
-    var semanticClickPendingForTesting: Bool {
-        pendingSemanticClick != nil
-    }
-
+    private var pointerPressPoint: CGPoint?
+    private var pointerPressGrid: Position?
+    // Keep the viewport cell so output scrolling cannot look like pointer movement.
+    private var pointerPressScreenGrid: Position?
     open override func mouseDown(with event: NSEvent) {
-        pendingSemanticClick?.cancel()
-        pendingSemanticClick = nil
         didSelectionDrag = false
         previousPressureStage = 0
         forceClickHandledForCurrentPress = false
@@ -3540,21 +3636,26 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 didDrag: false,
                 clickCount: event.clickCount,
                 pressWasSemanticEligible: false)
-            let pressLocation = calculateMouseHitLocked(
-                at: convert(event.locationInWindow, from: nil)).grid
+            let pressPoint = convert(event.locationInWindow, from: nil)
+            let pressLocation = calculateMouseHitLocked(at: pressPoint).grid
+            pointerPressPoint = pressPoint
+            pointerPressGrid = pressLocation
+            pointerPressScreenGrid = Position(
+                col: pressLocation.col,
+                row: pressLocation.row - terminal.displayBuffer.yDisp)
             terminal.beginPrimaryPointerPress(at: pressLocation)
             if allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event) && terminal.mouseMode.sendButtonPress() {
                 return true
             }
             pointerPressSnapshot.pressWasSemanticEligible = true
-            let hit = calculateMouseHitLocked(at: convert(event.locationInWindow, from: nil)).grid
+            let hit = pressLocation
             switch event.clickCount {
             case 1:
                 if selection.active == true {
                     if event.modifierFlags.contains(.shift) {
                         selection.shiftExtend(bufferPosition: Position(col: hit.col, row: hit.row))
                     } else {
-                        selection.active = false
+                        selection.selectNone()
                     }
                 }
             case 2:
@@ -3583,11 +3684,25 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     var didSelectionDrag: Bool = false
+
+    private func isSelectionDrag(to point: CGPoint, hit: Position, yDisp: Int) -> Bool {
+        guard let pressPoint = pointerPressPoint,
+              let pressScreenGrid = pointerPressScreenGrid else {
+            return false
+        }
+        let screenGrid = Position(col: hit.col, row: hit.row - yDisp)
+        if screenGrid != pressScreenGrid { return true }
+        let threshold = max(3, min(cellDimension.width, cellDimension.height) / 2)
+        return hypot(point.x - pressPoint.x, point.y - pressPoint.y) >= threshold
+    }
     
     open override func mouseUp(with event: NSEvent) {
         defer {
             didSelectionDrag = false
             pointerPressSnapshot.pressWasSemanticEligible = false
+            pointerPressPoint = nil
+            pointerPressGrid = nil
+            pointerPressScreenGrid = nil
             forceClickHandledForCurrentPress = false
             withTerminal { terminal in
                 terminal.endPrimaryPointerPress()
@@ -3596,7 +3711,30 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         stopSelectionAutoScrollTimer()
         autoScrollDelta = 0
         lastSelectionDragPoint = nil
-        let hit = calculateMouseHit(with: event).grid
+        let releasePoint = convert(event.locationInWindow, from: nil)
+        let (hit, startedDrag) = withTerminal { terminal -> (Position, Bool) in
+            let hit = calculateMouseHitLocked(at: releasePoint).grid
+            guard !didSelectionDrag, !forceClickHandledForCurrentPress,
+                  !(allowMouseReporting &&
+                    !shiftBypassesMouseReportingLocked(for: event) &&
+                    terminal.mouseMode != .off),
+                  isSelectionDrag(to: releasePoint, hit: hit,
+                                  yDisp: terminal.displayBuffer.yDisp) else {
+                return (hit, false)
+            }
+            if selection.active {
+                selection.dragExtend(bufferPosition: hit)
+            } else if let pressGrid = pointerPressGrid {
+                selection.setSoftStart(bufferPosition: pressGrid)
+                selection.startSelection()
+                selection.dragExtend(bufferPosition: hit)
+            }
+            return (hit, true)
+        }
+        if startedDrag {
+            didSelectionDrag = true
+            setNeedsDisplay(bounds)
+        }
         updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
         if !forceClickHandledForCurrentPress,
            !didSelectionDrag,
@@ -3611,51 +3749,22 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
         guard !forceClickHandledForCurrentPress else { return }
 
-        // The semantic route runs last, after the double-click interval.
-        // A second press cancels this work before word selection completes.
+        // Route a single click on release. Later presses still select words
+        // or rows according to their click count.
         var snapshot = pointerPressSnapshot
         snapshot.didDrag = didSelectionDrag
         guard snapshot.clickCount == 1 else { return }
         let modifiers = semanticPromptModifiers(for: event)
-        // F.5: don't schedule the deferral (retaining a line and arming a
-        // timer for the full double-click interval) when routing can never
-        // apply — before any OSC 133, when disabled, not armed, no click mode,
-        // or the gesture disqualifies. Eligibility is re-derived at fire time
-        // too; this only skips pointless scheduling.
-        let hitLine = withTerminal { terminal -> BufferLine? in
+        let handled = withTerminal { terminal -> Bool in
+            snapshot.selectionIsActiveAtRelease = selection.active
             guard terminal.mightRouteSemanticPromptClick(modifiers: modifiers,
                                                           snapshot: snapshot) else {
-                return nil
+                return false
             }
-            return terminal.bufferLine(atRow: hit.row)
+            return terminal.handleSemanticPromptClick(
+                at: hit, modifiers: modifiers, snapshot: snapshot)
         }
-        guard let hitLine else { return }
-        semanticDeferralScheduleCount += 1
-        // Capture the clicked line's identity, not its absolute row: the row
-        // index shifts if scrollback trims during the coalescing delay, so
-        // re-resolve it at fire time and drop the click if the line is gone.
-        let hitColumn = hit.col
-        let hitGeneration = hitLine.recycleGeneration
-        let workItem = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.pendingSemanticClick = nil
-            let handled = self.withTerminal { terminal in
-                guard let resolvedRow = terminal.semanticRow(forLineIdentity: hitLine,
-                                                              recycleGeneration: hitGeneration) else {
-                    return false
-                }
-                return terminal.handleSemanticPromptClick(
-                    at: Position(col: hitColumn, row: resolvedRow),
-                    modifiers: modifiers,
-                    snapshot: snapshot)
-            }
-            if handled {
-                self.setNeedsDisplay(self.bounds)
-            }
-        }
-        pendingSemanticClick = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + semanticClickCoalescingDelay,
-                                      execute: workItem)
+        if handled { setNeedsDisplay(bounds) }
 
         #if DEBUG
         // let hit = calculateMouseHit(with: event)
@@ -3665,9 +3774,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     open override func mouseDragged(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
         let dragInfo = withTerminal { terminal -> (hit: Position, displayYDisp: Int, displayRows: Int, handled: Bool) in
             let displayBuffer = terminal.displayBuffer
-            let mouseHit = calculateMouseHitLocked(at: convert(event.locationInWindow, from: nil))
+            let mouseHit = calculateMouseHitLocked(at: point)
             let hit = mouseHit.grid
             if allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event) {
                 if terminal.mouseMode.sendButtonTracking() {
@@ -3681,11 +3791,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 }
             }
 
+            if !didSelectionDrag &&
+                !isSelectionDrag(to: point, hit: hit, yDisp: displayBuffer.yDisp) {
+                return (hit, displayBuffer.yDisp, displayBuffer.rows, true)
+            }
+
             if selection.active {
                 selection.dragExtend(bufferPosition: Position(col: hit.col, row: hit.row))
             } else {
-                selection.setSoftStart(bufferPosition: Position(col: hit.col, row: hit.row))
+                selection.setSoftStart(bufferPosition: pointerPressGrid ?? hit)
                 selection.startSelection()
+                selection.dragExtend(bufferPosition: hit)
             }
             return (hit, displayBuffer.yDisp, displayBuffer.rows, false)
         }
@@ -3693,7 +3809,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
         didSelectionDrag = true
-        lastSelectionDragPoint = convert(event.locationInWindow, from: nil)
+        lastSelectionDragPoint = point
         autoScrollDelta = 0
         let screenRow = dragInfo.hit.row - dragInfo.displayYDisp
         if withTerminal({ _ in selection.active }) {
@@ -4243,7 +4359,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// terminal lock: `shouldTrackMouse` ran 1 611 times in one measured run.
     nonisolated private let mouseModeState = Locked(Terminal.MouseMode.off)
 
-    var currentMouseMode: Terminal.MouseMode {
+    /// The mouse reporting mode the program in the terminal last asked for,
+    /// `.off` when it has none. Hosts that give a click their own meaning, such
+    /// as a control-click context menu, can check it to leave the click to the
+    /// program while it is tracking the mouse. Reading it does not take the
+    /// terminal lock.
+    public var currentMouseMode: Terminal.MouseMode {
         mouseModeState.withLock { $0 }
     }
 
@@ -4523,6 +4644,14 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     // Keep new stored properties at the end of the class. Moving the existing
     // render-path fields changes their Release layout and can reduce throughput.
     nonisolated let kittyClipboardBridge = AppleKittyClipboardBridge()
+
+    /// Return true to give a Command key equivalent to the terminal program
+    /// when it has enabled the enhanced keyboard protocol. The default lets
+    /// the host menu handle its shortcuts first.
+    public var shouldSendCommandKeyToTerminal: ((NSEvent) -> Bool)?
+
+    private var kittyKeysWithReportedPress: Set<UInt16> = []
+    private var kittyKeyDownCode: UInt16?
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}
@@ -4632,3 +4761,5 @@ final class DictationOverlayTextView: NSTextView {
     }
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED

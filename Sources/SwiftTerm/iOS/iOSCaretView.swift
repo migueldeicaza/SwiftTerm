@@ -6,6 +6,7 @@
 //  Created by Miguel de Icaza on 3/20/20.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(iOS) || os(visionOS)
 import Foundation
 import UIKit
@@ -181,3 +182,5 @@ class CaretView: UIView {
 
 }
 #endif
+
+#endif // !SWIFTTERM_EMBEDDED
