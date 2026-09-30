@@ -19,7 +19,7 @@
 //          --instrument os_signpost --launch -- <binary>
 //
 
-#if !SWIFTTERM_EMBEDDED
+#if !SWIFTTERM_EMBEDDED && !os(WASI)
 import Foundation
 
 #if canImport(os)
@@ -591,4 +591,4 @@ enum Profiling {
     }
 }
 
-#endif // !SWIFTTERM_EMBEDDED
+#endif // !SWIFTTERM_EMBEDDED && !os(WASI)
