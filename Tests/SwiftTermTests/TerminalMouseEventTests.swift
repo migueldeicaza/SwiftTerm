@@ -31,7 +31,7 @@ struct TerminalMouseEventTests {
         let modes = "\u{1b}[?1000h" + (protocolMode == 0 ? "" : "\u{1b}[?\(protocolMode)h")
         view.feed(text: modes)
         terminal.feed(text: modes)
-        for button in [0, 1, 2, 4, 5] {
+        for button in [0, 1, 2, 4, 5, 6, 7] {
             for release in [false, true] {
                 let flags = terminal.encodeButton(button: button, release: release,
                                                    shift: true, meta: true, control: true)

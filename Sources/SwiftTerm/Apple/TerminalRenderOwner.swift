@@ -293,7 +293,7 @@ final class TerminalRenderOwner: Sendable {
                          control: Bool, col: Int, row: Int,
                          pixelX: Int?, pixelY: Int?) -> [UInt8]? {
         switch button {
-        case 0, 1, 2, 4, 5: break
+        case 0, 1, 2, 4, 5, 6, 7: break
         default: return nil
         }
         guard col >= 0, row >= 0, col <= Int.max - 33, row <= Int.max - 33,
