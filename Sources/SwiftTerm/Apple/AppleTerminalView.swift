@@ -317,6 +317,16 @@ struct ViewLineSegment {
 /// constants, so adding them to a batch dictionary allocates nothing.
 let ltrWritingDirectionKey = NSAttributedString.Key(kCTWritingDirectionAttributeName as String)
 let ltrWritingDirectionValue: [NSNumber] = [NSNumber(value: 2)]
+/// A left-to-right paragraph. Without it CoreText picks the paragraph
+/// direction from the first strong character, or from the process's default
+/// direction when there is none, and in a right-to-left paragraph it moves
+/// trailing whitespace to the left edge, ahead of the overridden text.
+/// Never mutated after creation, so sharing it across threads is safe.
+nonisolated(unsafe) let ltrParagraphStyle: NSParagraphStyle = {
+    let style = NSMutableParagraphStyle()
+    style.baseWritingDirection = .leftToRight
+    return style
+}()
 
 /// Checked-Sendable names for the CoreText attributes used by the draw pass.
 fileprivate struct CoreTextRunAttributeNames: Sendable {
@@ -2613,8 +2623,6 @@ extension TerminalView {
         snapshotRow.bidiLayout = TerminalBidi.layout(
             row: row, buffer: terminal.displayBuffer, cols: cols,
             terminal: terminal, font: fontSet.normal, hostPolicy: bidiHostPolicy)
-        snapshotRow.needsDirectionOverride = snapshotRow.bidiLayout != nil ||
-            TerminalBidi.mayNeedBidi(line: line, cols: cols, terminal: terminal)
         var column = 0
         while column < min(cols, line.count) {
             let cell = line.packedView(at: column)
