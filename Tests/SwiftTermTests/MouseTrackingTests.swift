@@ -30,12 +30,54 @@ private final class ResponseDroppingTerminalView: TerminalView {
         responses.withLock { $0.append(Array(data)) }
     }
 }
+
+private final class MouseModeChangingDragView: TerminalView {
+    var receivedPrimaryDrag = false
+
+    override func mouseDragged(with event: NSEvent) {
+        receivedPrimaryDrag = true
+        // This makes the old right-button dispatch lose mouse tracking before
+        // the primary handler takes the terminal lock again.
+        feed(text: "\u{1b}[?1002l\u{1b}[?1003l")
+        super.mouseDragged(with: event)
+    }
+}
 #endif
 
 struct MouseTrackingTests {
     private let esc = "\u{1b}"
 
 #if os(macOS)
+    @Test @MainActor func copiedMouseModeTracksProtocolChanges() {
+        let view = TerminalView(frame: .zero)
+        #expect(view.currentMouseMode == .off)
+        view.feed(text: "\(esc)[?1000h")
+        #expect(view.currentMouseMode == .vt200)
+        view.feed(text: "\(esc)[?1002h")
+        #expect(view.currentMouseMode == .buttonEventTracking)
+        view.feed(text: "\(esc)[?1003h")
+        #expect(view.currentMouseMode == .anyEvent)
+        view.resetToInitialState()
+        #expect(view.currentMouseMode == .off)
+    }
+
+    @Test @MainActor func appKitMouseButtonsUseTerminalButtonOrder() throws {
+        let view = TerminalView(frame: .zero)
+        for (appKitButton, terminalButton) in [(0, 0), (1, 2), (2, 1)] {
+            let event = try #require(NSEvent.mouseEvent(
+                with: .leftMouseDown, location: .zero, modifierFlags: [],
+                timestamp: 0, windowNumber: 0, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: 1
+            ))
+            let cgEvent = try #require(event.cgEvent)
+            cgEvent.setIntegerValueField(.mouseEventButtonNumber, value: Int64(appKitButton))
+            let buttonEvent = try #require(NSEvent(cgEvent: cgEvent))
+            #expect(view.encodeMouseEvent(with: buttonEvent) == terminalButton)
+            #expect(view.encodeMouseEvent(with: buttonEvent, overwriteRelease: true)
+                == (3 | (terminalButton << 8)))
+        }
+    }
+
     @MainActor private func waitForTerminalViewCallbacks() async {
         await withCheckedContinuation { continuation in
             DispatchQueue.main.async { continuation.resume() }
@@ -47,6 +89,59 @@ struct MouseTrackingTests {
         while delegate.sentData.isEmpty, ContinuousClock.now < deadline {
             await Task.yield()
         }
+    }
+
+    @Test(arguments: [1002, 1003]) @MainActor
+    func rightButtonDragDoesNotUsePrimaryDragHandler(mode: Int) async throws {
+        let view = MouseModeChangingDragView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let window = NSWindow(
+            contentRect: view.frame, styleMask: .borderless,
+            backing: .buffered, defer: false
+        )
+        window.contentView = view
+        let delegate = MouseMotionCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.feed(text: String(repeating: "row\r\n", count: 100))
+
+        func mouseEvent(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
+            let event = try #require(NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil,
+                eventNumber: 1, clickCount: 1, pressure: 1
+            ))
+            if type == .leftMouseDown || type == .leftMouseUp { return event }
+            let cgEvent = try #require(event.cgEvent)
+            cgEvent.setIntegerValueField(.mouseEventButtonNumber, value: 1)
+            return try #require(NSEvent(cgEvent: cgEvent))
+        }
+
+        let pressPoint = CGPoint(x: 1.5 * view.cellDimension.width,
+                                 y: view.bounds.maxY - 1.5 * view.cellDimension.height)
+        let leftRelease = try mouseEvent(.leftMouseUp, at: pressPoint)
+        view.mouseDown(with: try mouseEvent(.leftMouseDown, at: pressPoint))
+        defer { view.mouseUp(with: leftRelease) }
+        view.feed(text: "\(esc)[?\(mode)h\(esc)[?1006h")
+
+        let dragPoint = CGPoint(x: 5.5 * view.cellDimension.width,
+                                y: view.bounds.maxY + 4 * view.cellDimension.height)
+        let drag = try mouseEvent(.rightMouseDragged, at: dragPoint)
+        view.rightMouseDragged(with: drag)
+        await waitForTerminalViewCallbacks()
+
+        let expected = "\(esc)[<34;6;1M"
+        #expect(String(decoding: delegate.sentData.flatMap { $0 }, as: UTF8.self) == expected)
+        #expect(!view.receivedPrimaryDrag)
+        #expect(!view.didSelectionDrag)
+        #expect(!view.selectionActive)
+
+        view.feed(text: "\(esc)[?\(mode)l")
+        view.rightMouseDragged(with: drag)
+        view.rightMouseUp(with: try mouseEvent(.rightMouseUp, at: dragPoint))
+        await waitForTerminalViewCallbacks()
+        #expect(String(decoding: delegate.sentData.flatMap { $0 }, as: UTF8.self) == expected)
+        #expect(!view.receivedPrimaryDrag)
+        #expect(!view.didSelectionDrag)
+        #expect(!view.selectionActive)
     }
 
     @Test @MainActor func tripleClickDragExtendsByCompleteRows() {

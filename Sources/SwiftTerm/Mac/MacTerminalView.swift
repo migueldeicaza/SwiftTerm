@@ -3467,8 +3467,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         terminal.terminalLock.preconditionLocked()
         let flags = event.modifierFlags
         let isReleaseEvent = overwriteRelease || [NSEvent.EventType.leftMouseUp, .otherMouseUp, .rightMouseUp].contains(event.type)
-        
-        return terminal.encodeButton(button: event.buttonNumber, release: isReleaseEvent, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
+        // AppKit numbers the right button as 1 and the middle button as 2.
+        // Terminal mouse protocols use the reverse order.
+        let button: Int
+        switch event.buttonNumber {
+        case 1: button = 2
+        case 2: button = 1
+        default: button = event.buttonNumber
+        }
+        return terminal.encodeButton(button: button, release: isReleaseEvent, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
     }
     
     func calculateMouseHit (with event: NSEvent) -> (grid: Position, pixels: Position)
@@ -3674,6 +3681,49 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         setNeedsDisplay(bounds)
     }
     
+    open override func rightMouseDown(with event: NSEvent) {
+        let shouldReport = withTerminal { terminal in
+            allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event)
+                && terminal.mouseMode.sendButtonPress()
+        }
+        if shouldReport {
+            sharedMouseEvent(with: event)
+        } else {
+            super.rightMouseDown(with: event)
+        }
+    }
+
+    open override func rightMouseUp(with event: NSEvent) {
+        let shouldReport = withTerminal { terminal in
+            allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event)
+                && terminal.mouseMode.sendButtonRelease()
+        }
+        if shouldReport {
+            sharedMouseEvent(with: event)
+        } else {
+            super.rightMouseUp(with: event)
+        }
+    }
+
+    open override func rightMouseDragged(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let reported = withTerminal { terminal -> Bool in
+            guard allowMouseReporting,
+                  !shiftBypassesMouseReportingLocked(for: event),
+                  terminal.mouseMode.sendButtonTracking() else { return false }
+            let displayBuffer = terminal.displayBuffer
+            let hit = calculateMouseHitLocked(at: point)
+            let flags = encodeMouseEventLocked(with: event)
+            let screenRow = max(0, min(displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
+            terminal.sendMotion(buttonFlags: flags, x: hit.grid.col, y: screenRow,
+                                pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+            return true
+        }
+        if !reported {
+            super.rightMouseDragged(with: event)
+        }
+    }
+
     func getPayload (for event: NSEvent) -> Any?
     {
         let hit = calculateMouseHit(with: event).grid
