@@ -8532,7 +8532,8 @@ open class Terminal {
             data.append(0)
             return
         }
-        if ch < 127 {
+        // Like xterm, values below 128 are a single byte.
+        if ch < 128 {
             data.append (UInt8(ch))
         } else {
             let rc = ch > 2047 ? 2047 : ch
