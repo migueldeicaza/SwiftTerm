@@ -62,8 +62,9 @@ scripts/build-wasm.sh embedded --smoke --release --run
 `SWIFTTERM_WEB_WASM=1` adds the browser reactor. The traits select the core source path;
 `SWIFTTERM_WEB_FULL` is no longer used. `Wasm` alone selects Full even when
 that environment variable is absent. The two variants are separate: do not combine
-`Wasm` and `Embedded`. Existing manual `--traits Embedded,Wasm` commands must
-change to `--traits Embedded --disable-default-traits`; the build script interface is unchanged.
+`Wasm` and `Embedded`. Existing manual `swift build --traits Embedded,Wasm`
+commands must now run with `SWIFTTERM_EMBEDDED_WASM=1` in the environment and pass
+`--traits Embedded --disable-default-traits`; the build script interface is unchanged.
 The default `PortableGraphics` trait supplies PNG and zlib dependencies for native
 Linux and Windows. `Wasm` enables it explicitly. `Embedded` builds must omit it;
 the script disables default traits for this variant. Consumers of the native package do not acquire these executable
