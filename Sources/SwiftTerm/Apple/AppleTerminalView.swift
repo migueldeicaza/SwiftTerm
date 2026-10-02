@@ -2433,10 +2433,10 @@ extension TerminalView {
             var next: ClosedRange<Int>? = nil
             if !buffer.lines.isEmpty {
                 let maxRow = buffer.lines.count - 1
-                let visibleStart = buffer.yDisp
-                let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
-                let fallback = visibleStart <= visibleEnd
-                    ? visibleStart...visibleEnd : nil
+                // The full-redraw fallback must use the real visible
+                // range — the viewport can show a partial row above
+                // yDisp, which a yDisp-derived range would skip.
+                let fallback = metalVisibleRange()
                 if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
                     let absStart = buffer.yDisp + rowStart
                     let absEnd = buffer.yDisp + rowEnd
