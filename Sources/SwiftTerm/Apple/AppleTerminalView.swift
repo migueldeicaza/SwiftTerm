@@ -664,8 +664,15 @@ extension TerminalView {
         guard terminal != nil else { return [] }
         let buffer = terminal.displayBuffer
         guard !buffer.lines.isEmpty else { return [] }
-        let first = max(0, buffer.yDisp)
-        let last = min(buffer.lines.count, first + buffer.rows)
+        var first = max(0, buffer.yDisp)
+        var last = min(buffer.lines.count, first + buffer.rows)
+        #if (os(iOS) || os(visionOS)) && canImport(MetalKit)
+        // The iOS viewport can show a partial row above yDisp.
+        if metalView != nil, let visible = metalVisibleRange() {
+            first = min(first, visible.lowerBound)
+            last = max(last, visible.upperBound + 1)
+        }
+        #endif
         guard first < last else { return [] }
         var result: [Int] = []
         for row in first..<last {
@@ -710,18 +717,38 @@ extension TerminalView {
         textBlinkTimer?.invalidate()
         textBlinkTimer = nil
         textBlinkVisible = visible
-        let buffer = terminal.displayBuffer
         for row in visibleBlinkRows() {
-            terminal.updateRange(borrowing: buffer, row - buffer.yDisp)
+            invalidateAbsoluteRow(row)
         }
     }
 
     private func invalidateTextBlinkRows(_ absoluteRows: [Int]) {
-        let buffer = terminal.displayBuffer
         for row in absoluteRows {
-            terminal.updateRange(borrowing: buffer, row - buffer.yDisp)
+            invalidateAbsoluteRow(row)
         }
         queuePendingDisplay()
+    }
+
+    /// Marks an absolute buffer row for redraw.  `updateRange` is relative to
+    /// yDisp, so it cannot express a row the iOS viewport shows partially
+    /// above it; that row goes straight into the Metal dirty range.
+    func invalidateAbsoluteRow(_ row: Int) {
+        let buffer = terminal.displayBuffer
+        let screenRow = row - buffer.yDisp
+        if screenRow >= 0 && screenRow < terminal.rows {
+            terminal.updateRange(borrowing: buffer, screenRow)
+            return
+        }
+        #if (os(iOS) || os(visionOS)) && canImport(MetalKit)
+        if metalView != nil, let visible = metalVisibleRange(), visible.contains(row) {
+            if let prev = metalDirtyRange {
+                metalDirtyRange = min(prev.lowerBound, row)...max(prev.upperBound, row)
+            } else {
+                metalDirtyRange = row...row
+            }
+            requestMetalDisplay()
+        }
+        #endif
     }
     
     public func hostCurrentDirectoryUpdated (source: Terminal)
@@ -1363,12 +1390,7 @@ extension TerminalView {
 
     func invalidateLinkHighlightRow(_ bufferRow: Int)
     {
-        let displayBuffer = terminal.displayBuffer
-        let screenRow = bufferRow - displayBuffer.yDisp
-        guard screenRow >= 0 && screenRow < terminal.rows else {
-            return
-        }
-        terminal.updateRange(borrowing: displayBuffer, screenRow)
+        invalidateAbsoluteRow(bufferRow)
     }
 
     func linkVisibleForClick(match: Terminal.LinkMatch, hasCommandModifier: Bool) -> Bool
@@ -2423,8 +2445,36 @@ extension TerminalView {
         // life data being fed into it.
         #if canImport(MetalKit)
         if metalView != nil {
-            metalDirtyRange = metalVisibleRange()
+            // Dirty the touched rows, not the whole grid — the macOS
+            // branch's math, unioned with any pending dirt
+            // (selectionChanged sets the full range on its own async
+            // path — assigning here could clobber it before the draw).
+            // The row cache still backstops via line identity +
+            // generation, so a missed row can't ghost.
             let buffer = terminal.displayBuffer
+            var next: ClosedRange<Int>? = nil
+            if !buffer.lines.isEmpty {
+                let maxRow = buffer.lines.count - 1
+                // The full-redraw fallback must use the real visible
+                // range — the viewport can show a partial row above
+                // yDisp, which a yDisp-derived range would skip.
+                let fallback = metalVisibleRange()
+                if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
+                    let absStart = buffer.yDisp + rowStart
+                    let absEnd = buffer.yDisp + rowEnd
+                    let clampedStart = max(0, min(absStart, maxRow))
+                    let clampedEnd = max(0, min(absEnd, maxRow))
+                    next = clampedStart <= clampedEnd
+                        ? clampedStart...clampedEnd : fallback
+                } else {
+                    next = fallback
+                }
+            }
+            if let prev = metalDirtyRange, let n = next {
+                metalDirtyRange = min(prev.lowerBound, n.lowerBound)...max(prev.upperBound, n.upperBound)
+            } else {
+                metalDirtyRange = next
+            }
             lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
             requestMetalDisplay()
         } else {
