@@ -759,6 +759,9 @@ final class LocalProcessLifecycleTests: XCTestCase {
         let fd = process.childfd
         let pid = process.shellPid
         XCTAssertGreaterThan(pid, 0)
+        XCTAssertTrue(waitUntil(timeout: 2) {
+            tcgetpgrp(fd) == pid
+        }, "Timed out waiting for child \(pid) to own the foreground PTY group; last value was \(tcgetpgrp(fd))")
         XCTAssertEqual(tcgetpgrp(fd), pid, "The child must own the foreground PTY group")
         var attributes = termios()
         XCTAssertEqual(tcgetattr(fd, &attributes), 0)
