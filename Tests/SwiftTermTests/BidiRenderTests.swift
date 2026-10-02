@@ -102,6 +102,49 @@ final class BidiRenderTests {
         #expect(explicitText.hasSuffix("םולש"))
     }
 
+    @Test func rowsWithoutStrongCharactersKeepLeftToRightOrder() throws {
+        // Digits, spaces and punctuation have no strong direction, so CoreText
+        // lays such a row out in the default paragraph direction, which is
+        // right to left in a process running in Arabic or Hebrew. The test
+        // simulates that process by giving every range without a paragraph
+        // style a right-to-left one.
+        let directionKey = NSAttributedString.Key(kCTWritingDirectionAttributeName as String)
+        let view = makeView(feed: "1  2  3\r\n[#####     ] 50%")
+        for row in 0..<2 {
+            let info = view.withTerminal { terminal in
+                view.buildAttributedStringLocked(row: row, line: terminal.buffer.lines[row],
+                                                 cols: terminal.cols)
+            }
+            let segment = try #require(info.segments.first)
+            let string = segment.attributedString
+            #expect((string.attribute(directionKey, at: 0, effectiveRange: nil) as? [NSNumber])
+                        == [NSNumber(value: 2)])
+            let style = string.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+            #expect(style?.baseWritingDirection == .leftToRight)
+
+            // The first cell starts at the left edge, and cells keep their order.
+            let text = string.string as NSString
+            let line = CTLineCreateWithAttributedString(rightToLeftByDefault(string))
+            #expect(CTLineGetOffsetForStringIndex(line, 0, nil) == 0)
+            let later = text.range(of: row == 0 ? "3" : "5").location
+            #expect(CTLineGetOffsetForStringIndex(line, later, nil)
+                        > CTLineGetOffsetForStringIndex(line, 1, nil))
+        }
+    }
+
+    func rightToLeftByDefault(_ string: NSAttributedString) -> NSAttributedString {
+        let result = NSMutableAttributedString(attributedString: string)
+        let rightToLeft = NSMutableParagraphStyle()
+        rightToLeft.baseWritingDirection = .rightToLeft
+        let whole = NSRange(location: 0, length: result.length)
+        string.enumerateAttribute(.paragraphStyle, in: whole) { value, range, _ in
+            if value == nil {
+                result.addAttribute(.paragraphStyle, value: rightToLeft, range: range)
+            }
+        }
+        return result
+    }
+
     @Test func explicitRTLStoresApplicationCellsAndReversesThemForDisplay() {
         let source = "321 cba אבג :LTR ticilpxe"
         let view = makeView(feed: "\u{1b}[8l\u{1b}[2 k" + source)
