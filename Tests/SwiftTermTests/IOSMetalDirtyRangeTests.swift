@@ -1,8 +1,9 @@
 import XCTest
-import MetalKit
 @testable import SwiftTerm
 
 #if canImport(UIKit)
+import MetalKit
+
 /// Upstream migueldeicaza/SwiftTerm#731 review: an iOS viewport can
 /// show a partial row above `buffer.yDisp`. A full redraw (a color
 /// change drives `updateFullScreen`, whose `rowEnd == rows` fails the
@@ -52,6 +53,46 @@ final class IOSMetalDirtyRangeTests: XCTestCase {
 
         XCTAssertEqual(view.metalDirtyRange, visible,
                        "full redraw must cover the partial top row")
+    }
+
+    /// Feeds 60 lines with row `blinkRow` in SGR 5, then scrolls so row 22
+    /// is the partial row above yDisp = 23.
+    private func makeScrolledView(blinkRow: Int? = nil) throws -> TerminalView {
+        let view = TerminalView(
+            frame: CGRect(x: 0, y: 0, width: 400, height: 200),
+            options: TerminalOptions(cols: 40, rows: 8, scrollback: 80))
+        view.metalView = MTKView(frame: view.bounds,
+                                 device: MTLCreateSystemDefaultDevice())
+        for i in 0..<60 {
+            view.feed(text: i == blinkRow ? "\u{1b}[5mline \(i)\u{1b}[0m\r\n" : "line \(i)\r\n")
+        }
+        view.terminal.clearUpdateRange()
+        view.terminal.setViewYDisp(23)
+        view.contentOffset = CGPoint(x: 0, y: 22.5 * view.cellDimension.height)
+        view.metalDirtyRange = nil
+        XCTAssertEqual(try XCTUnwrap(view.metalVisibleRange()).lowerBound, 22)
+        return view
+    }
+
+    /// Review round 2: a blink phase change must redraw blinking text in
+    /// the partial top row, which a yDisp-relative scan never reaches.
+    func testBlinkChangeDirtiesPartialTopRow() throws {
+        let view = try makeScrolledView(blinkRow: 22)
+        XCTAssertEqual(view.visibleBlinkRows(), [22])
+
+        view.setTextBlinkVisibleForTesting(false)
+        view.updateDisplay(notifyAccessibility: false)
+
+        XCTAssertTrue(view.metalDirtyRange?.contains(22) ?? false,
+                      "blink change must dirty the partial top row")
+    }
+
+    /// Same class: a link highlight on the partial top row.
+    func testLinkHighlightDirtiesPartialTopRow() throws {
+        let view = try makeScrolledView()
+        view.invalidateLinkHighlightRow(22)
+        XCTAssertTrue(view.metalDirtyRange?.contains(22) ?? false,
+                      "link highlight must dirty the partial top row")
     }
 }
 #endif
