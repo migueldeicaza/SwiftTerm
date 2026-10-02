@@ -2423,8 +2423,36 @@ extension TerminalView {
         // life data being fed into it.
         #if canImport(MetalKit)
         if metalView != nil {
-            metalDirtyRange = metalVisibleRange()
+            // Dirty the touched rows, not the whole grid — the macOS
+            // branch's math, unioned with any pending dirt
+            // (selectionChanged sets the full range on its own async
+            // path — assigning here could clobber it before the draw).
+            // The row cache still backstops via line identity +
+            // generation, so a missed row can't ghost.
             let buffer = terminal.displayBuffer
+            var next: ClosedRange<Int>? = nil
+            if !buffer.lines.isEmpty {
+                let maxRow = buffer.lines.count - 1
+                let visibleStart = buffer.yDisp
+                let visibleEnd = min(maxRow, buffer.yDisp + buffer.rows - 1)
+                let fallback = visibleStart <= visibleEnd
+                    ? visibleStart...visibleEnd : nil
+                if rowStart >= 0 && rowEnd >= rowStart && rowEnd < terminal.rows {
+                    let absStart = buffer.yDisp + rowStart
+                    let absEnd = buffer.yDisp + rowEnd
+                    let clampedStart = max(0, min(absStart, maxRow))
+                    let clampedEnd = max(0, min(absEnd, maxRow))
+                    next = clampedStart <= clampedEnd
+                        ? clampedStart...clampedEnd : fallback
+                } else {
+                    next = fallback
+                }
+            }
+            if let prev = metalDirtyRange, let n = next {
+                metalDirtyRange = min(prev.lowerBound, n.lowerBound)...max(prev.upperBound, n.upperBound)
+            } else {
+                metalDirtyRange = next
+            }
             lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
             requestMetalDisplay()
         } else {
