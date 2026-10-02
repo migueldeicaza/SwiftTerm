@@ -1,4 +1,5 @@
 import XCTest
+import MetalKit
 @testable import SwiftTerm
 
 #if canImport(UIKit)
@@ -17,7 +18,13 @@ final class IOSMetalDirtyRangeTests: XCTestCase {
         let view = TerminalView(
             frame: CGRect(x: 0, y: 0, width: 400, height: 200),
             options: TerminalOptions(cols: 40, rows: rows, scrollback: 80))
-        try view.setUseMetal(true)
+        // A bare MTKView is enough: the flagged branch keys on
+        // `metalView != nil` and `requestMetalDisplay()` only calls
+        // `setNeedsDisplay`. Going through `setUseMetal(true)` would
+        // need the shader library, which is not staged for the test
+        // runner — and is not what this test covers.
+        view.metalView = MTKView(frame: view.bounds,
+                                 device: MTLCreateSystemDefaultDevice())
 
         for i in 0..<60 {
             view.feed(text: "line \(i)\r\n")
