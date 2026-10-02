@@ -329,6 +329,22 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func visibleRowsText(_ rows: Range<Int>) -> [String] {
+        guard let terminal = currentSession()?.terminal else { return [] }
+        return terminal.terminalLock.withLock {
+            // The snapshot's own conversion, row for row: a wide glyph's continuation cell is
+            // skipped and every other unwritten cell reads as a space, never a NUL.
+            let buffer = terminal.displayBuffer
+            let screen = 0..<max(0, terminal.rows)
+            return rows.clamped(to: screen).compactMap { row -> String? in
+                let lineIndex = buffer.yDisp + row
+                guard lineIndex >= 0, lineIndex < buffer.lines.count else { return nil }
+                return terminal.translateBufferLineToString(buffer: buffer, line: lineIndex, start: 0, end: -1)
+                    .replacingOccurrences(of: "\u{0}", with: " ")
+            }
+        }
+    }
+
     func bufferData(kind: Terminal.BufferKind,
                     encoding: String.Encoding) -> Data {
         guard let terminal = currentSession()?.terminal else { return Data() }
