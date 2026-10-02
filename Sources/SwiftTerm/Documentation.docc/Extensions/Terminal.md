@@ -16,7 +16,9 @@ with a headless backend, or with a custom renderer. All input flows through the
 Use ``terminalLock`` to serialize direct access from different threads. The
 bundled views and ``HeadlessTerminal`` manage this lock for their operations.
 When you use a `Terminal` directly, hold the lock while you feed, query, or
-change terminal state.
+change terminal state, except for methods that explicitly copy state under one
+terminal lock themselves, such as ``inputStateSnapshot()``,
+``contentSnapshot(region:)``, and ``makeRenderSnapshot(scope:)``.
 
 ## Topics
 
@@ -59,6 +61,8 @@ change terminal state.
 - ``buffer``
 - ``BufferKind``
 - ``isCurrentBufferAlternate``
+- ``inputStateSnapshot()``
+- ``contentSnapshot(region:)``
 - ``getBufferAsData(kind:encoding:)``
 - ``getText(start:end:)``
 - ``getCharData(col:row:)``

@@ -48,6 +48,13 @@ buffer lines or cells. A `.full` snapshot includes the complete viewport. A
 ``TerminalRenderSnapshot/lines`` when it is not clean. The normal dirty range
 uses viewport rows, while the scroll-invariant range uses buffer rows.
 
+For bounded content inspection that should not mutate damage state, use
+``Terminal/contentSnapshot(region:)`` instead. It can copy the viewport or a
+bounded history window with scroll-invariant row numbers, but intentionally
+omits renderer-only details such as images, hyperlinks, and palette values.
+It takes ``Terminal/terminalLock`` itself, so do not call it from code that
+already holds that lock or from a terminal delegate callback.
+
 For a direct native host, serialize its feed, input, render, and damage-clear
 operations with the terminal lock (or a single host executor). Do not clear
 damage before a frame is successfully drawn. If drawing is asynchronous, clear

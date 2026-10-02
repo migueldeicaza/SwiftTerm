@@ -1008,17 +1008,6 @@ struct GlyphMetrics {
 
 private let terminalFramePresentedHandler = LockedVoidCallback()
 
-/// The current terminal grid size.
-public struct TerminalDimensions: Sendable, Equatable {
-    public let cols: Int
-    public let rows: Int
-
-    public init(cols: Int, rows: Int) {
-        self.cols = cols
-        self.rows = rows
-    }
-}
-
 /// A copied row from the visible terminal region.
 public struct TerminalVisibleRowSnapshot: Sendable, Equatable {
     public let row: Int
@@ -1051,6 +1040,28 @@ public struct TerminalViewStateSnapshot: Sendable {
     public let cursorStyle: CursorStyle
     public let ansi256PaletteStrategy: Ansi256PaletteStrategy
     public let visibleRows: [TerminalVisibleRowSnapshot]
+
+    public init(
+        dimensions: TerminalDimensions,
+        cursor: Position,
+        viewportRow: Int,
+        bracketedPasteMode: Bool,
+        currentBidiState: BidiPresentationState,
+        bidiArrowKeySwap: Bool,
+        cursorStyle: CursorStyle,
+        ansi256PaletteStrategy: Ansi256PaletteStrategy,
+        visibleRows: [TerminalVisibleRowSnapshot]
+    ) {
+        self.dimensions = dimensions
+        self.cursor = cursor
+        self.viewportRow = viewportRow
+        self.bracketedPasteMode = bracketedPasteMode
+        self.currentBidiState = currentBidiState
+        self.bidiArrowKeySwap = bidiArrowKeySwap
+        self.cursorStyle = cursorStyle
+        self.ansi256PaletteStrategy = ansi256PaletteStrategy
+        self.visibleRows = visibleRows
+    }
 }
 
 /// Delivers input to one main-actor sink in FIFO order.
@@ -1642,6 +1653,31 @@ extension TerminalView {
     /// Returns copied terminal state for status displays and diagnostics.
     public nonisolated func terminalStateSnapshot() -> TerminalViewStateSnapshot {
         renderOwner.stateSnapshot()
+    }
+
+    /// Copies input modes and dimensions without copying any rows.
+    ///
+    /// Safe to call from any thread, but not from a terminal delegate callback
+    /// that already holds the terminal lock.
+    /// Returns nil when no terminal session is attached.
+    public nonisolated func terminalInputStateSnapshot() -> TerminalInputStateSnapshot? {
+        renderOwner.inputStateSnapshot()
+    }
+
+    /// Copies a bounded region and its input state in one transaction.
+    ///
+    /// Safe to call from any thread, but not from a terminal delegate callback
+    /// that already holds the terminal lock.
+    ///
+    /// The snapshot is useful for inspection and bounded text capture. It does
+    /// not include images, hyperlinks, or palette values, and is not sufficient
+    /// to reproduce the full display.
+    /// Returns nil when no terminal session is attached. The returned values
+    /// remain valid after later feeds, resizes, scrolls, and history trimming.
+    public nonisolated func terminalContentSnapshot(
+        region: TerminalContentRegion
+    ) -> TerminalContentSnapshot? {
+        renderOwner.contentSnapshot(region: region)
     }
 
     /// Copies terminal buffer contents without exposing the mutable terminal.
