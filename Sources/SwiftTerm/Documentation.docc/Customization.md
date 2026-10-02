@@ -57,6 +57,50 @@ terminalView.caretColor = NSColor.systemGreen
 terminalView.caretTextColor = NSColor.black  // optional: text color under cursor
 ```
 
+Applications can set or query these additional dynamic colors:
+
+| OSC | Color | ``TerminalDynamicColor`` |
+| --- | --- | --- |
+| 13 | Pointer foreground | `pointerForeground` |
+| 14 | Pointer background | `pointerBackground` |
+| 15 | Tektronix foreground | `tektronixForeground` |
+| 16 | Tektronix background | `tektronixBackground` |
+| 17 | Selection background | `highlightBackground` |
+| 18 | Tektronix cursor | `tektronixCursor` |
+| 19 | Selection foreground | `highlightForeground` |
+
+Use `?` as the color value to query a color. The reply ends with the same
+terminator as the request (BEL or ST).
+
+Separate multiple values with semicolons. Each value sets or queries the next
+OSC color number, through OSC 19. For example, `OSC 10;#000000;#ffffff` sets
+the foreground and the background. As in Ghostty, the terminal:
+
+* Skips empty values. An empty value does not use a color number, so
+  `OSC 10;;#000000` sets the foreground, not the background.
+* Stops at the first value that it cannot parse, and ignores the values
+  after it.
+
+The terminal stores explicit colors and reports them in `rgb:rrrr/gggg/bbbb`
+format. Without an explicit color, it uses the host's default from
+``TerminalDelegate/getDynamicColor(source:target:)``. If the host returns nil,
+the pointer background, the Tektronix background and the selection foreground
+use the terminal background. The other targets use the terminal foreground.
+
+OSC 113 through OSC 119 reset the related color to the host default.
+A full reset (RIS) resets all seven colors. The host can reset a color with
+``Terminal/resetDynamicColor(_:)``. If another thread feeds the terminal, call
+it inside `terminalLock.withLock`. On the Apple views, call
+`terminalView.resetDynamicColor(_:)`, which takes the lock for you.
+
+The Apple views draw the selection with the OSC 17 and OSC 19 colors until a
+reset. These colors do not change `selectedTextBackgroundColor` or
+`selectedTextForegroundColor`. The views use the system pointer and do not
+render the Tektronix colors. To apply these colors, implement
+``TerminalViewDelegate/dynamicColorChanged(source:target:color:)``. Other hosts
+can implement ``TerminalDelegate/setDynamicColor(source:target:color:)``.
+A nil color tells the host to use its default color again.
+
 ## Cursor Style
 
 The cursor style is typically controlled by the remote application via escape

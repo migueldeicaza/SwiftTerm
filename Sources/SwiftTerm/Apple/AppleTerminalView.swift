@@ -140,6 +140,18 @@ struct FrameFontSet: Sendable {
     }
 }
 
+extension Color {
+    /// Makes a terminal color from sRGB components in the range 0 to 1.
+    /// The initializer clamps each component to that range, because
+    /// extended-sRGB conversions can give values outside it.
+    convenience init(nativeRed red: CGFloat, green: CGFloat, blue: CGFloat) {
+        func component(_ value: CGFloat) -> UInt16 {
+            UInt16(min(max(value, 0), 1) * 65535)
+        }
+        self.init(red: component(red), green: component(green), blue: component(blue))
+    }
+}
+
 /// An sRGB color captured on the main actor and rebuilt by the render owner.
 struct FrameColor: Sendable, Hashable {
     let red: CGFloat
@@ -190,6 +202,11 @@ struct FrameColor: Sendable, Hashable {
         self.green = min(max(green, 0), 1)
         self.blue = min(max(blue, 0), 1)
         self.alpha = min(max(alpha, 0), 1)
+    }
+
+    /// The color without alpha.
+    var terminalColor: Color {
+        Color(nativeRed: red, green: green, blue: blue)
     }
 
     var nativeColor: TTColor {
@@ -251,8 +268,8 @@ final class FrameCaptureCache {
         let current = [
             view.effectiveNativeForegroundColor,
             view.effectiveNativeBackgroundColor,
-            view.selectedTextBackgroundColor,
-            view.selectedTextForegroundColor,
+            view.effectiveSelectedTextBackgroundColor,
+            view.effectiveSelectedTextForegroundColor,
             view.effectiveCaretColor,
             view.effectiveCaretTextColor
         ]
@@ -1216,7 +1233,7 @@ struct TerminalViewCrossThreadState: Sendable {
     var cachedCellPointSize: CGSize?
     var cachedImageScale: CGFloat?
     var cachedCellPixelSize: (width: Int, height: Int)?
-    var cachedNativeColors: (foreground: Color, background: Color)?
+    var cachedHighlightColors: (foreground: Color, background: Color)?
     var scrolledDirty = false
 }
 
@@ -1544,6 +1561,7 @@ extension TerminalView {
     func setupOptions(width: CGFloat, height: CGFloat)
     {
         resetCaches ()
+        refreshCachedHighlightColors()
         // Calculation assume that all glyphs in the font have the same advancement.
         // Get the ascent + descent + leading from the font, already scaled for the font's size
         self.cellDimension = computeFontDimensions ()
@@ -1851,18 +1869,10 @@ extension TerminalView {
         } else {
             pixelSize = nil
         }
-        let nativeColors: (foreground: Color, background: Color)?
-        if _nativeFg != nil && _nativeBg != nil {
-            nativeColors = (nativeForegroundColor.getTerminalColor(), nativeBackgroundColor.getTerminalColor())
-        } else {
-            nativeColors = nil
-        }
-
         crossThreadState.withLock { state in
             state.cachedCellPointSize = currentCellDimension
             state.cachedImageScale = imageScale
             state.cachedCellPixelSize = pixelSize
-            state.cachedNativeColors = nativeColors
         }
     }
 
@@ -1878,9 +1888,23 @@ extension TerminalView {
             cellPixelDimension(cellDimension.height, scale: scale))
     }
 
-    nonisolated func cachedNativeColorsValue () -> (foreground: Color, background: Color)?
-    {
-        crossThreadState.withLock { $0.cachedNativeColors }
+    /// The selection colors that the renderer uses: the OSC 17 and 19 colors
+    /// when the application set them, otherwise the configured colors.
+    var effectiveSelectedTextBackgroundColor: TTColor {
+        oscSelectedTextBackgroundColor ?? selectedTextBackgroundColor
+    }
+
+    var effectiveSelectedTextForegroundColor: TTColor {
+        oscSelectedTextForegroundColor ?? selectedTextForegroundColor
+    }
+
+    /// Stores the configured selection colors for OSC 17 and 19 queries.
+    /// Call this again when the appearance changes, because dynamic colors
+    /// resolve to different values in light and dark mode.
+    func refreshCachedHighlightColors() {
+        let colors = (foreground: FrameColor(selectedTextForegroundColor, view: self).terminalColor,
+                      background: FrameColor(selectedTextBackgroundColor, view: self).terminalColor)
+        crossThreadState.withLock { $0.cachedHighlightColors = colors }
     }
 
     nonisolated func cachedImageMetricsValue () -> (cellSize: CGSize, imageScale: CGFloat)?
@@ -2397,7 +2421,46 @@ extension TerminalView {
 
     public nonisolated func getColors (source: Terminal) -> (foreground: Color, background: Color)
     {
-        cachedNativeColorsValue() ?? (source.foregroundColor, source.backgroundColor)
+        // The terminal colors are current: the native color setters update
+        // them at once, and an OSC 10 or 11 sets them before the view sees
+        // the change on the main thread.
+        (source.foregroundColor, source.backgroundColor)
+    }
+
+    /// Removes the color that the application set with OSC 13 through OSC 19,
+    /// so that the default color applies again.
+    public func resetDynamicColor(_ target: TerminalDynamicColor) {
+        withTerminal { $0.resetDynamicColor(target) }
+    }
+
+    public nonisolated func setDynamicColor(source: Terminal, target: TerminalDynamicColor, color: Color?) {
+        onMain { [weak self] in
+            guard let self else { return }
+            // Keep the configured selection colors, so that a reset can restore them.
+            let nativeColor = color.map { TTColor.make(color: $0) }
+            switch target {
+            case .highlightBackground:
+                self.oscSelectedTextBackgroundColor = nativeColor
+            case .highlightForeground:
+                self.oscSelectedTextForegroundColor = nativeColor
+            default:
+                self.terminalDelegate?.dynamicColorChanged(source: self, target: target, color: color)
+                return
+            }
+            self.withTerminal { $0.updateFullScreen() }
+            self.frameDriver.markDirty()
+            self.terminalDelegate?.dynamicColorChanged(source: self, target: target, color: color)
+        }
+    }
+
+    public nonisolated func getDynamicColor(source: Terminal, target: TerminalDynamicColor) -> Color? {
+        crossThreadState.withLock { state in
+            switch target {
+            case .highlightBackground: return state.cachedHighlightColors?.background
+            case .highlightForeground: return state.cachedHighlightColors?.foreground
+            default: return nil
+            }
+        }
     }
 
     public nonisolated func notify(source: Terminal, title: String, body: String)
@@ -4884,6 +4947,8 @@ struct ProgramScrollRouting {
 }
 
 extension TerminalViewDelegate {
+    public func dynamicColorChanged(source: TerminalView, target: TerminalDynamicColor, color: Color?) {}
+
     public func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
         []
     }

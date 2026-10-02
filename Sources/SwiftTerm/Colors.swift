@@ -10,6 +10,53 @@
 import Foundation
 #endif
 
+/// The dynamic colors that OSC 13 through OSC 19 set or query.
+public enum TerminalDynamicColor: CaseIterable, Sendable {
+    /// OSC 13
+    case pointerForeground
+    /// OSC 14
+    case pointerBackground
+    /// OSC 15
+    case tektronixForeground
+    /// OSC 16
+    case tektronixBackground
+    /// OSC 17
+    case highlightBackground
+    /// OSC 18
+    case tektronixCursor
+    /// OSC 19
+    case highlightForeground
+
+    /// The OSC command number that sets or queries this color.
+    public var oscCode: Int {
+        switch self {
+        case .pointerForeground: return 13
+        case .pointerBackground: return 14
+        case .tektronixForeground: return 15
+        case .tektronixBackground: return 16
+        case .highlightBackground: return 17
+        case .tektronixCursor: return 18
+        case .highlightForeground: return 19
+        }
+    }
+
+    init?(oscCode: Int) {
+        guard let target = TerminalDynamicColor.allCases.first(where: { $0.oscCode == oscCode }) else {
+            return nil
+        }
+        self = target
+    }
+
+    /// True when the color uses the terminal background when no other color applies.
+    /// The other colors use the terminal foreground.
+    var defaultsToBackground: Bool {
+        switch self {
+        case .pointerBackground, .tektronixBackground, .highlightForeground: return true
+        default: return false
+        }
+    }
+}
+
 /// Strategy used to derive the 256-color palette from the first 16 ANSI colors.
 public enum Ansi256PaletteStrategy: Sendable {
     /// Keep the historical xterm 6x6x6 cube + grayscale ramp.

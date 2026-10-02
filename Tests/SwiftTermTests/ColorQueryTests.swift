@@ -40,11 +40,12 @@ final class ColorQueryTests {
         terminal.foregroundColor = Color(red: 0x1111, green: 0x2222, blue: 0x3333)
         terminal.backgroundColor = Color(red: 0x4444, green: 0x5555, blue: 0x6666)
 
+        // A reply uses the same terminator as its request.
         terminal.feed(text: "\u{1b}]10;?\u{07}")
-        terminal.feed(text: "\u{1b}]11;?\u{07}")
+        terminal.feed(text: "\u{1b}]11;?\u{1b}\\")
 
         #expect(delegate.sent.count == 2)
-        #expect(delegate.sent[0] == bytes("\u{1b}]10;rgb:1111/2222/3333\u{1b}\\"))
+        #expect(delegate.sent[0] == bytes("\u{1b}]10;rgb:1111/2222/3333\u{07}"))
         #expect(delegate.sent[1] == bytes("\u{1b}]11;rgb:4444/5555/6666\u{1b}\\"))
     }
 
