@@ -42,6 +42,24 @@ private final class MouseModeChangingDragView: TerminalView {
         super.mouseDragged(with: event)
     }
 }
+
+private final class OtherMouseFallbackView: NSView {
+    var downEvents = 0
+    var draggedEvents = 0
+    var upEvents = 0
+
+    override func otherMouseDown(with event: NSEvent) {
+        downEvents += 1
+    }
+
+    override func otherMouseDragged(with event: NSEvent) {
+        draggedEvents += 1
+    }
+
+    override func otherMouseUp(with event: NSEvent) {
+        upEvents += 1
+    }
+}
 #endif
 
 struct MouseTrackingTests {
@@ -89,6 +107,178 @@ struct MouseTrackingTests {
         while delegate.sentData.isEmpty, ContinuousClock.now < deadline {
             await Task.yield()
         }
+    }
+
+    @MainActor private func makeMouseReportingView()
+        -> (
+            view: TerminalView,
+            window: NSWindow,
+            delegate: MouseMotionCapturingDelegate,
+            fallback: OtherMouseFallbackView
+        )
+    {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let fallback = OtherMouseFallbackView(frame: view.frame)
+        fallback.addSubview(view)
+        let window = NSWindow(
+            contentRect: view.frame, styleMask: .borderless,
+            backing: .buffered, defer: false
+        )
+        window.contentView = fallback
+        let delegate = MouseMotionCapturingDelegate()
+        view.terminalDelegate = delegate
+        return (view, window, delegate, fallback)
+    }
+
+    @MainActor private func appKitMouseEvent(
+        _ type: NSEvent.EventType,
+        buttonNumber: Int,
+        at point: CGPoint,
+        in window: NSWindow,
+        modifiers: NSEvent.ModifierFlags = []
+    ) throws -> NSEvent {
+        let event = try #require(NSEvent.mouseEvent(
+            with: type, location: point, modifierFlags: modifiers, timestamp: 0,
+            windowNumber: window.windowNumber, context: nil,
+            eventNumber: 1, clickCount: 1, pressure: 1
+        ))
+        let cgEvent = try #require(event.cgEvent)
+        cgEvent.setIntegerValueField(.mouseEventButtonNumber, value: Int64(buttonNumber))
+        return try #require(NSEvent(cgEvent: cgEvent))
+    }
+
+    @Test @MainActor func middleButtonReportsDownDragAndUpInSGRMode() async throws {
+        let (view, window, delegate, fallback) = makeMouseReportingView()
+        view.feed(text: "\(esc)[?1002h\(esc)[?1006h")
+        await waitForTerminalViewCallbacks()
+
+        let downPoint = CGPoint(x: 1.5 * view.cellDimension.width,
+                                y: view.bounds.maxY - 1.5 * view.cellDimension.height)
+        let dragPoint = CGPoint(x: 4.5 * view.cellDimension.width,
+                                y: view.bounds.maxY - 0.5 * view.cellDimension.height)
+        let downHit = view.calculateMouseHit(at: downPoint).grid
+        let dragHit = view.calculateMouseHit(at: dragPoint).grid
+
+        view.otherMouseDown(with: try appKitMouseEvent(.otherMouseDown, buttonNumber: 2,
+                                                       at: downPoint, in: window))
+        view.otherMouseDragged(with: try appKitMouseEvent(.otherMouseDragged, buttonNumber: 2,
+                                                          at: dragPoint, in: window))
+        view.otherMouseUp(with: try appKitMouseEvent(.otherMouseUp, buttonNumber: 2,
+                                                     at: dragPoint, in: window))
+        await waitForSentData(from: delegate)
+        await waitForTerminalViewCallbacks()
+
+        let expected = "\(esc)[<1;\(downHit.col + 1);\(downHit.row + 1)M"
+            + "\(esc)[<33;\(dragHit.col + 1);\(dragHit.row + 1)M"
+            + "\(esc)[<1;\(dragHit.col + 1);\(dragHit.row + 1)m"
+        #expect(String(decoding: delegate.sentData.flatMap { $0 }, as: UTF8.self) == expected)
+        #expect(fallback.downEvents == 0)
+        #expect(fallback.draggedEvents == 0)
+        #expect(fallback.upEvents == 0)
+    }
+
+    @Test @MainActor func disabledMouseReportingDoesNotReportMiddleButton() async throws {
+        let (view, window, delegate, fallback) = makeMouseReportingView()
+        view.allowMouseReporting = false
+        view.feed(text: "\(esc)[?1002h\(esc)[?1006h")
+        await waitForTerminalViewCallbacks()
+
+        let point = CGPoint(x: 1.5 * view.cellDimension.width,
+                            y: view.bounds.maxY - 1.5 * view.cellDimension.height)
+        view.otherMouseDown(with: try appKitMouseEvent(.otherMouseDown, buttonNumber: 2,
+                                                       at: point, in: window))
+        view.otherMouseDragged(with: try appKitMouseEvent(.otherMouseDragged, buttonNumber: 2,
+                                                          at: point, in: window))
+        view.otherMouseUp(with: try appKitMouseEvent(.otherMouseUp, buttonNumber: 2,
+                                                     at: point, in: window))
+        await waitForTerminalViewCallbacks()
+
+        #expect(delegate.sentData.isEmpty)
+        #expect(fallback.downEvents == 1)
+        #expect(fallback.draggedEvents == 1)
+        #expect(fallback.upEvents == 1)
+    }
+
+    @Test @MainActor func shiftBypassDoesNotReportMiddleButton() async throws {
+        let (view, window, delegate, fallback) = makeMouseReportingView()
+        view.feed(text: "\(esc)[?1002h\(esc)[?1006h")
+        await waitForTerminalViewCallbacks()
+
+        let point = CGPoint(x: 1.5 * view.cellDimension.width,
+                            y: view.bounds.maxY - 1.5 * view.cellDimension.height)
+        view.otherMouseDown(with: try appKitMouseEvent(.otherMouseDown, buttonNumber: 2,
+                                                       at: point, in: window, modifiers: .shift))
+        view.otherMouseDragged(with: try appKitMouseEvent(.otherMouseDragged, buttonNumber: 2,
+                                                          at: point, in: window, modifiers: .shift))
+        view.otherMouseUp(with: try appKitMouseEvent(.otherMouseUp, buttonNumber: 2,
+                                                     at: point, in: window, modifiers: .shift))
+        await waitForTerminalViewCallbacks()
+
+        #expect(delegate.sentData.isEmpty)
+        #expect(fallback.downEvents == 1)
+        #expect(fallback.draggedEvents == 1)
+        #expect(fallback.upEvents == 1)
+    }
+
+    @Test @MainActor func vt200ModeDoesNotReportMiddleButtonDrag() async throws {
+        let (view, window, delegate, fallback) = makeMouseReportingView()
+        view.feed(text: "\(esc)[?1000h\(esc)[?1006h")
+        await waitForTerminalViewCallbacks()
+
+        let point = CGPoint(x: 1.5 * view.cellDimension.width,
+                            y: view.bounds.maxY - 1.5 * view.cellDimension.height)
+        view.otherMouseDragged(with: try appKitMouseEvent(.otherMouseDragged, buttonNumber: 2,
+                                                          at: point, in: window))
+        await waitForTerminalViewCallbacks()
+
+        #expect(delegate.sentData.isEmpty)
+        #expect(fallback.downEvents == 0)
+        #expect(fallback.draggedEvents == 1)
+        #expect(fallback.upEvents == 0)
+    }
+
+    @Test @MainActor func x10ModeReportsMiddleButtonPressOnly() async throws {
+        let (view, window, delegate, fallback) = makeMouseReportingView()
+        view.feed(text: "\(esc)[?9h\(esc)[?1006h")
+        await waitForTerminalViewCallbacks()
+
+        let point = CGPoint(x: 1.5 * view.cellDimension.width,
+                            y: view.bounds.maxY - 1.5 * view.cellDimension.height)
+        let hit = view.calculateMouseHit(at: point).grid
+        view.otherMouseDown(with: try appKitMouseEvent(.otherMouseDown, buttonNumber: 2,
+                                                       at: point, in: window))
+        view.otherMouseUp(with: try appKitMouseEvent(.otherMouseUp, buttonNumber: 2,
+                                                     at: point, in: window))
+        await waitForSentData(from: delegate)
+        await waitForTerminalViewCallbacks()
+
+        let expected = "\(esc)[<1;\(hit.col + 1);\(hit.row + 1)M"
+        #expect(String(decoding: delegate.sentData.flatMap { $0 }, as: UTF8.self) == expected)
+        #expect(fallback.downEvents == 0)
+        #expect(fallback.draggedEvents == 0)
+        #expect(fallback.upEvents == 1)
+    }
+
+    @Test(arguments: [3, 4]) @MainActor
+    func higherOtherMouseButtonsAreNotMouseReports(buttonNumber: Int) async throws {
+        let (view, window, delegate, fallback) = makeMouseReportingView()
+        view.feed(text: "\(esc)[?1002h\(esc)[?1006h")
+        await waitForTerminalViewCallbacks()
+
+        let point = CGPoint(x: 1.5 * view.cellDimension.width,
+                            y: view.bounds.maxY - 1.5 * view.cellDimension.height)
+        view.otherMouseDown(with: try appKitMouseEvent(.otherMouseDown, buttonNumber: buttonNumber,
+                                                       at: point, in: window))
+        view.otherMouseDragged(with: try appKitMouseEvent(.otherMouseDragged, buttonNumber: buttonNumber,
+                                                          at: point, in: window))
+        view.otherMouseUp(with: try appKitMouseEvent(.otherMouseUp, buttonNumber: buttonNumber,
+                                                     at: point, in: window))
+        await waitForTerminalViewCallbacks()
+
+        #expect(delegate.sentData.isEmpty)
+        #expect(fallback.downEvents == 1)
+        #expect(fallback.draggedEvents == 1)
+        #expect(fallback.upEvents == 1)
     }
 
     @Test(arguments: [1002, 1003]) @MainActor

@@ -3682,11 +3682,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     open override func rightMouseDown(with event: NSEvent) {
-        let shouldReport = withTerminal { terminal in
-            allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event)
-                && terminal.mouseMode.sendButtonPress()
-        }
-        if shouldReport {
+        if shouldReportMouseEvent(with: event, when: { $0.sendButtonPress() }) {
             sharedMouseEvent(with: event)
         } else {
             super.rightMouseDown(with: event)
@@ -3694,11 +3690,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     open override func rightMouseUp(with event: NSEvent) {
-        let shouldReport = withTerminal { terminal in
-            allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event)
-                && terminal.mouseMode.sendButtonRelease()
-        }
-        if shouldReport {
+        if shouldReportMouseEvent(with: event, when: { $0.sendButtonRelease() }) {
             sharedMouseEvent(with: event)
         } else {
             super.rightMouseUp(with: event)
@@ -3706,8 +3698,24 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     open override func rightMouseDragged(with event: NSEvent) {
+        if !reportAuxiliaryMouseDrag(with: event) {
+            super.rightMouseDragged(with: event)
+        }
+    }
+
+    private func shouldReportMouseEvent(
+        with event: NSEvent,
+        when mouseModeAllows: (Terminal.MouseMode) -> Bool
+    ) -> Bool {
+        withTerminal { terminal in
+            allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event)
+                && mouseModeAllows(terminal.mouseMode)
+        }
+    }
+
+    private func reportAuxiliaryMouseDrag(with event: NSEvent) -> Bool {
         let point = convert(event.locationInWindow, from: nil)
-        let reported = withTerminal { terminal -> Bool in
+        return withTerminal { terminal -> Bool in
             guard allowMouseReporting,
                   !shiftBypassesMouseReportingLocked(for: event),
                   terminal.mouseMode.sendButtonTracking() else { return false }
@@ -3719,8 +3727,48 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                                 pixelX: hit.pixels.col, pixelY: hit.pixels.row)
             return true
         }
-        if !reported {
-            super.rightMouseDragged(with: event)
+    }
+
+    private func isReportableOtherMouseButton(_ event: NSEvent) -> Bool {
+        // AppKit reports the middle button as 2, which encodeMouseEventLocked maps
+        // to terminal button 1. Higher AppKit buttons are back/forward-style
+        // buttons, but SwiftTerm does not encode xterm's 128+ extended button
+        // range here; passing them through would misreport button 3 as left and
+        // buttons 4...7 as wheel events.
+        event.buttonNumber == 2
+    }
+
+    open override func otherMouseDown(with event: NSEvent) {
+        guard isReportableOtherMouseButton(event) else {
+            super.otherMouseDown(with: event)
+            return
+        }
+        if shouldReportMouseEvent(with: event, when: { $0.sendButtonPress() }) {
+            sharedMouseEvent(with: event)
+        } else {
+            super.otherMouseDown(with: event)
+        }
+    }
+
+    open override func otherMouseUp(with event: NSEvent) {
+        guard isReportableOtherMouseButton(event) else {
+            super.otherMouseUp(with: event)
+            return
+        }
+        if shouldReportMouseEvent(with: event, when: { $0.sendButtonRelease() }) {
+            sharedMouseEvent(with: event)
+        } else {
+            super.otherMouseUp(with: event)
+        }
+    }
+
+    open override func otherMouseDragged(with event: NSEvent) {
+        guard isReportableOtherMouseButton(event) else {
+            super.otherMouseDragged(with: event)
+            return
+        }
+        if !reportAuxiliaryMouseDrag(with: event) {
+            super.otherMouseDragged(with: event)
         }
     }
 
