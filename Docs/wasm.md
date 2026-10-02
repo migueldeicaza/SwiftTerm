@@ -38,7 +38,7 @@ On macOS, the script finds the pinned toolchain in
 `~/Library/Developer/Toolchains`. On other hosts it checks `swift` on `PATH`.
 Set `SWIFTTERM_SWIFT` to an explicit compiler path when needed. Set
 `SWIFTTERM_SWIFT_SDKS_PATH` if the SDK bundles are outside
-`~/.swiftpm/swift-sdks`.
+SwiftPM's default SDK directories.
 
 The build checks the compiler revision, compiles an export probe, links a
 reactor, and checks the observed import and export tables against the checked-in
