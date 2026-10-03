@@ -19,6 +19,7 @@
 //
 
 #if !SWIFTTERM_EMBEDDED
+#if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 
 /// Thread-safe gate for bell delivery. Consulted on the parse thread, so it
@@ -92,4 +93,5 @@ final class BellPolicy {
     }
 }
 
+#endif
 #endif // !SWIFTTERM_EMBEDDED

@@ -23,6 +23,7 @@
 //
 
 #if !SWIFTTERM_EMBEDDED
+#if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 
 /// A notification that can be collapsed: repeated occurrences within one
@@ -168,4 +169,5 @@ final class TerminalEventQueue: Sendable {
     }
 }
 
+#endif
 #endif // !SWIFTTERM_EMBEDDED
