@@ -1894,15 +1894,6 @@ final class MetalTerminalRenderer {
                     continue
                 }
                 let runAttributes = run.attributes
-                var minOrdinal = Int.max
-                var maxOrdinal = Int.min
-                for index in run.shaperRun.stringIndices {
-                    let ordinal = shaped.segment.cellOrdinal(forUTF16: run.utf16Offset + index)
-                    minOrdinal = min(minOrdinal, ordinal)
-                    maxOrdinal = max(maxOrdinal, ordinal)
-                }
-                let startColumn = shaped.segment.column + (minOrdinal * shaped.segment.columnWidth)
-                let endColumn = shaped.segment.column + ((maxOrdinal + 1) * shaped.segment.columnWidth)
                 var backgroundColor: TTColor?
                 if runAttributes.keys.contains(.selectionBackgroundColor) {
                     backgroundColor = runAttributes[.selectionBackgroundColor] as? TTColor
@@ -1916,6 +1907,10 @@ final class MetalTerminalRenderer {
                     runAttributes.keys.contains(.selectionBackgroundColor)
                     || runAttributes.keys.contains(SwiftTermExplicitBackgroundKey)
                 if hasExplicitBackground, let backgroundColor {
+                    let startColumn = shaped.segment.column
+                        + run.sourceCells.lowerBound * shaped.segment.columnWidth
+                    let endColumn = shaped.segment.column
+                        + run.sourceCells.upperBound * shaped.segment.columnWidth
                     let columnSpan = max(0, endColumn - startColumn)
                     if columnSpan > 0 {
                         let x0 = lineOriginPx.x + (CGFloat(startColumn) * cellWidthPx)
@@ -2020,6 +2015,10 @@ final class MetalTerminalRenderer {
                 let runAttributes = run.attributes
                 let runFont = runAttributes[.font] as? TTFont ?? context.fonts.normal
                 let ctFont = runFont as CTFont
+                // Decorations are drawn once per source cell, full cell width.
+                let decorationWidth = decorationCellWidth * CGFloat(shaped.segment.columnWidth)
+                let decorationBaselineY = lineOrigin.y + yOffset
+                    + (run.shaperRun.glyphRuns.first?.positions.first?.y ?? 0)
 
                 let textColor = runAttributes[.foregroundColor] as? TTColor ?? context.effectiveForegroundColor
                 let textColorSIMD = colorToSIMD(textColor)
@@ -2033,7 +2032,16 @@ final class MetalTerminalRenderer {
                 // dictionary.
                 var anchorOrdinal = -1
                 var anchorX: CGFloat = 0
-                for glyphRun in run.shaperRun.glyphRuns {
+                let glyphRuns = run.shaperRun.glyphRuns
+                for (glyphRunIndex, glyphRun) in glyphRuns.enumerated() {
+                    // Single-cell glyphs are only fitted when CoreText took
+                    // them from a fallback font, mirroring the CoreGraphics path.
+                    let fitsFallbackGlyphs = glyphPolicy == nil
+                        && shaped.segment.columnWidth == 1
+                        && !context.fonts.contains(glyphRun.font)
+                    func cellOrdinal(ofGlyph i: Int) -> Int {
+                        shaped.segment.cellOrdinal(forUTF16: run.utf16Offset + glyphRun.stringIndices[i])
+                    }
                     let scaledFont = scaledFontFor(font: glyphRun.font, scale: scale)
                     let rasterFontToken = rasterFontToken(for: scaledFont)
                     let fullFontToken = profileFullFontToken(
@@ -2062,8 +2070,25 @@ final class MetalTerminalRenderer {
                             continue
                         }
                         let ctPos = glyphRun.positions[i]
-                        let stringIndex = run.utf16Offset + glyphRun.stringIndices[i]
-                        let ordinal = shaped.segment.cellOrdinal(forUTF16: stringIndex)
+                        let ordinal = cellOrdinal(ofGlyph: i)
+                        // Only a glyph alone in exactly one cell is fitted:
+                        // combining marks stay on their base, and a conjunct
+                        // keeps its multi-cell span.
+                        var isAlone = false
+                        if fitsFallbackGlyphs {
+                            let previousOrdinal: Int? = i > 0
+                                ? cellOrdinal(ofGlyph: i - 1)
+                                : glyphRunIndex > 0 ? glyphRuns[glyphRunIndex - 1].stringIndices.last
+                                    .map { shaped.segment.cellOrdinal(forUTF16: run.utf16Offset + $0) } : nil
+                            let nextOrdinal: Int = i + 1 < glyphRun.glyphs.count
+                                ? cellOrdinal(ofGlyph: i + 1)
+                                : glyphRunIndex + 1 < glyphRuns.count
+                                    ? glyphRuns[glyphRunIndex + 1].stringIndices.first
+                                        .map { shaped.segment.cellOrdinal(forUTF16: run.utf16Offset + $0) }
+                                        ?? run.sourceCells.upperBound
+                                    : run.sourceCells.upperBound
+                            isAlone = previousOrdinal != ordinal && nextOrdinal == ordinal + 1
+                        }
                         let intraCluster: CGFloat
                         if ordinal == anchorOrdinal {
                             intraCluster = ctPos.x - anchorX
@@ -2088,7 +2113,8 @@ final class MetalTerminalRenderer {
                                                renderingScale: scale,
                                                metricsFont: &metricsFont,
                                                policy: glyphPolicy,
-                                               iconHeight: policyIconHeight)
+                                               iconHeight: policyIconHeight,
+                                               fitsFallbackToCell: fitsFallbackGlyphs && isAlone)
                         let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)) + intraCluster + fit.dx,
                                               y: lineOrigin.y + yOffset + ctPos.y + fit.dy)
                         let pxX = basePos.x * scale + entry.bearing.x * fit.scaleX
@@ -2136,14 +2162,12 @@ final class MetalTerminalRenderer {
                     let thickness = underlineThickness * scale
                     let segmentStyle: UnderlineStyle = underlineStyle == .double ? .single : underlineStyle
 
-                    for (glyphIndex, ctPos) in run.shaperRun.positions.enumerated() {
-                        let stringIndex = run.utf16Offset + run.shaperRun.stringIndices[glyphIndex]
-                        let ordinal = shaped.segment.cellOrdinal(forUTF16: stringIndex)
+                    for ordinal in run.sourceCells {
                         let glyphColumn = shaped.segment.column + (ordinal * shaped.segment.columnWidth)
                         let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)),
-                                              y: lineOrigin.y + yOffset + ctPos.y)
+                                              y: decorationBaselineY)
                         let x0 = basePos.x * scale
-                        let x1 = (basePos.x + decorationCellWidth) * scale
+                        let x1 = (basePos.x + decorationWidth) * scale
                         let yCenter = (basePos.y + underlinePosition) * scale
                         appendUnderlineSegments(x0: x0,
                                                 x1: x1,
@@ -2191,14 +2215,12 @@ final class MetalTerminalRenderer {
                     let strikeThickness = max(round(scale * CTFontGetUnderlineThickness(ctFont)) / scale, 0.5)
                     let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
 
-                    for (glyphIndex, ctPos) in run.shaperRun.positions.enumerated() {
-                        let stringIndex = run.utf16Offset + run.shaperRun.stringIndices[glyphIndex]
-                        let ordinal = shaped.segment.cellOrdinal(forUTF16: stringIndex)
+                    for ordinal in run.sourceCells {
                         let glyphColumn = shaped.segment.column + (ordinal * shaped.segment.columnWidth)
                         let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)),
-                                              y: lineOrigin.y + yOffset + ctPos.y)
+                                              y: decorationBaselineY)
                         let x0 = basePos.x * scale
-                        let x1 = (basePos.x + decorationCellWidth) * scale
+                        let x1 = (basePos.x + decorationWidth) * scale
                         let yCenter = (basePos.y + strikePosition) * scale
                         let thickness = strikeThickness * scale
                         appendUnderlineSegments(x0: x0,
@@ -2328,6 +2350,7 @@ final class MetalTerminalRenderer {
                 }
                 shapedRuns.append(ShapedRun(attributes: attributes,
                                             utf16Offset: range.location,
+                                            sourceCells: segment.cellOrdinals(in: CFRange(location: range.location, length: range.length)),
                                             shaperRun: shaped))
             }
             if !shapedRuns.isEmpty {
@@ -2603,9 +2626,10 @@ final class MetalTerminalRenderer {
                               renderingScale: CGFloat,
                               metricsFont: inout GlyphMetricsFont?,
                               policy: TerminalGlyphPlacementPolicy? = nil,
-                              iconHeight: CGFloat = 0) -> GlyphSlotFit {
+                              iconHeight: CGFloat = 0,
+                              fitsFallbackToCell: Bool = false) -> GlyphSlotFit {
         let resolution = resolvedGlyph.fitMetrics(columnWidth: columnWidth,
-                                                  required: policy != nil) {
+                                                  required: policy != nil || fitsFallbackToCell) {
             resolvedGlyphMetrics(font: font,
                                  fittingFont: fittingFont,
                                  renderingScale: renderingScale,
@@ -2633,6 +2657,11 @@ final class MetalTerminalRenderer {
                                           baselineFromBottom: baselineFromBottom,
                                           iconHeight: iconHeight,
                                           renderingScale: renderingScale)
+        }
+        if fitsFallbackToCell {
+            return GlyphSlotFit.fitFallbackToCell(metrics: metrics,
+                                                  cellWidth: cellDimension.width,
+                                                  renderingScale: renderingScale)
         }
         return GlyphSlotFit.calculate(metrics: metrics,
                                       columnWidth: columnWidth,
@@ -3028,14 +3057,14 @@ final class MetalTerminalRenderer {
 
     private struct ShaperRun {
         let glyphRuns: [ShaperGlyphRun]
-        let positions: [CGPoint]
-        let stringIndices: [CFIndex]
         let glyphCount: Int
     }
 
     private struct ShapedRun {
         let attributes: [NSAttributedString.Key: Any]
         let utf16Offset: Int
+        /// Terminal cells covered by this run's source text.
+        let sourceCells: Range<Int>
         let shaperRun: ShaperRun
     }
 
@@ -3079,8 +3108,7 @@ final class MetalTerminalRenderer {
             }
 
             var glyphRuns: [ShaperGlyphRun] = []
-            var positions: [CGPoint] = []
-            var stringIndices: [CFIndex] = []
+            var glyphCount = 0
             for run in runs {
                 let count = CTRunGetGlyphCount(run)
                 if count == 0 {
@@ -3105,14 +3133,10 @@ final class MetalTerminalRenderer {
                                                 glyphs: glyphs,
                                                 positions: runPositions,
                                                 stringIndices: runStringIndices))
-                positions.append(contentsOf: runPositions)
-                stringIndices.append(contentsOf: runStringIndices)
+                glyphCount += count
             }
 
-            let result = ShaperRun(glyphRuns: glyphRuns,
-                                   positions: positions,
-                                   stringIndices: stringIndices,
-                                   glyphCount: positions.count)
+            let result = ShaperRun(glyphRuns: glyphRuns, glyphCount: glyphCount)
             insert(key: key, run: result)
             return result
         }

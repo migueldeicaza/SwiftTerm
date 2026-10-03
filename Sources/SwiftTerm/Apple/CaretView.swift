@@ -82,11 +82,18 @@ extension CaretView {
             // does the same via CTFontCreateCopyWithAttributes). The caret bounds
             // span `glyphColumnWidth` cells, so the centered glyph isn't clipped.
             let glyphPolicy = runAttributes[SwiftTermGlyphPolicyKey] as? TerminalGlyphPlacementPolicy
+            // A lone fallback glyph in a single cell is fitted like the row
+            // renderers do; see `fallbackGlyphFit`.
+            let fitsFallbackGlyph = glyphPolicy == nil && glyphColumnWidth == 1
+                && CTLineGetGlyphCount(ctline) == 1 && !terminal.isPrimaryFont(ctRunFont)
             let fits = runGlyphs.map { glyph in
                 if let glyphPolicy {
                     return terminal.glyphSlotFit(font: ctRunFont, glyph: glyph,
                                                  columnWidth: glyphColumnWidth,
                                                  policy: glyphPolicy)
+                }
+                if fitsFallbackGlyph {
+                    return terminal.fallbackGlyphFit(font: ctRunFont, glyph: glyph)
                 }
                 return terminal.glyphSlotFit(font: ctRunFont, glyph: glyph, columnWidth: glyphColumnWidth)
             }
