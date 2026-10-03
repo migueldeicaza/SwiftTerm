@@ -13,11 +13,7 @@ extension UIColor {
     func getTerminalColor () -> Color {
         var red: CGFloat = 0.0, green: CGFloat = 0.0, blue: CGFloat = 0.0, alpha: CGFloat = 1.0
         self.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        
-        func clamp (_ v: CGFloat) -> CGFloat {
-            return min (max (v, 0.0), 1.0)
-        }
-        return Color(red: UInt16 (clamp (red)*65535), green: UInt16(clamp (green)*65535), blue: UInt16(clamp (blue)*65535))
+        return Color(nativeRed: red, green: green, blue: blue)
     }
 
     func inverseColor() -> UIColor {

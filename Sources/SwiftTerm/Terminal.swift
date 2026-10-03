@@ -192,6 +192,15 @@ public protocol TerminalDelegate: AnyObject {
      * report.
      */
     func getColors (source: Terminal) -> (foreground: Color, background: Color)
+
+    /// Sets a pointer, highlight, or Tektronix cursor color in the host view.
+    /// A nil color tells the host to use its default color again.
+    /// The default implementation does nothing.
+    func setDynamicColor(source: Terminal, target: TerminalDynamicColor, color: Color?)
+
+    /// Returns the host's default color for this target, or nil to use the terminal default.
+    /// An explicit OSC color takes precedence over this value.
+    func getDynamicColor(source: Terminal, target: TerminalDynamicColor) -> Color?
     
     /**
      * This method is invoked when the client application (iTerm2) has issued a OSC 1337 and
@@ -947,6 +956,28 @@ open class Terminal {
             tdel?.setCursorColor(source: self, color: cursorColor)
             settingCursorColor = false
         }
+    }
+
+    // The colors that OSC 13 through OSC 19 set. A missing entry uses the host default.
+    var dynamicColors: [TerminalDynamicColor: Color] = [:]
+
+    /// Returns the color that the application set for this target,
+    /// or nil when the host default applies.
+    ///
+    /// If another thread feeds the terminal, call this method inside
+    /// `terminalLock.withLock`.
+    public func dynamicColor(_ target: TerminalDynamicColor) -> Color? {
+        dynamicColors[target]
+    }
+
+    /// Removes the application color for this target, so that the host default applies again.
+    /// The terminal sends nil to ``TerminalDelegate/setDynamicColor(source:target:color:)``.
+    ///
+    /// If another thread feeds the terminal, call this method inside
+    /// `terminalLock.withLock`.
+    public func resetDynamicColor(_ target: TerminalDynamicColor) {
+        guard dynamicColors.removeValue(forKey: target) != nil else { return }
+        tdel?.setDynamicColor(source: self, target: target, color: nil)
     }
     
     /// Tracks the host view's focus so that enabling focus reporting (DECSET
@@ -3886,8 +3917,13 @@ open class Terminal {
         //log ("Attempt to set the text Foreground color \(str)")
     }
     
+    // True while the terminal runs an OSC request that ended with BEL.
+    // A reply uses the same terminator as its request, as xterm does.
+    var oscRequestEndedWithBel = false
+
     func reportColor (oscCode: Int, color: Color) {
-        sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())", cc.ST)
+        sendResponse(cc.OSC, "\(oscCode);\(color.formatAsXcolor ())",
+                     oscRequestEndedWithBel ? [ControlCodes.BEL] : cc.ST)
     }
 
     private func reportColorScheme () {
@@ -3917,80 +3953,65 @@ open class Terminal {
         }
     }
     
-    // This handles both setting the foreground, but spill into background and cursor color
-    // if more parameters are provided (ie, sending OSC 10 with #ffffff,#000000,#ff0000
-    // sets the foreground to #ffffff, background to #000000 and cursor to ff0000
-    //
-    // - Parameter startAt: describes which of the colors is the first to try,
-    // startAt = 0 is foreground, startAt = 1 is background, startAt = 2 is
-    // the cursor Color
+    // Each value sets or queries the next OSC color number, through OSC 19.
+    // As in Ghostty, the terminal skips empty values, and an invalid value
+    // stops the list. startAt is the first OSC color number minus 10.
     func oscSetColors (_ data: ArraySlice<UInt8>, startAt: Int)
     {
-        let groups = data.split(separator: UInt8 (ascii: ";"))
-        guard !groups.isEmpty else {
-            return
+        // Ask the host for its colors only when a query needs them, and once per list.
+        var hostColors: (foreground: Color, background: Color)?
+        func currentColors () -> (foreground: Color, background: Color) {
+            if let hostColors {
+                return hostColors
+            }
+            let colors = tdel?.getColors(source: self) ?? (foregroundColor, backgroundColor)
+            hostColors = colors
+            return colors
         }
-        let reportedColors = tdel?.getColors(source: self)
-        let queryForeground = reportedColors?.foreground ?? foregroundColor
-        let queryBackground = reportedColors?.background ?? backgroundColor
-        for (offset, text) in groups.enumerated() {
+
+        for (offset, text) in data.split(separator: UInt8 (ascii: ";")).enumerated() {
             let target = startAt + offset
+            guard target <= 9 else { return }
             
-            if text.first == UInt8 (ascii: "?") {
+            if text.count == 1 && text.first == UInt8 (ascii: "?") {
                 switch target {
                 case 0:
-                    reportColor (oscCode: 10, color: queryForeground)
+                    reportColor (oscCode: 10, color: currentColors().foreground)
                 case 1:
-                    reportColor (oscCode: 11, color: queryBackground)
+                    reportColor (oscCode: 11, color: currentColors().background)
                 case 2:
-                    reportColor (oscCode: 12, color: cursorColor ?? queryForeground)
+                    reportColor (oscCode: 12, color: cursorColor ?? currentColors().foreground)
                 default:
-                    break
+                    if let dynamicTarget = TerminalDynamicColor(oscCode: target + 10) {
+                        let color = dynamicColor(dynamicTarget)
+                            ?? tdel?.getDynamicColor(source: self, target: dynamicTarget)
+                            ?? (dynamicTarget.defaultsToBackground
+                                ? currentColors().background : currentColors().foreground)
+                        reportColor(oscCode: dynamicTarget.oscCode, color: color)
+                    }
                 }
                 
                 continue
             }
 
             guard let color = Color.parseColor(text) else {
-                continue
+                return
             }
             switch target {
             case 0:
                 foregroundColor = color
-                tdel?.setForegroundColor(source: self, color: color)
+                hostColors = nil
             case 1:
                 backgroundColor = color
-                tdel?.setBackgroundColor(source: self, color: color)
+                hostColors = nil
             case 2:
                 cursorColor = color
-                tdel?.setCursorColor(source: self, color: color)
-                break
             default:
-                break
+                if let dynamicTarget = TerminalDynamicColor(oscCode: target + 10) {
+                    dynamicColors[dynamicTarget] = color
+                    tdel?.setDynamicColor(source: self, target: dynamicTarget, color: color)
+                }
             }
-        }
-    }
-
-    func oscSetTextBackground (_ data: ArraySlice<UInt8>)
-    {
-        if data.first == UInt8 (ascii: "?") {
-            let reportedColors = tdel?.getColors(source: self)
-            let queryBackground = reportedColors?.background ?? backgroundColor
-            reportColor (oscCode: 11, color: queryBackground)
-            return
-        }
-
-        if let background = Color.parseColor(data) {
-            backgroundColor = background
-            tdel?.setBackgroundColor(source: self, color: background)
-        }
-    }
-
-    func oscSetCursorColor (_ data: ArraySlice<UInt8>)
-    {
-        if let cursorColor = Color.parseColor(data) {
-            self.cursorColor = cursorColor
-            tdel?.setCursorColor(source: self, color: cursorColor)
         }
     }
 
@@ -7750,6 +7771,9 @@ open class Terminal {
         let savedCursorHidden = cursorHidden
         setup (isReset: true)
         clearAllKittyImages()
+        for target in Array(dynamicColors.keys) {
+            resetDynamicColor(target)
+        }
         cursorHidden = savedCursorHidden
         refresh (startRow: 0, endRow: rows-1)
         syncScrollArea ()
@@ -9906,6 +9930,12 @@ public extension TerminalDelegate {
     func getColors (source: Terminal) -> (foreground: Color, background: Color)
     {
         return (source.foregroundColor, source.backgroundColor)
+    }
+
+    func setDynamicColor(source: Terminal, target: TerminalDynamicColor, color: Color?) {}
+
+    func getDynamicColor(source: Terminal, target: TerminalDynamicColor) -> Color? {
+        return nil
     }
     
     func setForegroundColor (source: Terminal, color: Color)
