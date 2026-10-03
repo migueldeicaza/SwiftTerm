@@ -5,7 +5,7 @@
 //  Created by Miguel de Icaza on 4/5/20.
 //
 #if !SWIFTTERM_EMBEDDED
-#if !os(iOS) && !os(Windows) && !os(WASI)
+#if !os(iOS) && !os(Windows) && !os(WASI) && !os(Android)
 import Foundation
 
 ///

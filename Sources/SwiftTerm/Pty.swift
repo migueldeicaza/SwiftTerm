@@ -7,7 +7,7 @@
 
 #if !SWIFTTERM_EMBEDDED
 import Foundation
-#if !os(WASI) && !os(iOS) && !os(tvOS) && !os(Windows)
+#if !os(WASI) && !os(iOS) && !os(tvOS) && !os(Windows) && !os(Android)
 
 /**
  * APIs to assist in controlling a Unix pseudo-terminal from Swift.
