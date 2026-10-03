@@ -6,6 +6,7 @@
 //
 
 #if !SWIFTTERM_EMBEDDED
+#if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 
 class AccessibilityService {
@@ -15,4 +16,5 @@ class AccessibilityService {
     }
 }
 
+#endif
 #endif // !SWIFTTERM_EMBEDDED
