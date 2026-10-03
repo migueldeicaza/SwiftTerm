@@ -1965,9 +1965,49 @@ extension TerminalView {
         #endif
         // Snap to pixel grid to avoid sub-pixel seams between adjacent cells
         let scale = backingScaleFactor()
+        // Remembered so the grid can be re-snapped when the view moves to a
+        // screen with a different pixel density; see
+        // `remeasureCellDimensionIfBackingScaleChanged`.
+        cellDimensionBackingScale = scale
         let snappedWidth = (cellWidth * scale).rounded() / scale
         let snappedHeight = ceil(cellHeight * scale) / scale
         return CellDimension(width: max(1, snappedWidth), height: max(min(snappedHeight, 8192), 1))
+    }
+
+    /// Re-snaps the cell grid when the view's pixel density no longer matches
+    /// the one `computeFontDimensions` measured against.
+    ///
+    /// The cell width and height are snapped to the pixel grid of the screen
+    /// the view was on when the font was set. Without this, moving the window
+    /// to a screen with another backing scale (an external monitor to a
+    /// Retina laptop display, or back) kept drawing a grid snapped for the
+    /// old screen: cell edges fell between pixels, glyphs bled into their
+    /// neighbours and the column count no longer matched the width.
+    ///
+    /// Only runs while the view has a window: a detached view would measure
+    /// against `NSScreen.main`, so it keeps its grid until it is attached.
+    ///
+    /// Unlike `resetFont`, this does not go through `resize(cols:rows:)`,
+    /// whose `softReset()` would clear modes set by the running program.
+    /// `processSizeChange` resizes the terminal only when the rows or columns
+    /// change, and otherwise just updates the pixel geometry. Returns whether
+    /// the grid was re-measured.
+    @discardableResult
+    func remeasureCellDimensionIfBackingScaleChanged () -> Bool
+    {
+        guard window != nil, cellDimension != nil, backingScaleFactor() != cellDimensionBackingScale else {
+            return false
+        }
+        cellDimension = computeFontDimensions()
+        refreshCachedViewState()
+        processSizeChange(newSize: frame.size)
+        updateCaretView()
+        #if os(macOS)
+        needsDisplay = true
+        #else
+        setNeedsDisplay(frame)
+        #endif
+        return true
     }
 
     /// ``CellGeometry/baselineOffset(normalFont:cellHeight:)`` for this view's
