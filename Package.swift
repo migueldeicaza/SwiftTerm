@@ -38,12 +38,12 @@ let graphicsDependencies: [Target.Dependency] = [
     .product(
         name: "PNG",
         package: "swift-png",
-        condition: .when(platforms: [.linux, .windows, .wasi], traits: ["PortableGraphics"])
+        condition: .when(platforms: [.linux, .windows, .wasi, .android], traits: ["PortableGraphics"])
     ),
     .product(
         name: "LZ77",
         package: "swift-png",
-        condition: .when(platforms: [.linux, .windows, .wasi], traits: ["PortableGraphics"])
+        condition: .when(platforms: [.linux, .windows, .wasi, .android], traits: ["PortableGraphics"])
     ),
 ]
 

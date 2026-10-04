@@ -7,7 +7,8 @@
 //  Created by Miguel de Icaza on 4/5/20.
 //
 #if !SWIFTTERM_EMBEDDED
-#if !os(WASI) && !os(iOS) && !os(Windows)
+// Android apps, like iOS ones, do not spawn local processes on a PTY.
+#if !os(WASI) && !os(iOS) && !os(Windows) && !os(Android)
 import Foundation
 import Dispatch
 #if canImport(Darwin)
