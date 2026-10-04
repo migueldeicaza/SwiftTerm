@@ -2166,11 +2166,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             if let rawCharacter = event.charactersIgnoringModifiers {
                 if let fs = rawCharacter.unicodeScalars.first {
                     switch Int (fs.value) {
-                    case NSLeftArrowFunctionKey:
-                        send (EscapeSequences.emacsBack)
-                        return
-                    case NSRightArrowFunctionKey:
-                        send (EscapeSequences.emacsForward)
+                    case NSLeftArrowFunctionKey, NSRightArrowFunctionKey:
+                        let left = sendsLeftArrowSequence(
+                            forLeftKey: Int(fs.value) == NSLeftArrowFunctionKey)
+                        send (left ? EscapeSequences.emacsBack : EscapeSequences.emacsForward)
                         return
                     default: break
                     }
@@ -2191,11 +2190,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             if let ch = event.charactersIgnoringModifiers {
                 if let fs = ch.unicodeScalars.first {
                     switch Int (fs.value) {
-                    case NSLeftArrowFunctionKey:
-                        send (EscapeSequences.controlLeft)
-                        return
-                    case NSRightArrowFunctionKey:
-                        send (EscapeSequences.controlRight)
+                    case NSLeftArrowFunctionKey, NSRightArrowFunctionKey:
+                        let left = sendsLeftArrowSequence(
+                            forLeftKey: Int(fs.value) == NSLeftArrowFunctionKey)
+                        send (left ? EscapeSequences.controlLeft : EscapeSequences.controlRight)
                         return
                     default:
                         break
@@ -2426,11 +2424,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             } else {
                 send (EscapeSequences.cmdPageDown)
             }
-        case #selector(moveToLeftEndOfLine(_:)):
+        case #selector(moveToLeftEndOfLine(_:)), #selector(moveToRightEndOfLine(_:)):
             // Apple sends the Emacs back-word commands
-            send (EscapeSequences.emacsBack)
-        case #selector(moveToRightEndOfLine(_:)):
-            send (EscapeSequences.emacsForward)
+            let left = sendsLeftArrowSequence(
+                forLeftKey: selector == #selector(moveToLeftEndOfLine(_:)))
+            send (left ? EscapeSequences.emacsBack : EscapeSequences.emacsForward)
         default:
             // Nothing is sent for this key. Under the kitty protocol its
             // release must not be reported without a press.
@@ -3081,7 +3079,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     @discardableResult
     private func sendKittyEvent(_ event: KittyKeyEvent) -> Bool {
         let encoder = kittyEncoder()
-        guard let bytes = encoder.encode(event) else { return false }
+        guard let bytes = encoder.encode(bidiSwappedKeyEvent(event)) else { return false }
         send(bytes)
         if encoder.flags.contains(.reportEvents),
            event.eventType != .release,
@@ -4750,6 +4748,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     private var kittyKeysWithReportedPress: Set<UInt16> = []
     private var kittyKeyDownCode: UInt16?
+    /// The BiDi arrow swap chosen at each arrow key press, for its repeats and release.
+    var arrowKeySwapsAtPress: [KittyFunctionalKey: Bool] = [:]
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}

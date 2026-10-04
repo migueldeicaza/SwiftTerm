@@ -102,6 +102,49 @@ final class BidiRenderTests {
         #expect(explicitText.hasSuffix("םולש"))
     }
 
+    @Test func rowsWithoutStrongCharactersKeepLeftToRightOrder() throws {
+        // Digits, spaces and punctuation have no strong direction, so CoreText
+        // lays such a row out in the default paragraph direction, which is
+        // right to left in a process running in Arabic or Hebrew. The test
+        // simulates that process by giving every range without a paragraph
+        // style a right-to-left one.
+        let directionKey = NSAttributedString.Key(kCTWritingDirectionAttributeName as String)
+        let view = makeView(feed: "1  2  3\r\n[#####     ] 50%")
+        for row in 0..<2 {
+            let info = view.withTerminal { terminal in
+                view.buildAttributedStringLocked(row: row, line: terminal.buffer.lines[row],
+                                                 cols: terminal.cols)
+            }
+            let segment = try #require(info.segments.first)
+            let string = segment.attributedString
+            #expect((string.attribute(directionKey, at: 0, effectiveRange: nil) as? [NSNumber])
+                        == [NSNumber(value: 2)])
+            let style = string.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+            #expect(style?.baseWritingDirection == .leftToRight)
+
+            // The first cell starts at the left edge, and cells keep their order.
+            let text = string.string as NSString
+            let line = CTLineCreateWithAttributedString(rightToLeftByDefault(string))
+            #expect(CTLineGetOffsetForStringIndex(line, 0, nil) == 0)
+            let later = text.range(of: row == 0 ? "3" : "5").location
+            #expect(CTLineGetOffsetForStringIndex(line, later, nil)
+                        > CTLineGetOffsetForStringIndex(line, 1, nil))
+        }
+    }
+
+    func rightToLeftByDefault(_ string: NSAttributedString) -> NSAttributedString {
+        let result = NSMutableAttributedString(attributedString: string)
+        let rightToLeft = NSMutableParagraphStyle()
+        rightToLeft.baseWritingDirection = .rightToLeft
+        let whole = NSRange(location: 0, length: result.length)
+        string.enumerateAttribute(.paragraphStyle, in: whole) { value, range, _ in
+            if value == nil {
+                result.addAttribute(.paragraphStyle, value: rightToLeft, range: range)
+            }
+        }
+        return result
+    }
+
     @Test func explicitRTLStoresApplicationCellsAndReversesThemForDisplay() {
         let source = "321 cba אבג :LTR ticilpxe"
         let view = makeView(feed: "\u{1b}[8l\u{1b}[2 k" + source)
@@ -227,16 +270,11 @@ final class BidiRenderTests {
         #expect(hit.grid.col == 0)
     }
 
-    @Test func arrowKeysRequireOptInAndFollowTheRuntimeSetting() {
+    @Test func arrowKeysSwapByDefaultAndFollowTheRuntimeSetting() {
         let view = makeView(feed: "אב")
         let delegate = CapturingDelegate()
         view.terminalDelegate = delegate
 
-        view.sendKeyLeft()
-        #expect(delegate.sent == EscapeSequences.moveLeftNormal)
-
-        delegate.sent.removeAll()
-        view.withTerminal { $0.bidiArrowKeySwap = true }
         view.sendKeyLeft()
         #expect(delegate.sent == EscapeSequences.moveRightNormal)
         delegate.sent.removeAll()
@@ -247,6 +285,95 @@ final class BidiRenderTests {
         view.withTerminal { $0.bidiArrowKeySwap = false }
         view.sendKeyLeft()
         #expect(delegate.sent == EscapeSequences.moveLeftNormal)
+        delegate.sent.removeAll()
+        view.sendKeyRight()
+        #expect(delegate.sent == EscapeSequences.moveRightNormal)
+
+        delegate.sent.removeAll()
+        view.withTerminal { $0.bidiArrowKeySwap = true }
+        view.sendKeyLeft()
+        #expect(delegate.sent == EscapeSequences.moveRightNormal)
+    }
+
+    func arrowEvent(left: Bool, modifiers: NSEvent.ModifierFlags = []) -> NSEvent {
+        let character = String(UnicodeScalar(UInt16(left ? NSLeftArrowFunctionKey
+                                                          : NSRightArrowFunctionKey))!)
+        return NSEvent.keyEvent(with: .keyDown, location: .zero,
+                                modifierFlags: modifiers.union([.function, .numericPad]),
+                                timestamp: 0, windowNumber: 0, context: nil,
+                                characters: character, charactersIgnoringModifiers: character,
+                                isARepeat: false, keyCode: left ? 123 : 124)!
+    }
+
+    @Test(arguments: [false, true])
+    func physicalArrowKeysSwapOnEveryEncoding(kitty: Bool) {
+        let view = makeView(feed: "אב")
+        let delegate = CapturingDelegate()
+        view.terminalDelegate = delegate
+        if kitty {
+            view.feed(text: "\u{1b}[>1u")
+        }
+        let cases: [(NSEvent.ModifierFlags, String)] = [([], ""), (.control, "1;5"), (.shift, "1;2")]
+        for (modifiers, parameters) in cases {
+            for swap in [true, false] {
+                view.withTerminal { $0.bidiArrowKeySwap = swap }
+                delegate.sent.removeAll()
+                view.keyDown(with: arrowEvent(left: true, modifiers: modifiers))
+                #expect(delegate.sent == Array("\u{1b}[\(parameters)\(swap ? "C" : "D")".utf8))
+                delegate.sent.removeAll()
+                view.keyDown(with: arrowEvent(left: false, modifiers: modifiers))
+                #expect(delegate.sent == Array("\u{1b}[\(parameters)\(swap ? "D" : "C")".utf8))
+            }
+        }
+    }
+
+    @Test func physicalArrowKeysDoNotSwapOnLeftToRightRows() {
+        let view = makeView(feed: "abc")
+        let delegate = CapturingDelegate()
+        view.terminalDelegate = delegate
+        view.keyDown(with: arrowEvent(left: true))
+        #expect(delegate.sent == EscapeSequences.moveLeftNormal)
+    }
+
+    @Test func swappedKeyEventChangesOnlyHorizontalArrows() {
+        let view = makeView(feed: "אב")
+        func swapped(_ key: KittyFunctionalKey) -> KittyKeyEvent {
+            view.bidiSwappedKeyEvent(KittyKeyEvent(
+                key: .functional(key), modifiers: [.alt], eventType: .release,
+                text: nil, shiftedKey: nil, baseLayoutKey: nil))
+        }
+        func functionalKey(_ event: KittyKeyEvent) -> KittyFunctionalKey? {
+            if case .functional(let key) = event.key { return key }
+            return nil
+        }
+        let left = swapped(.left)
+        #expect(functionalKey(left) == .right)
+        #expect(left.modifiers == [.alt])
+        #expect(left.eventType == .release)
+        #expect(functionalKey(swapped(.right)) == .left)
+        #expect(functionalKey(swapped(.keypadLeft)) == .keypadRight)
+        #expect(functionalKey(swapped(.keypadRight)) == .keypadLeft)
+        #expect(functionalKey(swapped(.up)) == .up)
+        #expect(functionalKey(swapped(.home)) == .home)
+    }
+
+    @Test func repeatAndReleaseUseTheSwapChosenAtPress() {
+        let view = makeView(feed: "אב")
+        func send(_ key: KittyFunctionalKey, _ type: KittyKeyboardEventType) -> KittyFunctionalKey? {
+            let event = view.bidiSwappedKeyEvent(KittyKeyEvent(
+                key: .functional(key), modifiers: [], eventType: type,
+                text: nil, shiftedKey: nil, baseLayoutKey: nil))
+            if case .functional(let sent) = event.key { return sent }
+            return nil
+        }
+        #expect(send(.left, .press) == .right)
+        // The swap result changes while the key is down.
+        view.withTerminal { $0.bidiArrowKeySwap = false }
+        #expect(send(.left, .repeatPress) == .right)
+        #expect(send(.left, .release) == .right)
+        // The next press chooses again.
+        #expect(send(.left, .press) == .left)
+        #expect(send(.left, .release) == .left)
     }
 
     @Test func forcedDirectionsRenderAllRows() throws {

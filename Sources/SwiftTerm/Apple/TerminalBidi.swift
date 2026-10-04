@@ -39,6 +39,8 @@ struct BidiRowLayout {
     let logicalToVisualCol: [Int]
     /// Maps a visual column back to the logical buffer column.
     let visualToLogicalCol: [Int]
+    /// The resolved direction of each logical column, including erased cells.
+    let logicalDirections: [BidiDirection]
     /// The resolved paragraph base direction.
     let baseDirection: BidiDirection
     /// Changes when any row in the paragraph changes.
@@ -54,6 +56,10 @@ enum TerminalBidi {
     /// form blocks, and the RTL directional formatting characters.
     @inline(__always)
     static func isRTLTrigger(_ v: UInt32) -> Bool {
+        if v > 0xFFFF {
+            let probe = supplementaryProbeScalar(v)
+            return probe == 0x05D0 || probe == 0x0621
+        }
         if v < 0x0590 { return false }
         switch v {
         case 0x0590...0x08FF,           // Hebrew ... Arabic Extended-A
@@ -196,9 +202,20 @@ enum TerminalBidi {
     /// to this adapter. SwiftTerm continues to use grapheme clusters and cells.
     static func appendCells(line: BufferLine, row: Int, cols: Int,
                             to cells: inout [Cell]) -> Int {
-        let contentLimit = min(cols, line.count, line.getTrimmedLength())
+        let images = imageSpans(line: line, cols: cols)
+        let contentLimit = min(cols, line.count,
+                               max(line.getTrimmedLength(), images.last?.endColumn ?? 0))
         var col = 0
+        var imageIndex = 0
         while col < contentLimit {
+            if imageIndex < images.count, images[imageIndex].logicalColumn == col {
+                let image = images[imageIndex]
+                cells.append(Cell(row: row, logicalCol: col, width: image.width,
+                                  text: "\u{FFFC}"))
+                col = image.endColumn
+                imageIndex += 1
+                continue
+            }
             let ch = line.packedView(at: col)
             let width = max(1, Int(ch.width))
             let character: Character = ch.code == 0 ? " " : ch.getCharacter()
@@ -237,13 +254,41 @@ enum TerminalBidi {
         if isJoiningCapable(v) {
             return 0x0621  // hamza: Bidi_Class AL, Joining_Type U
         }
-        if v > 0xFFFF && isRTLTrigger(v) {
-            return 0x200F  // astral RTL letter: one-unit strong R probe
-        }
         if v > 0xFFFF {
-            return 0x00B7  // astral (emoji etc.): neutral placeholder (ON)
+            return supplementaryProbeScalar(v)
         }
         return unichar(v)
+    }
+
+    /// Keep supplementary letters and digits in their Unicode direction class.
+    static func supplementaryProbeScalar(_ value: UInt32) -> unichar {
+        var lower = 0
+        var upper = supplementaryBidiProbes.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            let entry = supplementaryBidiProbes[middle]
+            if value < entry.0.lowerBound {
+                upper = middle
+            } else if value > entry.0.upperBound {
+                lower = middle + 1
+            } else {
+                return entry.1
+            }
+        }
+        return 0x0041
+    }
+
+    /// Mirror the base scalar and keep the marks in the same cell.
+    static func mirroredCharacter(_ text: Character, boxMirroring: Bool) -> Character? {
+        guard let first = text.unicodeScalars.first else { return nil }
+        let counterpart = unicode17Mirror[first.value]
+            ?? (boxMirroring ? boxMirror[Character(first)]?.unicodeScalars.first?.value : nil)
+        guard let counterpart, let scalar = UnicodeScalar(counterpart) else { return nil }
+        var result = String(scalar)
+        for mark in text.unicodeScalars.dropFirst() {
+            result.unicodeScalars.append(mark)
+        }
+        return Character(result)
     }
 
     /// Computes the visual order for one soft-wrapped row. The typesetter owns
@@ -570,6 +615,7 @@ enum TerminalBidi {
                 visualCells: layout.visualCells,
                 logicalToVisualCol: layout.logicalToVisualCol,
                 visualToLogicalCol: layout.visualToLogicalCol,
+                logicalDirections: layout.logicalDirections,
                 baseDirection: layout.baseDirection,
                 paragraphRevision: revision)
         }
@@ -609,6 +655,10 @@ enum TerminalBidi {
         hasher.combine(ObjectIdentifier(line.renderIdentity))
         hasher.combine(line.generation)
         hasher.combine(line.isWrapped)
+        for image in line.images ?? [] {
+            hasher.combine(image.col)
+            hasher.combine(image.columnWidth)
+        }
     }
 
     private static func paragraphRevision(_ bounds: ClosedRange<Int>, buffer: Buffer) -> Int {
@@ -619,25 +669,37 @@ enum TerminalBidi {
         return hasher.finalize()
     }
 
-    private static func detectedBaseDirection(cells: [Cell], fallback: BidiDirection) -> BidiDirection {
+    /// Returns the direction of a scalar that sets the paragraph direction.
+    /// Only letters and the LRM and RLM marks count, in all Unicode planes.
+    /// Icons, flags and other symbols do not set the direction.
+    @inline(__always)
+    private static func strongDirection(_ scalar: UnicodeScalar) -> BidiDirection? {
+        let value = scalar.value
+        if value < 0x80 {
+            let lower = value | 0x20
+            return lower >= 0x61 && lower <= 0x7A ? .leftToRight : nil
+        }
+        if value == 0x200F {
+            return .rightToLeft
+        }
+        if value == 0x200E {
+            return .leftToRight
+        }
+        guard scalar.properties.isAlphabetic else {
+            return nil
+        }
+        return isRTLTrigger(value) ? .rightToLeft : .leftToRight
+    }
+
+    private static func detectedBaseDirection(cells: [Cell]) -> BidiDirection? {
         for cell in cells {
             for scalar in cell.text.unicodeScalars {
-                let value = scalar.value
-                if value == 0x200F {
-                    return .rightToLeft
-                }
-                if value == 0x200E {
-                    return .leftToRight
-                }
-                if isRTLTrigger(value) && scalar.properties.isAlphabetic {
-                    return .rightToLeft
-                }
-                if scalar.properties.isAlphabetic {
-                    return .leftToRight
+                if let direction = strongDirection(scalar) {
+                    return direction
                 }
             }
         }
-        return fallback
+        return nil
     }
 
     private static func makeTypesetter(cells: [Cell], direction: BidiDirection,
@@ -678,7 +740,7 @@ enum TerminalBidi {
                                        hasPotentialRTL: Bool,
                                        revision: Int) -> ParagraphResult {
         let baseDirection = state.autodetectDirection
-            ? detectedBaseDirection(cells: cells, fallback: state.fallbackDirection)
+            ? detectedBaseDirection(cells: cells) ?? state.fallbackDirection
             : state.fallbackDirection
         if !hasPotentialRTL && baseDirection == .leftToRight {
             return ParagraphResult(rows: [:], baseDirection: baseDirection)
@@ -701,14 +763,8 @@ enum TerminalBidi {
                     && display[range.lowerBound + localIndex] == nil {
                     let cellIndex = range.lowerBound + localIndex
                     let cell = cells[cellIndex]
-                    if cell.text.unicodeScalars.count == 1,
-                       let source = cell.text.unicodeScalars.first?.value,
-                       let mirroredValue = unicode17Mirror[source],
-                       let mirrored = UnicodeScalar(mirroredValue) {
-                        display[cellIndex] = Character(mirrored)
-                    } else if state.boxMirroring, let mirrored = boxMirror[cell.text] {
-                        display[cellIndex] = mirrored
-                    }
+                    display[cellIndex] = mirroredCharacter(cell.text,
+                                                          boxMirroring: state.boxMirroring)
                 }
             }
         }
@@ -723,9 +779,11 @@ enum TerminalBidi {
             visualCells.reserveCapacity(range.count + max(0, cols - used))
             var logicalToVisual = [Int](repeating: 0, count: cols)
             var visualToLogical = [Int](repeating: 0, count: cols)
+            var logicalDirections = [BidiDirection](repeating: baseDirection, count: cols)
             var visualColumn = 0
 
-            func append(logicalColumn: Int, width: Int, displayCharacter: Character?) {
+            func append(logicalColumn: Int, width: Int, displayCharacter: Character?,
+                        direction: BidiDirection) {
                 visualCells.append(BidiCell(logicalCol: logicalColumn, width: width,
                                             display: displayCharacter))
                 for offset in 0..<width {
@@ -733,6 +791,7 @@ enum TerminalBidi {
                     let visual = visualColumn + offset
                     if logical >= 0 && logical < cols {
                         logicalToVisual[logical] = visual
+                        logicalDirections[logical] = direction
                     }
                     if visual >= 0 && visual < cols {
                         visualToLogical[visual] = logicalColumn
@@ -743,23 +802,27 @@ enum TerminalBidi {
 
             if baseDirection == .rightToLeft && used < cols {
                 for logicalColumn in stride(from: cols - 1, through: used, by: -1) {
-                    append(logicalColumn: logicalColumn, width: 1, displayCharacter: nil)
+                    append(logicalColumn: logicalColumn, width: 1, displayCharacter: nil,
+                           direction: baseDirection)
                 }
             }
             for localIndex in resolved.order {
                 let cellIndex = range.lowerBound + localIndex
                 let cell = cells[cellIndex]
                 append(logicalColumn: cell.logicalCol, width: cell.width,
-                       displayCharacter: display[cellIndex])
+                       displayCharacter: display[cellIndex],
+                       direction: resolved.rtl[localIndex] ? .rightToLeft : .leftToRight)
             }
             if baseDirection == .leftToRight && used < cols {
                 for logicalColumn in used..<cols {
-                    append(logicalColumn: logicalColumn, width: 1, displayCharacter: nil)
+                    append(logicalColumn: logicalColumn, width: 1, displayCharacter: nil,
+                           direction: baseDirection)
                 }
             }
             layouts[row] = BidiRowLayout(visualCells: visualCells,
                                          logicalToVisualCol: logicalToVisual,
                                          visualToLogicalCol: visualToLogical,
+                                         logicalDirections: logicalDirections,
                                          baseDirection: baseDirection,
                                          paragraphRevision: revision)
         }
@@ -890,7 +953,17 @@ enum TerminalBidi {
         let maximumRows = max(1, terminal.options.maximumBidiParagraphRows)
         guard let bounds = paragraphBounds(row: row, buffer: buffer,
                                            maximumRows: maximumRows) else {
-            return .ready(nil)
+            // Use explicit display when the paragraph exceeds the limit. With
+            // autodetection, keep logical order: the direction would need a
+            // scan of the complete paragraph for each row.
+            let state = buffer.lines[row].bidiState
+            let direction: BidiDirection = state.autodetectDirection
+                ? .leftToRight : state.fallbackDirection
+            let layout = direction == .rightToLeft
+                ? explicitRightToLeftLayout(row: row, buffer: buffer, cols: cols,
+                                            terminal: terminal) : nil
+            return .ready(ParagraphResult(rows: layout.map { [row: $0] } ?? [:],
+                                           baseDirection: direction))
         }
         let state = buffer.lines[bounds.lowerBound].bidiState
         var lineIdentities: [BufferLine.RenderIdentity] = []
@@ -1050,25 +1123,18 @@ enum TerminalBidi {
             }
         }
         for cell in cells.reversed() {
-            let display: Character?
-            if cell.text.unicodeScalars.count == 1,
-               let source = cell.text.unicodeScalars.first?.value,
-               let mirroredValue = unicode17Mirror[source],
-               let mirrored = UnicodeScalar(mirroredValue) {
-                display = Character(mirrored)
-            } else if state.boxMirroring, let mirrored = boxMirror[cell.text] {
-                display = mirrored
-            } else {
-                display = nil
-            }
+            let display = mirroredCharacter(cell.text, boxMirroring: state.boxMirroring)
             append(logicalColumn: cell.logicalCol, width: cell.width, display: display)
         }
 
+        var hasher = Hasher()
+        hashLineRevision(line, into: &hasher)
         return BidiRowLayout(visualCells: visualCells,
                              logicalToVisualCol: logicalToVisual,
                              visualToLogicalCol: visualToLogical,
+                             logicalDirections: [BidiDirection](repeating: .rightToLeft, count: cols),
                              baseDirection: .rightToLeft,
-                             paragraphRevision: Int(truncatingIfNeeded: line.generation))
+                             paragraphRevision: hasher.finalize())
     }
 
     /// Returns a cell map for one row. The map was resolved with the complete
@@ -1144,13 +1210,17 @@ enum TerminalBidi {
 
     static func layoutRevision(row: Int, buffer: Buffer,
                                maximumRows: Int) -> Int {
-        guard row >= 0, row < buffer.lines.count,
-              buffer.lines[row].bidiState.supportMode == .implicit,
-              let bounds = paragraphBounds(row: row, buffer: buffer,
-                                           maximumRows: maximumRows) else {
+        guard row >= 0, row < buffer.lines.count else {
             return 0
         }
-        return paragraphRevision(bounds, buffer: buffer)
+        if buffer.lines[row].bidiState.supportMode == .implicit,
+           let bounds = paragraphBounds(row: row, buffer: buffer,
+                                        maximumRows: maximumRows) {
+            return paragraphRevision(bounds, buffer: buffer)
+        }
+        var hasher = Hasher()
+        hashLineRevision(buffer.lines[row], into: &hasher)
+        return hasher.finalize()
     }
 }
 #endif

@@ -1944,13 +1944,12 @@ final class MetalTerminalRenderer {
                 guard let texture = texture(for: image) else {
                     continue
                 }
-                let rect = CGRect(x: CGFloat(image.col) * cellWidth,
-                                  y: rowBase - CGFloat(image.pixelHeight),
-                                  width: CGFloat(image.pixelWidth),
-                                  height: CGFloat(image.pixelHeight))
+                guard let geometry = TerminalBidi.imageGeometry(
+                    image, layout: row.bidiLayout, cols: snapshot.cols,
+                    cellWidth: cellWidth, rowBase: rowBase) else { continue }
                 if let draw = imageDraw(texture: texture,
-                                        rect: rect,
-                                        uvRect: CGRect(x: 0, y: 0, width: 1, height: 1),
+                                        rect: geometry.visibleRect,
+                                        uvRect: geometry.uvRect,
                                         renderMode: renderMode,
                                         clipRect: clipRect,
                                         pivotY: pivotY,
@@ -3072,6 +3071,7 @@ final class MetalTerminalRenderer {
             let attributedString = NSAttributedString(string: text, attributes: [
                 .font: font,
                 writingDirectionKey: [NSNumber(value: 2)],
+                .paragraphStyle: ltrParagraphStyle,
             ])
             let line = CTLineCreateWithAttributedString(attributedString)
             guard let runs = CTLineGetGlyphRuns(line) as? [CTRun], !runs.isEmpty else {
@@ -3412,11 +3412,13 @@ final class MetalTerminalRenderer {
 
         switch cursorStyle {
         case .blinkBar, .steadyBar:
-            let barWidth = max(1, 2 * scale)
-            colorVertices.append(contentsOf: quadVertices(x0: CGFloat(x0),
-                                                          y0: CGFloat(y0),
-                                                          x1: CGFloat(x0 + barWidth),
-                                                          y1: CGFloat(y1),
+            let barRect = CursorGeometry.barRect(
+                in: CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0),
+                direction: renderData.direction, width: max(1, 2 * scale))
+            colorVertices.append(contentsOf: quadVertices(x0: barRect.minX,
+                                                          y0: barRect.minY,
+                                                          x1: barRect.maxX,
+                                                          y1: barRect.maxY,
                                                           color: cursorColor))
             return (colorVertices, [], [])
         case .blinkUnderline, .steadyUnderline:
@@ -3583,19 +3585,22 @@ final class MetalTerminalRenderer {
     }
 
     private func texture(for image: SnapshotImage) -> MTLTexture? {
+        guard let source = image.image else {
+            return nil
+        }
         if let cached = imageTextureCache.object(forKey: image) {
             return cached
         }
         var texture: MTLTexture?
-        if let cgImage = cgImage(from: image.image) {
+        if let cgImage = cgImage(from: source) {
             texture = try? textureLoader.newTexture(cgImage: cgImage, options: textureOptions())
         }
         #if os(macOS)
-        if texture == nil, let data = image.image.tiffRepresentation {
+        if texture == nil, let data = source.tiffRepresentation {
             texture = try? textureLoader.newTexture(data: data, options: textureOptions())
         }
         #else
-        if texture == nil, let data = image.image.pngData() {
+        if texture == nil, let data = source.pngData() {
             texture = try? textureLoader.newTexture(data: data, options: textureOptions())
         }
         #endif
@@ -3606,7 +3611,7 @@ final class MetalTerminalRenderer {
             let key = ObjectIdentifier(image)
             if !imageTextureFailures.contains(key) {
                 imageTextureFailures.insert(key)
-                print("Metal: failed to create texture for image size=\(image.image.size)")
+                print("Metal: failed to create texture for image size=\(source.size)")
             }
 #endif
         }

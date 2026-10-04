@@ -312,7 +312,19 @@ public protocol TerminalDelegate: AnyObject {
      *  - report: the parsed progress report
      */
     func progressReport(source: Terminal, report: Terminal.ProgressReport)
-    
+
+    /**
+     * Returns true when the host swaps the Left and Right arrow keys in
+     * right-to-left paragraphs while ``Terminal/bidiArrowKeySwap`` is on.
+     *
+     * The terminal reports DEC private mode 1243 as permanently reset when
+     * this returns false. The default implementation returns false.
+     * `TerminalView` returns true.
+     * - Parameters:
+     *  - source: identifies the instance of the terminal that sent this request
+     */
+    func supportsBidiArrowKeySwap(source: Terminal) -> Bool
+
     /**
      * Invoked to create an image from an RGBA buffer at the current cursor position
      *
@@ -360,6 +372,29 @@ public protocol TerminalImage {
     
     /// Column where the image was attached
     var col: Int { get set }
+    /// Number of terminal columns occupied by this image stripe.
+    var columnWidth: Int { get }
+}
+
+public extension TerminalImage {
+    /// An image type that does not supply a stripe width uses one column.
+    var columnWidth: Int { 1 }
+}
+
+/// Returns the number of terminal columns that an image of `width` covers.
+/// A width that is a whole number of cells, within floating-point error,
+/// does not get an extra column. Returns nil for a value that is not valid.
+func imageColumnCount(width: Double, cellWidth: Double) -> Int? {
+    guard width.isFinite, cellWidth.isFinite, width > 0, cellWidth > 0 else {
+        return nil
+    }
+    let quotient = width / cellWidth
+    let nearest = quotient.rounded()
+    let columns = abs(quotient - nearest) <= nearest * 1e-9 ? nearest : quotient.rounded(.up)
+    guard columns < Double(Int.max) else {
+        return nil
+    }
+    return max(1, Int(columns))
 }
 
 struct SynchronizedOutputWatchdogCounters {
@@ -636,8 +671,10 @@ open class Terminal {
 
     /// True when left and right cursor keys follow the resolved paragraph
     /// direction. Hosts can change this while the terminal is running. A reset
-    /// restores `options.initialBidiArrowKeySwap`.
-    public var bidiArrowKeySwap: Bool = false
+    /// restores `options.initialBidiArrowKeySwap`, which is true by default.
+    /// The host applies the swap. A host that does not swap returns false from
+    /// ``TerminalDelegate/supportsBidiArrowKeySwap(source:)``.
+    public var bidiArrowKeySwap: Bool = true
 
     // These properties keep source compatibility with the first BiDi patch.
     public var bidiSupportEnabled: Bool { currentBidiState.supportMode == .implicit }
@@ -2640,7 +2677,8 @@ open class Terminal {
             movedToNextLine = true
             let line = buffer.lines[buffer.yBase + buffer.y]
             if !line.isWrapped {
-                line.bidiState = _currentBidiState
+                buffer.setParagraphBidiState(startingAt: buffer.yBase + buffer.y,
+                                             to: _currentBidiState)
             }
         }
         
@@ -5489,6 +5527,10 @@ open class Terminal {
         if mode == SpecialDECPrivateMode.graphemeClustering.rawValue {
             return .permanentlySet
         }
+        // Report the behavior of the host, not only the stored state.
+        if mode == 1243, tdel?.supportsBidiArrowKeySwap(source: self) != true {
+            return .permanentlyReset
+        }
 #if SWIFTTERM_EMBEDDED
         if mode == SpecialDECPrivateMode.kittyPasteEvents.rawValue { return .notRecognized }
 #else
@@ -7863,6 +7905,13 @@ open class Terminal {
     private func scroll (buffer: borrowing Buffer, isWrapped: Bool)
     {
         scroll(buffer: buffer, lines: buffer.lines, isWrapped: isWrapped)
+        // A region scroll replaces the row above the first row below the
+        // region. Start a new paragraph at that row and keep its state, as RI,
+        // SU and SD do.
+        let nextRow = buffer.yBase + buffer.scrollBottom + 1
+        if nextRow > 0, nextRow < buffer.lines.count {
+            buffer.lines[nextRow].isWrapped = false
+        }
     }
 
     /// Keep this ownership boundary out of line. It lets the caller lend the
@@ -8057,6 +8106,12 @@ open class Terminal {
                 print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
             }
 
+            // The first moved row no longer follows its original predecessor.
+            // Keep its state and start a new paragraph at the region boundary.
+            if topRow < bottomRow {
+                lines[topRow].isWrapped = false
+            }
+
             // The rows moved but yDisp did not, so any selection anchored to
             // absolute rows in this region now points at different text.
             selectionsAdjustForInPlaceScroll (top: topRow, bottom: bottomRow, lines: 1)
@@ -8118,6 +8173,10 @@ open class Terminal {
                                     isWrapped: isWrapped,
                                     bidiState: newLineState) {
             print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
+        }
+        // A one-row region has no moved row. Keep the new row's wrap state.
+        if topRow < bottomRow {
+            lines[topRow].isWrapped = false
         }
         buffer.yDisp = buffer.yBase
         updateRange(borrowing: buffer, startLine: scrollTop, endLine: scrollBottom)
@@ -8831,6 +8890,7 @@ open class Terminal {
 
                     // Lines moved down in place; translate selections with them.
                     selectionsAdjustForInPlaceScroll (top: topRow, bottom: bottomRow, lines: -1)
+                    hardenBidiScrollBoundaries(insertedAtTop: true, count: 1)
                 }
                 if hasKittyPlacements {
                     scrollKittyPlacementsInMargins(
@@ -9993,7 +10053,11 @@ public extension TerminalDelegate {
 
     func progressReport(source: Terminal, report: Terminal.ProgressReport) {
     }
-    
+
+    func supportsBidiArrowKeySwap(source: Terminal) -> Bool {
+        false
+    }
+
     func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int){
     }
 

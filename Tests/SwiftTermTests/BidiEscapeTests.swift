@@ -11,9 +11,14 @@ import Testing
 
 final class BidiEscapeTests: TerminalDelegate {
     var sent: [UInt8] = []
+    var hostSwapsArrowKeys = true
 
     func send(source: Terminal, data: ArraySlice<UInt8>) {
         sent.append(contentsOf: data)
+    }
+
+    func supportsBidiArrowKeySwap(source: Terminal) -> Bool {
+        hostSwapsArrowKeys
     }
 
     var sentString: String {
@@ -30,7 +35,7 @@ final class BidiEscapeTests: TerminalDelegate {
         #expect(terminal.bidiAutodetectDirection, "autodetect on by default (RTL-first app policy)")
         #expect(!terminal.bidiRTLPreference, "SPD default direction is LTR")
         #expect(!terminal.bidiBoxMirroring, "box mirroring off by default")
-        #expect(!terminal.bidiArrowKeySwap, "arrow swapping requires opt-in")
+        #expect(terminal.bidiArrowKeySwap, "arrow swapping is on by default")
         #expect(terminal.currentBidiState.presentationMode == .implicitAutoLeftToRight)
     }
 
@@ -126,6 +131,189 @@ final class BidiEscapeTests: TerminalDelegate {
         terminal.feed(text: "\r\nnext")
         let third = try #require(terminal.getLine(row: 2))
         #expect(third.bidiState.presentationMode == .implicitAutoLeftToRight)
+    }
+
+    @Test func lineFeedSetsTheStateOfTheCompleteDestinationParagraph() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 4, rows: 6))
+        terminal.feed(text: "x\r\nאבגדאב\r\nz")
+        let contents = (0..<4).map { terminal.buffer.lines[$0].translateToString() }
+        terminal.feed(text: "\u{1b}[1;2H\u{1b}[8l\n")
+
+        #expect(terminal.buffer.lines[0].bidiState == .default)
+        for row in 1...2 {
+            #expect(terminal.buffer.lines[row].bidiState == terminal.currentBidiState)
+        }
+        #expect(terminal.buffer.lines[2].isWrapped)
+        #expect(terminal.buffer.lines[3].bidiState == .default)
+        #expect((0..<4).map { terminal.buffer.lines[$0].translateToString() } == contents)
+    }
+
+    @Test func lineFeedWithinAParagraphPreservesItsState() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 4, rows: 6))
+        terminal.feed(text: "אבגדאבגדאב")
+        terminal.feed(text: "\u{1b}[1;2H\u{1b}[8l\n")
+
+        #expect(terminal.currentBidiState.supportMode == .explicit)
+        for row in 0...2 {
+            #expect(terminal.buffer.lines[row].bidiState == .default)
+        }
+    }
+
+    @Test(arguments: ["asciiSlice", "asciiSpan", "scalarRun", "singleCell", "insertMode"])
+    func wrapSetsTheStateOfTheCompleteJoinedParagraph(path: String) {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 4, rows: 6))
+        terminal.feed(text: "x\r\nאבגדאב\r\nz")
+        terminal.feed(text: "\u{1b}[1;1H\u{1b}[8l")
+        let continuation = terminal.buffer.lines[2].translateToString()
+        let unrelated = terminal.buffer.lines[3].translateToString()
+        let bytes = Array("abcde".utf8)
+        switch path {
+        case "asciiSlice":
+            #expect(terminal.buffer.insertAsciiRun(bytes[...], styleID: 0, payloadCode: 0) == 5)
+        case "asciiSpan":
+            let slice = bytes[...]
+            let inserted = terminal.buffer.insertAsciiRun(slice.span, styleID: 0, payloadCode: 0)
+            #expect(inserted == 5)
+        case "scalarRun":
+            let scalars = bytes.map(UInt32.init)
+            scalars.withUnsafeBufferPointer {
+                #expect(terminal.buffer.insertScalarRun($0, width: 1, styleID: 0, payloadCode: 0) == 5)
+            }
+        case "singleCell":
+            for byte in bytes {
+                let cell = terminal.buffer.cellArena.pack(styleID: 0, scalar: UInt32(byte),
+                                                          widthState: .narrow)!
+                terminal.buffer.insertCharacter(cell)
+            }
+        default:
+            terminal.feed(text: "\u{1b}[4habcde")
+        }
+
+        for row in 0...2 {
+            #expect(terminal.buffer.lines[row].bidiState == terminal.currentBidiState)
+        }
+        #expect(terminal.buffer.lines[1].isWrapped)
+        #expect(terminal.buffer.lines[2].isWrapped)
+        #expect(terminal.buffer.lines[2].translateToString() == continuation)
+        #expect(terminal.buffer.lines[3].translateToString() == unrelated)
+        #expect(terminal.buffer.lines[3].bidiState == .default)
+    }
+
+    @Test(arguments: [false, true])
+    func lineFeedScrollSeparatesContinuationRowsBelowTheRegion(generalPath: Bool) {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 4, rows: 6))
+        terminal.feed(text: "x\r\nאבגדאבגדאב\r\nz")
+        let continuation = (2...3).map { terminal.buffer.lines[$0].translateToString() }
+        // A region at row zero uses the scrollback insertion path. A region
+        // at row one uses the in-place scroll path.
+        terminal.buffer.scrollTop = generalPath ? 0 : 1
+        terminal.buffer.scrollBottom = 1
+        terminal.feed(text: "\u{1b}[2;2H\u{1b}[8l\n")
+
+        let base = terminal.buffer.yBase
+        #expect(terminal.buffer.lines[base + 1].bidiState == terminal.currentBidiState)
+        // The rows below the region keep their state and start a new paragraph,
+        // as they do after RI, SU and SD.
+        #expect(!terminal.buffer.lines[base + 2].isWrapped)
+        #expect(terminal.buffer.lines[base + 3].isWrapped)
+        for row in 2...3 {
+            #expect(terminal.buffer.lines[base + row].bidiState == .default)
+        }
+        #expect((2...3).map { terminal.buffer.lines[base + $0].translateToString() } == continuation)
+        #expect(terminal.buffer.lines[base + 4].bidiState == .default)
+        #expect(terminal.buffer.lines[base + 4].translateToString(trimRight: true) == "z")
+    }
+
+    @Test(arguments: [false, true])
+    func wrapScrollKeepsTheSourceParagraphState(generalPath: Bool) {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 4, rows: 6))
+        terminal.feed(text: "אבגדאבגדאבגדאב\r\nz")
+        let continuation = (2...3).map { terminal.buffer.lines[$0].translateToString() }
+        terminal.buffer.scrollTop = generalPath ? 0 : 1
+        terminal.buffer.scrollBottom = 1
+        terminal.feed(text: "\u{1b}[2;4H\u{1b}[8lxy")
+
+        let base = terminal.buffer.yBase
+        #expect(terminal.currentBidiState.supportMode == .explicit)
+        for row in 0...3 {
+            #expect(terminal.buffer.lines[base + row].bidiState == .default)
+        }
+        #expect(terminal.buffer.lines[base + 1].isWrapped)
+        #expect((2...3).map { terminal.buffer.lines[base + $0].translateToString() } == continuation)
+        #expect(terminal.buffer.lines[base + 4].translateToString(trimRight: true) == "z")
+    }
+
+    @Test(arguments: [false, true])
+    func regionLineFeedDoesNotJoinTheFirstMovedRowToAnEarlierParagraph(generalPath: Bool) {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 4, rows: 8))
+        terminal.feed(text: "p\r\nq\r\nאבגדאבגדאב")
+        terminal.feed(text: "\u{1b}[2;1H\u{1b}[8l")
+        let earlierState = terminal.buffer.lines[1].bidiState
+        let earlierContent = terminal.buffer.lines[1].translateToString()
+        let movedContent = (3...4).map { terminal.buffer.lines[$0].translateToString() }
+        terminal.buffer.scrollTop = 2
+        terminal.buffer.scrollBottom = 4
+        if generalPath {
+            // Full-width horizontal margins select the general scroll worker.
+            terminal.feed(text: "\u{1b}[?69h")
+        }
+        terminal.feed(text: "\u{1b}[5;2H\n")
+
+        #expect(terminal.buffer.lines[1].bidiState == earlierState)
+        #expect(terminal.buffer.lines[1].translateToString() == earlierContent)
+        #expect(!terminal.buffer.lines[2].isWrapped)
+        #expect(terminal.buffer.lines[3].isWrapped)
+        #expect((2...3).map { terminal.buffer.lines[$0].translateToString() } == movedContent)
+        #expect(terminal.buffer.lines[2].bidiState == .default)
+        #expect(terminal.buffer.lines[3].bidiState == .default)
+
+        // The destination already has the current state. Its unchanged-state
+        // fast path must leave the separate moved paragraph unchanged.
+        terminal.feed(text: "\u{1b}[1;2H\n")
+        #expect(terminal.buffer.lines[1].bidiState == earlierState)
+        #expect(terminal.buffer.lines[2].bidiState == .default)
+        #expect(terminal.buffer.lines[3].bidiState == .default)
+    }
+
+    @Test func reverseIndexSeparatesTheInsertedRowFromMovedContinuations() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 4, rows: 8))
+        terminal.feed(text: "p\r\nאבגדאבגדאבגדאבגדאב")
+        let movedContent = terminal.buffer.lines[2].translateToString()
+        let outsideContent = terminal.buffer.lines[4].translateToString()
+        terminal.buffer.scrollTop = 2
+        terminal.buffer.scrollBottom = 3
+        terminal.feed(text: "\u{1b}[3;2H\u{1b}[8l\u{1b}M")
+
+        #expect(terminal.buffer.lines[2].bidiState == terminal.currentBidiState)
+        #expect(!terminal.buffer.lines[2].isWrapped)
+        #expect(terminal.buffer.lines[3].bidiState == .default)
+        #expect(!terminal.buffer.lines[3].isWrapped)
+        #expect(terminal.buffer.lines[3].translateToString() == movedContent)
+        #expect(!terminal.buffer.lines[4].isWrapped)
+        #expect(terminal.buffer.lines[4].translateToString() == outsideContent)
+
+        terminal.feed(text: "\u{1b}[2;2H\n")
+        #expect(terminal.buffer.lines[2].bidiState == terminal.currentBidiState)
+        #expect(terminal.buffer.lines[3].bidiState == .default)
+    }
+
+    @Test func reverseIndexInOneRowRegionPreservesTheOutsideRows() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 4, rows: 6))
+        terminal.feed(text: "p\r\nאבגדאבגדאב")
+        let above = terminal.buffer.lines[1].translateToString()
+        let below = terminal.buffer.lines[3].translateToString()
+        terminal.buffer.scrollTop = 2
+        terminal.buffer.scrollBottom = 2
+        terminal.feed(text: "\u{1b}[3;2H\u{1b}[8l\u{1b}M")
+
+        #expect(terminal.buffer.lines[1].translateToString() == above)
+        #expect(terminal.buffer.lines[1].bidiState == .default)
+        #expect(terminal.buffer.lines[2].translateToString(trimRight: true) == "")
+        #expect(terminal.buffer.lines[2].bidiState == terminal.currentBidiState)
+        #expect(!terminal.buffer.lines[2].isWrapped)
+        #expect(terminal.buffer.lines[3].translateToString() == below)
+        #expect(terminal.buffer.lines[3].bidiState == .default)
+        #expect(!terminal.buffer.lines[3].isWrapped)
     }
 
     @Test func reinforcedModeAppliesOnlyItsPropertyAtParagraphStart() throws {
@@ -288,13 +476,13 @@ final class BidiEscapeTests: TerminalDelegate {
 
     @Test func hostCanChangeArrowSwappingAtRuntime() {
         let terminal = makeTerminal()
-        #expect(!terminal.bidiArrowKeySwap)
-
-        terminal.bidiArrowKeySwap = true
         #expect(terminal.bidiArrowKeySwap)
 
         terminal.bidiArrowKeySwap = false
         #expect(!terminal.bidiArrowKeySwap)
+
+        terminal.bidiArrowKeySwap = true
+        #expect(terminal.bidiArrowKeySwap)
     }
 
     @Test func softResetRestoresConfiguredBidiDefaults() {
@@ -310,6 +498,18 @@ final class BidiEscapeTests: TerminalDelegate {
         terminal.softReset()
         #expect(terminal.currentBidiState == initial)
         #expect(terminal.bidiArrowKeySwap)
+    }
+
+    @Test func resetRestoresConfiguredArrowSwappingDisabled() {
+        let terminal = Terminal(delegate: self,
+                                options: TerminalOptions(initialBidiArrowKeySwap: false))
+        #expect(!terminal.bidiArrowKeySwap)
+        terminal.feed(text: "\u{1b}[?1243h")
+        terminal.softReset()
+        #expect(!terminal.bidiArrowKeySwap)
+        terminal.feed(text: "\u{1b}[?1243h")
+        terminal.resetToInitialState()
+        #expect(!terminal.bidiArrowKeySwap)
     }
 
     @Test func decrqmReportsBidiModes() {
@@ -334,6 +534,21 @@ final class BidiEscapeTests: TerminalDelegate {
         sent.removeAll()
         terminal.feed(text: "\u{1b}[?2500h\u{1b}[?2500$p")
         #expect(sentString == "\u{1b}[?2500;1$y")
+
+        sent.removeAll()
+        terminal.feed(text: "\u{1b}[?1243$p")
+        #expect(sentString == "\u{1b}[?1243;1$y", "arrow swapping set by default")
+    }
+
+    @Test func decrqmReportsArrowSwappingPermanentlyResetWhenTheHostDoesNotSwap() {
+        hostSwapsArrowKeys = false
+        let terminal = makeTerminal()
+        #expect(terminal.bidiArrowKeySwap)
+        for sequence in ["", "\u{1b}[?1243h", "\u{1b}[?1243l"] {
+            sent.removeAll()
+            terminal.feed(text: sequence + "\u{1b}[?1243$p")
+            #expect(sentString == "\u{1b}[?1243;4$y")
+        }
     }
 
     @Test func fullResetRestoresBidiDefaults() {
@@ -349,6 +564,6 @@ final class BidiEscapeTests: TerminalDelegate {
         #expect(terminal.bidiAutodetectDirection)
         #expect(!terminal.bidiRTLPreference)
         #expect(terminal.bidiBoxMirroring == false)
-        #expect(!terminal.bidiArrowKeySwap)
+        #expect(terminal.bidiArrowKeySwap)
     }
 }

@@ -108,13 +108,27 @@ final class BidiTests: TerminalDelegate {
         }
     }
 
-    @Test func paragraphRowCapUsesExplicitFallback() {
+    @Test func paragraphRowCapUsesExplicitDisplay() throws {
+        // With autodetection, rows above the limit keep logical order.
         let options = TerminalOptions(cols: 3, rows: 4, maximumBidiParagraphRows: 1)
         let terminal = Terminal(delegate: self, options: options)
         terminal.feed(text: "אבג---")
         #expect(TerminalBidi.layout(row: 1, buffer: terminal.buffer, cols: 3,
                                     terminal: terminal, font: font,
                                     hostPolicy: .respectTerminal) == nil)
+
+        // Without autodetection, the stored fallback direction applies.
+        let fixed = Terminal(delegate: self, options: TerminalOptions(
+            cols: 3, rows: 4,
+            initialBidiState: BidiPresentationState(autodetectDirection: false,
+                                                    fallbackDirection: .rightToLeft),
+            maximumBidiParagraphRows: 1))
+        fixed.feed(text: "אבג---")
+        let layout = try #require(TerminalBidi.layout(
+            row: 1, buffer: fixed.buffer, cols: 3, terminal: fixed,
+            font: font, hostPolicy: .respectTerminal))
+        #expect(layout.baseDirection == .rightToLeft)
+        #expect(layout.logicalToVisualCol == [2, 1, 0])
     }
 
     @Test func renderingDependencyRangeIncludesTheWholeParagraph() {
@@ -134,8 +148,13 @@ final class BidiTests: TerminalDelegate {
         let range = TerminalBidi.renderingDependencyRange(
             rows: 100...100, buffer: buffer, maximumRows: 16)
         #expect(range == 100...100)
+        let revision = TerminalBidi.layoutRevision(row: 100, buffer: buffer, maximumRows: 16)
+        buffer.lines[99][0] = CharData(attribute: CharData.defaultAttr, code: 65)
         #expect(TerminalBidi.layoutRevision(
-            row: 100, buffer: buffer, maximumRows: 16) == 0)
+            row: 100, buffer: buffer, maximumRows: 16) == revision)
+        buffer.lines[100][0] = CharData(attribute: CharData.defaultAttr, code: 65)
+        #expect(TerminalBidi.layoutRevision(
+            row: 100, buffer: buffer, maximumRows: 16) != revision)
     }
 
     @Test func forcedRTLParagraphReversesNeutralOnlyContext() throws {

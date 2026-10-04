@@ -169,10 +169,13 @@ public struct TerminalOptions: Sendable {
     public var regionalIndicatorWidth: RegionalIndicatorWidth
     /// BiDi state for new paragraphs after startup or reset.
     public var initialBidiState: BidiPresentationState
-    /// Maximum rows that the renderer processes as one BiDi paragraph.
+    /// Maximum rows that the renderer processes as one BiDi paragraph (default 500).
+    /// Larger paragraphs use explicit display. With autodetection, they keep
+    /// logical order. Without autodetection, they use the stored fallback direction.
     public var maximumBidiParagraphRows: Int
     /// Initial state for terminal-wg left and right arrow swapping. The default
-    /// is false, so the host or terminal application must opt in.
+    /// is true. Set this to false to disable swapping after startup and reset.
+    /// The host applies the swap. See ``TerminalDelegate/supportsBidiArrowKeySwap(source:)``.
     public var initialBidiArrowKeySwap: Bool
     /// An ASCII-alphanumeric iTerm2 feature report. Nil disables reporting.
     /// The host must include only features that the terminal and host implement together.
@@ -225,7 +228,7 @@ public struct TerminalOptions: Sendable {
                                                        regionalIndicatorWidth: .wide,
                                                        initialBidiState: .default,
                                                        maximumBidiParagraphRows: 500,
-                                                       initialBidiArrowKeySwap: false,
+                                                       initialBidiArrowKeySwap: true,
                                                        featureReport: nil,
                                                        maximumOscBytes: 65 * 1024 * 1024,
                                                        kittyClipboardPolicy: [],

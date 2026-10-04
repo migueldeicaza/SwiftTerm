@@ -1730,6 +1730,22 @@ public final class Buffer {
     }
 #endif
     
+    /// Apply one state to this row and its wrapped continuation rows.
+    /// Rows in an existing paragraph have one state. An unchanged first row
+    /// therefore needs no scan of its continuation rows.
+    func setParagraphBidiState(startingAt row: Int, to state: BidiPresentationState) {
+        guard row >= 0, row < _lines.count, _lines[row].bidiState != state else {
+            return
+        }
+        _lines[row].bidiState = state
+        var last = row
+        while last + 1 < _lines.count && _lines[last + 1].isWrapped {
+            last += 1
+            _lines[last].bidiState = state
+        }
+        terminal?.updateRange(startLine: row - _yBase, endLine: last - _yBase)
+    }
+
     @inline(__always)
     var allowsBulkInsert: Bool { !insertMode }
 
@@ -1752,7 +1768,7 @@ public final class Buffer {
                     let paragraphBidiState = _lines[_y + _yBase].bidiState
                     _y += 1
                     _lines[_y + _yBase].isWrapped = true
-                    _lines[_y + _yBase].bidiState = paragraphBidiState
+                    setParagraphBidiState(startingAt: _y + _yBase, to: paragraphBidiState)
                 }
             }
             let available = right - _x + 1
@@ -1788,7 +1804,7 @@ public final class Buffer {
                     let paragraphBidiState = _lines[_y + _yBase].bidiState
                     _y += 1
                     _lines[_y + _yBase].isWrapped = true
-                    _lines[_y + _yBase].bidiState = paragraphBidiState
+                    setParagraphBidiState(startingAt: _y + _yBase, to: paragraphBidiState)
                 }
             }
             let available = right - _x + 1
@@ -1829,7 +1845,7 @@ public final class Buffer {
                     let paragraphBidiState = _lines[_y + _yBase].bidiState
                     _y += 1
                     _lines[_y + _yBase].isWrapped = true
-                    _lines[_y + _yBase].bidiState = paragraphBidiState
+                    setParagraphBidiState(startingAt: _y + _yBase, to: paragraphBidiState)
                 }
             }
             let available = (right - _x + 1) / width
@@ -1875,7 +1891,7 @@ public final class Buffer {
                     let paragraphBidiState = _lines[_y + _yBase].bidiState
                     _y += 1
                     _lines [_y + _yBase].isWrapped = true
-                    _lines [_y + _yBase].bidiState = paragraphBidiState
+                    setParagraphBidiState(startingAt: _y + _yBase, to: paragraphBidiState)
                 }
                 // row changed, get it again
             } else {

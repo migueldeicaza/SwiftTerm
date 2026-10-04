@@ -33,12 +33,15 @@ private final class RasterLineImage: TerminalImage {
     let height: Double
     let sourceY: Double
     let sourceHeight: Double
+    let columnWidth: Int
     var col: Int
     var pixelWidth: Int { Int(width.rounded(.up)) }
     var pixelHeight: Int { Int(height.rounded(.up)) }
 
-    init(image: TerminalRasterImage, column: Int, width: Double, height: Double, sourceY: Double, sourceHeight: Double) {
-        self.image = image; col = column; self.width = width; self.height = height
+    init(image: TerminalRasterImage, column: Int, columnWidth: Int, width: Double, height: Double,
+         sourceY: Double, sourceHeight: Double) {
+        self.image = image; col = column; self.columnWidth = columnWidth
+        self.width = width; self.height = height
         self.sourceY = sourceY; self.sourceHeight = sourceHeight
     }
 }
@@ -77,13 +80,14 @@ extension Terminal {
         guard width.isFinite, height.isFinite, width > 0, height > 0,
               width <= 65535, height <= 65535 else { return }
         let count = Int((height / Double(cellHeight)).rounded(.up))
-        guard count <= 4096 else { return }
+        guard count <= 4096,
+              let columns = imageColumnCount(width: width, cellWidth: Double(cellWidth)) else { return }
         let savedX = buffer.x
         for index in 0..<count {
             let top = Double(index * cellHeight)
             let stripeHeight = min(Double(cellHeight), height - top)
             let stripe = RasterLineImage(
-                image: image, column: savedX, width: width, height: stripeHeight,
+                image: image, column: savedX, columnWidth: columns, width: width, height: stripeHeight,
                 sourceY: top * Double(image.height) / height,
                 sourceHeight: stripeHeight * Double(image.height) / height
             )

@@ -11,21 +11,26 @@ import Foundation
 import CoreGraphics
 
 final class SnapshotImage: TerminalImage {
-    let image: TTImage
+    /// Nil for an image type that the view does not draw. Its span still
+    /// hides the text in its cells, as it does in the BiDi layout.
+    let image: TTImage?
     let pixelWidth: Int
     let pixelHeight: Int
+    let columnWidth: Int
     var col: Int
 
-    init (_ source: TerminalView.AppleImage) {
-        image = source.image
+    init (_ source: TerminalImage) {
+        image = (source as? TerminalView.AppleImage)?.image
         pixelWidth = source.pixelWidth
         pixelHeight = source.pixelHeight
+        columnWidth = source.columnWidth
         col = source.col
     }
 
     func hasSameValue (as other: SnapshotImage) -> Bool {
         image === other.image &&
             pixelWidth == other.pixelWidth && pixelHeight == other.pixelHeight &&
+            columnWidth == other.columnWidth &&
             col == other.col
     }
 }
@@ -105,6 +110,7 @@ struct SnapshotKitty {
 }
 
 struct CaretRenderData {
+    var direction: BidiDirection = .leftToRight
     let code: Int32
     let width: Int8
     let cellAttribute: Attribute
@@ -148,7 +154,6 @@ final class TerminalSnapshot {
         var sourceGeneration: UInt64
         var bidiParagraphRevision: Int
         var bidiLayout: BidiRowLayout?
-        var needsDirectionOverride: Bool
         var resolvedCharacters: [Int: Character]
         var resolvedText: [Int: String]
         var images: [SnapshotImage]
@@ -166,7 +171,6 @@ final class TerminalSnapshot {
             sourceGeneration = UInt64.max
             bidiParagraphRevision = Int.min
             bidiLayout = nil
-            needsDirectionOverride = false
             resolvedCharacters = [:]
             resolvedText = [:]
             images = []
@@ -266,19 +270,18 @@ final class TerminalSnapshot {
             let destination = rows[entry.rowIndex]
             let layout = TerminalBidi.rowLayout(entry.deferred, row: entry.absoluteRow)
             destination.bidiLayout = layout
-            destination.needsDirectionOverride = layout != nil ||
-                TerminalBidi.mayNeedBidi(line: destination.line, cols: cols)
         }
-        // The cursor's visual column is the one thing `refresh` derives from a
-        // row layout while still holding the lock. Correct it here if the
-        // cursor's row was one of the deferred ones.
+        // Update the cursor column and direction after the row layout is complete.
         if var moved = cursor,
            pendingBidi.contains(where: { $0.absoluteRow == moved.absoluteRow }) {
             if let layout = row(atAbsolute: moved.absoluteRow)?.bidiLayout,
                moved.logicalCol < layout.logicalToVisualCol.count {
                 moved.visualCol = layout.logicalToVisualCol[moved.logicalCol]
+                moved.renderData.direction = moved.logicalCol < layout.logicalDirections.count
+                    ? layout.logicalDirections[moved.logicalCol] : .leftToRight
             } else {
                 moved.visualCol = moved.logicalCol
+                moved.renderData.direction = .leftToRight
             }
             cursor = moved
         }
@@ -465,8 +468,6 @@ final class TerminalSnapshot {
                         hostPolicy: viewState.bidiHostPolicy) {
                     case .resolved(let layout):
                         destination.bidiLayout = layout
-                        destination.needsDirectionOverride = layout != nil ||
-                            TerminalBidi.mayNeedBidi(line: source, cols: cols)
                     case .pending(let deferred):
                         // Finished in `completePendingBidi()` once the lock is
                         // released. `destination.line` already holds this
@@ -477,13 +478,16 @@ final class TerminalSnapshot {
                 }
             }
 
-            let newImages = (source.images ?? []).compactMap { image in
-                (image as? TerminalView.AppleImage).map(SnapshotImage.init)
-            }
+            let newImages = (source.images ?? []).map(SnapshotImage.init)
             let imagesChanged = newImages.count != destination.images.count ||
                 zip(newImages, destination.images).contains { !$0.hasSameValue(as: $1) }
             if imagesChanged {
                 destination.images = newImages
+            }
+            if contentChanged || imagesChanged {
+                // The text builder must use copied geometry after the lock is
+                // released. Live image columns can change without a cell edit.
+                destination.line.images = newImages.isEmpty ? nil : newImages
             }
             if contentChanged || bidiChanged || styleChanged || imagesChanged {
                 destination.revision &+= 1
@@ -522,9 +526,13 @@ final class TerminalSnapshot {
                 attributes[SwiftTermGlyphPolicyKey] = fallback.policy
             }
             var visualCol = cursorCol
+            var direction: BidiDirection = .leftToRight
             if let layout = row(atAbsolute: absoluteCursorRow)?.bidiLayout,
                cursorCol < layout.logicalToVisualCol.count {
                 visualCol = layout.logicalToVisualCol[cursorCol]
+                if cursorCol < layout.logicalDirections.count {
+                    direction = layout.logicalDirections[cursorCol]
+                }
             }
             cursor = SnapshotCursor(
                 absoluteRow: absoluteCursorRow,
@@ -534,7 +542,8 @@ final class TerminalSnapshot {
                 columnWidth: max(1, Int(cell.width)),
                 renderMode: cursorLine.renderMode,
                 hidden: terminal.cursorHidden,
-                renderData: CaretRenderData(code: cell.code,
+                renderData: CaretRenderData(direction: direction,
+                                            code: cell.code,
                                             width: cell.width,
                                             cellAttribute: cell.attribute,
                                             character: character,

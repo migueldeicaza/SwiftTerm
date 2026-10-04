@@ -317,6 +317,16 @@ struct ViewLineSegment {
 /// constants, so adding them to a batch dictionary allocates nothing.
 let ltrWritingDirectionKey = NSAttributedString.Key(kCTWritingDirectionAttributeName as String)
 let ltrWritingDirectionValue: [NSNumber] = [NSNumber(value: 2)]
+/// A left-to-right paragraph. Without it CoreText picks the paragraph
+/// direction from the first strong character, or from the process's default
+/// direction when there is none, and in a right-to-left paragraph it moves
+/// trailing whitespace to the left edge, ahead of the overridden text.
+/// Never mutated after creation, so sharing it across threads is safe.
+nonisolated(unsafe) let ltrParagraphStyle: NSParagraphStyle = {
+    let style = NSMutableParagraphStyle()
+    style.baseWritingDirection = .leftToRight
+    return style
+}()
 
 /// Checked-Sendable names for the CoreText attributes used by the draw pass.
 fileprivate struct CoreTextRunAttributeNames: Sendable {
@@ -1250,6 +1260,11 @@ extension TerminalView {
         kittyClipboardBridge.capabilities.withLock { $0 }
     }
 
+    /// The view swaps the Left and Right keys on every key input path.
+    public nonisolated func supportsBidiArrowKeySwap(source: Terminal) -> Bool {
+        true
+    }
+
     @discardableResult
     public nonisolated func kittyClipboardAvailableMimeTypes(
         source: Terminal,
@@ -1510,6 +1525,7 @@ extension TerminalView {
     {
         resetCaches()
         self.cellDimension = computeFontDimensions ()
+        updateImageColumnWidths()
         refreshCachedViewState()
         if (frame.width > 0) && (frame.height > 0) {
             // Use getEffectiveWidth so the scroller's reserved width is taken
@@ -1529,6 +1545,35 @@ extension TerminalView {
         #endif
     }
     
+    /// Inline images keep their size in points when the font changes. Update
+    /// the number of cells that each image covers, so that the BiDi layout,
+    /// the text builder and the renderers do not crop the image.
+    func updateImageColumnWidths() {
+        guard let terminal else { return }
+        let cellWidth = Double(cellDimension.width)
+        terminal.terminalLock.withLock {
+            for buffer in [terminal.normalBuffer, terminal.altBuffer] where buffer.hasAnyImages {
+                for index in 0..<buffer.lines.count {
+                    let line = buffer.lines[index]
+                    guard let images = line.images else { continue }
+                    var changed = false
+                    for case let image as AppleImage in images {
+                        let columns = imageColumnCount(width: Double(max(1, image.pixelWidth)),
+                                                       cellWidth: cellWidth) ?? image.columnWidth
+                        if columns != image.columnWidth {
+                            image.columnWidth = columns
+                            changed = true
+                        }
+                    }
+                    if changed {
+                        // Assign the same array to mark the line as changed.
+                        line.images = images
+                    }
+                }
+            }
+        }
+    }
+
     func updateCaretView ()
     {
         guard let caretView else { return }
@@ -2629,8 +2674,6 @@ extension TerminalView {
         snapshotRow.bidiLayout = TerminalBidi.layout(
             row: row, buffer: terminal.displayBuffer, cols: cols,
             terminal: terminal, font: fontSet.normal, hostPolicy: bidiHostPolicy)
-        snapshotRow.needsDirectionOverride = snapshotRow.bidiLayout != nil ||
-            TerminalBidi.mayNeedBidi(line: line, cols: cols, terminal: terminal)
         var column = 0
         while column < min(cols, line.count) {
             let cell = line.packedView(at: column)
@@ -3611,12 +3654,14 @@ extension TerminalView {
             }
             if !otherImages.isEmpty {
                 for image in otherImages {
-                    let col = image.col
-                    let rect = CGRect(x: CGFloat (col)*cellDimension.width,
-                                      y: rowBase - CGFloat (image.pixelHeight),
-                                      width: CGFloat (image.pixelWidth),
-                                      height: CGFloat (image.pixelHeight))
-                    image.image.draw (in: rect)
+                    guard let pixels = image.image,
+                          let geometry = TerminalBidi.imageGeometry(
+                            image, layout: snapshotRow.bidiLayout, cols: snapshot.cols,
+                            cellWidth: cellDimension.width, rowBase: rowBase) else { continue }
+                    context.saveGState()
+                    context.clip(to: geometry.visibleRect)
+                    pixels.draw(in: geometry.fullRect)
+                    context.restoreGState()
                 }
             }
             switch renderMode {
@@ -4572,15 +4617,65 @@ extension TerminalView {
              ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
     }
 
+    /// True when the Left and Right keys swap: ``Terminal/bidiArrowKeySwap``
+    /// is on and the cursor's paragraph resolves right to left. Call this
+    /// while holding the terminal lock.
+    private func swapsHorizontalArrowKeys(_ terminal: Terminal) -> Bool {
+        guard terminal.bidiArrowKeySwap else {
+            return false
+        }
+        let buffer = terminal.displayBuffer
+        let baseDirection = TerminalBidi.resolvedBaseDirection(
+            row: buffer.yBase + buffer.y, buffer: buffer, cols: terminal.cols,
+            terminal: terminal, font: fontSet.normal, hostPolicy: bidiHostPolicy)
+        return baseDirection == .rightToLeft
+    }
+
+    /// Returns true when a press of the Left key (`left` is true) or the Right
+    /// key (`left` is false) must send the sequences of the Left key. Every
+    /// key input path uses this function, also for modified arrow keys.
+    func sendsLeftArrowSequence(forLeftKey left: Bool) -> Bool {
+        withTerminal { swapsHorizontalArrowKeys($0) } ? !left : left
+    }
+
+    /// Applies BiDi arrow-key swapping to a kitty or legacy key event. This
+    /// includes the keypad arrows. A press chooses the swap from the cursor's
+    /// paragraph. Its repeats and its release use the same choice, so the
+    /// application never gets a release for a key that it did not see pressed.
+    func bidiSwappedKeyEvent(_ event: KittyKeyEvent) -> KittyKeyEvent {
+        guard case .functional(let key) = event.key else {
+            return event
+        }
+        let mirrored: KittyFunctionalKey
+        switch key {
+        case .left: mirrored = .right
+        case .right: mirrored = .left
+        case .keypadLeft: mirrored = .keypadRight
+        case .keypadRight: mirrored = .keypadLeft
+        default: return event
+        }
+        let swap: Bool
+        switch event.eventType {
+        case .press:
+            swap = withTerminal { swapsHorizontalArrowKeys($0) }
+            arrowKeySwapsAtPress[key] = swap
+        case .repeatPress:
+            swap = arrowKeySwapsAtPress[key] ?? withTerminal { swapsHorizontalArrowKeys($0) }
+        case .release:
+            swap = arrowKeySwapsAtPress.removeValue(forKey: key)
+                ?? withTerminal { swapsHorizontalArrowKeys($0) }
+        }
+        guard swap else {
+            return event
+        }
+        var result = event
+        result.key = .functional(mirrored)
+        return result
+    }
+
     private func sendHorizontalKey(left: Bool) {
         let sequence = withTerminal { terminal in
-            let buffer = terminal.displayBuffer
-            let row = buffer.yBase + buffer.y
-            let baseDirection = TerminalBidi.resolvedBaseDirection(
-                row: row, buffer: buffer, cols: terminal.cols, terminal: terminal,
-                font: fontSet.normal, hostPolicy: bidiHostPolicy)
-            let swap = terminal.bidiArrowKeySwap && baseDirection == .rightToLeft
-            let sendLeft = swap ? !left : left
+            let sendLeft = swapsHorizontalArrowKeys(terminal) ? !left : left
             return sendLeft
                 ? (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
                 : (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
@@ -4604,12 +4699,16 @@ extension TerminalView {
         var image: TTImage
         var pixelWidth: Int
         var pixelHeight: Int
+        /// Changes when the font changes. See `updateImageColumnWidths()`.
+        var columnWidth: Int
         var col: Int
         
-        init (image: TTImage, width: Int, height: Int, onCol: Int) {
+        init (image: TTImage, width: Int, height: Int, onCol: Int,
+              columnWidth: Int = 1) {
             self.image = image
             self.pixelWidth = width
             self.pixelHeight = height
+            self.columnWidth = columnWidth
             self.col = onCol
         }
     }
@@ -4726,7 +4825,21 @@ extension TerminalView {
             }
         }
         
-        let rows = Int (ceil (height/cellSize.height))
+        guard width.isFinite, height.isFinite, width > 0, height > 0,
+              cellSize.width > 0, cellSize.height > 0,
+              width < CGFloat(Int.max), height < CGFloat(Int.max) else {
+            return
+        }
+        // The image keeps this width in points. Compute the span from the
+        // same value that `updateImageColumnWidths()` uses after a font change.
+        let pixelWidth = Int(width)
+        let rowCount = ceil(height / cellSize.height)
+        guard rowCount < CGFloat(Int.max),
+              let columns = imageColumnCount(width: Double(max(1, pixelWidth)),
+                                             cellWidth: Double(cellSize.width)) else {
+            return
+        }
+        let rows = Int(rowCount)
         
         let stripeSize = CGSize (width: width, height: cellSize.height)
         var didScroll = false
@@ -4748,7 +4861,9 @@ extension TerminalView {
             srcY += cellSize.height * heightRatio
             #endif
             
-            let attachedImage = AppleImage (image: stripe, width: Int (stripeSize.width), height: Int (cellSize.height), onCol: terminal.buffer.x)
+            let attachedImage = AppleImage(image: stripe, width: pixelWidth,
+                                           height: Int(cellSize.height), onCol: terminal.buffer.x,
+                                           columnWidth: columns)
             buffer.attachImage(attachedImage, toLineAt: buffer.y+buffer.yBase)
 
             terminal.updateRange (buffer.y)

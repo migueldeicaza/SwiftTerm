@@ -2644,7 +2644,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     @discardableResult
     private func sendKittyEvent(_ event: KittyKeyEvent) -> Bool {
-        guard let bytes = kittyEncoder().encode(event) else { return false }
+        guard let bytes = kittyEncoder().encode(bidiSwappedKeyEvent(event)) else { return false }
         send(bytes)
         return true
     }
@@ -3220,21 +3220,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 data = .bytes (withTerminal({ $0.applicationCursor }) ? EscapeSequences.moveUpApp : EscapeSequences.moveUpNormal)
             case .keyboardDownArrow:
                 data = .bytes (withTerminal({ $0.applicationCursor }) ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
-            case .keyboardLeftArrow:
+            case .keyboardLeftArrow, .keyboardRightArrow:
+                let left = sendsLeftArrowSequence(forLeftKey: key.keyCode == .keyboardLeftArrow)
                 if key.modifierFlags.contains ([.alternate]) {
-                    data = .bytes (EscapeSequences.emacsBack)
+                    data = .bytes (left ? EscapeSequences.emacsBack : EscapeSequences.emacsForward)
                 } else if key.modifierFlags.contains ([.control]) {
-                    data = .bytes (EscapeSequences.controlLeft)
+                    data = .bytes (left ? EscapeSequences.controlLeft : EscapeSequences.controlRight)
+                } else if withTerminal({ $0.applicationCursor }) {
+                    data = .bytes (left ? EscapeSequences.moveLeftApp : EscapeSequences.moveRightApp)
                 } else {
-                    data = .bytes (withTerminal({ $0.applicationCursor }) ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
-                }
-            case .keyboardRightArrow:
-                if key.modifierFlags.contains ([.alternate]) {
-                    data = .bytes (EscapeSequences.emacsForward)
-                } else if key.modifierFlags.contains ([.control]) {
-                    data = .bytes (EscapeSequences.controlRight)
-                } else {
-                    data = .bytes (withTerminal({ $0.applicationCursor }) ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
+                    data = .bytes (left ? EscapeSequences.moveLeftNormal : EscapeSequences.moveRightNormal)
                 }
             case .keyboardPageUp:
                 if withTerminal({ $0.applicationCursor }) {
@@ -3731,6 +3726,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // Keep new stored properties at the end of the class. Moving the existing
     // render-path fields changes their Release layout and can reduce throughput.
     nonisolated let kittyClipboardBridge = AppleKittyClipboardBridge()
+    /// The BiDi arrow swap chosen at each arrow key press, for its repeats and release.
+    var arrowKeySwapsAtPress: [KittyFunctionalKey: Bool] = [:]
 }
 
 // Default implementations for TerminalViewDelegate

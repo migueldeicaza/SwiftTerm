@@ -26,8 +26,11 @@ recommendation, the same model that mlterm uses:
 A *paragraph* is a row together with the soft-wrapped rows that continue it.
 Each paragraph stores its own BiDi state (``BidiPresentationState``), so
 scrollback keeps the presentation it had when it was produced. Escape
-sequences change the state of the paragraph that the cursor is on and of the
-paragraphs that follow; earlier paragraphs do not change.
+sequences change the current state for new paragraphs. At the first logical
+position of a paragraph, a mode change also applies to that paragraph.
+A line feed into a different paragraph applies the current state to all its
+rows. A line feed within the same paragraph preserves its state. When a soft
+wrap joins two paragraphs, all joined rows use the first paragraph's state.
 
 ### The six presentation modes
 
@@ -98,6 +101,8 @@ as a compatibility alias because the original BiDi patches used it:
 - **DECRQM** reports every mode above: `CSI 8 $ p` for BDSM and
   `CSI ? 2500 $ p`, `CSI ? 2501 $ p`, `CSI ? 1243 $ p` for the private
   modes. The reply is `CSI Ps ; Pm $ y` with `Pm` = 1 (set) or 2 (reset).
+  For mode 1243, `Pm` is 4 (permanently reset) when the host does not swap
+  the arrow keys.
 - **XTSAVE/XTRESTORE** (`CSI ? Pm s` and `CSI ? Pm r`) save and restore
   modes 2500, 2501, and 1243. The recommendation asks BiDi-aware
   applications to *save and disable* arrow swapping on startup and restore
@@ -129,12 +134,15 @@ printf '\e[8l'
   new paragraphs receive at startup and after a reset. The default enables
   implicit mode with autodetection and an LTR fallback.
 - ``TerminalOptions/maximumBidiParagraphRows`` — the largest number of
-  soft-wrapped rows the renderer treats as one paragraph (default 120).
-  Paragraphs beyond the cap fall back to row-local processing, which bounds
-  the cost of pathological output such as an endless wrapped line.
+  soft-wrapped rows the renderer treats as one paragraph (default 500).
+  Above this limit, the renderer uses explicit display on each row. With
+  autodetection, the rows keep logical column order. Without autodetection,
+  the renderer uses the stored fallback direction: LTR keeps logical column
+  order; RTL places logical column zero at the right edge. This limits the
+  work for an endless wrapped line without changing its stored state.
 - ``TerminalOptions/initialBidiArrowKeySwap`` — the initial value for
-  arrow-key swapping (default `false`; the host or the application must opt
-  in).
+  arrow-key swapping (default `true`). Set it to `false` to disable swapping
+  after startup and reset.
 
 ```swift
 let options = TerminalOptions(
@@ -142,7 +150,7 @@ let options = TerminalOptions(
         supportMode: .implicit,
         autodetectDirection: true,
         fallbackDirection: .rightToLeft),
-    initialBidiArrowKeySwap: true)
+    initialBidiArrowKeySwap: false)
 let terminal = Terminal(delegate: delegate, options: options)
 ```
 
@@ -181,10 +189,16 @@ operations keep working on logical content.
 When ``Terminal/bidiArrowKeySwap`` is on and the cursor is on a paragraph
 whose resolved base direction is RTL, the view swaps the sequences that the
 Left and Right arrows send, so the cursor moves in the visual direction of
-the key. Home and End are not swapped. The feature is off by default;
-enable it with ``TerminalOptions/initialBidiArrowKeySwap``, by setting
-``Terminal/bidiArrowKeySwap``, or from the application side with
-`CSI ? 1243 h`.
+the key. The swap applies to the arrow keys with and without modifiers, and
+to the legacy and kitty keyboard encodings. Home and End are not swapped. The
+feature is on by default. To disable it, set
+``TerminalOptions/initialBidiArrowKeySwap`` to `false`, set
+``Terminal/bidiArrowKeySwap`` to `false` at runtime, or send `CSI ? 1243 l`
+from the application. A reset restores the configured initial value.
+
+The host applies the swap. `TerminalView` does this. Another host returns
+`true` from ``TerminalDelegate/supportsBidiArrowKeySwap(source:)`` only when
+it swaps the keys. Otherwise DECRQM reports mode 1243 as permanently reset.
 
 ## Rendering details
 
@@ -198,6 +212,11 @@ enable it with ``TerminalOptions/initialBidiArrowKeySwap``, by setting
   render mirrored on RTL runs.
 - With DECSET 2500, horizontally asymmetric box-drawing characters are also
   mirrored, so BiDi-unaware TUI frames stay coherent in RTL paragraphs.
+- Each inline image stripe occupies one unit in the BiDi layout. All columns
+  in the stripe move together. The renderer draws the image without horizontal
+  reflection. SwiftTerm sets ``TerminalImage/columnWidth`` when it attaches
+  the image. An image keeps its size in points, so `TerminalView` updates the
+  width when the font changes.
 - Paragraph layouts are cached and invalidated by a per-paragraph revision,
   so LTR-only workloads keep their previous performance.
 

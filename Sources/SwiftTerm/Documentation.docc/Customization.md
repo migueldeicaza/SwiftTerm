@@ -176,18 +176,27 @@ let options = TerminalOptions(
 )
 ```
 
-BiDi left/right arrow swapping requires opt-in. Set its initial value when you
-create the terminal, or change the live terminal state later:
+BiDi left/right arrow swapping is on by default for RTL paragraphs. To disable
+it, set the initial value when you create the terminal. You can also change
+the live terminal state:
 
 ```swift
-let options = TerminalOptions(initialBidiArrowKeySwap: true)
+let options = TerminalOptions(initialBidiArrowKeySwap: false)
 let terminal = Terminal(delegate: delegate, options: options)
 
-terminal.bidiArrowKeySwap = false
+terminal.bidiArrowKeySwap = true
 ```
 
 A terminal reset restores `initialBidiArrowKeySwap`. Terminal applications can
-also change the live state with DEC private mode 1243.
+also disable swapping with `CSI ? 1243 l` or enable it with `CSI ? 1243 h`.
+`TerminalView` applies the swap. A host with its own key handling must swap
+the keys itself and return `true` from the `TerminalDelegate` method
+`supportsBidiArrowKeySwap(source:)`.
+
+The renderer processes up to 500 rows as one BiDi paragraph by default. Set
+`maximumBidiParagraphRows` to change this limit. Longer paragraphs use explicit
+display on each row. With autodetection, they keep logical order. Otherwise
+they use the stored fallback direction.
 
 For the full bidirectional text support — presentation modes, escape
 sequences, and the rendering pipeline — see <doc:BiDi>.
@@ -204,8 +213,8 @@ Key options:
 | `screenReaderMode` | `false` | Accessibility mode |
 | `enableSixelReported` | `true` | Advertise Sixel support to applications |
 | `initialBidiState` | implicit, autodetect, LTR | BiDi state for new paragraphs after startup or reset |
-| `maximumBidiParagraphRows` | `120` | Maximum rows processed as one BiDi paragraph |
-| `initialBidiArrowKeySwap` | `false` | Initial state for BiDi left/right arrow swapping |
+| `maximumBidiParagraphRows` | `500` | Maximum rows processed as one BiDi paragraph |
+| `initialBidiArrowKeySwap` | `true` | Initial state for BiDi left/right arrow swapping |
 | `kittyGraphics` | 10 MB per screen, direct media only | Kitty storage and local-media policy |
 | `ansi256PaletteStrategy` | `.base16Lab` | 256-color palette generation strategy |
 

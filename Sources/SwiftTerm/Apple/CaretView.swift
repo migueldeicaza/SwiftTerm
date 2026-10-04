@@ -33,7 +33,7 @@ extension CaretView {
         let region: CGRect
         switch style {
         case .blinkBar, .steadyBar:
-            region = CGRect (x: 0, y: 0, width: 2, height: bounds.height)
+            region = CursorGeometry.barRect(in: bounds, direction: renderDirection, width: 2)
         case .blinkBlock, .steadyBlock:
             region = bounds
         case .blinkUnderline, .steadyUnderline:

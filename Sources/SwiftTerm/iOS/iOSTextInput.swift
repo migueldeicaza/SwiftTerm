@@ -476,7 +476,8 @@ extension TerminalView: UITextInput {
         // 5 is a happy medium between fast moving and precise enough.
         if abs(deltax) > 5 {
             var data: [UInt8]
-            if deltax > 0 {
+            // A swapped key moves the input offset in the direction of the sent key.
+            if sendsLeftArrowSequence(forLeftKey: deltax > 0) {
                 data = terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal
                 // Update the carret to the new position so that deleteBackward will delete the correct character
                 let newOffset = textInputStorage.textInputOffset(_selectedTextRange.startPosition.offset, advancedByUTF16Distance: -1)

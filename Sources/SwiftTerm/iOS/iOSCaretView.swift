@@ -20,6 +20,7 @@ class CaretView: UIView {
     /// Cell width of the character currently under the caret (2 for full-width
     /// CJK). Used to center its glyph within the caret, matching the text.
     var glyphColumnWidth: Int = 1
+    var renderDirection: BidiDirection = .leftToRight
     var powerlineCodePoint: UInt32?
     var renderCursorColor = UIColor.gray
     var renderTextColor = UIColor.black
@@ -92,6 +93,7 @@ class CaretView: UIView {
     
     func setText (_ data: CaretRenderData) {
         glyphColumnWidth = max(1, Int(data.width))
+        renderDirection = data.direction
         renderCursorColor = data.cursorColor
         renderTextColor = data.textColor
         renderCustomBlockGlyphs = data.customBlockGlyphs
