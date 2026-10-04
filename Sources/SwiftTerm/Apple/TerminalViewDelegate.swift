@@ -179,6 +179,36 @@ public protocol TerminalViewDelegate: AnyObject {
      */
     func rangeChanged (source: TerminalView, startY: Int, endY: Int)
 
+    /**
+     * Invoked every time the terminal view handles an OSC 9;4 progress report, with the
+     * report it just applied to the progress bar.
+     *
+     * The bar draws the progress itself; this callback exists for hosts that also want to
+     * know whether the session is busy — a launcher that shows a spinner next to the tab,
+     * an editor that holds back input until the command finishes. The view keeps its own
+     * state, so an implementation only has to mirror what it is told.
+     *
+     * A `set` or `indeterminate` is followed by a `remove`: from the application, from the
+     * 15 second silence timer, or from the view closing — the last two arrive as a synthetic
+     * ``Terminal/ProgressReport`` with the ``Terminal/ProgressReportState/remove`` state. That
+     * holds as long as the same delegate stays attached; a delegate attached while a report is
+     * live is not caught up on it, and one detached before the removal never hears it.
+     *
+     * The default implementation does nothing.
+     */
+    func progressReport (source: TerminalView, report: Terminal.ProgressReport)
+
+    /**
+     * Invoked when the client application posts a desktop notification with OSC 777
+     * (`ESC ] 777 ; notify ; title ; body BEL`).
+     *
+     * SwiftTerm never posts a notification itself: what the host does with one — a banner,
+     * a badge, an entry in its own inbox, nothing at all — is the host's policy.
+     *
+     * The default implementation does nothing.
+     */
+    func notification (source: TerminalView, title: String, body: String)
+
 }
 #endif
 

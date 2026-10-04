@@ -276,3 +276,39 @@ custom overlay), set `notifyUpdateChanges` to `true` and implement
 ```swift
 terminalView.notifyUpdateChanges = true
 ```
+
+## Session Signals
+
+A host that embeds a terminal usually wants to know what the session is doing —
+whether to show a spinner beside its tab, hold back input while a command runs,
+or surface a notification the application posted.
+
+``TerminalViewDelegate/progressReport(source:report:)`` is called every time the
+view handles an OSC 9;4 progress report, with the report it just applied to the
+progress bar. `set` and `indeterminate` mean the application is working;
+`remove` means it is done. A `set` or `indeterminate` is followed by a
+`remove`: from the application, from the 15 second silence timer that clears a
+bar the application never removed, or from the view closing
+(``TerminalView/updateUiClosed()``); the last two arrive as a synthetic report.
+That holds as long as the same delegate stays attached; a delegate attached
+while a report is live is not caught up on it, and one detached before the
+removal never hears it.
+
+```swift
+func progressReport (source: TerminalView, report: Terminal.ProgressReport) {
+    isBusy = report.state != .remove
+}
+```
+
+``TerminalViewDelegate/notification(source:title:body:)`` is called when the
+application posts a desktop notification with OSC 777
+(`ESC ] 777 ; notify ; title ; body BEL`). SwiftTerm never posts one itself:
+whether it becomes a banner, a badge, or nothing at all is the host's policy.
+
+Both are defaulted to do nothing, so neither is a breaking change for an
+existing delegate.
+
+``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so a host
+that uses it implements the same two methods on
+``LocalProcessTerminalViewDelegate`` instead; the view forwards them, and they
+are defaulted there too.

@@ -52,6 +52,22 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     /// Reports a launch failure, separate from child exit.
     func processFailedToStart(source: TerminalView, error: LocalProcessError)
 
+    // MARK: Session signals
+    //
+    // ``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so the
+    // host cannot answer these ``TerminalViewDelegate`` hooks directly. The
+    // view forwards them here, and the defaults do nothing.
+
+    /// Invoked every time the terminal view handles an OSC 9;4 progress report.
+    ///
+    /// See ``TerminalViewDelegate/progressReport(source:report:)``.
+    func progressReport(source: TerminalView, report: Terminal.ProgressReport)
+
+    /// Invoked when the process posts an OSC 777 desktop notification.
+    ///
+    /// See ``TerminalViewDelegate/notification(source:title:body:)``.
+    func notification(source: TerminalView, title: String, body: String)
+
     // MARK: Kitty clipboard protocol, OSC 5522
     //
     // ``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so the
@@ -95,6 +111,10 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
 
 public extension LocalProcessTerminalViewDelegate {
     func processFailedToStart(source: TerminalView, error: LocalProcessError) {}
+
+    func progressReport(source: TerminalView, report: Terminal.ProgressReport) {}
+
+    func notification(source: TerminalView, title: String, body: String) {}
 
     func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
         []
@@ -348,6 +368,18 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
 
     public func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
         processDelegate?.hostCurrentDirectoryUpdate(source: source, directory: directory)
+    }
+
+    // MARK: Session signals, forwarded to the processDelegate
+    //
+    // These are `open` so a subclass can also answer them directly.
+
+    open func progressReport(source: TerminalView, report: Terminal.ProgressReport) {
+        processDelegate?.progressReport(source: source, report: report)
+    }
+
+    open func notification(source: TerminalView, title: String, body: String) {
+        processDelegate?.notification(source: source, title: title, body: body)
     }
 
     // MARK: Kitty clipboard protocol, forwarded to the processDelegate
