@@ -79,7 +79,8 @@ export async function checkBrowserInput(page) {
   assert.equal(await page.evaluate(() => window.swifttermExample.terminal.selectionText()), 'hello');
   const copied = await text.evaluate(input => {
     const data = new DataTransfer(), event = new ClipboardEvent('copy', { clipboardData: data, cancelable: true, bubbles: true });
-    input.dispatchEvent(event); return { prevented: event.defaultPrevented, text: data.getData('text/plain') };
+    input.dispatchEvent(event);
+    return { prevented: event.defaultPrevented, text: event.clipboardData?.getData('text/plain') ?? '' };
   });
   assert.deepEqual(copied, { prevented: true, text: 'hello' });
   const highlighted = await page.evaluate(() => {

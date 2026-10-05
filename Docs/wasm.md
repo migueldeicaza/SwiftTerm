@@ -19,13 +19,12 @@ entry point. The TypeScript loader supplies the required WASI imports and calls
 
 Use the exact compiler and SDK pair in
 [`scripts/wasm-toolchain.env`](../scripts/wasm-toolchain.env):
-`swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-14-a`, Swift revision
-`424cae54c1a10da`. Install its WASM artifact bundle. It contains the SDK IDs
-`swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-14-a_wasm` and
-`swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-08-14-a_wasm-embedded`.
+`swift-6.4.0-RELEASE`, Swift revision `swift-6.4-RELEASE`. Install its WASM
+artifact bundle. It contains the SDK IDs `swift-6.4.0-RELEASE_wasm` and
+`swift-6.4.0-RELEASE_wasm-embedded`.
 Use the [Swift installation page](https://www.swift.org/install/macos/) and
 [WASM SDK guide](https://www.swift.org/documentation/articles/wasm-getting-started.html)
-for installation steps. Do not mix an Xcode compiler with a snapshot SDK.
+for installation steps. Do not mix an Xcode compiler with the Swift.org WASM SDK.
 
 Install Node.js 22 or later, then run:
 
@@ -39,7 +38,7 @@ On macOS, the script finds the pinned toolchain in
 `~/Library/Developer/Toolchains`. On other hosts it checks `swift` on `PATH`.
 Set `SWIFTTERM_SWIFT` to an explicit compiler path when needed. Set
 `SWIFTTERM_SWIFT_SDKS_PATH` if the SDK bundles are outside
-`~/.swiftpm/swift-sdks`.
+SwiftPM's default SDK directories.
 
 The build checks the compiler revision, compiles an export probe, links a
 reactor, and checks the observed import and export tables against the checked-in
@@ -63,8 +62,9 @@ scripts/build-wasm.sh embedded --smoke --release --run
 `SWIFTTERM_WEB_WASM=1` adds the browser reactor. The traits select the core source path;
 `SWIFTTERM_WEB_FULL` is no longer used. `Wasm` alone selects Full even when
 that environment variable is absent. The two variants are separate: do not combine
-`Wasm` and `Embedded`. Existing manual `--traits Embedded,Wasm` commands must
-change to `--traits Embedded --disable-default-traits`; the build script interface is unchanged.
+`Wasm` and `Embedded`. Existing manual `swift build --traits Embedded,Wasm`
+commands must now run with `SWIFTTERM_EMBEDDED_WASM=1` in the environment and pass
+`--traits Embedded --disable-default-traits`; the build script interface is unchanged.
 The default `PortableGraphics` trait supplies PNG and zlib dependencies for native
 Linux and Windows. `Wasm` enables it explicitly. `Embedded` builds must omit it;
 the script disables default traits for this variant. Consumers of the native package do not acquire these executable

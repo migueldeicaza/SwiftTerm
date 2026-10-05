@@ -289,6 +289,28 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func mouseEventBytes(button: Int, release: Bool, shift: Bool, meta: Bool,
+                         control: Bool, col: Int, row: Int,
+                         pixelX: Int?, pixelY: Int?) -> [UInt8]? {
+        switch button {
+        case 0, 1, 2, 4, 5, 6, 7: break
+        default: return nil
+        }
+        guard col >= 0, row >= 0, col <= Int.max - 33, row <= Int.max - 33,
+              pixelX.map({ $0 >= 0 && $0 < Int.max }) ?? true,
+              pixelY.map({ $0 >= 0 && $0 < Int.max }) ?? true,
+              let session = currentSession() else { return nil }
+        let terminal = session.terminal
+        precondition(!terminal.terminalLock.isLockedByCurrentThread,
+                     "Mouse input cannot be sent from a terminal callback")
+        return terminal.terminalLock.withLock {
+            let flags = terminal.encodeButton(button: button, release: release,
+                                               shift: shift, meta: meta, control: control)
+            return terminal.mouseEventBytes(buttonFlags: flags, x: col, y: row,
+                                            pixelX: pixelX ?? col, pixelY: pixelY ?? row)
+        }
+    }
+
     func dimensions() -> TerminalDimensions {
         guard let terminal = currentSession()?.terminal else {
             return TerminalDimensions(cols: 0, rows: 0)
@@ -312,6 +334,22 @@ final class TerminalRenderOwner: Sendable {
         }
         return terminal.terminalLock.withLock {
             terminal.keyboardEnhancementFlags
+        }
+    }
+
+    func visibleRowsText(_ rows: Range<Int>) -> [String] {
+        guard let terminal = currentSession()?.terminal else { return [] }
+        return terminal.terminalLock.withLock {
+            // The snapshot's own conversion, row for row: a wide glyph's continuation cell is
+            // skipped and every other unwritten cell reads as a space, never a NUL.
+            let buffer = terminal.displayBuffer
+            let screen = 0..<max(0, terminal.rows)
+            return rows.clamped(to: screen).compactMap { row -> String? in
+                let lineIndex = buffer.yDisp + row
+                guard lineIndex >= 0, lineIndex < buffer.lines.count else { return nil }
+                return terminal.translateBufferLineToString(buffer: buffer, line: lineIndex, start: 0, end: -1)
+                    .replacingOccurrences(of: "\u{0}", with: " ")
+            }
         }
     }
 

@@ -12,6 +12,9 @@ import WASILibc
 // The Swift Static Linux SDK builds against musl, where the C library module
 // is `Musl` and `Glibc` does not exist.
 import Musl
+#elseif canImport(Android)
+// Bionic, as the Swift Android SDK names it; Android has no `Glibc`.
+import Android
 #elseif canImport(Glibc)
 import Glibc
 #elseif os(Windows)
@@ -35,7 +38,8 @@ import PNG
 import LZ77
 #endif
 
-#if !os(Windows) && !os(WASI)
+// Android's Bionic has no POSIX shared memory (`shm_open`).
+#if !os(Windows) && !os(WASI) && !os(Android)
 @_silgen_name("shm_open")
 private func swiftShmOpen(_ name: UnsafePointer<CChar>, _ oflag: Int32, _ mode: mode_t) -> Int32
 #endif
@@ -1328,7 +1332,7 @@ extension Terminal {
     }
 
     private func loadKittySharedMemoryPayload(control: KittyGraphicsControl, base64Payload: [UInt8]) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
-        #if os(Windows) || os(WASI)
+        #if os(Windows) || os(WASI) || os(Android)
         return (nil, "ENOTSUP: unsupported transmission")
         #else
         guard let pathData = decodeKittyBase64Payload(base64Payload), !pathData.isEmpty else {
@@ -1337,7 +1341,8 @@ extension Terminal {
         guard !pathData.contains(0) else {
             return (nil, "EINVAL: bad payload")
         }
-        guard let name = String(data: pathData, encoding: .utf8) else {
+        guard let name = String(data: pathData, encoding: .utf8),
+              Terminal.isPlausibleSharedMemoryName(name) else {
             return (nil, "EINVAL: bad payload")
         }
 
@@ -1483,7 +1488,24 @@ extension Terminal {
     }
     #endif
 
-    #if !os(Windows) && !os(WASI)
+    #if !os(Windows) && !os(WASI) && !os(Android)
+    /// A POSIX shared memory name: one leading slash, no other slash, and
+    /// within the platform's length limit (the checks Ghostty makes). The
+    /// name comes from terminal output and the object is unlinked once
+    /// opened, so anything else is refused before it is opened.
+    static func isPlausibleSharedMemoryName(_ name: String) -> Bool {
+        #if canImport(Darwin)
+        let maxLength = 31   // PSHMNAMLEN, counting the slash
+        #else
+        let maxLength = 256  // the slash, then NAME_MAX
+        #endif
+        let bytes = Array(name.utf8)
+        guard bytes.count >= 2, bytes.count <= maxLength, bytes[0] == UInt8(ascii: "/") else {
+            return false
+        }
+        return !bytes.dropFirst().contains(UInt8(ascii: "/"))
+    }
+
     private func readKittySharedMemory(name: String, expectedSize: Int?, offset: Int, size: Int) -> Data? {
         guard offset >= 0, size >= 0 else {
             return nil
@@ -1513,14 +1535,17 @@ extension Terminal {
         if let expectedSize, statSize < expectedSize {
             return nil
         }
-        let effectiveExpectedSize = expectedSize ?? statSize
-
+        // S= counts from O= and is clamped to the object, as kitty does;
+        // without it, the image's own size counts from O=, or the rest of
+        // the object when the size is not known up front.
         let start = offset
         let end: Int
         if size > 0 {
-            end = min(offset + size, effectiveExpectedSize)
+            end = min(offset + size, statSize)
+        } else if let expectedSize {
+            end = offset + expectedSize
         } else {
-            end = effectiveExpectedSize
+            end = statSize
         }
         guard start < end, end <= statSize else {
             return nil

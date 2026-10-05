@@ -7,7 +7,7 @@
 //  queue into a small ring of buffers, a parse thread delivers batches.
 //
 #if !SWIFTTERM_EMBEDDED
-#if !os(iOS) && !os(Windows) && !os(WASI)
+#if !os(iOS) && !os(Windows) && !os(WASI) && !os(Android)
 import Dispatch
 import Foundation
 

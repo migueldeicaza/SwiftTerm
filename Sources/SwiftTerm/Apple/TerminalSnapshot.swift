@@ -148,7 +148,6 @@ final class TerminalSnapshot {
         var sourceGeneration: UInt64
         var bidiParagraphRevision: Int
         var bidiLayout: BidiRowLayout?
-        var needsDirectionOverride: Bool
         var resolvedCharacters: [Int: Character]
         var resolvedText: [Int: String]
         var images: [SnapshotImage]
@@ -166,7 +165,6 @@ final class TerminalSnapshot {
             sourceGeneration = UInt64.max
             bidiParagraphRevision = Int.min
             bidiLayout = nil
-            needsDirectionOverride = false
             resolvedCharacters = [:]
             resolvedText = [:]
             images = []
@@ -266,8 +264,6 @@ final class TerminalSnapshot {
             let destination = rows[entry.rowIndex]
             let layout = TerminalBidi.rowLayout(entry.deferred, row: entry.absoluteRow)
             destination.bidiLayout = layout
-            destination.needsDirectionOverride = layout != nil ||
-                TerminalBidi.mayNeedBidi(line: destination.line, cols: cols)
         }
         // The cursor's visual column is the one thing `refresh` derives from a
         // row layout while still holding the lock. Correct it here if the
@@ -465,8 +461,6 @@ final class TerminalSnapshot {
                         hostPolicy: viewState.bidiHostPolicy) {
                     case .resolved(let layout):
                         destination.bidiLayout = layout
-                        destination.needsDirectionOverride = layout != nil ||
-                            TerminalBidi.mayNeedBidi(line: source, cols: cols)
                     case .pending(let deferred):
                         // Finished in `completePendingBidi()` once the lock is
                         // released. `destination.line` already holds this

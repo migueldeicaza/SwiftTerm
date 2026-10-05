@@ -6,6 +6,7 @@
 //
 
 #if !SWIFTTERM_EMBEDDED
+#if os(macOS) || os(iOS) || os(visionOS) || os(tvOS)
 #if os(macOS)
 import AppKit
 typealias ProgressBarBaseView = NSView
@@ -205,4 +206,5 @@ final class TerminalProgressBarView: ProgressBarBaseView {
     }
 }
 
+#endif
 #endif // !SWIFTTERM_EMBEDDED

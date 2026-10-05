@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { createRequire } from 'node:module';
@@ -7,21 +8,29 @@ import { checkBrowserInput } from './browser-input.mjs';
 const require=createRequire(new URL('../../Web/package.json',import.meta.url));
 const playwright=process.env.PLAYWRIGHT_MODULE_PATH?require(process.env.PLAYWRIGHT_MODULE_PATH):require('playwright');
 const root=resolve(new URL('../../',import.meta.url).pathname);
-const url='http://swiftterm.test';
+const type={'.html':'text/html','.js':'text/javascript','.wasm':'application/wasm'};
 const trace = message => { if (process.env.BROWSER_TRACE) console.log(message); };
 
-{
+const server = createServer(async (request, response) => {
+  try {
+    const path=resolve(root,'.'+decodeURIComponent(new URL(request.url, 'http://127.0.0.1').pathname));
+    if(!path.startsWith(root+sep))throw new Error('Invalid path');
+    const body=await readFile(path);
+    response.writeHead(200, {'content-type': type[extname(path)]||'application/octet-stream'}); response.end(body);
+  } catch { response.writeHead(404, {'content-type':'text/plain'}); response.end('Not found'); }
+});
+await new Promise((resolveReady, rejectReady) => {
+  server.once('error', rejectReady);
+  server.listen(0, '127.0.0.1', () => { server.off('error', rejectReady); resolveReady(); });
+});
+const url=`http://127.0.0.1:${server.address().port}`;
+
+try {
   for(const name of (process.env.BROWSERS||'chromium,firefox,webkit').split(',')){
     const browser=await playwright[name].launch({headless:true,timeout:30000});
     trace(`${name}: launched`);
     try{
       const context=await browser.newContext({deviceScaleFactor:2});
-      await context.route('**/*',async route=>{
-        try { const path=resolve(root,'.'+decodeURIComponent(new URL(route.request().url()).pathname));
-          if(!path.startsWith(root+sep))throw new Error('Invalid path');
-          const body=await readFile(path);await route.fulfill({status:200,contentType:({'.html':'text/html','.js':'text/javascript','.wasm':'application/wasm'})[extname(path)]||'application/octet-stream',body});
-        } catch { await route.fulfill({status:404,body:'Not found'}); }
-      });
       for(const variant of (process.env.WASM_VARIANTS||'full,embedded').split(',')){
         const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
         trace(`${name} ${variant}: load`);
@@ -84,4 +93,6 @@ const trace = message => { if (process.env.BROWSER_TRACE) console.log(message); 
     } catch (error) { console.error(`${name}: test failed`, error); throw error; }
     finally { await browser.close(); }
   }
+} finally {
+  await new Promise(resolveClose => server.close(resolveClose));
 }
