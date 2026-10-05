@@ -44,6 +44,35 @@ struct TerminalViewVisibleRowsTests {
     }
 
     @MainActor
+    @Test func visibleRowsTextAndContentSnapshotsUseTheSameRowText() throws {
+        let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 640, height: 320)))
+        view.feed(text: "界\u{1b}[5Gx  ")
+        let expected = ["界  x  "]
+        #expect(rows(view, 0..<1, equal: expected) == expected)
+
+        let snapshot = try #require(view.terminalContentSnapshot(region: .viewport))
+        let row = try #require(snapshot.rows.first)
+        #expect(view.visibleRowsText(0..<1) == [row.text])
+        #expect(view.terminalStateSnapshot().visibleRows.first?.text == row.text)
+        #expect(row.text == expected[0])
+        #expect(!row.text.contains("\u{0}"))
+    }
+
+    @MainActor
+    @Test func narrowedAlternateScreenDoesNotExposeOffscreenCells() throws {
+        let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 640, height: 320)))
+        view.feed(text: "\u{1b}[?1049hABCDEFGHIJKL")
+        view.resize(cols: 8, rows: 4)
+        view.feed(text: "\u{1b}[2J\u{1b}[Hx")
+        let expected = ["x"]
+        #expect(rows(view, 0..<1, equal: expected) == expected)
+
+        let snapshot = try #require(view.terminalContentSnapshot(region: .viewport))
+        #expect(snapshot.rows.first?.text == expected[0])
+        #expect(view.terminalStateSnapshot().visibleRows.first?.text == expected[0])
+    }
+
+    @MainActor
     @Test func rangesAreClampedToTheScreen() {
         let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 640, height: 320)))
         let screen = view.terminalDimensions.rows

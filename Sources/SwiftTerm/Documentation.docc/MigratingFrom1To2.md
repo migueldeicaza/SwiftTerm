@@ -99,7 +99,8 @@ Use the narrowest read API that gives the data you need:
 | Grid size | ``TerminalView/terminalDimensions`` | A copied `TerminalDimensions` value with columns and rows. |
 | Status or visible screen | ``TerminalView/terminalStateSnapshot()`` | A copied ``TerminalViewStateSnapshot``. It includes dimensions, cursor state, viewport row, palette state, and visible rows. |
 | Text from the active, normal, or alternate buffer | ``TerminalView/getBufferAsData(kind:encoding:)`` | A copied `Data` value. Select the required ``Terminal/BufferKind``. |
-| The text of a few visible rows | ``TerminalView/visibleRowsText(_:)`` | Copied `String`s for the rows asked for, read as the snapshot's row text is. Cheaper than the snapshot when a host polls the bottom of the screen or reads the row under a click. |
+| The text of a few visible rows | ``TerminalView/visibleRowsText(_:)`` | Copied `String`s for the rows asked for, using the same NUL-free display-text conversion as ``TerminalContentRowSnapshot/text`` and ``TerminalVisibleRowSnapshot/text``. Cheaper than a content snapshot when a host polls the bottom of the screen or reads the row under a click. |
+| Bounded viewport or history contents | ``TerminalView/terminalContentSnapshot(region:)`` | A copied ``TerminalContentSnapshot`` with input state, row coordinates, cell text, widths, attributes, wrap flags, and row text using the same conversion as ``TerminalView/visibleRowsText(_:)``. |
 | Whether the application enabled the kitty keyboard protocol | ``TerminalView/keyboardEnhancementFlags`` | A copied `KittyKeyboardFlags`. Read it before a host event monitor rebinds a key the view would otherwise encode itself. |
 | A terminal event outside the displayed content | `TerminalView.observeOscEvents(_:)` | A copied ``TerminalOscEvent`` goes to an `@Sendable` handler. Retain its ``TerminalOscObservation`` token for the required lifetime. |
 

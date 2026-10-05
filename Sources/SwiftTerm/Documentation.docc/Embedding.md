@@ -111,11 +111,16 @@ A content snapshot captures its input state, row coordinates, complete cell
 text, widths, attributes, and row-wrap flags in one transaction. Its
 `capturedRange` uses scroll-invariant absolute row numbers; it describes only
 the copied window, not all retained history. The computed row text is
-right-trimmed display text: wide-character continuation cells are omitted,
-interior empty cells become spaces, and internal NUL placeholders are not
-exposed. The copied cells still preserve complete cell text and widths, so
-hosts that need column mapping should use cells instead of Swift string
-indices.
+right-trimmed display text using the same conversion as
+``TerminalView/visibleRowsText(_:)`` and
+``TerminalVisibleRowSnapshot/text``: wide-character continuation cells are
+omitted, interior empty cells become spaces, trailing unwritten cells are
+dropped, and internal NUL placeholders are not exposed. If a view host only
+needs a few visible row strings, ``TerminalView/visibleRowsText(_:)`` is the
+cheaper API; use content snapshots when you need bounded history, input state,
+cell widths, attributes, or wrap flags. The copied cells still preserve complete
+cell text and widths, so hosts that need column mapping should use cells
+instead of Swift string indices.
 
 This is a pure inspection snapshot and does not mutate renderer damage state.
 Use ``Terminal/makeRenderSnapshot(scope:)`` for renderer input. Content

@@ -75,41 +75,27 @@ public struct TerminalContentRowSnapshot: Sendable, Equatable {
     /// True when this row is a soft-wrapped continuation of the preceding row.
     public let isWrapped: Bool
     public let cells: [TerminalCellSnapshot]
+    /// Right-trimmed display text without internal NUL placeholders.
+    ///
+    /// Wide-cell continuation cells are omitted and unwritten cells inside the
+    /// trimmed region are represented as spaces. No styling is encoded.
+    public var text: String {
+        terminalContentSnapshotText(cells)
+    }
 
     public init(absoluteRow: Int, cells: [TerminalCellSnapshot], isWrapped: Bool = false) {
         self.absoluteRow = absoluteRow
         self.isWrapped = isWrapped
         self.cells = cells
     }
+}
 
-    /// Right-trimmed display text without internal NUL placeholders.
-    ///
-    /// Wide-cell continuation cells are omitted and unwritten cells inside the
-    /// trimmed region are represented as spaces. No styling is encoded.
-    /// Computed from copied cells only when requested, outside the capture lock.
-    public var text: String {
-        // Packed cells use their first scalar as the logical code and widths
-        // 0, 1 or 2. Match BufferLine's last-nonzero-code plus width rule.
-        guard let last = cells.lastIndex(where: {
-            ($0.text.unicodeScalars.first?.value ?? 0) != 0
-        }) else { return "" }
-        let end = last + min(max(0, cells[last].width), cells.count - last)
-        var result = ""
-        for index in 0..<end {
-            let cell = cells[index]
-            let isNull = (cell.text.unicodeScalars.first?.value ?? 0) == 0
-            guard isNull else {
-                result.append(contentsOf: cell.text)
-                continue
-            }
-            let followsWideCell = index > 0 && cells[index - 1].width == 2
-            if cell.width == 0 || followsWideCell {
-                continue
-            }
-            result.append(" ")
-        }
-        return result
-    }
+private func terminalContentSnapshotText(_ cells: [TerminalCellSnapshot]) -> String {
+    terminalReplacingNulls(terminalRowText(
+        cellCount: cells.count,
+        logicalCode: { Int32(cells[$0].text.unicodeScalars.first?.value ?? 0) },
+        width: { cells[$0].width },
+        text: { cells[$0].text.isEmpty ? "\u{0}" : cells[$0].text }))
 }
 
 /// Contents and input state captured in one terminal-lock transaction.
@@ -148,6 +134,16 @@ extension Terminal {
             mouseMode: mouseMode,
             keyboardEnhancementFlags: keyboardEnhancementFlags,
             focusReportingEnabled: sendFocus)
+    }
+
+    func displayText(buffer: Buffer, line lineIndex: Int, columns: Int) -> String {
+        let line = buffer.lines[lineIndex]
+        let cellCount = min(max(0, columns), line.count)
+        return terminalReplacingNulls(terminalRowText(
+            cellCount: cellCount,
+            logicalCode: { line.packedCode(at: $0) },
+            width: { Int(line.packedWidth(at: $0)) },
+            text: { self.getText(for: line[$0]) }))
     }
 
     /// Copies input modes and dimensions under one terminal lock.
