@@ -1009,6 +1009,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // every renderer resolve them again and schedule a frame with the new
         // effective appearance.
         colorsChangedOnMain()
+        refreshCachedHighlightColors()
     }
     
     /// AppKit keeps the first responder when a window loses key status. Terminal
@@ -1346,10 +1347,16 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         set {
             _selectedTextBackgroundColor = newValue
+            refreshCachedHighlightColors()
             withTerminal { $0.updateFullScreen() }
             frameDriver.markDirty()
         }
     }
+
+    // The selection colors that the application set with OSC 17 and 19.
+    // They take precedence over the configured colors until a reset.
+    var oscSelectedTextBackgroundColor: NSColor?
+    var oscSelectedTextForegroundColor: NSColor?
 
     var _selectedTextForegroundColor = NSColor.black
     /// The foreground color used to render selected text.
@@ -1359,6 +1366,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         set {
             _selectedTextForegroundColor = newValue
+            refreshCachedHighlightColors()
             withTerminal { $0.updateFullScreen() }
             frameDriver.markDirty()
         }

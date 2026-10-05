@@ -755,12 +755,15 @@ final class EscapeSequenceParser {
             if !terminal.oscProgressReport(data) {
                 terminal.log ("SwiftTerm: Unknown OSC code: \(code)")
             }
-        case 10:   terminal.oscSetColors(data, startAt: 0)
-        case 11:   terminal.oscSetColors(data, startAt: 1)
-        case 12:   terminal.oscSetColors(data, startAt: 2)
+        case 10...19:
+            terminal.oscSetColors(data, startAt: code - 10)
         case 52:   terminal.oscClipboard(data)
         case 104:  terminal.oscResetColor(data)
         case 112:  terminal.tdel?.setCursorColor(source: terminal, color: nil)
+        case 113...119:
+            if let target = TerminalDynamicColor(oscCode: code - 100) {
+                terminal.resetDynamicColor(target)
+            }
         case 133:  terminal.oscSemanticPrompt(data)
         case 777:  terminal.oscNotification(data)
         case 1337: terminal.osciTerm2(data)
@@ -886,7 +889,7 @@ final class EscapeSequenceParser {
     /// Splits an accumulated OSC payload into its code and content, and
     /// dispatches it. Takes the payload as a parameter so that the parse loop
     /// does not have to capture its accumulation buffer.
-    func dispatchAccumulatedOsc(_ osc: [UInt8], limitExceeded: Bool, _ terminal: Terminal) {
+    func dispatchAccumulatedOsc(_ osc: [UInt8], limitExceeded: Bool, endedWithBel: Bool = false, _ terminal: Terminal) {
         guard !limitExceeded, !osc.isEmpty else { return }
         let oscCode: Int?
         let content: ArraySlice<UInt8>
@@ -898,7 +901,9 @@ final class EscapeSequenceParser {
             content = []
         }
         if let oscCode {
+            terminal.oscRequestEndedWithBel = endedWithBel
             dispatchOsc(code: oscCode, data: content, terminal)
+            terminal.oscRequestEndedWithBel = false
         }
     }
 
@@ -1247,7 +1252,8 @@ final class EscapeSequenceParser {
                     }
                 } else {
                     if code != ControlCodes.CAN && code != ControlCodes.SUB {
-                        dispatchAccumulatedOsc(osc, limitExceeded: oscLimitExceeded, terminal)
+                        dispatchAccumulatedOsc(osc, limitExceeded: oscLimitExceeded,
+                                               endedWithBel: code == ControlCodes.BEL, terminal)
                     }
                 }
                 if code == 0x1b {

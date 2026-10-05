@@ -179,6 +179,14 @@ public protocol TerminalViewDelegate: AnyObject {
      */
     func rangeChanged (source: TerminalView, startY: Int, endY: Int)
 
+    /// The application set or reset a color with OSC 13 through OSC 19.
+    /// A nil color tells the host to use its default color again.
+    ///
+    /// ``TerminalView`` draws the selection with the OSC 17 and OSC 19 colors.
+    /// Use this method to apply the other colors, for example to a custom pointer.
+    /// The default implementation does nothing.
+    func dynamicColorChanged (source: TerminalView, target: TerminalDynamicColor, color: Color?)
+
 }
 #endif
 

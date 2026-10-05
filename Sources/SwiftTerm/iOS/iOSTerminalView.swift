@@ -495,6 +495,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         updateTextBlinkLifecycle()
     }
 
+    open override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        guard uiShutdownState == .active,
+              traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) else { return }
+        // Dynamic colors resolve to new values in the new appearance. Draw
+        // them again, and update the colors that OSC 17 and 19 queries report.
+        colorsChangedOnMain()
+        refreshCachedHighlightColors()
+    }
+
 #if canImport(MetalKit)
     /// Enables or disables GPU-accelerated rendering via Metal.
     ///
@@ -1730,10 +1740,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
         set {
             _selectedTextBackgroundColor = newValue
+            refreshCachedHighlightColors()
             withTerminal { $0.updateFullScreen() }
             frameDriver.markDirty()
         }
     }
+
+    // The selection colors that the application set with OSC 17 and 19.
+    // They take precedence over the configured colors until a reset.
+    var oscSelectedTextBackgroundColor: UIColor?
+    var oscSelectedTextForegroundColor: UIColor?
 
     var _selectedTextForegroundColor = UIColor.black
     /// The foreground color used to render selected text.
@@ -1743,6 +1759,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
         set {
             _selectedTextForegroundColor = newValue
+            refreshCachedHighlightColors()
             withTerminal { $0.updateFullScreen() }
             frameDriver.markDirty()
         }
