@@ -77,13 +77,17 @@ extension TerminalView {
     /// `index` (0 when there is no current match) and the `total` match count
     /// (capped at `limit`). Drives a "2/14" style counter in a search UI.
     public func searchMatchSummary (_ term: String, options: SearchOptions = SearchOptions(), limit: Int = 1000) -> (index: Int, total: Int) {
-        withTerminal { _ in
+        withTerminal { terminal in
             guard let search = search else {
                 return (0, 0)
             }
             let all = search.findAll(term: term, options: options, limit: limit)
-            guard let last = search.lastResult,
-                  let i = all.firstIndex(where: { $0.row == last.row && $0.col == last.col }) else {
+            guard let selection, let current = currentSearchSelection(selection),
+                  let i = all.firstIndex(where: {
+                      let range = search.selectionRange(for: $0)
+                      return selection.clamp(terminal.displayBuffer, range.start) == current.start &&
+                             selection.clamp(terminal.displayBuffer, range.end, allowsEndColumn: true) == current.end
+                  }) else {
                 return (0, all.count)
             }
             return (i + 1, all.count)
