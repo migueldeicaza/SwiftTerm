@@ -163,10 +163,22 @@ struct ProcessOutputConsumerTests {
         #expect(throws: ProcessOutputConsumerError.self) {
             try view.setProcessOutputConsumer(nil)
         }
+        // Queue the marker immediately after finishTermination clears windingDown.
+        // An unstructured Task handoff would let the marker overtake "exit".
+        func enqueueMarkerAfterWindingDown() {
+            if view.process.windingDown {
+                DispatchQueue.main.async {
+                    enqueueMarkerAfterWindingDown()
+                }
+            } else {
+                capture.events.append("marker")
+            }
+        }
+        enqueueMarkerAfterWindingDown()
         releaseHandled.signal()
         await waitForExit(delegate, count: 2)
         #expect(capture.bytes == Array("firstsecond".utf8))
-        #expect(capture.events == ["first", "exit", "second", "exit"])
+        #expect(capture.events == ["first", "exit", "marker", "second", "exit"])
         #expect(view.process.shellPid == 0)
         #expect(!view.process.running)
         #expect(!view.process.windingDown)
