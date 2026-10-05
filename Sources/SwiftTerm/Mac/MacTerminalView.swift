@@ -3478,20 +3478,24 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         return terminal.encodeButton(button: button, release: isReleaseEvent, shift: flags.contains(.shift), meta: flags.contains(.option), control: flags.contains(.control))
     }
     
-    func calculateMouseHit (with event: NSEvent) -> (grid: Position, pixels: Position)
+    func calculateMouseHit (with event: NSEvent) -> (grid: Position, pixels: Position, isInGrid: Bool)
     {
         let point = convert(event.locationInWindow, from: nil)
         return calculateMouseHit(at: point)
     }
 
-    func calculateMouseHit (at point: CGPoint) -> (grid: Position, pixels: Position)
+    func calculateMouseHit (at point: CGPoint) -> (grid: Position, pixels: Position, isInGrid: Bool)
     {
         withTerminal { _ in
             calculateMouseHitLocked(at: point)
         }
     }
 
-    func calculateMouseHitLocked (at point: CGPoint) -> (grid: Position, pixels: Position)
+    /// Returns the buffer cell at a point, and the pixel position of the point.
+    ///
+    /// The hit test moves a point outside the grid onto the nearest cell.
+    /// `isInGrid` is false when the point is not on a cell of the grid.
+    func calculateMouseHitLocked (at point: CGPoint) -> (grid: Position, pixels: Position, isInGrid: Bool)
     {
         terminal.terminalLock.preconditionLocked()
         func toInt (_ p: NSPoint) -> Position {
@@ -3515,8 +3519,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                     pixelCount: height))
         }
         let displayBuffer = terminal.displayBuffer
-        let col = Int (point.x / cellDimension.width)
-        let row = Int ((frame.height-point.y) / cellDimension.height)
+        let colOffset = point.x / cellDimension.width
+        let rowOffset = (frame.height-point.y) / cellDimension.height
+        let col = Int (colOffset)
+        let row = Int (rowOffset)
+        // Int rounds toward zero, so the sign test of the offsets is necessary.
+        let isInGrid = colOffset >= 0 && col < terminal.cols
+            && rowOffset >= 0 && row < terminal.rows
         var colValue = min (max (0, col), terminal.cols-1)
         let bufferRow = row + displayBuffer.yDisp
         let maxRow = max (0, displayBuffer.lines.count - 1)
@@ -3531,7 +3540,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
            colValue < bidiLayout.visualToLogicalCol.count {
             colValue = bidiLayout.visualToLogicalCol[colValue]
         }
-        return (Position(col: colValue, row: rowValue), toInt (point))
+        return (Position(col: colValue, row: rowValue), toInt (point), isInGrid)
     }
     
     private func sharedMouseEvent (with event: NSEvent)

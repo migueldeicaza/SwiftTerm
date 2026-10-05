@@ -84,11 +84,11 @@ its buffers are mutable. Parsing, rendering, and input can occur on different
 threads. A raw terminal reference could outlive the lock that protects it.
 It could also change state without a new view snapshot and redraw.
 
-The internal `withTerminal` helper is not a replacement public API. A closure
-cannot prevent callers from saving the `Terminal`, `Buffer`, or `BufferLine`.
-It must not call an API that takes the terminal lock again. Use the view's
-copied reads and command entry points. They own the locking, copying, and
-render updates.
+The internal `withTerminal` helper is not a replacement public API, and it will
+not become public. A closure cannot prevent callers from saving the `Terminal`,
+`Buffer`, or `BufferLine`. Use the view's copied reads and command entry points.
+They own the locking, copying, and render updates. If no API gives the data that
+you need, open an issue that asks for a copied read API.
 
 ### Read terminal data
 
@@ -97,6 +97,9 @@ Use the narrowest read API that gives the data you need:
 | Need | API | Result |
 | --- | --- | --- |
 | Grid size | ``TerminalView/terminalDimensions`` | A copied `TerminalDimensions` value with columns and rows. |
+| Link under a point | ``TerminalView/link(at:mode:)`` | A copied link string and OSC 8 parameters. |
+| Cell under a point | ``TerminalView/gridPosition(at:)`` | A buffer row and logical column, or `nil` when the point is not on a visible cell. |
+| Cell size | ``TerminalView/cellSize`` | Width and height in view points. |
 | Status or visible screen | ``TerminalView/terminalStateSnapshot()`` | A copied ``TerminalViewStateSnapshot``. It includes dimensions, cursor state, viewport row, palette state, and visible rows. |
 | Text from the active, normal, or alternate buffer | ``TerminalView/getBufferAsData(kind:encoding:)`` | A copied `Data` value. Select the required ``Terminal/BufferKind``. |
 | The text of a few visible rows | ``TerminalView/visibleRowsText(_:)`` | Copied `String`s for the rows asked for, read as the snapshot's row text is. Cheaper than the snapshot when a host polls the bottom of the screen or reads the row under a click. |
@@ -221,6 +224,16 @@ When `queue` is `nil`, `HeadlessTerminal` and its ``LocalProcess`` share one
 private serial queue. Input registration and queued process output therefore
 use the same FIFO delivery domain. Pass `DispatchQueue.main` explicitly if the
 callbacks must run on the main queue.
+
+## Rename subclass members that conflict with new API
+
+SwiftTerm 2.0 adds ``TerminalView/cellSize``, ``TerminalView/gridPosition(at:)``,
+and ``TerminalView/link(at:mode:)`` to `TerminalView`.
+
+If your subclass declares a member with the same name and parameter types, the
+compiler gives an error. `TerminalView` declares its new members in an
+extension, so a subclass cannot override them. Rename the member in your
+subclass.
 
 ## Verify the migration
 

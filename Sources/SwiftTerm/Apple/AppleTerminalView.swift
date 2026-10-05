@@ -1620,6 +1620,15 @@ extension TerminalView {
     /// The closure must not call another API that synchronously acquires the
     /// terminal lock. Helpers that assume the lock is held use the `Locked`
     /// suffix and assert that contract in DEBUG builds.
+    ///
+    /// IMPORTANT: Do not make this method public. This rule has no exceptions.
+    /// A closure cannot stop a caller from keeping the `Terminal`, a `Buffer`,
+    /// or a `BufferLine` after the method releases the lock. The parser thread
+    /// changes these objects, so a kept reference causes data races. A change
+    /// that the closure makes also skips the snapshot and redraw steps of the view.
+    /// We do not accept pull requests that make this method public. If a host
+    /// needs terminal state, add a narrow API that returns a copied value, such
+    /// as `terminalStateSnapshot()` or `link(at:mode:)`.
     func withTerminal<T> (_ body: (Terminal) throws -> T, caller: StaticString = #function) rethrows -> T
     {
         if ProfilingStats.enabled && Thread.isMainThread {
@@ -1627,6 +1636,63 @@ extension TerminalView {
         }
         return try terminal.terminalLock.withLock {
             try body(terminal)
+        }
+    }
+
+    /// The current cell width and height, in view points.
+    ///
+    /// On macOS, the value is zero until the view sets up its font.
+    public var cellSize: CGSize {
+#if os(macOS)
+        cellDimension ?? .zero
+#else
+        cellDimension
+#endif
+    }
+
+    /// Returns the buffer row and logical column of the cell at a point.
+    ///
+    /// Give the point in view coordinates. On iOS, use the result of
+    /// `gesture.location(in: self)`. Do not add the scroll offset to it.
+    ///
+    /// The result is `nil` when the point is not on a visible cell. The method
+    /// uses the hit test of a mouse click or tap. This hit test uses the scroll
+    /// position and the BiDi layout. The method takes the terminal lock.
+    public func gridPosition(at point: CGPoint) -> Position? {
+        withTerminal { _ in gridPositionLocked(at: point) }
+    }
+
+    func gridPositionLocked(at point: CGPoint) -> Position? {
+        terminal.terminalLock.preconditionLocked()
+        // The bounds test also rejects NaN and infinite values, which the hit
+        // test cannot convert to Int.
+        guard bounds.contains(point) else { return nil }
+#if os(macOS)
+        let hit = calculateMouseHitLocked(at: point)
+#else
+        let hit = calculateTapHitLocked(point: point)
+#endif
+        return hit.isInGrid ? hit.grid : nil
+    }
+
+    /// Returns the link at a point, or `nil` when the point is not on a link.
+    ///
+    /// Give the point in view coordinates, as for ``gridPosition(at:)``. The
+    /// method uses the same hit test, and returns `nil` for a point that is not
+    /// on a visible cell. The lookup holds the terminal lock.
+    ///
+    /// Only `mode` controls which links the method returns. Highlight settings
+    /// and modifier keys do not change the result. An explicit OSC 8 link
+    /// includes its parameters. An implicit link has no parameters.
+    public func link(at point: CGPoint, mode: Terminal.LinkLookupMode = .explicitOnly)
+        -> (link: String, params: [String: String])?
+    {
+        withTerminal { terminal in
+            guard let position = gridPositionLocked(at: point),
+                  let match = terminal.linkMatch(at: .buffer(position), mode: mode) else {
+                return nil
+            }
+            return linkResultLocked(for: match)
         }
     }
 
@@ -2669,13 +2735,15 @@ extension TerminalView {
     // "k=v:k2=v2;URL"
     func urlAndParamsFrom(payload: String) -> (String, [String:String])?
     {
-        let split = payload.split(separator: ";", maxSplits: Int.max, omittingEmptySubsequences: false)
+        let split = payload.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
         if split.count > 1 {
             let pairs = split[0].split(separator: ":")
             var params: [String:String] = [:]
             for p in pairs {
-                let kv = p.split(separator: "=")
-                if kv.count == 2 {
+                // Split at the first "=" only, so a value can contain "=".
+                // OSC 8 treats an empty value as no value.
+                let kv = p.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                if kv.count == 2, !kv[0].isEmpty, !kv[1].isEmpty {
                     params[String(kv[0])] = String(kv[1])
                 }
             }
@@ -2792,6 +2860,14 @@ extension TerminalView {
         guard linkVisibleForClick(match: match, hasCommandModifier: hasCommandModifier) else {
             return nil
         }
+        return linkResultLocked(for: match)
+    }
+
+    func linkResultLocked(for match: Terminal.LinkMatch) -> (link: String, params: [String: String]) {
+        terminal.terminalLock.preconditionLocked()
+        // The match contains the resolved row. This row includes the clamp of
+        // the core lookup.
+        let position = Position(col: match.range.lowerBound, row: match.row)
         if match.isExplicit,
            let payload = payloadStringLocked(at: position),
            let (url, params) = urlAndParamsFrom(payload: payload) {

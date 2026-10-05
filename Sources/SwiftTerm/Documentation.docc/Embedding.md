@@ -105,6 +105,33 @@ thread yourself. Reading terminal state inside such a callback is fine — you
 already hold the lock — but calling back into SwiftTerm APIs that take it is
 not.
 
+## Look up a link at a point
+
+Call ``TerminalView/link(at:mode:)`` on the main actor. Give a point in view
+coordinates. The method takes the terminal lock and uses the hit test of a click
+or tap. This hit test uses the scroll position and the BiDi layout. Highlight
+settings and modifier keys do not change the result.
+
+```swift
+// On macOS, convert the event location from window coordinates.
+let point = terminalView.convert(event.locationInWindow, from: nil)
+if let result = terminalView.link(at: point) {
+    inspectLink(result.link, parameters: result.params)
+}
+
+// On iOS, use the gesture location. Do not add contentOffset to it.
+let point = gesture.location(in: terminalView)
+let result = terminalView.link(at: point, mode: .explicitAndImplicit)
+```
+
+The default mode returns explicit OSC 8 links only. An implicit link has an
+empty parameter dictionary. A lookup does not select text, and it does not open
+the link.
+
+``TerminalView/gridPosition(at:)`` returns a buffer row and a logical column.
+Both methods return `nil` when the point is not on a visible cell.
+``TerminalView/cellSize`` returns the current cell size in view points.
+
 ## Topics
 
 ### Related
