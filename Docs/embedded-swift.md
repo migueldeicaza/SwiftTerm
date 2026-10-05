@@ -3,7 +3,8 @@
 SwiftTerm has a Foundation-free, headless core for Embedded Swift. Select this
 core with the `Embedded` package trait.
 
-You need Swift 6.2 or later. For Xcode builds, you need Xcode 26 or later.
+Embedded builds need Swift 6.3 or later. For Xcode builds, use an Xcode
+toolchain whose `swift --version` reports Swift 6.3 or later.
 
 ## Build
 

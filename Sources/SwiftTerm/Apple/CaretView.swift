@@ -6,6 +6,7 @@
 //
 
 #if !SWIFTTERM_EMBEDDED
+#if os(macOS) || os(iOS) || os(visionOS)
 import Foundation
 import CoreText
 
@@ -119,4 +120,5 @@ extension CaretView {
     }
 }
 
+#endif
 #endif // !SWIFTTERM_EMBEDDED

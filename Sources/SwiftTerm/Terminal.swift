@@ -8532,7 +8532,8 @@ open class Terminal {
             data.append(0)
             return
         }
-        if ch < 127 {
+        // Like xterm, values below 128 are a single byte.
+        if ch < 128 {
             data.append (UInt8(ch))
         } else {
             let rc = ch > 2047 ? 2047 : ch
@@ -8625,35 +8626,51 @@ open class Terminal {
      */
     public func sendEvent (buttonFlags: Int, x: Int, y: Int, pixelX: Int, pixelY: Int)
     {
+        sendResponse(mouseEventBytes(buttonFlags: buttonFlags, x: x, y: y,
+                                     pixelX: pixelX, pixelY: pixelY))
+    }
+
+    /// Encodes a response without invoking the delegate. Owners can copy it
+    /// under TerminalLock and deliver it after releasing the lock.
+    func mouseEventBytes(buttonFlags: Int, x: Int, y: Int,
+                         pixelX: Int, pixelY: Int) -> [UInt8] {
         let originalButton = (buttonFlags >> 8) & 3
         let buttonFlags = buttonFlags & 255
         let isRelease = (buttonFlags & 3) == 3 && (buttonFlags & (32 | 64)) == 0
-        sendMousePacket(buttonFlags: buttonFlags, release: isRelease,
-                        originalButton: originalButton, x: x, y: y, pixelX: pixelX, pixelY: pixelY)
+        return mousePacketBytes(buttonFlags: buttonFlags, release: isRelease,
+                                originalButton: originalButton, x: x, y: y,
+                                pixelX: pixelX, pixelY: pixelY)
     }
 
     private func sendMousePacket(buttonFlags: Int, release: Bool, originalButton: Int,
                                  x: Int, y: Int, pixelX: Int, pixelY: Int) {
+        sendResponse(mousePacketBytes(buttonFlags: buttonFlags, release: release,
+                                      originalButton: originalButton, x: x, y: y,
+                                      pixelX: pixelX, pixelY: pixelY))
+    }
+
+    private func mousePacketBytes(buttonFlags: Int, release: Bool, originalButton: Int,
+                                  x: Int, y: Int, pixelX: Int, pixelY: Int) -> [UInt8] {
         switch mouseProtocol {
         case .x10:
-            sendResponse(cc.CSI, "M", [UInt8(min(buttonFlags+32, 255)), UInt8(max(0, min(x, 222))+33), UInt8(max(0, min(y, 222))+33)])
+            return cc.CSI + [UInt8(ascii: "M"), UInt8(min(buttonFlags+32, 255)),
+                             UInt8(max(0, min(x, 222))+33), UInt8(max(0, min(y, 222))+33)]
         case .sgr:
             let bflags = release ? (buttonFlags & ~3) | originalButton : buttonFlags
             let m = release ? "m" : "M"
-            sendResponse(cc.CSI, "<\(bflags);\(x+1);\(y+1)\(m)")
+            return cc.CSI + Array("<\(bflags);\(x+1);\(y+1)\(m)".utf8)
         case .sgrPixel:
             let bflags = release ? (buttonFlags & ~3) | originalButton : buttonFlags
             let m = release ? "m" : "M"
-            sendResponse(cc.CSI, "<\(bflags);\(pixelX+1);\(pixelY+1)\(m)")
-            
+            return cc.CSI + Array("<\(bflags);\(pixelX+1);\(pixelY+1)\(m)".utf8)
         case .urxvt:
-            sendResponse(cc.CSI, "\(buttonFlags+32);\(x+1);\(y+1)M");
+            return cc.CSI + Array("\(buttonFlags+32);\(x+1);\(y+1)M".utf8)
         case .utf8:
-            var buffer: [UInt8] = [UInt8 (ascii: "M")]
+            var buffer = cc.CSI + [UInt8(ascii: "M")]
             encodeMouseUtf(data: &buffer, ch: buttonFlags+32)
-            encodeMouseUtf (data: &buffer, ch: x+33)
-            encodeMouseUtf (data: &buffer, ch: y+33)
-            sendResponse(cc.CSI, buffer)
+            encodeMouseUtf(data: &buffer, ch: x+33)
+            encodeMouseUtf(data: &buffer, ch: y+33)
+            return buffer
         }
     }
     

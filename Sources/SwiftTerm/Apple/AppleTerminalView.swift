@@ -317,6 +317,16 @@ struct ViewLineSegment {
 /// constants, so adding them to a batch dictionary allocates nothing.
 let ltrWritingDirectionKey = NSAttributedString.Key(kCTWritingDirectionAttributeName as String)
 let ltrWritingDirectionValue: [NSNumber] = [NSNumber(value: 2)]
+/// A left-to-right paragraph. Without it CoreText picks the paragraph
+/// direction from the first strong character, or from the process's default
+/// direction when there is none, and in a right-to-left paragraph it moves
+/// trailing whitespace to the left edge, ahead of the overridden text.
+/// Never mutated after creation, so sharing it across threads is safe.
+nonisolated(unsafe) let ltrParagraphStyle: NSParagraphStyle = {
+    let style = NSMutableParagraphStyle()
+    style.baseWritingDirection = .leftToRight
+    return style
+}()
 
 /// Checked-Sendable names for the CoreText attributes used by the draw pass.
 fileprivate struct CoreTextRunAttributeNames: Sendable {
@@ -1639,6 +1649,22 @@ extension TerminalView {
         renderOwner.keyboardEnhancementFlags()
     }
 
+    /// The text of the visible rows in `rows`, as copied values.
+    ///
+    /// For a host that reads a few rows often — a prompt detector watching the bottom of the
+    /// screen on a timer, a click that needs the row under the pointer. It takes the same lock
+    /// as ``terminalStateSnapshot()`` but copies only the rows asked for, where the snapshot
+    /// copies every visible row with its cell widths. Each row is the same text
+    /// ``TerminalVisibleRowSnapshot/text`` holds — the same conversion: a wide glyph's
+    /// continuation cell is skipped, an unwritten cell before text reads as a space, trailing
+    /// unwritten cells are dropped, and no NUL ever appears. Rows are zero-based from the top of
+    /// the viewport and clamped to the screen; an empty or fully off-screen range yields no rows.
+    ///
+    /// - Parameter rows: The visible rows to copy, `0..<rows` being the whole screen.
+    public nonisolated func visibleRowsText(_ rows: Range<Int>) -> [String] {
+        renderOwner.visibleRowsText(rows)
+    }
+
     /// Returns copied terminal state for status displays and diagnostics.
     public nonisolated func terminalStateSnapshot() -> TerminalViewStateSnapshot {
         renderOwner.stateSnapshot()
@@ -2613,8 +2639,6 @@ extension TerminalView {
         snapshotRow.bidiLayout = TerminalBidi.layout(
             row: row, buffer: terminal.displayBuffer, cols: cols,
             terminal: terminal, font: fontSet.normal, hostPolicy: bidiHostPolicy)
-        snapshotRow.needsDirectionOverride = snapshotRow.bidiLayout != nil ||
-            TerminalBidi.mayNeedBidi(line: line, cols: cols, terminal: terminal)
         var column = 0
         while column < min(cols, line.count) {
             let cell = line.packedView(at: column)
@@ -4508,6 +4532,28 @@ extension TerminalView {
      */
     public func send (_ bytes: [UInt8]) {
         send (data: (bytes)[...])
+    }
+
+    /// Sends a mouse response using the currently negotiated protocol.
+    ///
+    /// Cell coordinates are zero-based. Pixel coordinates default to the cell
+    /// coordinates, matching Terminal.sendEvent. Buttons 0, 1, 2 and 4...7
+    /// are supported; other buttons and negative or overflowing cell coordinates
+    /// are ignored. The host decides when to report an event;
+    /// this method does not consult allowMouseReporting or suppress off-mode
+    /// reports. Unlike keyboard input, mouse responses do not register an
+    /// OSC 133 semantic submission. Delivery is synchronous on the main actor,
+    /// after releasing the terminal lock.
+    @MainActor
+    public func sendMouseEvent(button: Int, release: Bool,
+                               shift: Bool = false, meta: Bool = false,
+                               control: Bool = false, col: Int, row: Int,
+                               pixelX: Int? = nil, pixelY: Int? = nil) {
+        guard let bytes = renderOwner.mouseEventBytes(
+            button: button, release: release, shift: shift, meta: meta,
+            control: control, col: col, row: row, pixelX: pixelX, pixelY: pixelY)
+        else { return }
+        terminalDelegate?.send(source: self, data: bytes[...])
     }
     
     /// Sends the Up key with the active terminal modes.

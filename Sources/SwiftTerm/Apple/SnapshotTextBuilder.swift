@@ -254,10 +254,20 @@ final class SnapshotTextBuilder {
         if flags.contains(.dim) {
             foregroundColor = foregroundColor.dimmedColor(towards: backgroundColor)
         }
+        // SwiftTerm owns cell placement. A BiDi layout is already in visual
+        // order, and rows on the legacy and explicit-LTR paths must keep
+        // logical cell order, so CoreText must not reorder anything. Every row
+        // gets the override and a left-to-right paragraph: a row with no strong
+        // character (only digits, spaces and punctuation) would otherwise be
+        // laid out in the process's default direction, which is right to left
+        // when the app runs in an RTL language. The Metal renderer sets the
+        // same override on everything it shapes.
         var result: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: foregroundColor,
             .backgroundColor: backgroundColor,
+            ltrWritingDirectionKey: ltrWritingDirectionValue,
+            .paragraphStyle: ltrParagraphStyle,
         ]
         if background != .defaultColor {
             result[SwiftTermExplicitBackgroundKey] = true
@@ -323,10 +333,6 @@ final class SnapshotTextBuilder {
         var builder: TerminalView.ViewLineSegmentBuilder?
 
         let bidiLayout = snapshotRow.bidiLayout
-        // Rows without RTL content skip the writing-direction override:
-        // CoreText does not reorder pure-LTR text, and omitting the attribute
-        // keeps its bidi resolution machinery out of the common path.
-        let needsDirectionOverride = snapshotRow.needsDirectionOverride
         var visualCol = 0
         var visualIndex = 0
         var kittyPlaceholders: [KittyPlaceholderCell] = []
@@ -461,7 +467,7 @@ final class SnapshotTextBuilder {
                 lastBlinkHidden = blinkHidden
                 lastGlyphFallbackFont = glyphFallback?.font
                 lastGlyphFallbackPolicy = glyphFallback?.policy
-                if isSelected || blinkHidden || needsDirectionOverride || glyphFallback != nil {
+                if isSelected || blinkHidden || glyphFallback != nil {
                     var batchAttributes = attributes.values
                     if isSelected {
                         batchAttributes[.selectionBackgroundColor] = context.selectedTextBackgroundColor
@@ -480,14 +486,6 @@ final class SnapshotTextBuilder {
                         batchAttributes.removeValue(forKey: .strikethroughColor)
                         batchAttributes.removeValue(forKey: .strikethroughStyle)
                         batchAttributes.removeValue(forKey: SwiftTermUnderlineStyleKey)
-                    }
-                    if needsDirectionOverride {
-                        // SwiftTerm owns cell placement. A BiDi layout is already in
-                        // visual order, and rows with RTL content on the legacy and
-                        // explicit-LTR paths must keep logical cell order. The LTR
-                        // override stops CoreText from applying a second,
-                        // renderer-specific ordering pass.
-                        batchAttributes[ltrWritingDirectionKey] = ltrWritingDirectionValue
                     }
                     if let glyphFallback {
                         batchAttributes[.font] = glyphFallback.font

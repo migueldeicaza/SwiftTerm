@@ -513,6 +513,80 @@ final class LocalProcessLifecycleTests: XCTestCase {
         XCTAssertEqual(secondDelegate.receivedData, Array("second".utf8))
     }
 
+    func testNextProcessDoesNotInheritPreviousPTYWriteDescriptor() throws {
+        let firstTerminated = expectation(description: "first process terminated")
+        let secondTerminated = expectation(description: "descriptor probe terminated")
+        let firstDelegate = LifecycleDelegate()
+        let secondDelegate = LifecycleDelegate()
+        firstDelegate.onTermination = { firstTerminated.fulfill() }
+        secondDelegate.onTermination = { secondTerminated.fulfill() }
+        let first = LocalProcess(delegate: firstDelegate)
+        let second = LocalProcess(delegate: secondDelegate)
+        defer {
+            first.terminate()
+            second.terminate()
+        }
+        first.startProcess(
+            executable: "/bin/sh",
+            args: ["-c", "read line; printf 'echo:%s' \"$line\""])
+        let master = first.childfd
+        XCTAssertGreaterThanOrEqual(master, 0)
+        // Embedders protect the public master; the private write channel must
+        // not leak an alias when another terminal forks and execs.
+        XCTAssertEqual(fcntl(master, F_SETFD, FD_CLOEXEC), 0)
+        var identity = stat()
+        XCTAssertEqual(fstat(master, &identity), 0)
+#if os(macOS)
+        let descriptorDirectory = "/dev/fd"
+#else
+        let descriptorDirectory = "/proc/self/fd"
+        // Swift's Glibc/Musl overlays do not expose the TIOCGPTN ioctl macro.
+        let tiocgptn = UInt(0x80045430)
+        var masterPTYNumber = UInt32.max
+        XCTAssertEqual(ioctl(master, tiocgptn, &masterPTYNumber), 0)
+#endif
+        let aliases = try FileManager.default.contentsOfDirectory(atPath: descriptorDirectory)
+            .compactMap(Int32.init)
+            .filter { descriptor in
+                var candidate = stat()
+                guard fstat(descriptor, &candidate) == 0,
+                      candidate.st_dev == identity.st_dev,
+                      candidate.st_ino == identity.st_ino,
+                      candidate.st_rdev == identity.st_rdev else {
+                    return false
+                }
+#if os(Linux)
+                var candidatePTYNumber = UInt32.max
+                guard ioctl(descriptor, tiocgptn, &candidatePTYNumber) == 0,
+                      candidatePTYNumber == masterPTYNumber else {
+                    return false
+                }
+#endif
+                return true
+            }
+        XCTAssertGreaterThanOrEqual(aliases.count, 2, "Both PTY descriptors must still be live")
+        second.startProcess(
+            executable: "/bin/sh",
+            args: ["-c", """
+                for fd in \(aliases.map(String.init).joined(separator: " ")); do
+                    if test -t "$fd"; then
+                        printf 'inherited PTY: %s' "$fd"
+                        exit 1
+                    fi
+                done
+                printf isolated
+                """, "descriptor-probe"])
+        wait(for: [secondTerminated], timeout: 5)
+        XCTAssertEqual(secondDelegate.exitCode, 0)
+        XCTAssertEqual(String(decoding: secondDelegate.receivedData, as: UTF8.self), "isolated")
+
+        first.send(data: ArraySlice("still-connected\n".utf8))
+        wait(for: [firstTerminated], timeout: 5)
+        XCTAssertEqual(firstDelegate.exitCode, 0)
+        XCTAssertTrue(String(decoding: firstDelegate.receivedData, as: UTF8.self)
+            .contains("echo:still-connected"))
+    }
+
     func testCheckedLaunchWriteAndResize() throws {
         let delegate = LifecycleDelegate()
         let terminated = expectation(description: "checked child exited")
@@ -685,6 +759,9 @@ final class LocalProcessLifecycleTests: XCTestCase {
         let fd = process.childfd
         let pid = process.shellPid
         XCTAssertGreaterThan(pid, 0)
+        XCTAssertTrue(waitUntil(timeout: 2) {
+            tcgetpgrp(fd) == pid
+        }, "Timed out waiting for child \(pid) to own the foreground PTY group; last value was \(tcgetpgrp(fd))")
         XCTAssertEqual(tcgetpgrp(fd), pid, "The child must own the foreground PTY group")
         var attributes = termios()
         XCTAssertEqual(tcgetattr(fd, &attributes), 0)
