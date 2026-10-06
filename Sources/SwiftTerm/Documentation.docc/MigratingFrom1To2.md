@@ -191,6 +191,16 @@ You can also use a wrapper function that passes `directDelivery: false`. If you
 distribute a compiled framework that links to SwiftTerm, rebuild the framework
 against SwiftTerm 2.0.
 
+In SwiftTerm 1.0, ``LocalProcessTerminalView`` was its own process delegate, so
+a subclass could override `dataReceived(slice:)` to see process output. In
+SwiftTerm 2.0 the view parses output on the I/O thread and never calls that
+method, so it is unavailable. To be notified after each output batch, use
+``LocalProcessTerminalView/setProcessOutputHandler(_:)``. To handle the bytes
+yourself, subclass ``TerminalView`` and run your own ``LocalProcess`` with a
+``LocalProcessDelegate``. A delegate on `DispatchQueue.main` with
+`directDelivery: false` receives each batch on the main thread, in order, and
+the I/O thread waits until it returns.
+
 ## Update HeadlessTerminal initializer references
 
 SwiftTerm 1.0 has `HeadlessTerminal.init(queue:options:onEnd:)`. SwiftTerm 2.0

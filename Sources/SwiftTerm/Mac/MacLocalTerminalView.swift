@@ -459,9 +459,10 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         processDelegate?.processTerminated(source: self, exitCode: exitCode)
     }
     
-    /**
-     * Implements the LocalProcessDelegate.dataReceived method
-     */
+    /// Left over from SwiftTerm 1.0, when this view was the process delegate.
+    /// Output is now parsed on the I/O thread without calling this method, so
+    /// it is unavailable to make an override a compile error, not a no-op.
+    @available(*, unavailable, message: "LocalProcessTerminalView parses process output on the I/O thread and never calls this method. Use setProcessOutputHandler(_:) to observe output batches, or run your own LocalProcess with a LocalProcessDelegate to handle the bytes.")
     open func dataReceived(slice: ArraySlice<UInt8>) {
         feed (byteArray: slice)
     }
