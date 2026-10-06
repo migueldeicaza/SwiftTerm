@@ -714,8 +714,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         frameDriver.markDirty()
     }
 
+    /// Override to enable host-defined menu actions or filter standard actions.
+    /// Call `super` for actions whose default availability should be preserved.
     @objc
-    public override func canPerformAction(
+    open override func canPerformAction(
         _ action: Selector,
         withSender sender: Any?
     ) -> Bool {
@@ -742,21 +744,24 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     ///  - pos: the location where this was triggered in the buffer, it used at a later point
     ///  to auto-select a word
     func showContextMenu (forRegion: CGRect, pos: Position) {
-        let items: [UIMenuItem] = []
-        
         lastLongSelect = pos
         lastLongSelectRegion = forRegion
+        presentContextMenu(forRegion: forRegion)
+    }
 
-        //GAR: Declutter context menu
-        //items.append (UIMenuItem(title: "Reset", action: #selector(resetCmd)))
-        
-        // Configure the shared menu controller
+    /// Presents the editing menu after SwiftTerm has prepared its selection context.
+    ///
+    /// Override to supply host-defined menu items or present a `UIEditMenuInteraction`.
+    /// The default implementation shows the standard Copy / Paste / Select / Select All
+    /// menu. The region is in this view's coordinate space and identifies the area
+    /// the menu should avoid covering.
+    ///
+    /// To request a menu programmatically, use `showStandardContextMenu(at:)` so the
+    /// position used by the standard Select action is prepared before this hook runs.
+    open func presentContextMenu(forRegion region: CGRect) {
         let menuController = UIMenuController.shared
-        menuController.menuItems = items
-        
-        // Set the location of the menu in the view.
-        //let menuLocation = CGRect (origin: at, size: CGSize (width: cellDimension.width, height: cellDimension.height))
-        menuController.showMenu(from: self, rect: forRegion)
+        menuController.menuItems = []
+        menuController.showMenu(from: self, rect: region)
     }
     
     // This is a position relative to the buffer
@@ -1288,7 +1293,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var panStart: Position?
     var panTask: Task<(),Never>?
     
-    @objc func panSelectionHandler (_ gestureRecognizer: UIPanGestureRecognizer) {
+    /// Handles SwiftTerm's selection-drag gesture.
+    ///
+    /// Override to integrate a host-owned text loupe or other selection feedback.
+    /// Call `super` to retain selection extension, edge scrolling, and the menu shown
+    /// when dragging ends. Use the recognizer's state and `location(in: self)` to
+    /// track the gesture and clean up feedback on completion or cancellation.
+    /// This hook runs on the main actor and does not expose mutable terminal state.
+    @objc open func panSelectionHandler (_ gestureRecognizer: UIPanGestureRecognizer) {
         func near (_ pos1: Position, _ pos2: Position) -> Bool {
             return abs (pos1.col-pos2.col) < 3 && abs (pos1.row-pos2.row) < 2
         }
@@ -1793,12 +1805,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         selection?.selectNone()
     }
 
-    /// Programmatically presents SwiftTerm's standard Copy / Paste /
-    /// Select All context menu at the given point in the terminal's
-    /// coordinate space. Mirrors the path the built-in long-press
+    /// Programmatically requests SwiftTerm's editing menu at the given point in the
+    /// terminal's coordinate space. Mirrors the path the built-in long-press
     /// gesture takes — becomes first responder, computes the menu
     /// region around the tap point, then calls the existing internal
     /// `showContextMenu(forRegion:pos:)` presenter.
+    /// The default presentation is the standard Copy / Paste / Select / Select All
+    /// menu; overrides of `presentContextMenu(forRegion:)` are honored.
     ///
     /// Useful when a host app replaces the built-in long-press gesture
     /// with custom behaviour (e.g. a cursor-drag mode) but still wants

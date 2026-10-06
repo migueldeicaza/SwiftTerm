@@ -159,6 +159,55 @@ When a click/tap lands on an active link, ``TerminalView`` calls
 - For modifier-based modes (`.hoverWithModifier`, `.alwaysWithModifier`),
   activation requires the Command key from a hardware keyboard.
 
+## iOS and visionOS Selection UI
+
+Subclass `TerminalView` to customize selection feedback and editing-menu presentation.
+
+- Override `presentContextMenu(forRegion:)` to supply your own `UIMenuController`
+  items or present a `UIEditMenuInteraction` (iOS 16 or later). SwiftTerm prepares
+  the buffer position used by the standard Select action before calling this hook.
+  The rectangle is in the terminal view's coordinate space.
+- Override `canPerformAction(_:withSender:)` to enable custom selector-based menu
+  actions. Call `super` for standard actions whose availability you want to retain.
+  Use `getSelection()` to obtain a copy of the selected text.
+- Override `panSelectionHandler(_:)` and call `super` to keep the existing selection
+  and edge-scrolling behavior. The recognizer supplies the drag state and location
+  in the terminal view, so a host can manage a `UITextLoupeSession` (iOS 17 or later)
+  without finding SwiftTerm's internal gesture recognizer.
+
+For example, a host can replace the menu while retaining SwiftTerm's standard
+action state:
+
+```swift
+final class HostTerminalView: TerminalView {
+    override func presentContextMenu(forRegion region: CGRect) {
+        let controller = UIMenuController.shared
+        controller.menuItems = [
+            UIMenuItem(title: "Use Selection", action: #selector(useSelection(_:)))
+        ]
+        controller.showMenu(from: self, rect: region)
+    }
+
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(useSelection(_:)) { return hasActiveSelection }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    @objc private func useSelection(_ sender: Any?) {
+        guard let text = getSelection() else { return }
+        // Pass the selected text to the host's workflow.
+        print(text)
+    }
+}
+```
+
+Request a menu with `showStandardContextMenu(at:)`, which also calls the overridden
+presentation hook. The default implementation retains the existing standard menu
+and selection behavior. Loupe presentation and dismissal are owned by the host;
+when overriding the drag hook, end any active loupe on `.ended`, `.cancelled`, or
+`.failed`. If the host clears the selection or removes the view during a drag,
+also clean up its loupe as part of that operation.
+
 ## Terminal Options
 
 ``TerminalOptions`` controls engine-level settings. Create a custom options struct
