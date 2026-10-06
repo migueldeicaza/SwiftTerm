@@ -97,7 +97,7 @@ Use the narrowest read API that gives the data you need:
 | Need | API | Result |
 | --- | --- | --- |
 | Grid size | ``TerminalView/terminalDimensions`` | A copied `TerminalDimensions` value with columns and rows. |
-| Live input modes and cursor row | ``TerminalView/terminalInputStateSnapshot()`` | A copied ``TerminalInputStateSnapshot`` from the active buffer, including application-cursor mode, horizontal margins, and the cursor row. It reads the active buffer during synchronized output and is independent of the scrolled display viewport. Returns `nil` after the view session closes. |
+| Live input modes and cursor row | ``TerminalView/terminalInputStateSnapshot()`` | A copied ``TerminalInputStateSnapshot`` from the active buffer, including application-cursor mode, effective horizontal margins, and the cursor row. Disabled horizontal margins are reported as the full terminal width. It reads the active buffer during synchronized output and is independent of the scrolled display viewport. Returns `nil` if no terminal session is installed; `updateUiClosed()` stops UI resources but retains readable terminal state. |
 | Status or visible screen | ``TerminalView/terminalStateSnapshot()`` | A copied ``TerminalViewStateSnapshot``. It includes dimensions, cursor state, viewport row, palette state, and visible rows. |
 | Text from the active, normal, or alternate buffer | ``TerminalView/getBufferAsData(kind:encoding:)`` | A copied `Data` value. Select the required ``Terminal/BufferKind``. |
 | The text of a few visible rows | ``TerminalView/visibleRowsText(_:)`` | Copied `String`s for the rows asked for, read as the snapshot's row text is. Cheaper than the snapshot when a host polls the bottom of the screen or reads the row under a click. |

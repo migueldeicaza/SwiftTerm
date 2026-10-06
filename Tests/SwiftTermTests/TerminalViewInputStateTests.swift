@@ -43,6 +43,55 @@ struct TerminalViewInputStateTests {
         #expect(view.terminalStateSnapshot().visibleRows.first?.text == "live")
     }
 
+    @Test(arguments: [false, true])
+    func disabledMarginsReportFullWidth(synchronizedOutput: Bool) throws {
+        let enabled = TerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 400))
+        let disabled = TerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 400))
+        for view in [enabled, disabled] {
+            view.resize(cols: 80, rows: 24)
+            if synchronizedOutput {
+                view.feed(text: "\u{1B}[?2026h\u{1B}[?1049h")
+            }
+            view.feed(text: "\u{1B}[?69h\u{1B}[3;5s\u{1B}[1;5H")
+        }
+        disabled.feed(text: "\u{1B}[?69l")
+
+        let enabledState = try #require(enabled.terminalInputStateSnapshot())
+        let disabledState = try #require(disabled.terminalInputStateSnapshot())
+        #expect(enabledState.cursor == disabledState.cursor)
+        #expect(enabledState.marginLeft == 2)
+        #expect(enabledState.marginRight == 4)
+        #expect(disabledState.marginLeft == 0)
+        #expect(disabledState.marginRight == 79)
+
+        enabled.feed(text: "ab")
+        disabled.feed(text: "ab")
+        #expect(enabled.terminalInputStateSnapshot()?.cursor == Position(col: 3, row: 1))
+        #expect(disabled.terminalInputStateSnapshot()?.cursor == Position(col: 6, row: 0))
+        // Copies taken before subsequent output must retain their old cursor.
+        #expect(enabledState.cursor == Position(col: 4, row: 0))
+        #expect(disabledState.cursor == Position(col: 4, row: 0))
+        if synchronizedOutput {
+            enabled.feed(text: "\u{1B}[?2026l")
+            disabled.feed(text: "\u{1B}[?2026l")
+        }
+    }
+
+    @Test func uiShutdownRetainsCopiedInputState() throws {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 400))
+        view.feed(text: "$ ls")
+        let before = try #require(view.terminalInputStateSnapshot())
+
+        #expect(view.updateUiClosed())
+        #expect(view.updateUiClosed())
+
+        let after = try #require(view.terminalInputStateSnapshot())
+        #expect(after.dimensions == before.dimensions)
+        #expect(after.cursor == before.cursor)
+        #expect(after.cursorRow?.text == "$ ls")
+        #expect(after.cursorRow?.cellWidths == before.cursorRow?.cellWidths)
+    }
+
     @Test func cursorRowIsIndependentOfTheScrolledViewport() throws {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 400))
         view.resize(cols: 80, rows: 4)

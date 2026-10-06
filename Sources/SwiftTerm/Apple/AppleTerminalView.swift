@@ -1070,7 +1070,9 @@ public struct TerminalInputStateSnapshot: Sendable {
     public let cursor: Position
     public let isAlternateBuffer: Bool
     public let applicationCursor: Bool
+    /// Effective left margin; zero when DEC private mode 69 is disabled.
     public let marginLeft: Int
+    /// Effective right margin; the last column when DEC private mode 69 is disabled.
     public let marginRight: Int
     public let scrollback: Int
     public let screenBaseRow: Int
@@ -1686,7 +1688,8 @@ extension TerminalView {
     }
 
     /// Copies the active input state and cursor row under one lock.
-    /// Returns nil after the view's terminal session has closed.
+    /// Returns nil if no terminal session is installed. Stopping the view's UI
+    /// with `updateUiClosed()` retains the terminal buffer and its readable state.
     public nonisolated func terminalInputStateSnapshot() -> TerminalInputStateSnapshot? {
         renderOwner.inputStateSnapshot()
     }
