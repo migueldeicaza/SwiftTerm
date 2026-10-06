@@ -87,7 +87,9 @@ struct ProcessOutputConsumerTests {
         try view.setProcessOutputConsumer(nil)
     }
 
-    @Test func consumerDeliveryAppliesBackpressureAcrossManyBatches() async throws {
+    @Test(.enabled(if: SwiftTermTests.pythonBin() != nil))
+    func consumerDeliveryAppliesBackpressureAcrossManyBatches() async throws {
+        let python = try #require(SwiftTermTests.pythonBin())
         let view = LocalProcessTerminalView(frame: .zero)
         let delegate = Delegate()
         view.processDelegate = delegate
@@ -107,9 +109,8 @@ struct ProcessOutputConsumerTests {
             handled.withLock { $0 += 1 }
         }
         view.startProcess(
-            executable: "/usr/bin/env",
+            executable: python,
             args: [
-                "python3",
                 "-c",
                 "import sys; sys.stdout.write(''.join(f'{i:08x}' for i in range(32768)))"
             ],

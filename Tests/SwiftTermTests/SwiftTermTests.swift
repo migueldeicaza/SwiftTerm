@@ -19,7 +19,7 @@ final class SwiftTermTests {
     // Tests run in parallel, so each one needs its own esctest log.
     let logfile = NSTemporaryDirectory() + "log-\(UUID().uuidString)"
     
-    func pythonBin() -> String? {
+    static func pythonBin() -> String? {
         // Check environment variable first
         if let pythonEnv = getenv("PYTHON_BIN") {
             return String(validatingCString: pythonEnv)
@@ -49,7 +49,7 @@ final class SwiftTermTests {
             return nil
         }
         
-        guard let python = pythonBin() else {
+        guard let python = SwiftTermTests.pythonBin() else {
             print("Skipping test - Python 3 executable not found")
             return nil
         }
