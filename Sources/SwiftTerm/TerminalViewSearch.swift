@@ -82,11 +82,16 @@ extension TerminalView {
                 return (0, 0)
             }
             let all = search.findAll(term: term, options: options, limit: limit)
+            func normalized(_ position: Position) -> Position {
+                position.col == terminal.cols
+                    ? Position(col: 0, row: position.row + 1)
+                    : position
+            }
             guard let selection, let current = currentSearchSelection(selection),
                   let i = all.firstIndex(where: {
                       let range = search.selectionRange(for: $0)
-                      return selection.clamp(terminal.displayBuffer, range.start) == current.start &&
-                             selection.clamp(terminal.displayBuffer, range.end, allowsEndColumn: true) == current.end
+                      return normalized(selection.clamp(terminal.displayBuffer, range.start)) == normalized(current.start) &&
+                             normalized(selection.clamp(terminal.displayBuffer, range.end, allowsEndColumn: true)) == normalized(current.end)
                   }) else {
                 return (0, all.count)
             }

@@ -207,20 +207,22 @@ final class SearchEngine {
     }
 
     private func findInLine (term: String, searchPosition: inout SearchPosition, searchOptions: SearchOptions? = nil, isReverseSearch: Bool = false) -> SearchResult? {
-        let row = searchPosition.startRow
-        let col = searchPosition.startCol
+        var row = searchPosition.startRow
+        var col = searchPosition.startCol
         let buffer = terminal.displayBuffer
 
         guard row >= 0 && row < buffer.lines.count else {
             return nil
         }
 
-        let firstLine = buffer.lines[row]
-        if firstLine.isWrapped {
-            searchPosition.startRow -= 1
-            searchPosition.startCol += terminal.cols
-            return findInLine(term: term, searchPosition: &searchPosition, searchOptions: searchOptions, isReverseSearch: isReverseSearch)
+        // A logical line can span the entire scrollback. Normalize iteratively
+        // and stop at the first retained row if its beginning has been trimmed.
+        while row > 0 && buffer.lines[row].isWrapped {
+            row -= 1
+            col += terminal.cols
         }
+        searchPosition.startRow = row
+        searchPosition.startCol = col
 
         var cache = lineCache.getLineFromCache(row: row)
         if cache == nil {

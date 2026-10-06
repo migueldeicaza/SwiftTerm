@@ -90,6 +90,27 @@ struct SearchViewRegressionTests {
         #expect(terminal.searchMatchSummary("界", options: options).index == 1)
     }
 
+    @Test("a row-end match keeps its index when output grows the buffer", arguments: [false, true])
+    func lastCellSelectionSurvivesBufferGrowth(regex: Bool) {
+        let terminal = TerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 400))
+        terminal.resize(cols: 7, rows: 2)
+        let options = SearchOptions(regex: regex)
+        terminal.feed(text: "first\r\nxxerror")
+        #expect(terminal.findNext("error", options: options))
+        #expect(terminal.getSelection() == "error")
+        #expect(terminal.searchMatchSummary("error", options: options).index == 1)
+
+        terminal.feed(text: "\r\nquiet")
+
+        #expect(terminal.getSelection() == "error")
+        #expect(terminal.searchMatchSummary("error", options: options).index == 1)
+        #expect(terminal.searchMatchSummary("error", options: options).total == 1)
+        #expect(terminal.findNext("error", options: options))
+        #expect(terminal.getSelection() == "error")
+        #expect(terminal.findPrevious("error", options: options))
+        #expect(terminal.searchMatchSummary("error", options: options).index == 1)
+    }
+
     @Test("search preserves a literal space before a wide-character wrap")
     func literalSpaceBeforeWideWrap() {
         let terminal = TerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 400))
