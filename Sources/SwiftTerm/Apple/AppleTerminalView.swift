@@ -2001,6 +2001,12 @@ extension TerminalView {
         cellDimension = computeFontDimensions()
         refreshCachedViewState()
         processSizeChange(newSize: frame.size)
+        // A live resize may have queued counts measured with the old cell
+        // size (or a frame may already be applying them), and the next frame
+        // would restore them over the ones just set. Queue the corrected
+        // counts in their place; if they match, the frame only updates the
+        // pixel geometry.
+        queueSizeChange(newSize: frame.size)
         updateCaretView()
         #if os(macOS)
         needsDisplay = true

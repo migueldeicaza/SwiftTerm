@@ -92,6 +92,35 @@ struct BackingScaleCellDimensionTests {
         #expect(view.withTerminal { $0.applicationCursor })
     }
 
+    private final class LiveResizingView: TerminalView {
+        override var inLiveResize: Bool { true }
+    }
+
+    /// A live resize queues row and column counts for the next frame. If the
+    /// backing scale changes before that frame, the queued counts were
+    /// measured with the old cell size and must not replace the corrected ones.
+    @Test func backingChangeReplacesAQueuedLiveResize() throws {
+        let font = try #require(NSFont(name: "Monaco", size: 12))
+        let view = LiveResizingView(frame: frame, font: font)
+        host(view)
+        // Frames are prepared by hand below.
+        view.frameDriver.invalidate()
+        pretendMeasuredOnAnotherScreen(view)
+
+        view.setFrameSize(CGSize(width: 410, height: 200))
+        let queuedCols = Int(view.getEffectiveWidth(size: view.frame.size)
+                             / view.cellDimension.width)
+        view.viewDidChangeBackingProperties()
+        let expectedCols = Int(view.getEffectiveWidth(size: view.frame.size)
+                               / view.cellDimension.width)
+        #expect(queuedCols != expectedCols)
+        #expect(view.withTerminal { $0.cols } == expectedCols)
+
+        let state = try #require(view.captureFrameViewState())
+        _ = view.prepareFrame(viewState: state)
+        #expect(view.withTerminal { $0.cols } == expectedCols)
+    }
+
     @Test func detachingDoesNotResizeTheTerminal() throws {
         let view = try makeView()
         host(view)
