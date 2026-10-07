@@ -127,6 +127,16 @@ Link activation is also gated by `linkHighlightMode`. The reporting mode chooses
 how links are discovered during tracking, while highlight mode decides whether a
 click/tap is allowed to open the link.
 
+### Link Color
+
+By default a highlighted link is underlined in its own text color. Set
+`linkColor` to draw every highlighted link, explicit or implicit, in one color
+instead; set it back to `nil` to restore the default:
+
+```swift
+terminalView.linkColor = NSColor.systemBlue
+```
+
 ### What happens when the user activates a link
 
 When a click/tap lands on an active link, ``TerminalView`` calls
