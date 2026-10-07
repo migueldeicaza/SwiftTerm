@@ -1977,10 +1977,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// layout can compose the character it puts behind the key (Option+Q is "@"
     /// on a Turkish layout, Option+2 on a Czech one). The layout composes
     /// nothing for the keys that carry no text: the arrows, Home, End, Page
-    /// Up/Down, Insert, Delete, the function keys, the keypad, Enter, Tab and
-    /// Backspace. Set this to `true` and Option stays Meta on those keys while
-    /// the layout keeps the rest: Option+Left still moves a word back and
-    /// Option+Backspace still deletes one, and Option+Q still types "@".
+    /// Up/Down, Insert, Delete, the function keys, the keypad, Escape, Enter,
+    /// Tab and Backspace. Set this to `true` and Option stays Meta on those
+    /// keys while the layout keeps the rest: Option+Left still moves a word
+    /// back, Option+Backspace still deletes one and Option+Q still types "@".
     ///
     /// This is what iTerm2 does when its Option key is set to "Normal", and
     /// what kitty and Ghostty do with Option not acting as Alt. It has no
@@ -1990,22 +1990,42 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     /// Whether Option acts as Meta for this key: on every key when
     /// `optionAsMetaKey` is on, and on the keys the layout composes nothing
-    /// for when `optionAsMetaKeyForFunctionalKeys` is on. Enter, Tab and
-    /// Backspace are text keys to the kitty encoder but compose nothing, so
-    /// they count as functional here, as they do in iTerm2.
+    /// for when `optionAsMetaKeyForFunctionalKeys` is on. Escape, Enter, Tab
+    /// and Backspace compose nothing, so they count as functional here, as
+    /// they do in iTerm2. While the input method holds marked text, every key
+    /// belongs to it.
     private func optionIsMeta(for event: NSEvent) -> Bool {
         if optionAsMetaKey {
             return true
         }
-        guard optionAsMetaKeyForFunctionalKeys else {
+        guard optionAsMetaKeyForFunctionalKeys, !hasMarkedText() else {
             return false
         }
+        return textlessKey(for: event) != nil || kittyFunctionalKey(from: event) != nil
+    }
+
+    /// Escape, Enter, Tab and Backspace by their physical key. AppKit keeps
+    /// Shift in `charactersIgnoringModifiers`, so Shift+Tab reads as U+0019
+    /// there; the key code says Tab whatever the modifiers.
+    private func textlessKey(for event: NSEvent) -> KittyFunctionalKey? {
         switch Int(event.keyCode) {
-        case kVK_Return, kVK_Tab, kVK_Delete:
-            return true
-        default:
-            return kittyFunctionalKey(from: event) != nil
+        case kVK_Escape: return .escape
+        case kVK_Return: return .enter
+        case kVK_Tab: return .tab
+        case kVK_Delete: return .backspace
+        default: return nil
         }
+    }
+
+    /// Sends Option plus Escape, Enter, Tab or Backspace through the encoder,
+    /// which applies the Meta prefix (or the kitty Alt modifier), Shift on Tab
+    /// and the `backspaceSendsControlH` byte the same way it does for the key
+    /// without Option.
+    private func sendMetaTextlessKey(_ event: NSEvent, eventType: KittyKeyboardEventType) -> Bool {
+        guard let key = textlessKey(for: event) else { return false }
+        return sendKittyFunctionalKey(key,
+                                      modifiers: kittyModifiers(from: event, includeOption: true),
+                                      eventType: eventType)
     }
 
     private struct PendingKittyKeyEvent {
@@ -2120,6 +2140,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 }
             }
 
+            if optionIsMeta(for: event) && eventFlags.contains(.option),
+               sendMetaTextlessKey(event, eventType: repeatEventType) {
+                return
+            }
+
             if eventFlags.contains(.control) || (optionIsMeta(for: event) && eventFlags.contains(.option)) {
                 if let kittyEvent = kittyTextEvent(from: event, eventType: repeatEventType),
                    sendKittyEvent(kittyEvent) {
@@ -2138,6 +2163,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 optionAsMetaKey.toggle()
             }
         } else if optionIsMeta(for: event) && eventFlags.contains (.option) {
+            if sendMetaTextlessKey(event, eventType: event.isARepeat ? .repeatPress : .press) {
+                return
+            }
             if let rawCharacter = event.charactersIgnoringModifiers {
                 if let fs = rawCharacter.unicodeScalars.first {
                     switch Int (fs.value) {

@@ -60,6 +60,13 @@ final class OptionMetaFunctionalKeysTests {
                  keyCode: UInt16(kVK_LeftArrow))
     }
 
+    private func optionEscape() -> NSEvent {
+        keyEvent(modifierFlags: [.option],
+                 characters: "\u{1b}",
+                 charactersIgnoringModifiers: "\u{1b}",
+                 keyCode: UInt16(kVK_Escape))
+    }
+
     private func makeView(kitty: Bool) -> (TerminalView, CapturingDelegate) {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
         let delegate = CapturingDelegate()
@@ -88,6 +95,20 @@ final class OptionMetaFunctionalKeysTests {
         #expect(delegate.sent == Array("\u{1b}[1;3D".utf8))
     }
 
+    /// Legacy keyboard: Option+Escape is Meta+Escape, `ESC ESC`.
+    @Test func testOptionEscapeReportsMetaEscapeWithoutKittyProtocol() {
+        let (view, delegate) = makeView(kitty: false)
+        view.keyDown(with: optionEscape())
+        #expect(delegate.sent == [0x1b, 0x1b])
+    }
+
+    /// Kitty keyboard protocol: Option+Escape is Escape with Alt, `CSI 27;3u`.
+    @Test func testOptionEscapeReportsAltEscapeWithKittyProtocol() {
+        let (view, delegate) = makeView(kitty: true)
+        view.keyDown(with: optionEscape())
+        #expect(delegate.sent == Array("\u{1b}[27;3u".utf8))
+    }
+
     /// Option+Backspace is Meta too: `ESC DEL`, the delete-word the shells read.
     @Test func testOptionBackspaceReportsMetaBackspaceWithoutKittyProtocol() {
         let (view, delegate) = makeView(kitty: false)
@@ -113,6 +134,55 @@ final class OptionMetaFunctionalKeysTests {
             view.insertText("@", replacementRange: NSRange(location: NSNotFound, length: 0))
         }
         #expect(delegate.sent == Array("@".utf8))
+    }
+
+    /// Option+Backspace follows `backspaceSendsControlH` like Backspace does:
+    /// the Meta prefix in front of the configured byte, `ESC BS`.
+    @Test func testOptionBackspaceHonorsBackspaceSendsControlH() {
+        let (view, delegate) = makeView(kitty: false)
+        view.backspaceSendsControlH = true
+        view.keyDown(with: keyEvent(modifierFlags: [.option],
+                                    characters: "\u{7f}",
+                                    charactersIgnoringModifiers: "\u{7f}",
+                                    keyCode: UInt16(kVK_Delete)))
+        #expect(delegate.sent == [0x1b, 0x08])
+    }
+
+    /// While the input method holds marked text, Option+Backspace is its key:
+    /// nothing reaches the PTY, so the shell's input is not deleted under it.
+    @Test func testOptionBackspaceGoesToTheInputMethodWhileComposing() {
+        let (view, delegate) = makeView(kitty: false)
+        view.setMarkedText("ka", selectedRange: NSRange(location: 2, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+        view.keyDown(with: keyEvent(modifierFlags: [.option],
+                                    characters: "\u{7f}",
+                                    charactersIgnoringModifiers: "\u{7f}",
+                                    keyCode: UInt16(kVK_Delete)))
+        #expect(delegate.sent.isEmpty)
+    }
+
+    /// Option+Shift+Tab as AppKit delivers it, with Shift kept as Backtab
+    /// (U+0019) in `charactersIgnoringModifiers`.
+    private func optionShiftTab() -> NSEvent {
+        keyEvent(modifierFlags: [.option, .shift],
+                 characters: "\u{19}",
+                 charactersIgnoringModifiers: "\u{19}",
+                 keyCode: UInt16(kVK_Tab))
+    }
+
+    /// Kitty protocol: Option+Shift+Tab is Tab with Shift and Alt, `CSI 9;4u`,
+    /// never the Backtab character AppKit reports.
+    @Test func testOptionShiftTabReportsTabWithKittyProtocol() {
+        let (view, delegate) = makeView(kitty: true)
+        view.keyDown(with: optionShiftTab())
+        #expect(delegate.sent == Array("\u{1b}[9;4u".utf8))
+    }
+
+    /// Legacy keyboard: the Meta prefix in front of Shift+Tab's `CSI Z`.
+    @Test func testOptionShiftTabReportsMetaBacktabWithoutKittyProtocol() {
+        let (view, delegate) = makeView(kitty: false)
+        view.keyDown(with: optionShiftTab())
+        #expect(delegate.sent == Array("\u{1b}\u{1b}[Z".utf8))
     }
 
     /// A host that only turned `optionAsMetaKey` off sees no change: Option+Left
