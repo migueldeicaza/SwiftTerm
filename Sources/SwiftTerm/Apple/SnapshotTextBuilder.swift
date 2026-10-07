@@ -254,6 +254,13 @@ final class SnapshotTextBuilder {
         if flags.contains(.dim) {
             foregroundColor = foregroundColor.dimmedColor(towards: backgroundColor)
         }
+        if withUrl, let linkColor = context.linkColor {
+            // The host's link color replaces the cell's own for the text and
+            // every line drawn with it: the link underline added below, and
+            // any SGR underline or strikethrough. The contrast floor below
+            // still applies to it, as it does to any other color.
+            foregroundColor = linkColor
+        }
         let shapeColor = foregroundColor
         foregroundColor = foregroundColor.withContrast(atLeast: context.minimumContrastRatio,
                                                        against: backgroundColor)
