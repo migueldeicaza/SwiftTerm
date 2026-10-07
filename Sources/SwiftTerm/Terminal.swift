@@ -2638,10 +2638,16 @@ open class Terminal {
         } else {
             buffer.y = by + 1
             movedToNextLine = true
+            // An explicit line feed into an existing row ends any soft wrap
+            // that row carried, as in xterm.js. Programs that repaint in place
+            // (Claude Code and other Ink apps redraw the screen with CR LF after
+            // a SIGWINCH) write new lines over rows that a narrowing reflow
+            // marked as continuations; a surviving flag makes the next widening
+            // reflow join those unrelated lines onto the ones above them. The
+            // scrolling branch above needs nothing: it brings in an unwrapped row.
             let line = buffer.lines[buffer.yBase + buffer.y]
-            if !line.isWrapped {
-                line.bidiState = _currentBidiState
-            }
+            line.isWrapped = false
+            line.bidiState = _currentBidiState
         }
         
         // If the end of the line is hit, prevent this action from wrapping around to the next line.
