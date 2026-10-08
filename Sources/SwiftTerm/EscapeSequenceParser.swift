@@ -937,6 +937,7 @@ final class EscapeSequenceParser {
         _ oscLimitExceeded: inout Bool,
         _ terminal: Terminal)
     {
+        @inline(__always)
         func appendBytes(_ range: Range<Int>, to output: inout [UInt8]) {
             output.reserveCapacity(output.count + range.count)
             for index in range {
