@@ -83,6 +83,14 @@ change terminal state.
 - ``hostCurrentDirectory``
 - ``hostCurrentDocument``
 
+### Program Status
+
+- <doc:ProgramStatus>
+- ``programStatusRecords``
+- ``programStatus(id:)``
+- ``clearProgramStatus(id:)``
+- ``programStatusProcessExited()``
+
 ### Bidirectional Text
 
 - ``currentBidiState``

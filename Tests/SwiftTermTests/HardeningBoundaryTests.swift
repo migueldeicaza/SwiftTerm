@@ -75,6 +75,22 @@ struct HardeningBoundaryTests {
         #expect(!parser._oscLimitExceeded)
     }
 
+    @Test func oversizedStatusStillRecognizesC1StAtALowerHostLimit() {
+        let input = Array("\u{1b}]7501;state=working:future=abcdefghijklmnop".utf8)
+            + [0xc3, 0x9c] + Array("discard".utf8) + [0x9c] + Array("VISIBLE".utf8)
+        for split in 0...input.count {
+            let (parser, terminal) = makeParser(maximumOscBytes: 12)
+            var received: [String] = []
+            parser.oscHandlers[7501] = { received.append(String(decoding: $0, as: UTF8.self)) }
+            parser.parse(data: input[..<split], terminal)
+            parser.parse(data: input[split...], terminal)
+            #expect(received.isEmpty)
+            #expect(parser.currentState == .ground)
+            #expect(parser._osc.isEmpty && !parser._oscLimitExceeded)
+            #expect(String(decoding: terminal.getBufferAsData(), as: UTF8.self).hasPrefix("VISIBLE\n"))
+        }
+    }
+
     @Test func largeOscStorageIsReleasedAfterTermination() {
         let limit = EscapeSequenceParser.maximumRetainedOscBytes + 1
         let (parser, terminal) = makeParser(maximumOscBytes: limit)

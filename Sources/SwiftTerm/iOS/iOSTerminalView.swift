@@ -3494,6 +3494,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     /// Coalescing channel for idempotent notifications (io-gaps.md G6).
     nonisolated let eventQueue = TerminalEventQueue()
+    nonisolated let programStatusState = Locked<[TerminalProgramStatus]>([])
 
     nonisolated open func bell(source: Terminal) {
         // See the macOS view and io-gaps.md G9: push and forget, debounce at
@@ -3513,6 +3514,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             break
         case .bell:
             deliverBell()
+        case .programStatusChanged:
+            terminalDelegate?.programStatusChanged(source: self, records: programStatusRecords)
         }
     }
 

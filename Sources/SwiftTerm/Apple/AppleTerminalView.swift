@@ -4442,6 +4442,27 @@ extension TerminalView {
     {
         feedSender.feed(text: text)
     }
+
+    /// Current OSC 7501 records. This value snapshot is safe to read without
+    /// the terminal lock. It includes inherited program names.
+    public nonisolated var programStatusRecords: [TerminalProgramStatus] {
+        programStatusState.withLock { $0 }
+    }
+
+    public nonisolated func programStatusChanged(source: Terminal, records: [TerminalProgramStatus]) {
+        programStatusState.withLock { $0 = records }
+        eventQueue.post(.programStatusChanged)
+    }
+
+    /// Removes a status record and its descendants. An empty id removes all.
+    public func clearProgramStatus(id: String = "") {
+        withTerminal { $0.clearProgramStatus(id: id) }
+    }
+
+    /// Call this after a remote process exits and its output is parsed.
+    public func programStatusProcessExited() {
+        withTerminal { $0.programStatusProcessExited() }
+    }
          
     /**
      * Triggers a resize of the underlying terminal to the desired columsn and rows

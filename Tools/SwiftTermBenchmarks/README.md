@@ -97,7 +97,9 @@ Rebuild without `-DSWIFTTERM_SEAM_COUNTER` before measuring throughput.
 ## Hardening workloads
 
 The benchmark executable also includes focused hardening workloads. They test
-ASCII and wide-character seams, horizontal margins, and bounded OSC input.
+ASCII and wide-character seams, horizontal margins, bounded OSC input, and
+short title OSC commands. The short OSC cases use whole input and one-byte
+chunks to detect prefix and per-feed costs.
 They are separate from the 12 vtebench workloads. This keeps the default
 vtebench set and external `all` selections unchanged.
 

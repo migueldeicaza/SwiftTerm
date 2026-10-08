@@ -73,6 +73,7 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     public func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         callbackLock.lock()
         defer { callbackLock.unlock() }
+        terminal.terminalLock.withLock { terminal.programStatusProcessExited() }
         onEnd(exitCode)
     }
     

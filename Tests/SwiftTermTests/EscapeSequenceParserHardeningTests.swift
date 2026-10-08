@@ -172,7 +172,7 @@ final class EscapeSequenceParserHardeningTests {
     }
 
     @Test func everyByteIsSafeInEveryParserState() {
-        for rawState in ParserState.ground.rawValue...ParserState.dcsPassthrough.rawValue {
+        for rawState in ParserState.ground.rawValue...ParserState.programStatusEscape.rawValue {
             let state = ParserState(rawValue: rawState)!
             let (parser, terminal) = makeParser()
 
@@ -181,7 +181,7 @@ final class EscapeSequenceParserHardeningTests {
                 parser.currentState = state
                 parser.parse(data: [byte][...], terminal)
 
-                #expect(parser.currentState.rawValue <= ParserState.dcsPassthrough.rawValue)
+                #expect(parser.currentState.rawValue <= ParserState.programStatusEscape.rawValue)
             }
         }
     }

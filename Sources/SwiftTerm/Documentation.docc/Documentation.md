@@ -56,6 +56,7 @@ testing, and screen-scraping terminal output.
 - Mouse event reporting (X10, SGR, UTF-8, URxvt protocols)
 - Terminal resizing (local and remote-initiated)
 - Hyperlink support (OSC 8)
+- Program status records (OSC 7501) — see <doc:ProgramStatus>
 - Configurable Apple view link tracking via ``LinkReporting`` (explicit OSC 8 and implicit URL detection)
 - Optional GPU-accelerated rendering via Metal (macOS, iOS, visionOS)
 - Graphics: Sixel, iTerm2-style inline images, and the Kitty graphics protocol. See <doc:KittyGraphicsIntegration>.

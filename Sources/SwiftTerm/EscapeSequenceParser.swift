@@ -37,6 +37,8 @@ enum ParserState : UInt8 {
     case dcsIgnore
     case dcsIntermediate
     case dcsPassthrough
+    /// OSC 7501 ended with ESC and needs the next byte to complete ST.
+    case programStatusEscape
 }
 
 typealias cstring = [UInt8]
@@ -453,6 +455,11 @@ final class EscapeSequenceParser {
         table.add (codes: [0x1b, 0x9c], state: .dcsPassthrough, action: .dcsUnhook, next: .ground)
         table.add (code: NonAsciiPrintable, state: .oscString, action: .oscPut, next: .oscString)
         table.add (code: NonAsciiPrintable, state: .apcString, action: .oscPut, next: .apcString)
+        // Use a separate state so normal input needs no pending-ST check.
+        for code in UInt8(0)...NonAsciiPrintable {
+            table.add(code: code, state: .programStatusEscape,
+                      action: .escDispatch, next: .ground)
+        }
         return TransitionTable(table.table)
     }
     
@@ -482,6 +489,7 @@ final class EscapeSequenceParser {
     // buffers over several calls
     var _osc: cstring
     var _oscLimitExceeded: Bool
+    var _oscIgnoredPrefixBytes = false
     var _apc: cstring
     var _apcLimitExceeded: Bool
     var _pars: CsiParameterStorage
@@ -505,6 +513,15 @@ final class EscapeSequenceParser {
     ///
     /// This default permits large payloads such as clipboard and inline-file commands.
     static let maximumOscBytes = 65 * 1024 * 1024
+    // Leave room for the two-byte OSC and two-byte ST framing. BEL and C1
+    // framing use the same lower cap, as permitted by the protocol.
+    static let maximumProgramStatusOscBytes = 4092
+    private static let programStatusOscPrefix: [UInt8] = [55, 53, 48, 49, 59]
+
+    private static func isProgramStatusOsc(_ bytes: [UInt8]) -> Bool {
+        bytes.count >= 5 && bytes[0] == 55 && bytes[1] == 53
+            && bytes[2] == 48 && bytes[3] == 49 && bytes[4] == 59
+    }
     /// An oversized OSC must not pin its peak allocation for the terminal's
     /// lifetime after the sequence ends.
     static let maximumRetainedOscBytes = 1024 * 1024
@@ -732,7 +749,8 @@ final class EscapeSequenceParser {
         }
     }
 
-    func dispatchOsc(code: Int, data: ArraySlice<UInt8>, _ terminal: Terminal) {
+    func dispatchOsc(code: Int, data: ArraySlice<UInt8>,
+                     terminator: UInt8 = 0x1b, _ terminal: Terminal) {
         // Publish at encounter time. If a synchronous override performs a
         // nested feed, the outer event stays before the nested event.
         terminal.publishOscEvent(code: code, payload: data)
@@ -765,6 +783,7 @@ final class EscapeSequenceParser {
         case 777:  terminal.oscNotification(data)
         case 1337: terminal.osciTerm2(data)
         case 5522: terminal.oscKittyClipboard(data)
+        case 7501: terminal.oscProgramStatus(data, terminator: terminator)
         default:
             terminal.log ("SwiftTerm: Unknown OSC code: \(code)")
         }
@@ -811,6 +830,7 @@ final class EscapeSequenceParser {
         currentState = initialState
         _osc = []
         _oscLimitExceeded = false
+        _oscIgnoredPrefixBytes = false
         _apc = []
         _apcLimitExceeded = false
         _pars.reset()
@@ -886,7 +906,10 @@ final class EscapeSequenceParser {
     /// Splits an accumulated OSC payload into its code and content, and
     /// dispatches it. Takes the payload as a parameter so that the parse loop
     /// does not have to capture its accumulation buffer.
-    func dispatchAccumulatedOsc(_ osc: [UInt8], limitExceeded: Bool, _ terminal: Terminal) {
+    @inline(never)
+    func dispatchAccumulatedOsc(_ osc: [UInt8], limitExceeded: Bool,
+                                ignoredPrefixBytes: Bool = false,
+                                terminator: UInt8 = 0x1b, _ terminal: Terminal) {
         guard !limitExceeded, !osc.isEmpty else { return }
         let oscCode: Int?
         let content: ArraySlice<UInt8>
@@ -898,8 +921,154 @@ final class EscapeSequenceParser {
             content = []
         }
         if let oscCode {
-            dispatchOsc(code: oscCode, data: content, terminal)
+            if oscCode == 7501 {
+                guard !ignoredPrefixBytes, Self.isProgramStatusOsc(osc),
+                      osc.count <= Self.maximumProgramStatusOscBytes else { return }
+            }
+            dispatchOsc(code: oscCode, data: content, terminator: terminator, terminal)
         }
+    }
+
+    @inline(__always)
+    private func appendOscBytes(
+        _ range: Range<Int>,
+        data: Span<UInt8>,
+        to osc: inout [UInt8],
+        _ oscLimitExceeded: inout Bool,
+        _ terminal: Terminal)
+    {
+        func appendBytes(_ range: Range<Int>, to output: inout [UInt8]) {
+            output.reserveCapacity(output.count + range.count)
+            for index in range {
+                output.append(data[index])
+            }
+        }
+        @inline(__always)
+        func isProgramStatusOscAfterAppending(_ range: Range<Int>, to osc: [UInt8]) -> Bool {
+            if osc.isEmpty {
+                guard !range.isEmpty, data[range.lowerBound] == UInt8(ascii: "7") else { return false }
+            } else {
+                guard osc[0] == UInt8(ascii: "7") else { return false }
+            }
+            if osc.count >= 5 {
+                return EscapeSequenceParser.isProgramStatusOsc(osc)
+            }
+            guard osc.count + range.count >= 5 else { return false }
+            for index in 0..<5 {
+                let byte = index < osc.count
+                    ? osc[index]
+                    : data[range.lowerBound + index - osc.count]
+                guard byte == EscapeSequenceParser.programStatusOscPrefix[index] else { return false }
+            }
+            return true
+        }
+
+        // After the status size limit, keep the code prefix and enough tail
+        // bytes to distinguish C1 ST from a UTF-8 continuation byte.
+        func retainDroppedOscTail(_ range: Range<Int>, to osc: inout [UInt8]) {
+            guard !range.isEmpty else { return }
+            var tail = EscapeSequenceParser.programStatusOscPrefix
+            tail.append(contentsOf: osc.suffix(max(0, 4 - range.count)))
+            appendBytes(max(range.lowerBound, range.upperBound - 4)..<range.upperBound, to: &tail)
+            osc = tail
+        }
+
+        if oscLimitExceeded {
+            if EscapeSequenceParser.isProgramStatusOsc(osc) {
+                retainDroppedOscTail(range, to: &osc)
+            }
+            return
+        }
+        // Inspect the prefix before allocation. Keep one append for
+        // other OSC commands, including a prefix split across feeds.
+        let isProgramStatus = isProgramStatusOscAfterAppending(range, to: osc)
+        let limit = isProgramStatus
+            ? min(maximumOscBytes, EscapeSequenceParser.maximumProgramStatusOscBytes)
+            : maximumOscBytes
+        let remaining = limit - osc.count
+        if range.count > remaining {
+            oscLimitExceeded = true
+            if isProgramStatus {
+                retainDroppedOscTail(range, to: &osc)
+            } else if remaining > 0 {
+                appendBytes(range.lowerBound..<(range.lowerBound + remaining), to: &osc)
+            }
+            #if DEBUG
+            terminal.log ("SwiftTerm: OSC sequence exceeded the maximum size of \(limit) bytes and was dropped")
+            #endif
+            return
+        }
+        appendBytes(range, to: &osc)
+    }
+
+    @inline(never)
+    private func appendIgnoredOscByte(_ data: Span<UInt8>, at index: Int,
+                                      osc: inout [UInt8], limitExceeded: inout Bool,
+                                      _ terminal: Terminal) -> Bool {
+        guard Self.isProgramStatusOsc(osc) else { return false }
+        appendOscBytes(index..<(index + 1), data: data,
+                       to: &osc, &limitExceeded, terminal)
+        return true
+    }
+
+    // Keep string scanning outside the per-byte parser loop.
+    @inline(never)
+    private func consumeOscRun(_ data: Span<UInt8>, from i: Int,
+                               osc: inout [UInt8], limitExceeded: inout Bool,
+                               ignoredPrefixBytes: Bool, _ terminal: Terminal) -> (Int, Bool) {
+        var j: Int
+        var c1Terminated = false
+        if limitExceeded && !EscapeSequenceParser.isProgramStatusOsc(osc) {
+            // Preserve the discard mode of other OSC commands.
+            j = ByteRunScanner.firstC0Byte(in: data, from: i)
+        } else {
+            // One pass finds the run boundary, which is either a C0
+            // byte or a C1 ST byte that ends the sequence.
+            var appendedThrough = i
+            var searchStart = i
+            while true {
+                j = ByteRunScanner.firstC0OrByte(0x9c, in: data, from: searchStart)
+                guard j < data.count, data[j] == 0x9c else { break }
+                appendOscBytes(appendedThrough..<j, data: data, to: &osc, &limitExceeded, terminal)
+                appendedThrough = j
+                guard (limitExceeded && !EscapeSequenceParser.isProgramStatusOsc(osc))
+                        || EscapeSequenceParser.oscExpectsUTF8Continuation(osc)
+                else {
+                    c1Terminated = true
+                    break
+                }
+                appendOscBytes(j..<(j + 1), data: data, to: &osc, &limitExceeded, terminal)
+                appendedThrough = j + 1
+                searchStart = j + 1
+                if limitExceeded && !EscapeSequenceParser.isProgramStatusOsc(osc) {
+                    j = ByteRunScanner.firstC0Byte(in: data, from: searchStart)
+                    break
+                }
+            }
+            appendOscBytes(appendedThrough..<j, data: data, to: &osc, &limitExceeded, terminal)
+        }
+        if c1Terminated {
+            dispatchAccumulatedOsc(osc, limitExceeded: limitExceeded,
+                                   ignoredPrefixBytes: ignoredPrefixBytes,
+                                   terminator: 0x9c, terminal)
+        }
+        return (j, c1Terminated)
+    }
+
+    // Keep status framing and dispatch outside the per-byte parser loop.
+    @inline(never)
+    private func finishProgramStatusSt(_ code: UInt8, osc: inout [UInt8],
+                                       limitExceeded: inout Bool, _ terminal: Terminal) -> Bool {
+        guard code == UInt8(ascii: "\\") else {
+            EscapeSequenceParser.resetOsc(&osc, &limitExceeded)
+            self.currentState = .escape
+            return false
+        }
+        let pending = osc
+        osc = []
+        self.currentState = .ground
+        dispatchAccumulatedOsc(pending, limitExceeded: false, terminal)
+        return true
     }
 
     func parse (data: ArraySlice<UInt8>, _ terminal: Terminal)
@@ -933,6 +1102,8 @@ final class EscapeSequenceParser {
         self._osc = []
         var oscLimitExceeded = self._oscLimitExceeded
         self._oscLimitExceeded = false
+        var oscIgnoredPrefixBytes = self._oscIgnoredPrefixBytes
+        self._oscIgnoredPrefixBytes = false
         var apc = self._apc
         self._apc = []
         var apcLimitExceeded = self._apcLimitExceeded
@@ -980,24 +1151,6 @@ final class EscapeSequenceParser {
             appendBytes(range, to: &apc)
         }
 
-        func appendOscBytes(
-            _ range: Range<Int>,
-            to osc: inout [UInt8],
-            _ oscLimitExceeded: inout Bool)
-        {
-            guard !oscLimitExceeded else { return }
-            let remaining = maximumOscBytes - osc.count
-            if range.count > remaining {
-                if remaining > 0 {
-                    appendBytes(range.lowerBound..<(range.lowerBound + remaining), to: &osc)
-                }
-                oscLimitExceeded = true
-                terminal.log ("SwiftTerm: OSC sequence exceeded the maximum size of \(maximumOscBytes) bytes and was dropped")
-                return
-            }
-            appendBytes(range, to: &osc)
-        }
-        
         //dump (data)
             
         // process input string
@@ -1006,7 +1159,7 @@ final class EscapeSequenceParser {
         var input = data
         while !input.isEmpty {
             code = input[0]
-            
+
             // 1f..80 are printable ascii characters
             // c2..f3 are valid utf8 beginning of sequence elements, and most importantly,
             // does not cover 0x90 which is the DCS initiator in 8 bit mode.
@@ -1045,6 +1198,14 @@ final class EscapeSequenceParser {
                 }
                 dispatchExecute(code: code, terminal)
             case .ignore:
+                if currentState == ParserState.oscString.rawValue {
+                    // Keep these bytes and count them towards the status
+                    // limit. Other OSC commands ignore them.
+                    if !appendIgnoredOscByte(data, at: i, osc: &osc,
+                                             limitExceeded: &oscLimitExceeded, terminal) {
+                        oscIgnoredPrefixBytes = true
+                    }
+                }
                 // handle leftover print or dcs chars
                 if ~print != 0 {
                     terminal.handlePrintBorrowed(data.extracting(print..<i))
@@ -1115,7 +1276,15 @@ final class EscapeSequenceParser {
                     pars.accumulateDigit(code)
                 }
             case .escDispatch:
-                dispatchEsc(collect: collect, code: code, terminal)
+                if currentState == ParserState.programStatusEscape.rawValue {
+                    let complete = finishProgramStatusSt(code, osc: &osc,
+                                                        limitExceeded: &oscLimitExceeded, terminal)
+                    let nextState = complete ? ParserState.ground : ParserState.escape
+                    transition = (transition & 0xf0) | nextState.rawValue
+                    consumed = complete ? 1 : 0
+                } else {
+                    dispatchEsc(collect: collect, code: code, terminal)
+                }
             case .collect:
                 collect.append (code)
             case .clear:
@@ -1124,6 +1293,7 @@ final class EscapeSequenceParser {
                     print = -1
                 }
                 EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
+                oscIgnoredPrefixBytes = false
                 EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
                 pars.reset()
                 parsColonMask = 0
@@ -1180,6 +1350,7 @@ final class EscapeSequenceParser {
                 } else {
                     osc = []
                     oscLimitExceeded = false
+                    oscIgnoredPrefixBytes = false
                 }
             case .oscPut:
                 var j: Int
@@ -1187,39 +1358,11 @@ final class EscapeSequenceParser {
                 if currentState == ParserState.apcString.rawValue {
                     j = ByteRunScanner.firstC0Byte(in: data, from: i)
                     appendApcBytes(i..<j, to: &apc, &apcLimitExceeded)
-                } else if oscLimitExceeded {
-                    // The payload is already dropped, so C1 ST stays payload
-                    // and only a C0 byte ends the run.
-                    j = ByteRunScanner.firstC0Byte(in: data, from: i)
                 } else {
-                    // One pass finds the run boundary, which is either a C0
-                    // byte or a C1 ST byte that ends the sequence.
-                    var appendedThrough = i
-                    var searchStart = i
-                    while true {
-                        j = ByteRunScanner.firstC0OrByte(0x9c, in: data, from: searchStart)
-                        guard j < data.count, data[j] == 0x9c else { break }
-                        appendOscBytes(appendedThrough..<j, to: &osc, &oscLimitExceeded)
-                        appendedThrough = j
-                        guard oscLimitExceeded
-                                || EscapeSequenceParser.oscExpectsUTF8Continuation(osc)
-                        else {
-                            c1Terminated = true
-                            break
-                        }
-                        appendOscBytes(j..<(j + 1), to: &osc, &oscLimitExceeded)
-                        appendedThrough = j + 1
-                        searchStart = j + 1
-                        if oscLimitExceeded {
-                            j = ByteRunScanner.firstC0Byte(in: data, from: searchStart)
-                            break
-                        }
-                    }
-                    appendOscBytes(appendedThrough..<j, to: &osc, &oscLimitExceeded)
+                    (j, c1Terminated) = consumeOscRun(data, from: i, osc: &osc,
+                                                    limitExceeded: &oscLimitExceeded,
+                                                    ignoredPrefixBytes: oscIgnoredPrefixBytes, terminal)
                     if c1Terminated {
-                        // The transition table keeps 0x9c as payload, so this
-                        // action ends the sequence and consumes the byte.
-                        dispatchAccumulatedOsc(osc, limitExceeded: oscLimitExceeded, terminal)
                         endStringSequence(
                             osc: &osc,
                             oscLimitExceeded: &oscLimitExceeded,
@@ -1234,9 +1377,6 @@ final class EscapeSequenceParser {
                         transition = (transition & 0xf0) | ParserState.ground.rawValue
                     }
                 }
-                // Let the transition table process the boundary byte. This
-                // keeps OSC and APC behavior independent of input chunking.
-                // A C1 ST is the one boundary this action handles itself.
                 consumed = c1Terminated ? j - i + 1 : j - i
             case .oscEnd:
                 if currentState == ParserState.apcString.rawValue {
@@ -1247,13 +1387,25 @@ final class EscapeSequenceParser {
                     }
                 } else {
                     if code != ControlCodes.CAN && code != ControlCodes.SUB {
-                        dispatchAccumulatedOsc(osc, limitExceeded: oscLimitExceeded, terminal)
+                        if code == 0x1b, !oscLimitExceeded,
+                           !oscIgnoredPrefixBytes, EscapeSequenceParser.isProgramStatusOsc(osc) {
+                            transition = (transition & 0xf0) | ParserState.programStatusEscape.rawValue
+                        } else {
+                            dispatchAccumulatedOsc(osc, limitExceeded: oscLimitExceeded,
+                                                   ignoredPrefixBytes: oscIgnoredPrefixBytes,
+                                                   terminator: code, terminal)
+                        }
                     }
                 }
                 if code == 0x1b {
-                    transition |= ParserState.escape.rawValue
+                    if transition & 0x0f != ParserState.programStatusEscape.rawValue {
+                        transition = (transition & 0xf0) | ParserState.escape.rawValue
+                    }
                 }
-                EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
+                if transition & 0x0f != ParserState.programStatusEscape.rawValue {
+                    EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
+                }
+                oscIgnoredPrefixBytes = false
                 EscapeSequenceParser.resetApc (&apc, &apcLimitExceeded)
                 pars.reset()
                 parsColonMask = 0
@@ -1284,6 +1436,7 @@ final class EscapeSequenceParser {
         // save non pushable buffers
         _osc = osc
         _oscLimitExceeded = oscLimitExceeded
+        _oscIgnoredPrefixBytes = oscIgnoredPrefixBytes
         _apc = apc
         _apcLimitExceeded = apcLimitExceeded
         _collect = collect

@@ -312,6 +312,11 @@ public protocol TerminalDelegate: AnyObject {
      *  - report: the parsed progress report
      */
     func progressReport(source: Terminal, report: Terminal.ProgressReport)
+
+    /// Receives the current OSC 7501 records after a report or removal.
+    /// The default implementation does nothing. The terminal lock is held
+    /// when a host feeds or changes the terminal under that lock.
+    func programStatusChanged(source: Terminal, records: [TerminalProgramStatus])
     
     /**
      * Invoked to create an image from an RGBA buffer at the current cursor position
@@ -384,6 +389,7 @@ struct SynchronizedOutputWatchdogCounters {
  * that is provided in the constructor call.
  */
 open class Terminal {
+    var programStatusStore = TerminalProgramStatusStore()
     public enum ProgressReportState: Int, Sendable {
         case remove = 0
         case set = 1
@@ -1335,6 +1341,7 @@ open class Terminal {
         _rows = max (options.rows, MINIMUM_ROWS)
         
         if isReset {
+            clearProgramStatus()
             resetNormalBuffer()
             activateNormalBuffer(clearAlt: false)
             resetSemanticPromptState(clearingScreenMarks: true)
@@ -3408,6 +3415,9 @@ open class Terminal {
                 allocates = !buffer.canReuseSemanticGroup(atRow: originRow)
             }
             if allocates {
+                // Repaint, right, and continuation markers do not start a
+                // new shell prompt and must preserve live program status.
+                if action == "A" { programStatusProcessExited() }
                 buffer.beginSemanticPromptGroup(originRow: originRow)
                 // F.2a: `freshSemanticPromptLine`'s LF stamped this landing row
                 // with the OUTGOING group's epoch before we allocated. Clear it
@@ -9992,6 +10002,9 @@ public extension TerminalDelegate {
     }
 
     func progressReport(source: Terminal, report: Terminal.ProgressReport) {
+    }
+
+    func programStatusChanged(source: Terminal, records: [TerminalProgramStatus]) {
     }
     
     func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int){
