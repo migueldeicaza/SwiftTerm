@@ -929,6 +929,11 @@ final class EscapeSequenceParser {
         }
     }
 
+    @inline(never)
+    private func startOsc(_ osc: inout [UInt8], _ limitExceeded: inout Bool) {
+        Self.resetOsc(&osc, &limitExceeded)
+    }
+
     @inline(__always)
     private func appendOscBytes(
         _ range: Range<Int>,
@@ -1349,8 +1354,7 @@ final class EscapeSequenceParser {
                     apc = []
                     apcLimitExceeded = false
                 } else {
-                    osc = []
-                    oscLimitExceeded = false
+                    startOsc(&osc, &oscLimitExceeded)
                     oscIgnoredPrefixBytes = false
                 }
             case .oscPut:

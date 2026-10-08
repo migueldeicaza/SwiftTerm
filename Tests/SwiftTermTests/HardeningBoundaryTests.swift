@@ -91,6 +91,26 @@ struct HardeningBoundaryTests {
         }
     }
 
+    @Test func shortOscStorageIsReusedWithoutKeepingPriorPayload() {
+        let (parser, terminal) = makeParser(maximumOscBytes: 1024)
+        feed(parser, terminal, "\(esc)]77;\(String(repeating: "a", count: 256))\u{7}")
+        let capacity = parser._osc.capacity
+        #expect(capacity >= 259)
+
+        feed(parser, terminal, "\(esc)]77;new")
+        #expect(parser._osc.capacity == capacity)
+        #expect(String(decoding: parser._osc, as: UTF8.self) == "77;new")
+    }
+
+    @Test func reusedOscStorageDoesNotChangeRetainedHandlerPayloads() {
+        let (parser, terminal) = makeParser(maximumOscBytes: 1024)
+        var received: [ArraySlice<UInt8>] = []
+        parser.oscHandlers[77] = { received.append($0) }
+        feed(parser, terminal, "\(esc)]77;first\u{7}\(esc)]77;second\u{7}")
+        #expect(received.map { String(decoding: $0, as: UTF8.self) } == ["first", "second"])
+        #expect(parser._osc.isEmpty)
+    }
+
     @Test func largeOscStorageIsReleasedAfterTermination() {
         let limit = EscapeSequenceParser.maximumRetainedOscBytes + 1
         let (parser, terminal) = makeParser(maximumOscBytes: limit)
