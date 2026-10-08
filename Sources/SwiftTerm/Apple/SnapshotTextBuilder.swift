@@ -254,6 +254,12 @@ final class SnapshotTextBuilder {
         if flags.contains(.dim) {
             foregroundColor = foregroundColor.dimmedColor(towards: backgroundColor)
         }
+        if withUrl, let linkColor = context.linkColor {
+            // The host's link color replaces the cell's own for the text and
+            // every line drawn with it: the link underline added below, and
+            // any SGR underline or strikethrough.
+            foregroundColor = linkColor
+        }
         // SwiftTerm owns cell placement. A BiDi layout is already in visual
         // order, and rows on the legacy and explicit-LTR paths must keep
         // logical cell order, so CoreText must not reorder anything. Every row
