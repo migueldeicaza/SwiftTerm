@@ -52,6 +52,9 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     /// Reports a launch failure, separate from child exit.
     func processFailedToStart(source: TerminalView, error: LocalProcessError)
 
+    /// Receives the current OSC 7501 records on the main actor.
+    func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus])
+
     // MARK: Kitty clipboard protocol, OSC 5522
     //
     // ``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so the
@@ -94,6 +97,7 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
 }
 
 public extension LocalProcessTerminalViewDelegate {
+    func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {}
     func processFailedToStart(source: TerminalView, error: LocalProcessError) {}
 
     func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
@@ -456,7 +460,12 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     }
 
     open func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
+        programStatusProcessExited()
         processDelegate?.processTerminated(source: self, exitCode: exitCode)
+    }
+
+    open func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {
+        processDelegate?.programStatusChanged(source: source, records: records)
     }
     
     /**

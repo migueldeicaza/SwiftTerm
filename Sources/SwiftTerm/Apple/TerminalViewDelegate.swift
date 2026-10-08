@@ -179,6 +179,14 @@ public protocol TerminalViewDelegate: AnyObject {
      */
     func rangeChanged (source: TerminalView, startY: Int, endY: Int)
 
+    /// Receives current OSC 7501 records on the main actor.
+    /// Updates can be combined before delivery. Text is untrusted plain text.
+    func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus])
+
+}
+
+public extension TerminalViewDelegate {
+    func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {}
 }
 #endif
 

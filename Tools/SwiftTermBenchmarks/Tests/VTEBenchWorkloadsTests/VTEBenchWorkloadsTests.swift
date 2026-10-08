@@ -33,7 +33,9 @@ struct VTEBenchWorkloadsTests {
             "hardening_horizontal_margin_wide_scroll_edit",
             "hardening_osc_bounded_normal",
             "hardening_osc_bounded_over_limit",
-            "hardening_osc_bounded_chunked"
+            "hardening_osc_bounded_chunked",
+            "hardening_osc_short_normal",
+            "hardening_osc_short_chunked"
         ])
 
         let byName = Dictionary(uniqueKeysWithValues: workloads.map { ($0.name, $0) })
@@ -44,6 +46,9 @@ struct VTEBenchWorkloadsTests {
         #expect(byName["hardening_osc_bounded_normal"]?.maximumOscBytes == 4_096)
         #expect(byName["hardening_osc_bounded_over_limit"]?.payload.count == 4_100)
         #expect(byName["hardening_osc_bounded_chunked"]?.inputChunkSize == 127)
+        #expect(byName["hardening_osc_short_normal"]?.payload == Array("\u{1b}]2;title\u{07}".utf8))
+        #expect(byName["hardening_osc_short_chunked"]?.payload == byName["hardening_osc_short_normal"]?.payload)
+        #expect(byName["hardening_osc_short_chunked"]?.inputChunkSize == 1)
     }
 
     @Test("Preserves captured byte streams")

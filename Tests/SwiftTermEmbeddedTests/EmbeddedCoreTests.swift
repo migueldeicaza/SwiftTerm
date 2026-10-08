@@ -12,6 +12,29 @@ private final class EmbeddedTerminalDelegate: TerminalDelegate {
     func scheduleSynchronizedOutputTimeout(source: Terminal, afterMilliseconds: UInt32) { timeoutMilliseconds = afterMilliseconds }
 }
 
+@Test func embeddedCoreValidatesProgramStatusAndItsLifetime() {
+    let delegate = EmbeddedTerminalDelegate()
+    let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 8, rows: 2, scrollback: 0))
+    defer { terminal.close() }
+    terminal.feed(text: "\u{1b}]7501;?\u{7}")
+    #expect(delegate.sentBytes == Array("\u{1b}]7501;?\u{7}".utf8))
+    terminal.feed(text: "\u{1b}]7501;state=done:app=build:msg=SGk\u{7}")
+    terminal.feed(text: "\u{1b}]7501;state=blocked:id=test:kind=question:progress=50\u{7}")
+    #expect(terminal.programStatus()?.message == "Hi")
+    #expect(terminal.programStatus(id: "test")?.effectiveApp == "build")
+    let original = terminal.programStatusRecords
+    for invalid in ["YQ=", "YR==", "AA==", "woA=", "/w=="] {
+        terminal.feed(text: "\u{1b}]7501;state=clear:msg=\(invalid)\u{7}")
+        #expect(terminal.programStatusRecords == original)
+    }
+    terminal.feed(text: "\u{1b}[?1049h\u{1b}[!p\u{1b}[?1049l")
+    #expect(terminal.programStatusRecords == original)
+    terminal.feed(text: "\u{1b}]133;A\u{7}")
+    #expect(terminal.programStatusRecords.map(\.state) == [.done])
+    terminal.feed(text: "\u{1b}c")
+    #expect(terminal.programStatusRecords.isEmpty)
+}
+
 @Test func embeddedCoreParsesTextAndCursorMovement() {
     let delegate = EmbeddedTerminalDelegate()
     let terminal = Terminal(delegate: delegate, options: TerminalOptions(cols: 8, rows: 2, scrollback: 0))

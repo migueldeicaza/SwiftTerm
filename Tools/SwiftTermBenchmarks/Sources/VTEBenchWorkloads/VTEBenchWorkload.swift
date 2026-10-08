@@ -161,7 +161,14 @@ public enum VTEBenchWorkloads {
                 name: "hardening_osc_bounded_chunked",
                 payload: bytes("\u{1b}]2;\(normalOscBody)\u{07}"),
                 maximumOscBytes: oscLimit,
-                inputChunkSize: 127)
+                inputChunkSize: 127),
+            VTEBenchWorkload(
+                name: "hardening_osc_short_normal",
+                payload: bytes("\u{1b}]2;title\u{07}")),
+            VTEBenchWorkload(
+                name: "hardening_osc_short_chunked",
+                payload: bytes("\u{1b}]2;title\u{07}"),
+                inputChunkSize: 1)
         ]
     }
 

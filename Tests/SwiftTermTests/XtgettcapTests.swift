@@ -350,14 +350,14 @@ struct XtgettcapTests {
     /// From Ghostty: "xtgettcap map" in Source.zig, as a generated-table test.
     @Test func theGeneratedTableHasEveryCapabilityAndTheTwoExtraKeys() throws {
         let names = try TerminfoFixture.capabilityNames()
-        #expect(names.count == 268)
+        #expect(names.count == 269)
 
         for name in names {
             let key = TerminfoFixture.hexEncoded(name)
             #expect(SwiftTermTerminfo.xtgettcapReplies[key] != nil,
                     "the table has no entry for \(name)")
         }
-        #expect(SwiftTermTerminfo.xtgettcapReplies.count == 270)
+        #expect(SwiftTermTerminfo.xtgettcapReplies.count == 271)
         #expect(SwiftTermTerminfo.xtgettcapReplies["436F"] != nil)   // Co
         #expect(SwiftTermTerminfo.xtgettcapReplies["524742"] != nil) // RGB
         #expect(SwiftTermTerminfo.xtgettcapReplies["544E"] == nil)   // TN is dynamic

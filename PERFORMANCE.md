@@ -45,8 +45,8 @@ The suite contains these vtebench cases:
 - `scrolling` and four scrolling-region variants
 - `scrolling_fullscreen`, `sync_medium_cells`, and `unicode`
 
-Six opt-in hardening cases cover ASCII and wide-cell seams, horizontal
-margins, and bounded OSC input. Enable them without changing the default
+Eight opt-in hardening cases cover ASCII and wide-cell seams, horizontal
+margins, bounded OSC input, and short title OSC commands. Enable them without changing the default
 vtebench selection:
 
 ```bash
@@ -64,6 +64,73 @@ cd Tools/SwiftTermBenchmarks
 swift package benchmark baseline update main      # on the first revision
 swift package benchmark baseline compare main     # on the second revision
 ```
+
+### OSC 7501 regression fix — 2026-10-08
+
+The remaining OSC regression is removed in the measured engine cases.
+The final paired 22-case Release suite has no slowdown above 1.5% in both
+run orders against the original baseline, `15fed4fd`. This does not establish
+UI or PTY latency.
+
+The status-prefix matcher added work to ordinary OSC commands. The matcher
+and byte-copy helper are now inlined, with an early check for a non-`7`
+first byte. Those changes alone did not reliably restore short whole OSC
+performance. The saved profile also showed substantial allocation and copy
+work: both the baseline and the feature version discarded the cleared OSC
+buffer at each new sequence.
+
+The accepted [storage patch](Docs/performance-osc7501-storage-fix.patch)
+uses the existing bounded reset at OSC start. Small cleared buffers are
+reused; overflow or capacity above 1 MiB still releases storage. A
+`@inline(never)` wrapper keeps this reset outside the main parser code.
+The inline-reset version had a repeatable scrolling cost in follow-up runs
+and was rejected. Scanner and dispatch annotation changes were also tested
+separately and rejected. Overflow logging remains DEBUG-only.
+
+Allocation counting confirms the storage change. One sample contains
+104,858 short reports: the previous version made 104,858 allocations, and
+the final version made one. Both run orders gave the same counts.
+All 241 focused tests passed. Two new tests check storage reuse and retained
+handler payloads. Existing tests cover large-storage release, split status
+framing, pending-ST recovery, and nested feed/reset. Release benchmark and
+profiler builds passed.
+
+| Case | Final versus baseline, pair 1 | Pair 2 |
+| --- | ---: | ---: |
+| `hardening_osc_short_normal` | -26.87% | -26.55% |
+| `hardening_osc_short_chunked` | -7.20% | -3.93% |
+| `hardening_osc_bounded_chunked` | -18.98% | -16.51% |
+| `medium_cells` | -4.63% | -1.52% |
+| `scrolling` | -1.29% | -3.39% |
+
+The full suite includes 12 standard cases, eight hardening cases, and two
+Kitty snapshot cases. It uses `p0` wall clock and a three-second maximum
+duration per case for both builds. The repository default remains ten
+seconds. Results still vary: cursor motion was -3.07% / +2.12%, dense cells
+-2.80% / +2.64%, and Kitty 3 MiB snapshots -7.75% / +8.40%. No case exceeded
+the 1.5% limit in both final full-suite pairs.
+
+The timing tool encountered three Swift/Foundation crashes during command
+request decoding, before terminal workload execution. The failures affected
+a saved local binary and the original baseline. Final framework runs used
+`SWIFT_DEBUG_ENABLE_LIB_PRESPECIALIZED_METADATA=0` for both builds.
+[Swift's runtime source](https://github.com/swiftlang/swift/blob/main/stdlib/public/runtime/EnvironmentVariables.def)
+defines this switch. No production runtime setting was changed.
+
+A separate fixed-work check used normal runtime settings and equal work in
+both orders. Short whole OSC was 24.55% and 19.74% faster. Cursor motion and
+dense cells also improved in both pairs. Scrolling varied by +4.00% / -2.06%;
+its fixed-work results do not show a repeatable slowdown. All repetitions
+are retained.
+
+The sandbox prevented a new Instruments capture: `xctrace` reported a MAC
+policy error and could not load the Time Profiler template. Diagnosis used
+the saved October 7 traces, Release code, allocation counting, and paired
+measurements. The [measurement record](Docs/performance-osc7501-fix-2026-10-08.json)
+contains all trials, hashes, runtime conditions, incomplete runs, and raw
+fixed-work repetitions. The
+[compressed baselines](Docs/performance-osc7501-fix-2026-10-08-baselines.json.gz)
+retain full benchmark distributions, including rejected variants.
 
 The older manually timed cases remain in
 `Tests/SwiftTermTests/PerformanceTest.swift` for focused experiments. Use the

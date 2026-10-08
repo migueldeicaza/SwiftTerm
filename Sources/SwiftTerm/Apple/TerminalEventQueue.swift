@@ -39,6 +39,8 @@ enum TerminalEvent: Int, CaseIterable, Sendable {
     case mouseModeChanged = 1
     /// A BEL was received. Collapsing matches the debounce that follows it.
     case bell = 2
+    /// Current program status changed. The view stores the latest snapshot.
+    case programStatusChanged = 3
 
     fileprivate var mask: UInt32 { 1 << UInt32(rawValue) }
 }

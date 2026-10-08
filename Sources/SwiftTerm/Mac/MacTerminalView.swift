@@ -4449,6 +4449,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     /// Coalescing channel for idempotent notifications (io-gaps.md G6).
     nonisolated let eventQueue = TerminalEventQueue()
+    nonisolated let programStatusState = Locked<[TerminalProgramStatus]>([])
 
     /// Set by `updateScroller`, applied by `frameTick` under the lock.
 
@@ -4487,6 +4488,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             }
         case .bell:
             deliverBell()
+        case .programStatusChanged:
+            terminalDelegate?.programStatusChanged(source: self, records: programStatusRecords)
         }
     }
 
