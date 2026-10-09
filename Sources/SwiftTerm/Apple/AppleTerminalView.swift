@@ -1068,6 +1068,23 @@ public struct TerminalViewStateSnapshot: Sendable {
     public let visibleRows: [TerminalVisibleRowSnapshot]
 }
 
+/// Copied active-buffer input state, independent of the scrolled viewport.
+/// No mutable engine or buffer objects escape the terminal lock.
+public struct TerminalInputStateSnapshot: Sendable {
+    public let dimensions: TerminalDimensions
+    public let cursor: Position
+    public let isAlternateBuffer: Bool
+    public let applicationCursor: Bool
+    /// Effective left margin; zero when DEC private mode 69 is disabled.
+    public let marginLeft: Int
+    /// Effective right margin; the last column when DEC private mode 69 is disabled.
+    public let marginRight: Int
+    public let scrollback: Int
+    public let screenBaseRow: Int
+    public let viewportRow: Int
+    public let cursorRow: TerminalVisibleRowSnapshot?
+}
+
 /// Delivers input to one main-actor sink in FIFO order.
 ///
 /// At most one drain task is pending. The queue preserves the order in which
@@ -1673,6 +1690,13 @@ extension TerminalView {
     /// Returns copied terminal state for status displays and diagnostics.
     public nonisolated func terminalStateSnapshot() -> TerminalViewStateSnapshot {
         renderOwner.stateSnapshot()
+    }
+
+    /// Copies the active input state and cursor row under one lock.
+    /// Returns nil if no terminal session is installed. Stopping the view's UI
+    /// with `updateUiClosed()` retains the terminal buffer and its readable state.
+    public nonisolated func terminalInputStateSnapshot() -> TerminalInputStateSnapshot? {
+        renderOwner.inputStateSnapshot()
     }
 
     /// Copies terminal buffer contents without exposing the mutable terminal.
