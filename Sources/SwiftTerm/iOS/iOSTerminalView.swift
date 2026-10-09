@@ -330,6 +330,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 #endif
     var cellDimension: CellDimension
+    /// The backing scale `cellDimension` was snapped to; see `computeFontDimensions`.
+    var cellDimensionBackingScale: CGFloat = 1
     var caretView: CaretView?
     var _lineSpacing: CGFloat = 1.0
     var terminal: Terminal!
