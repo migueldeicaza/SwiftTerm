@@ -209,6 +209,31 @@ final class BidiRenderTests {
         #expect(abs(invalidated.maxY - view.bounds.maxY) < 0.5)
     }
 
+    @Test func lineFeedRedrawsBothPartsOfASplitArabicParagraph() throws {
+        let view = InvalidationTrackingView(
+            frame: NSRect(x: 0, y: 0, width: 400, height: 200))
+        let cellWidth = view.cellDimension.width
+        let cellHeight = view.cellDimension.height
+        view.setFrameSize(NSSize(width: cellWidth * 10 + 1, height: cellHeight * 5 + 1))
+        let cols = view.withTerminal { $0.cols }
+        view.feed(text: String(repeating: "ب", count: cols + 2))
+        view.feed(text: "\u{1b}[H")
+        view.frameTick()
+
+        let before = segmentText(view, row: 0).trimmingCharacters(in: .whitespaces)
+        #expect(before.first == "\u{FE92}")
+        view.invalidatedRects.removeAll()
+
+        view.feed(text: "\n")
+        view.frameTick()
+
+        let after = segmentText(view, row: 0).trimmingCharacters(in: .whitespaces)
+        #expect(after.first == "\u{FE90}")
+        let invalidated = try #require(view.invalidatedRects.last)
+        #expect(abs(invalidated.maxY - view.bounds.maxY) < 0.5)
+        #expect(invalidated.height >= 2 * cellHeight)
+    }
+
     @Test func caretIsDrawnAtVisualColumn() throws {
         // After feeding مرحبا (5 cells) the logical cursor is at column 5.
         // In the RTL paragraph the text occupies the right edge, so the caret
