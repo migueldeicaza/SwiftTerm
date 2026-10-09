@@ -523,20 +523,26 @@ open class Terminal {
     /// from tracking in-place scrolls.
     var testingActiveSelectionCount: Int { activeSelectionCount }
 
-    /// Notifies attached selections that `lines` rows were shifted up in place
-    /// within the absolute row range `top...bottom`.
-    func selectionsAdjustForInPlaceScroll (top: Int, bottom: Int, lines: Int)
+    /// Notifies attached selections, and the host's ``onRowsShiftedInPlace``
+    /// hook, that `lines` rows were shifted in place within the buffer-list
+    /// slot range `top...bottom` (positive `lines` moved content up, negative
+    /// moved it down). `linesTopDelta` is how much of the buffer's trimmed-line
+    /// count this same shift consumed; see ``onRowsShiftedInPlace``.
+    func selectionsAdjustForInPlaceScroll (top: Int, bottom: Int, lines: Int, linesTopDelta: Int = 0)
     {
         // Hot path: every scrolled line lands here. An inactive selection would
         // return immediately from `adjustForInPlaceScroll` anyway, so the whole
         // walk is skippable when nothing is selected.
-        guard activeSelectionCount > 0, lines != 0 else {
-            return
+        if activeSelectionCount > 0, lines != 0 {
+            let currentSelections = selections
+            for entry in currentSelections {
+                entry.value.adjustForInPlaceScroll (top: top, bottom: bottom, lines: lines)
+            }
         }
-        let currentSelections = selections
-        for entry in currentSelections {
-            entry.value.adjustForInPlaceScroll (top: top, bottom: bottom, lines: lines)
-        }
+        // The host mirror is not conditional on a selection being active: a
+        // host maintaining its own anchors needs every shift. One point covers
+        // every present and future caller.
+        onRowsShiftedInPlace? (top, bottom, lines, buffer.linesTop, linesTopDelta)
     }
 
     /// Notifies attached selections that rows `top...bottom` were shifted only
@@ -712,6 +718,47 @@ open class Terminal {
 #else
     weak var tdel: TerminalDelegate?
 #endif
+
+    /**
+     * Invoked when rows of the current buffer moved within the buffer list.
+     *
+     * The built-in ``SelectionService`` is translated for every such shift;
+     * this is the same signal, for a host that keeps its own absolute row
+     * anchors — prompt markers, read cursors, marks. Without it those anchors
+     * silently come to name different text, and nothing the host can poll
+     * reports it: a top-anchored scroll region on a full buffer drops the
+     * front row while the rows below the region keep their slots, so an anchor
+     * below the region is off by one per scroll while every counter it can
+     * read looks unchanged.
+     *
+     * - `top`, `bottom`: the buffer-list slot range whose rows moved.
+     * - `lines`: positive when content moved up, negative when it moved down.
+     * - `linesTop`: ``Buffer/totalLinesTrimmed`` immediately after the shift.
+     * - `linesTopDelta`: how much of that count this shift itself consumed —
+     *   0 for a pure in-place move, 1 for a scrollback-consuming recycle,
+     *   negative when the count was reset under the rows (`CSI 3 J`).
+     *
+     * An anchor is a trimmed-line count plus a slot, so one law covers every
+     * shape. Membership is decided in the pre-shift frame
+     * `top + linesTop - linesTopDelta ... bottom + linesTop - linesTopDelta`:
+     * an anchor inside it moves by `-(lines - linesTopDelta)` and is dropped
+     * when it lands outside the post-shift frame
+     * `top + linesTop ... bottom + linesTop`, and an anchor outside it absorbs
+     * this shift's share of the base (`+linesTopDelta`), because rows past the
+     * region keep their slots while the count advances beneath them. Netting
+     * the motion against `linesTopDelta` is what stops a recycle — which
+     * consumes its row into the count — from being counted twice, once in the
+     * shift and once in the base. Full recycles, partial and margin scrolls,
+     * insert and delete line, ``clearScrollback`` and `CSI 3 J` all follow it.
+     *
+     * A closure rather than a ``TerminalDelegate`` method: a host embedding
+     * ``TerminalView`` inherits the view's delegate conformance, and a
+     * protocol witness cannot be overridden from a subclass in another module.
+     *
+     * Nil by default. Invoked synchronously on the thread feeding the
+     * terminal, after the terminal's own state has been updated.
+     */
+    public var onRowsShiftedInPlace: ((_ top: Int, _ bottom: Int, _ lines: Int, _ linesTop: Int, _ linesTopDelta: Int) -> Void)?
     private var curAttr: Attribute = CharData.defaultAttr
     /// Arena identifier for `curAttr`. It changes only when SGR state changes.
     private var curStyleID: UInt16 = 0
@@ -1253,9 +1300,14 @@ open class Terminal {
     }
     
     public func resetNormalBuffer() {
+        // A fresh object starts a new content frame on the same coordinates:
+        // carry the epoch forward so a host can tell the replacement from the
+        // buffer it replaced.
+        let resetEpoch = normalBuffer.resetEpoch + 1
         normalBuffer = Buffer(cols: cols, rows: rows, tabStopWidth: tabStopWidth,
                               scrollback: options.scrollback, bidiState: currentBidiState,
                               arena: cellArena)
+        normalBuffer.resetEpoch = resetEpoch
         normalBuffer.terminal = self
 
         normalBuffer.fillViewportRows()
@@ -4365,10 +4417,19 @@ open class Terminal {
             // Clear scrollback (everything not in viewport)
             let scrollBackSize = buffer.lines.count - rows
             if scrollBackSize > 0 {
+                let previousLineCount = buffer.lines.count
+                let linesTopDelta = -buffer.linesTop
                 buffer.lines.trimStart (count: scrollBackSize)
                 buffer.linesTop = 0
                 buffer.yBase = max (buffer.yBase - scrollBackSize, 0)
                 buffer.yDisp = max (buffer.yDisp - scrollBackSize, 0)
+                // Every surviving row moved up by the trimmed count while the
+                // trimmed-line count reset underneath it. The delta carries
+                // that frame reset, so survivors land on their new anchors and
+                // anchors in the discarded rows fall out of the frame.
+                selectionsAdjustForInPlaceScroll (top: 0, bottom: previousLineCount - 1,
+                                                  lines: scrollBackSize,
+                                                  linesTopDelta: linesTopDelta)
             }
             break;
         default:
@@ -7916,6 +7977,9 @@ open class Terminal {
                           isWrapped: isWrapped,
                           bidiState: newLineState)
             buffer.linesTop += 1
+            // This path is taken only when no selection is active, so it skips
+            // the selection walk — but a host hook still has to see the shift.
+            onRowsShiftedInPlace? (0, lines.count - 1, 1, buffer.linesTop, 1)
             buffer.yDisp = buffer.yBase
             updateRange(borrowing: buffer, startLine: 0, endLine: _rows - 1,
                         scrolling: true)
@@ -8017,6 +8081,7 @@ open class Terminal {
             // row into scrollback. Keep the splice path for that case.
             // Determine whether the buffer is going to be trimmed after insertion.
             let willBufferBeTrimmed = lines.isFull
+            let previousLineCount = lines.count
 
             // Insert the line using the fastest method
             if bottomRow == lines.count - 1 {
@@ -8044,6 +8109,15 @@ open class Terminal {
                 if !userScrolling {
                     buffer.yDisp += 1
                 }
+                if bottomRow < previousLineCount - 1 {
+                    // A top-anchored region that does not reach the end of the
+                    // buffer: the blank was spliced in below it, so the rows
+                    // past the region keep their text and move one slot down.
+                    // Rows inside the region did not move, which is why this
+                    // starts below it rather than at zero.
+                    selectionsAdjustForInPlaceScroll (top: bottomRow + 1,
+                                                      bottom: previousLineCount, lines: -1)
+                }
             } else {
                 kittyTrimmedScrollback = true
                 if hasScrollback {
@@ -8051,8 +8125,17 @@ open class Terminal {
                 }
 
                 // Recycling removes the first buffer row and shifts every
-                // remaining row up without changing yDisp.
-                selectionsAdjustForInPlaceScroll (top: 0, bottom: lines.count - 1, lines: 1)
+                // remaining row up without changing yDisp. When the region does
+                // not reach the end of the buffer only the rows inside it move:
+                // splicing plus trimming leaves everything below at its slot.
+                // The recycle consumes a row into the trimmed-line count only
+                // when the buffer keeps scrollback; reporting that consumption
+                // is what keeps a host from counting the same row twice.
+                selectionsAdjustForInPlaceScroll (
+                    top: 0,
+                    bottom: bottomRow == previousLineCount - 1 ? previousLineCount - 1 : bottomRow,
+                    lines: 1,
+                    linesTopDelta: hasScrollback ? 1 : 0)
 
                 // When the buffer is full and the user has scrolled up, keep the text
                 // stable unless ydisp is right at the top
@@ -8140,6 +8223,10 @@ open class Terminal {
                                     bidiState: newLineState) {
             print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
         }
+        // Like the whole-screen fast path, this one is entered only when no
+        // selection is active and so skips the selection walk; the host hook
+        // still has to see the shift. Nothing was trimmed, so no base share.
+        onRowsShiftedInPlace? (topRow, bottomRow, 1, buffer.linesTop, 0)
         buffer.yDisp = buffer.yBase
         updateRange(borrowing: buffer, startLine: scrollTop, endLine: scrollBottom)
         recordScrollNotification()
@@ -8346,7 +8433,16 @@ open class Terminal {
     public func clearScrollback ()
     {
         // Only the normal buffer has scrollback
+        let trimmedLineCount = normalBuffer.yBase
+        let previousLineCount = normalBuffer.lines.count
         normalBuffer.clearScrollback ()
+        if buffer === normalBuffer, trimmedLineCount > 0 {
+            // Trimming moves every surviving row up without touching the
+            // trimmed-line count; unreported, it leaves anchors aimed at the
+            // wrong rows until something else reconciles them.
+            selectionsAdjustForInPlaceScroll (top: 0, bottom: previousLineCount - 1,
+                                              lines: trimmedLineCount)
+        }
         refresh (startRow: 0, endRow: self.rows - 1)
     }
 
