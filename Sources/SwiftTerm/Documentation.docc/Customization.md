@@ -229,6 +229,11 @@ terminalView.antiAliasCustomBlockGlyphs = true
 
 // Use bright colors for bold text (traditional terminal behavior)
 terminalView.useBrightColors = true
+
+// Darken or lighten text that falls below a WCAG contrast ratio against
+// its background, such as colors a program picked for a dark theme shown
+// on a light one. 1, the default, keeps every color as it is.
+terminalView.minimumContrastRatio = 4.5
 ```
 
 ### GPU-Accelerated Rendering
