@@ -1687,6 +1687,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
     public var useBrightColors: Bool = true
 
+    /// The least contrast, as a WCAG ratio from 1 to 21, that text keeps against its background. Text whose colors
+    /// fall below it, such as colors a program picked for a background of the other brightness, is darkened or
+    /// lightened just enough to reach it. Powerline separators, box drawing, and block elements keep their colors.
+    /// The default, 1, keeps every color as it is; 4.5 matches WCAG AA and VS Code's terminal default.
+    public var minimumContrastRatio: CGFloat = 1 {
+        didSet {
+            guard minimumContrastRatio != oldValue else { return }
+            colorsChanged ()
+        }
+    }
+
     /// Controls whether this view applies the terminal's BiDi presentation state.
     public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
         didSet {

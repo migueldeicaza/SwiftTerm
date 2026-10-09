@@ -538,6 +538,7 @@ struct FrameViewState: Sendable {
     let appearance: FrameAppearance
     let customBlockGlyphs: Bool
     let useBrightColors: Bool
+    let minimumContrastRatio: CGFloat
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
 
@@ -578,6 +579,7 @@ struct FrameViewState: Sendable {
         appearance = view.frameCaptureCache.appearance(for: view)
         customBlockGlyphs = view.customBlockGlyphs
         useBrightColors = view.useBrightColors
+        minimumContrastRatio = view.minimumContrastRatio
         bidiHostPolicy = view.bidiHostPolicy
         glyphFallbackProvider = view.glyphFallbackProvider
     }
@@ -643,6 +645,7 @@ struct SnapshotRenderContext {
     let commandActive: Bool
     let customBlockGlyphs: Bool
     let useBrightColors: Bool
+    let minimumContrastRatio: CGFloat
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
     let cols: Int
@@ -701,6 +704,7 @@ struct SnapshotRenderContext {
         commandActive = style.commandActive
         customBlockGlyphs = viewState.customBlockGlyphs
         useBrightColors = viewState.useBrightColors
+        minimumContrastRatio = viewState.minimumContrastRatio
         bidiHostPolicy = viewState.bidiHostPolicy
         glyphFallbackProvider = viewState.glyphFallbackProvider
         self.cols = cols
@@ -721,6 +725,7 @@ struct SnapshotRenderContext {
             identityHasher.combine(color.hash)
         }
         identityHasher.combine(useBrightColors)
+        identityHasher.combine(minimumContrastRatio)
         identity = UInt64(bitPattern: Int64(identityHasher.finalize()))
     }
 
@@ -2486,6 +2491,7 @@ extension TerminalView {
         if flags.contains (.dim) {
             fgColor = fgColor.dimmedColor (towards: bgColor)
         }
+        fgColor = fgColor.withContrast (atLeast: minimumContrastRatio, against: bgColor)
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fgColor,

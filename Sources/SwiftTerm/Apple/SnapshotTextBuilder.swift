@@ -254,6 +254,9 @@ final class SnapshotTextBuilder {
         if flags.contains(.dim) {
             foregroundColor = foregroundColor.dimmedColor(towards: backgroundColor)
         }
+        let shapeColor = foregroundColor
+        foregroundColor = foregroundColor.withContrast(atLeast: context.minimumContrastRatio,
+                                                       against: backgroundColor)
         // SwiftTerm owns cell placement. A BiDi layout is already in visual
         // order, and rows on the legacy and explicit-LTR paths must keep
         // logical cell order, so CoreText must not reorder anything. Every row
@@ -266,6 +269,7 @@ final class SnapshotTextBuilder {
             .font: font,
             .foregroundColor: foregroundColor,
             .backgroundColor: backgroundColor,
+            SwiftTermShapeColorKey: shapeColor,
             ltrWritingDirectionKey: ltrWritingDirectionValue,
             .paragraphStyle: ltrParagraphStyle,
         ]
@@ -291,6 +295,17 @@ final class SnapshotTextBuilder {
             result[SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
         }
         return SnapshotTextAttributes(result)
+    }
+
+    /// The color for Powerline separators, box drawing, and block elements:
+    /// the program's color before `minimumContrastRatio` adjusts it, since
+    /// these characters draw shapes, such as pixel art, meant to blend in.
+    private func shapeColor(of attributes: SnapshotTextAttributes,
+                            context: SnapshotRenderContext) -> TTColor
+    {
+        (attributes[SwiftTermShapeColorKey] as? TTColor)
+            ?? (attributes[.foregroundColor] as? TTColor)
+            ?? context.effectiveForegroundColor
     }
 
     /// Maps one terminal color to a platform color. Truecolor values are
@@ -350,6 +365,7 @@ final class SnapshotTextBuilder {
         var lastHasUrl = false
         var lastIsSelected = false
         var lastBlinkHidden = false
+        var lastUsesShapeColor = false
         var lastGlyphFallbackFont: TTFont?
         var lastGlyphFallbackPolicy: TerminalGlyphPlacementPolicy?
         var decodedStyleKey: PackedAttributeKey?
@@ -437,6 +453,11 @@ final class SnapshotTextBuilder {
                 character = text.first ?? " "
             }
             let renderCodePoint = character.unicodeScalars.first?.value ?? 0
+            // Font-rendered shapes must keep the same color as custom shapes.
+            let usesShapeColor = !context.customBlockGlyphs && context.minimumContrastRatio > 1
+                && ((renderCodePoint >= UInt32(BoxDrawingRenderer.lowerBoundary)
+                     && renderCodePoint <= UInt32(BlockElementMapping.upperBoundary))
+                    || PowerlineRenderer.glyph(for: renderCodePoint) != nil)
 
             // Host glyph fallback: cells the custom Powerline/box/block
             // renderers will consume below keep those dedicated paths.
@@ -457,6 +478,7 @@ final class SnapshotTextBuilder {
             // copying it.
             if styleKey != lastStyleKey || hasUrl != lastHasUrl || isSelected != lastIsSelected
                 || blinkHidden != lastBlinkHidden
+                || usesShapeColor != lastUsesShapeColor
                 || glyphFallback?.font !== lastGlyphFallbackFont
                 || glyphFallback?.policy != lastGlyphFallbackPolicy
                 || pendingAttrs == nil {
@@ -465,13 +487,18 @@ final class SnapshotTextBuilder {
                 lastHasUrl = hasUrl
                 lastIsSelected = isSelected
                 lastBlinkHidden = blinkHidden
+                lastUsesShapeColor = usesShapeColor
                 lastGlyphFallbackFont = glyphFallback?.font
                 lastGlyphFallbackPolicy = glyphFallback?.policy
-                if isSelected || blinkHidden || glyphFallback != nil {
+                if isSelected || blinkHidden || usesShapeColor || glyphFallback != nil {
                     var batchAttributes = attributes.values
+                    if usesShapeColor {
+                        batchAttributes[.foregroundColor] = shapeColor(of: attributes, context: context)
+                    }
                     if isSelected {
                         batchAttributes[.selectionBackgroundColor] = context.selectedTextBackgroundColor
                         batchAttributes[.foregroundColor] = context.selectedTextForegroundColor
+                        batchAttributes[SwiftTermShapeColorKey] = context.selectedTextForegroundColor
                         if batchAttributes[.underlineColor] != nil {
                             batchAttributes[.underlineColor] = context.selectedTextForegroundColor
                         }
@@ -503,7 +530,7 @@ final class SnapshotTextBuilder {
             if !blinkHidden && PowerlineRenderer.shouldRender(codePoint: renderCodePoint,
                                               customGlyphsEnabled: context.customBlockGlyphs) {
                 flushPending()
-                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? context.effectiveForegroundColor
+                let fgColor = shapeColor(of: currentAttributes, context: context)
                 powerlineGlyphs.append(PowerlineRenderItem(column: visualCol,
                                                            columnWidth: width,
                                                            codePoint: renderCodePoint,
@@ -518,7 +545,7 @@ final class SnapshotTextBuilder {
                renderCodePoint >= UInt32(BoxDrawingRenderer.lowerBoundary),
                renderCodePoint <= UInt32(BoxDrawingRenderer.upperBoundary) {
                 flushPending()
-                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? context.effectiveForegroundColor
+                let fgColor = shapeColor(of: currentAttributes, context: context)
                 boxDrawings.append(BoxDrawingRenderItem(column: visualCol,
                                                         columnWidth: width,
                                                         codePoint: renderCodePoint,
@@ -533,7 +560,7 @@ final class SnapshotTextBuilder {
                        && renderCodePoint <= UInt32(BlockElementMapping.upperBoundary)),
                       let rects = BlockElementMapping.rects(for: renderCodePoint) {
                 flushPending()
-                let fgColor = (currentAttributes[.foregroundColor] as? TTColor) ?? context.effectiveForegroundColor
+                let fgColor = shapeColor(of: currentAttributes, context: context)
                 blockElements.append(BlockElementRenderItem(column: visualCol,
                                                             columnWidth: width,
                                                             codePoint: renderCodePoint,
