@@ -117,7 +117,12 @@ final class SearchService {
 
     func selectionRange (for result: SearchResult) -> (start: Position, end: Position) {
         let start = Position(col: result.col, row: result.row)
-        let end = advancePosition(from: start, by: max(result.size, 0))
+        var end = advancePosition(from: start, by: max(result.size, 0))
+        // Keep row-end selections on their last selected row, independent of
+        // buffer growth. A next-row endpoint would also copy that row's newline.
+        if result.size > 0 && end.col == 0 {
+            end = Position(col: terminal.cols, row: end.row - 1)
+        }
         return (start, end)
     }
 

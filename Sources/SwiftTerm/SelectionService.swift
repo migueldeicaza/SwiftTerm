@@ -374,9 +374,9 @@ public class SelectionService: CustomDebugStringConvertible {
         setActiveAndNotify()
     }
         
-    func clamp (_ buffer: Buffer, _ p: Position) -> Position {
+    func clamp (_ buffer: Buffer, _ p: Position, allowsEndColumn: Bool = false) -> Position {
         let maxRow = max(0, buffer.lines.count - 1)
-        return Position(col: max(0, min(p.col, exclusiveEnd ? buffer.cols : buffer.cols - 1)),
+        return Position(col: max(0, min(p.col, exclusiveEnd || allowsEndColumn ? buffer.cols : buffer.cols - 1)),
                         row: max(0, min(p.row, maxRow)))
     }
     /**
@@ -385,7 +385,7 @@ public class SelectionService: CustomDebugStringConvertible {
     public func setSelection (start: Position, end: Position) {
         let buffer = terminal.displayBuffer
         let sclamped = clamp (buffer, start)
-        let eclamped = clamp (buffer, end)
+        let eclamped = clamp (buffer, end, allowsEndColumn: true)
         
         self.start = sclamped
         self.end = eclamped
