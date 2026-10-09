@@ -121,6 +121,28 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         
     }
 
+    /// Copies input modes and dimensions without copying any rows.
+    ///
+    /// Do not call this method from a terminal delegate callback that already
+    /// holds the terminal lock.
+    public func terminalInputStateSnapshot() -> TerminalInputStateSnapshot {
+        terminal.inputStateSnapshot()
+    }
+
+    /// Copies a bounded region and its input state in one transaction.
+    ///
+    /// Do not call this method from a terminal delegate callback that already
+    /// holds the terminal lock.
+    ///
+    /// The snapshot is useful for inspection and bounded text capture. It does
+    /// not include images, hyperlinks, or palette values, and is not sufficient
+    /// to reproduce the full display.
+    public func terminalContentSnapshot(
+        region: TerminalContentRegion
+    ) -> TerminalContentSnapshot {
+        terminal.contentSnapshot(region: region)
+    }
+
     /// Changes scrollback size for the underlying terminal at runtime.
     /// - Parameter newScrollback: The new scrollback size in lines. Pass `nil` to disable scrollback.
     public func changeScrollback (_ newScrollback: Int?)
