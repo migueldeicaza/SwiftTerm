@@ -50,13 +50,35 @@ import Testing
         #expect(row(terminal, 2) == "> ")
     }
 
-    /// A line feed that scrolls brings in a fresh row; it must stay unwrapped,
-    /// and text that genuinely wraps after it must still be marked as wrapped.
-    @Test func realSoftWrapsAfterALineFeedAreKept() {
-        let terminal = makeTerminal(cols: 10)
-        terminal.feed(text: "x\r\nABCDEFGHIJKL")
-
+    @Test func realSoftWrapsAfterAScrollingLineFeedAreKept() {
+        let terminal = makeTerminal(cols: 10, rows: 2)
+        terminal.feed(text: "x\r\nx\r\n")
+        #expect(terminal.buffer.yBase > 0)
         #expect(!terminal.buffer.lines[terminal.buffer.yBase + 1].isWrapped)
-        #expect(terminal.buffer.lines[terminal.buffer.yBase + 2].isWrapped)
+
+        terminal.feed(text: "ABCDEFGHIJKL")
+
+        #expect(!terminal.buffer.lines[terminal.buffer.yBase].isWrapped)
+        #expect(terminal.buffer.lines[terminal.buffer.yBase + 1].isWrapped)
+    }
+
+    @Test(arguments: [false, true])
+    func splittingAWrappedParagraphRequestsRedraw(hasScrollback: Bool) throws {
+        let terminal = makeTerminal(cols: 10)
+        if hasScrollback {
+            terminal.feed(text: String(repeating: "old\r\n", count: 5))
+            terminal.feed(text: "\u{1b}[H")
+            #expect(terminal.buffer.yBase > 0)
+        }
+        terminal.feed(text: String(repeating: "ب", count: 12))
+        terminal.feed(text: "\u{1b}[H")
+        terminal.clearUpdateRange()
+
+        terminal.feed(text: "\n")
+
+        let range = terminal.getUpdateRange()
+        let dirty = try #require(range)
+        #expect(dirty.startY == 0)
+        #expect(dirty.endY == 1)
     }
 }

@@ -2646,7 +2646,12 @@ open class Terminal {
             // reflow join those unrelated lines onto the ones above them. The
             // scrolling branch above needs nothing: it brings in an unwrapped row.
             let line = buffer.lines[buffer.yBase + buffer.y]
-            line.isWrapped = false
+            if line.isWrapped {
+                // Splitting a wrapped paragraph can change letter shapes
+                // on both sides. Request a redraw for both paragraphs.
+                line.isWrapped = false
+                updateRange(borrowing: buffer, startLine: by, endLine: buffer.y)
+            }
             line.bidiState = _currentBidiState
         }
         
