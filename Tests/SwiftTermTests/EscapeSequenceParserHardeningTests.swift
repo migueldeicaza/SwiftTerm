@@ -138,6 +138,24 @@ final class EscapeSequenceParserHardeningTests {
         }
     }
 
+    @Test func oscKeepsUTF8ScalarsSplitAcrossInputChunks() {
+        // Cyrillic continuation bytes fall in 0x80-0x9f: "с" is 0xd1 0x81.
+        let bytes = Array("\(esc)]77;Устранить рост\u{7}".utf8)
+        for cut in 1..<bytes.count {
+            let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 20, rows: 1)
+            terminal.silentLog = true
+            let parser = EscapeSequenceParser()
+            var received: [String] = []
+            parser.oscHandlers[77] = { received.append(String(decoding: $0, as: UTF8.self)) }
+
+            feed(parser, terminal, Array(bytes[..<cut]))
+            feed(parser, terminal, Array(bytes[cut...]))
+
+            #expect(received == ["Устранить рост"], "split at byte \(cut)")
+            #expect(terminal.buffer.x == 0, "split at byte \(cut)")
+        }
+    }
+
     @Test func bareEscapeDispatchesTitleOscBeforeStartingCsi() {
         let delegate = BareEscapeOscDelegate()
         let terminal = Terminal(
