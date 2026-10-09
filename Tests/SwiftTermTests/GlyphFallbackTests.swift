@@ -182,8 +182,11 @@ struct GlyphFallbackTests {
         let after = joined.attributes(at: 2, effectiveRange: nil)
         #expect((after[.font] as? NSFont) !== provider.font)
         #expect(after[SwiftTermGlyphPolicyKey] == nil)
-        // Column bookkeeping: every cell contributed exactly one UTF-16 unit.
-        #expect(info.segments.allSatisfy { $0.utf16IsCellIdentity })
+        // Column bookkeeping: every cell contributed exactly one UTF-16 unit,
+        // so the UTF-16 to cell map is the identity.
+        #expect(info.segments.allSatisfy { segment in
+            segment.utf16ToCellOrdinal == Array(0..<segment.attributedString.length)
+        })
     }
 
     // MARK: Placement policy fit
