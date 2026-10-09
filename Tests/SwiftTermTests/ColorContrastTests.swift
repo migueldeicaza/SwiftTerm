@@ -76,6 +76,55 @@ final class ColorContrastTests {
     }
 
     @MainActor
+    @Test(arguments: [false, true])
+    func fontRenderedShapesKeepTheirOriginalColors(dim: Bool) throws {
+        let view = TerminalView(frame: .zero, font: nil, options: TerminalOptions(cols: 16, rows: 4, scrollback: 20))
+        view.nativeBackgroundColor = .white
+        view.nativeForegroundColor = .black
+        view.customBlockGlyphs = false
+        // Alternate text and all four Powerline separators, a block, and a box
+        // drawing character with the same style to check both run boundaries.
+        let dimSequence = dim ? "\u{1B}[2m" : ""
+        view.feed(text: "\u{1B}[38;2;250;250;250m\(dimSequence)A\u{2588}B\u{2500}C\u{E0B0}D\u{E0B2}E\u{E0B4}F\u{E0B6}G")
+        let original = try renderFirstRow(view)
+
+        view.minimumContrastRatio = 4.5
+        let adjusted = try renderFirstRow(view)
+        #expect(adjusted.blockElements.isEmpty)
+        #expect(adjusted.boxDrawings.isEmpty)
+        #expect(adjusted.powerlineGlyphs.isEmpty)
+        for index in stride(from: 0, through: 12, by: 2) {
+            #expect(contrast(attributes(at: index, in: adjusted)[.foregroundColor], .white) >= 4.5)
+        }
+        for index in stride(from: 1, through: 11, by: 2) {
+            let originalColor = try #require(attributes(at: index, in: original)[.foregroundColor] as? NSColor)
+            let adjustedColor = try #require(attributes(at: index, in: adjusted)[.foregroundColor] as? NSColor)
+            #expect(adjustedColor == originalColor)
+        }
+    }
+
+    @MainActor
+    @Test func selectedFontRenderedShapeUsesSelectionColors() throws {
+        let view = TerminalView(frame: .zero, font: nil, options: TerminalOptions(cols: 12, rows: 4, scrollback: 20))
+        view.nativeBackgroundColor = .white
+        view.nativeForegroundColor = .black
+        view.customBlockGlyphs = false
+        view.minimumContrastRatio = 4.5
+        view.selectedTextForegroundColor = .red
+        view.selectedTextBackgroundColor = .blue
+        view.feed(text: "\u{1B}[38;2;250;250;250mA\u{2588}B")
+        view.selection.startSelection(row: 0, col: 1)
+        view.selection.dragExtend(bufferPosition: Position(col: 2, row: 0))
+
+        let row = try renderFirstRow(view)
+        let selected = attributes(at: 1, in: row)
+        #expect((selected[.foregroundColor] as? NSColor) == view.selectedTextForegroundColor)
+        #expect((selected[.selectionBackgroundColor] as? NSColor) == view.selectedTextBackgroundColor)
+        #expect(contrast(attributes(at: 0, in: row)[.foregroundColor], .white) >= 4.5)
+        #expect(contrast(attributes(at: 2, in: row)[.foregroundColor], .white) >= 4.5)
+    }
+
+    @MainActor
     private func renderFirstRow(_ view: TerminalView) throws -> ViewLineInfo {
         let snapshot = TerminalSnapshot()
         view.withTerminal { terminal in

@@ -365,6 +365,7 @@ final class SnapshotTextBuilder {
         var lastHasUrl = false
         var lastIsSelected = false
         var lastBlinkHidden = false
+        var lastUsesShapeColor = false
         var lastGlyphFallbackFont: TTFont?
         var lastGlyphFallbackPolicy: TerminalGlyphPlacementPolicy?
         var decodedStyleKey: PackedAttributeKey?
@@ -452,6 +453,11 @@ final class SnapshotTextBuilder {
                 character = text.first ?? " "
             }
             let renderCodePoint = character.unicodeScalars.first?.value ?? 0
+            // Font-rendered shapes must keep the same color as custom shapes.
+            let usesShapeColor = !context.customBlockGlyphs && context.minimumContrastRatio > 1
+                && ((renderCodePoint >= UInt32(BoxDrawingRenderer.lowerBoundary)
+                     && renderCodePoint <= UInt32(BlockElementMapping.upperBoundary))
+                    || PowerlineRenderer.glyph(for: renderCodePoint) != nil)
 
             // Host glyph fallback: cells the custom Powerline/box/block
             // renderers will consume below keep those dedicated paths.
@@ -472,6 +478,7 @@ final class SnapshotTextBuilder {
             // copying it.
             if styleKey != lastStyleKey || hasUrl != lastHasUrl || isSelected != lastIsSelected
                 || blinkHidden != lastBlinkHidden
+                || usesShapeColor != lastUsesShapeColor
                 || glyphFallback?.font !== lastGlyphFallbackFont
                 || glyphFallback?.policy != lastGlyphFallbackPolicy
                 || pendingAttrs == nil {
@@ -480,10 +487,14 @@ final class SnapshotTextBuilder {
                 lastHasUrl = hasUrl
                 lastIsSelected = isSelected
                 lastBlinkHidden = blinkHidden
+                lastUsesShapeColor = usesShapeColor
                 lastGlyphFallbackFont = glyphFallback?.font
                 lastGlyphFallbackPolicy = glyphFallback?.policy
-                if isSelected || blinkHidden || glyphFallback != nil {
+                if isSelected || blinkHidden || usesShapeColor || glyphFallback != nil {
                     var batchAttributes = attributes.values
+                    if usesShapeColor {
+                        batchAttributes[.foregroundColor] = shapeColor(of: attributes, context: context)
+                    }
                     if isSelected {
                         batchAttributes[.selectionBackgroundColor] = context.selectedTextBackgroundColor
                         batchAttributes[.foregroundColor] = context.selectedTextForegroundColor
