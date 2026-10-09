@@ -1172,7 +1172,11 @@ final class MetalTerminalRenderer {
             return
         }
         let drawable = drawableFrame.drawable
-        let drawableSize = drawableFrame.geometry.drawableSize
+        // The viewport must match the texture we render into. Under a
+        // non-integral scale the reported drawableSize is fractional while the
+        // texture is truncated to whole pixels; using drawableSize shifts every
+        // cell and lets the sampler bleed neighbouring atlas glyphs.
+        let drawableSize = CGSize(width: drawable.texture.width, height: drawable.texture.height)
 #if canImport(os)
         let buildID = OSSignpostID(log: MetalTerminalRenderer.profileLog)
         if MetalTerminalRenderer.profileEnabled {
