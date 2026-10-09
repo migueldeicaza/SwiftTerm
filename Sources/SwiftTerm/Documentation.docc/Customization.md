@@ -276,3 +276,23 @@ custom overlay), set `notifyUpdateChanges` to `true` and implement
 ```swift
 terminalView.notifyUpdateChanges = true
 ```
+
+## Progress Bar Timeout
+
+The OSC 9;4 progress bar clears itself after 15 seconds without a report, so a
+program that dies mid-task does not leave a bar behind. That safety net assumes
+reports keep arriving while the work runs: a program that reports once at the
+start and once at the end of a long task looks silent in between and loses its
+bar halfway through.
+
+``TerminalView/progressReportTimeout`` sets that wait, and `nil` turns it off
+for a host that trusts its program to close every bar it opens:
+
+```swift
+terminalView.progressReportTimeout = 60   // wait a minute instead
+terminalView.progressReportTimeout = nil  // keep the bar until the program removes it
+```
+
+Changing it while a bar is on screen restarts the wait from that moment, and
+`nil` cancels a wait already running. The default is
+``TerminalView/defaultProgressReportTimeout``.
