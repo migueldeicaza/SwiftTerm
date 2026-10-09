@@ -22,6 +22,75 @@ public class PseudoTerminalHelpers {
         let count: Int
     }
 
+#if os(macOS)
+    /// Turns the forked child's exec into one that keeps only its terminal.
+    ///
+    /// `fork` duplicates every descriptor the host holds, and `execve` keeps
+    /// all of them that are not close-on-exec. The host cannot mark them all:
+    /// Darwin has no `pipe2(O_CLOEXEC)` or `SOCK_CLOEXEC`, so a descriptor
+    /// another thread is creating is inheritable until its owner flags it, and
+    /// much host code never does. A shell that inherited a pipe's writer holds
+    /// it for as long as it lives, so that pipe's reader never sees EOF, and
+    /// every program the user runs in the terminal inherits the host's
+    /// sockets and files too.
+    ///
+    /// `POSIX_SPAWN_SETEXEC` makes `posix_spawn` replace the calling process
+    /// as `execve` would, and `POSIX_SPAWN_CLOEXEC_DEFAULT` closes every
+    /// descriptor its file actions do not name. The actions name only 0, 1
+    /// and 2, which `forkpty` has already made the PTY; the controlling
+    /// terminal and session are properties of the process, not of a
+    /// descriptor, and survive the exec unchanged.
+    ///
+    /// Built in the parent: the child of a multithreaded process may run only
+    /// async-signal-safe code, so it must not allocate.
+    private struct TerminalExecBoundary {
+        let attributes: UnsafeMutablePointer<posix_spawnattr_t?>
+        let fileActions: UnsafeMutablePointer<posix_spawn_file_actions_t?>
+
+        /// nil, with `errno` set, when the attributes cannot be built.
+        static func make() -> TerminalExecBoundary? {
+            let attributes = UnsafeMutablePointer<posix_spawnattr_t?>.allocate(capacity: 1)
+            let fileActions = UnsafeMutablePointer<posix_spawn_file_actions_t?>.allocate(capacity: 1)
+            let attributesResult = posix_spawnattr_init(attributes)
+            guard attributesResult == 0 else {
+                attributes.deallocate()
+                fileActions.deallocate()
+                errno = attributesResult
+                return nil
+            }
+            let actionsResult = posix_spawn_file_actions_init(fileActions)
+            guard actionsResult == 0 else {
+                posix_spawnattr_destroy(attributes)
+                attributes.deallocate()
+                fileActions.deallocate()
+                errno = actionsResult
+                return nil
+            }
+            let boundary = TerminalExecBoundary(attributes: attributes, fileActions: fileActions)
+            var result = posix_spawnattr_setflags(
+                attributes,
+                Int16(POSIX_SPAWN_SETEXEC | POSIX_SPAWN_CLOEXEC_DEFAULT)
+            )
+            for descriptor in [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO] where result == 0 {
+                result = posix_spawn_file_actions_addinherit_np(fileActions, descriptor)
+            }
+            guard result == 0 else {
+                boundary.destroy()
+                errno = result
+                return nil
+            }
+            return boundary
+        }
+
+        func destroy() {
+            posix_spawn_file_actions_destroy(fileActions)
+            posix_spawnattr_destroy(attributes)
+            fileActions.deallocate()
+            attributes.deallocate()
+        }
+    }
+#endif
+
     private static func allocateCStringArray(_ strings: [String]) -> CStringArray? {
         let base = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: strings.count + 1)
         var initializedCount = 0
@@ -107,6 +176,15 @@ public class PseudoTerminalHelpers {
         defaultAction.sa_flags = 0
         var emptyMask = sigset_t()
         sigemptyset(&emptyMask)
+#if os(macOS)
+        guard let execBoundary = TerminalExecBoundary.make() else {
+            return nil
+        }
+        defer { execBoundary.destroy() }
+        // Plain pointers, so the child reads no Swift aggregate after fork.
+        let spawnAttributes = execBoundary.attributes
+        let spawnFileActions = execBoundary.fileActions
+#endif
         var master: Int32 = 0
 
         let pid = forkpty(&master, nil, nil, &desiredWindowSize)
@@ -134,7 +212,13 @@ public class PseudoTerminalHelpers {
                 _ = chdir(cCurrentDirectory)
             }
             
+#if os(macOS)
+            // Exec keeping only the terminal (see `TerminalExecBoundary`).
+            // Returns only on failure.
+            _ = posix_spawn(nil, cExecutable, spawnFileActions, spawnAttributes, cArgs.base, cEnv.base)
+#else
             _ = execve(cExecutable, cArgs.base, cEnv.base)
+#endif
             _exit(127)
         }
         return (pid, master)
