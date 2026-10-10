@@ -1695,20 +1695,24 @@ extension TerminalView {
         renderOwner.inputStateSnapshot()
     }
 
-    /// Copies a bounded region and its input state in one transaction.
+    /// Copies a region of a buffer, with its palette and the input state, in
+    /// one transaction.
     ///
     /// Safe to call from any thread, but not from a terminal delegate callback
     /// that already holds the terminal lock.
     ///
-    /// The snapshot is useful for inspection and bounded text capture. It does
-    /// not include images, hyperlinks, or palette values, and is not sufficient
-    /// to reproduce the full display.
+    /// By default it copies every retained row of the active buffer; `kind`
+    /// selects the normal or alternate buffer regardless of which one is
+    /// displayed. The snapshot is useful for inspection, text capture and
+    /// re-encoding as ANSI through ``TerminalContentSnapshot/ansiRepresentation()``.
+    /// It does not include images or hyperlinks.
     /// Returns nil when no terminal session is attached. The returned values
     /// remain valid after later feeds, resizes, scrolls, and history trimming.
     public nonisolated func terminalContentSnapshot(
-        region: TerminalContentRegion
+        region: TerminalContentRegion = .all,
+        kind: Terminal.BufferKind = .active
     ) -> TerminalContentSnapshot? {
-        renderOwner.contentSnapshot(region: region)
+        renderOwner.contentSnapshot(region: region, kind: kind)
     }
 
     /// Copies terminal buffer contents without exposing the mutable terminal.

@@ -131,54 +131,81 @@ public struct Attribute: Equatable, Hashable, Sendable {
         Attribute (fg: fg, bg: bg, style: .none, underlineStyle: .none, underlineColor: underlineColor)
     }
     
-    // Temporary, longer term in Attribute we will add a proper encoding
+    /// The SGR parameters that reproduce this attribute from a reset state,
+    /// without the `CSI` prefix or the final `m`: for example `0;1;38;5;16`.
+    ///
+    /// The list always starts with `0`, so the receiving terminal does not
+    /// inherit anything from its current attribute. Every style, both colors,
+    /// the underline style (as a `4:n` subparameter) and the underline color
+    /// are included; feeding the result back into a ``Terminal`` restores an
+    /// equal attribute.
+    public func sgrParameters () -> String
+    {
+        var params = ["0"]
+
+        if style.contains(.bold) { params.append("1") }
+        if style.contains(.dim) { params.append("2") }
+        if style.contains(.italic) { params.append("3") }
+        if style.contains(.underline) || underlineStyle != .none {
+            switch underlineStyle {
+            case .none, .single: params.append("4")
+            case .double: params.append("4:2")
+            case .curly: params.append("4:3")
+            case .dotted: params.append("4:4")
+            case .dashed: params.append("4:5")
+            }
+        }
+        if style.contains(.blink) { params.append("5") }
+        if style.contains(.inverse) { params.append("7") }
+        if style.contains(.invisible) { params.append("8") }
+        if style.contains(.crossedOut) { params.append("9") }
+
+        params.append(Attribute.sgrColorParameters(fg, base: 30))
+        params.append(Attribute.sgrColorParameters(bg, base: 40))
+        if let underlineColor {
+            switch underlineColor {
+            case .ansi256(let code):
+                params.append("58;5;\(code)")
+            case .trueColor(let r, let g, let b):
+                params.append("58;2;\(r);\(g);\(b)")
+            case .defaultColor, .defaultInvertedColor:
+                params.append("59")
+            }
+        }
+        return params.joined(separator: ";")
+    }
+
+    /// The complete escape sequence that selects this attribute: `CSI`,
+    /// ``sgrParameters()`` and `m`.
+    public var sgrSequence: String {
+        "\u{1b}[" + sgrParameters() + "m"
+    }
+
+    /// Foreground (`base` 30) or background (`base` 40) color parameters.
+    /// Only the first 16 palette entries have the compact 30-37/90-97 forms;
+    /// every other index, 16 included, needs `38;5;n`.
+    private static func sgrColorParameters (_ color: Color, base: Int) -> String
+    {
+        switch color {
+        case .ansi256(let code):
+            if code < 8 {
+                return "\(base + Int(code))"
+            } else if code < 16 {
+                return "\(base + 60 + Int(code) - 8)"
+            } else {
+                return "\(base + 8);5;\(code)"
+            }
+        case .trueColor(let r, let g, let b):
+            return "\(base + 8);2;\(r);\(g);\(b)"
+        case .defaultColor, .defaultInvertedColor:
+            return "\(base + 9)"
+        }
+    }
+
+    // The DECRQSS "m" report: parameters plus the final character.
     func toSgr () -> String
     {
-        var result = "0"
-        
-        if style.contains(.bold) {
-            result += ";1"
-        }
-        if style.contains (.underline) {
-            result += ";4"
-        }
-        if style.contains (.blink) {
-            result += ";5"
-        }
-        if style.contains (.inverse) {
-            result += ";7"
-        }
-        if style.contains (.invisible) {
-            result += ";8"
-        }
-        
-        switch fg {
-        case .ansi256(let c):
-            if c > 16 {
-                result += ";38;5;\(c)"
-            } else {
-                result += ";\(c >= 8 ? 9 : 3)\(c >= 8 ? c - 8 : c);"
-            }
-        case .trueColor(let r, let g, let b):
-            result += ";38;2;\(r);\(g);\(b)"
-        default:
-            break
-        }
-
-        switch bg {
-        case .ansi256(let c):
-            if c > 16 {
-                result += ";48;5;\(c)"
-            } else {
-                result += ";\(c >= 8 ? 10 : 4)\(c >= 8 ? c - 8 : c);"
-            }
-        case .trueColor(let r, let g, let b):
-            result += ";48;2;\(r);\(g);\(b)"
-        default:
-            break
-        }
-        result += "m"
-        return result
+        sgrParameters() + "m"
     }
 }
 
