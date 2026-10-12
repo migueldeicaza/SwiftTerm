@@ -17,7 +17,7 @@ import CoreText
 
 // The CaretView is used to show the cursor
 class CaretView: NSView {
-    weak var terminal: TerminalView?
+    weak var terminal: (any CaretHost)?
     var ctline: CTLine?
     /// Cell width of the character currently under the caret (2 for full-width
     /// CJK). Used to center its glyph within the caret, matching the text.
@@ -34,7 +34,7 @@ class CaretView: NSView {
         }
     }
     
-    public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
+    init (frame: CGRect, cursorStyle: CursorStyle, terminal: any CaretHost)
     {
         self.terminal = terminal
         style = cursorStyle
