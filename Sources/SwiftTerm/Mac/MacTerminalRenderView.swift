@@ -9,6 +9,9 @@
 #if os(macOS)
 import AppKit
 import CoreText
+#if canImport(MetalKit)
+import Metal
+#endif
 
 /// Draws the frames of a ``TerminalExternalFrameSource`` with the same Core
 /// Graphics renderer that `TerminalView` uses.
@@ -20,6 +23,9 @@ import CoreText
 ///
 /// Call ``requestRedraw()`` when the source has a new frame. The view asks the
 /// source for the frame on its next display-link tick.
+///
+/// ``setUseMetal(_:)`` switches to SwiftTerm's Metal renderer, as in
+/// `TerminalView`.
 @MainActor
 open class TerminalRenderView: NSView, CaretHost {
     /// The source of the frames that the view draws.
@@ -59,6 +65,8 @@ open class TerminalRenderView: NSView, CaretHost {
         }
     }
     public var glyphFallbackProvider: (any TerminalGlyphFallbackProvider)? { didSet { invalidateAll() } }
+    /// How the Metal renderer builds its GPU buffers, as in `TerminalView`.
+    public var metalBufferingMode: MetalBufferingMode = .perRowPersistent { didSet { invalidateAll() } }
 
     public var nativeForegroundColor: NSColor = .textColor { didSet { colorsChanged() } }
     public var nativeBackgroundColor: NSColor = .textBackgroundColor { didSet { colorsChanged() } }
@@ -191,6 +199,14 @@ open class TerminalRenderView: NSView, CaretHost {
         if window != nil {
             updateMetrics()
         }
+#if canImport(MetalKit)
+        // A CAMetalLayer does not follow its view into another window (see
+        // TerminalView.rebindMetalRendererToWindow), so build a new surface.
+        if metalRenderer != nil, let window, window !== metalBoundWindow {
+            removeMetal()
+            try? installMetal()
+        }
+#endif
     }
 
     open override func viewDidChangeBackingProperties () {
@@ -210,6 +226,10 @@ open class TerminalRenderView: NSView, CaretHost {
     }
 
     open override func draw (_ dirtyRect: NSRect) {
+#if canImport(MetalKit)
+        // The Metal surface covers the view.
+        if metalRenderer != nil { return }
+#endif
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         // Layer-backed drawing can pass an unbounded rectangle.
         let clipped = dirtyRect.intersection(bounds)
@@ -233,6 +253,9 @@ open class TerminalRenderView: NSView, CaretHost {
 
     private func updateLayerBackground () {
         layer?.backgroundColor = nativeBackgroundColor.cgColor
+#if canImport(MetalKit)
+        metalSurface?.metalLayer.isOpaque = nativeBackgroundColor.alphaComponent >= 1
+#endif
     }
 
     private func computeCellDimension () -> TerminalView.CellDimension {
@@ -296,6 +319,14 @@ open class TerminalRenderView: NSView, CaretHost {
     func frameTick () {
         guard let source = frameSource, let viewState = captureFrameViewState(),
               let prepared = owner.prepare(source: source, viewState: viewState) else { return }
+#if canImport(MetalKit)
+        if let metalRenderer {
+            // The renderer draws the whole frame, cursor included. It keeps
+            // the rows it built, so an unchanged row costs little.
+            renderMetalFrame(metalRenderer, viewState: viewState)
+            return
+        }
+#endif
         switch prepared.damage {
         case .none:
             break
@@ -331,7 +362,102 @@ open class TerminalRenderView: NSView, CaretHost {
     /// Restarts the caret blink so the caret stays visible while the user types.
     public func resetCaretBlink () {
         caretView?.resetBlinkAfterInput()
+#if canImport(MetalKit)
+        metalRenderer?.resetCursorBlinkAfterInput()
+#endif
     }
+
+#if canImport(MetalKit)
+    // MARK: Metal
+
+    private var metalSurface: TerminalMetalLayerView?
+    private var metalRenderer: MetalTerminalRenderer?
+    private weak var metalBoundWindow: NSWindow?
+
+    /// Whether the view draws with the Metal renderer.
+    public var isUsingMetalRenderer: Bool { metalRenderer != nil }
+
+    /// Draws with SwiftTerm's Metal renderer instead of Core Graphics, as
+    /// `TerminalView.setUseMetal(_:)` does. The renderer draws the cursor too.
+    ///
+    /// Frames are drawn on the main thread, on the frame-driver tick: an
+    /// external frame is one viewport, so there is no render loop.
+    ///
+    /// - Throws: ``MetalError`` when there is no Metal device or the renderer
+    ///   cannot be built. The view then stays with Core Graphics.
+    public func setUseMetal (_ enabled: Bool) throws {
+        guard enabled != isUsingMetalRenderer else { return }
+        if enabled {
+            try installMetal()
+        } else {
+            removeMetal()
+        }
+    }
+
+    private func installMetal () throws {
+        guard let device = MTLCreateSystemDefaultDevice() else { throw MetalError.deviceUnavailable }
+        // The same surface configuration as TerminalView.makeMetalView.
+        let surface = TerminalMetalLayerView(frame: bounds)
+        surface.autoresizingMask = [.width, .height]
+        surface.renderDevice = device
+        surface.metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+        surface.metalLayer.isOpaque = nativeBackgroundColor.alphaComponent >= 1
+        surface.renderContentsScale = backingScaleFactor()
+        let renderer = try MetalTerminalRenderer(target: surface)
+        let signal = frameSignal
+        renderer.requestRedraw = { signal.markDirty() }
+        surface.onNeedsDisplay = { signal.markDirty() }
+        // Below every other subview, so that the host's overlays stay on top.
+        addSubview(surface, positioned: .below, relativeTo: nil)
+        metalSurface = surface
+        metalRenderer = renderer
+        metalBoundWindow = window
+        caretView?.isHidden = true
+        invalidateAll()
+    }
+
+    private func removeMetal () {
+        _ = metalRenderer?.waitForIdle()
+        metalSurface?.onNeedsDisplay = nil
+        metalSurface?.removeFromSuperview()
+        metalSurface = nil
+        metalRenderer = nil
+        metalBoundWindow = nil
+        caretView?.isHidden = false
+        needsDisplay = true
+        invalidateAll()
+    }
+
+    private func renderMetalFrame (_ renderer: MetalTerminalRenderer, viewState: FrameViewState) {
+        owner.withSnapshotForDrawing(viewState: viewState) { snapshot, context in
+            renderer.prepareSnapshotForImmediateDraw(snapshot: snapshot, context: context)
+            renderer.render()
+            renderer.discardPreparedSnapshot()
+        }
+    }
+
+    /// Asks the source for the current frame and renders it into `target`.
+    /// For tests that compare the pixels with `TerminalView`.
+    func renderSnapshotForMetal (renderer: MetalTerminalRenderer,
+                                 target: any MetalRenderTarget) -> Bool {
+        guard let source = frameSource, let viewState = captureFrameViewState(),
+              owner.prepare(source: source, viewState: viewState) != nil else { return false }
+        var rendered = false
+        owner.withSnapshotForDrawing(viewState: viewState) { snapshot, context in
+            renderer.prepareSnapshotForImmediateDraw(snapshot: snapshot, context: context)
+            defer { renderer.discardPreparedSnapshot() }
+            if target.needsExternalDrawCall {
+                renderer.render()
+            } else if let frame = target.acquireDrawableFrame() {
+                renderer.render(frame: frame)
+            } else {
+                return
+            }
+            rendered = true
+        }
+        return rendered
+    }
+#endif
 }
 
 extension FrameViewState {
@@ -353,7 +479,7 @@ extension FrameViewState {
         cellPixelWidth = Int((cellDimension.width * scale).rounded())
         cellPixelHeight = Int((cellDimension.height * scale).rounded())
         imageScale = view.getImageScale()
-        metalBufferingMode = .perRowPersistent
+        metalBufferingMode = view.metalBufferingMode
         antiAliasCustomBlockGlyphs = view.antiAliasCustomBlockGlyphs
         appearance = view.frameAppearance()
         customBlockGlyphs = view.customBlockGlyphs

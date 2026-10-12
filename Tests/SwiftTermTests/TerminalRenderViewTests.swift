@@ -2,6 +2,9 @@
 import AppKit
 import Foundation
 import Testing
+#if canImport(MetalKit)
+import Metal
+#endif
 
 @testable import SwiftTerm
 
@@ -211,6 +214,118 @@ struct TerminalRenderViewTests {
         }
         #expect(different == 0, "\(different) pixels differ")
     }
+
+    /// Copies the visible rows of a local terminal into a fixed source.
+    private func mirror(_ local: TerminalView, columns: Int, rows: Int) -> FixedFrameSource {
+        let source = FixedFrameSource(columns: columns, rows: rows, topLine: 0)
+        let terminal: Terminal = local.terminal
+        for row in 0..<rows {
+            guard let line = terminal.getLine(row: row) else { continue }
+            let copy = source.store.makeLine(columns: columns)
+            for column in 0..<min(columns, line.count) {
+                let cell = line[column]
+                let text = cell.getText()
+                source.store.setCell(copy, column: column, text: text == "\u{0}" ? nil : text,
+                                     width: Int(cell.width), attribute: cell.attribute)
+            }
+            source.lines[row] = copy
+        }
+        source.frame.palette = terminal.ansiColors
+        return source
+    }
+
+#if canImport(MetalKit)
+    /// Renders through a fresh Metal renderer and returns the pixels, or nil
+    /// when the machine has no usable Metal device or drawable.
+    private func metalPixels(width: Int, height: Int,
+                             render: (MetalTerminalRenderer, any MetalRenderTarget) -> Bool) -> [UInt8]? {
+        guard MetalTerminalRenderer.shaderLibraryIsAvailable,
+              let device = MTLCreateSystemDefaultDevice() else { return nil }
+        let target = TerminalMetalLayerView(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        target.renderDevice = device
+        target.metalLayer.framebufferOnly = false
+        target.renderContentsScale = 1
+        target.renderDrawableSize = CGSize(width: width, height: height)
+        guard let renderer = try? MetalTerminalRenderer(target: target) else { return nil }
+        renderer.waitForCompletionAfterCommit = true
+        renderer.capturesRenderedTexture = true
+        guard render(renderer, target), let texture = renderer.lastRenderedTexture else { return nil }
+        let bytesPerRow = texture.width * 4
+        var bytes = [UInt8](repeating: 0, count: bytesPerRow * texture.height)
+        bytes.withUnsafeMutableBytes { raw in
+            texture.getBytes(raw.baseAddress!, bytesPerRow: bytesPerRow,
+                             from: MTLRegionMake2D(0, 0, texture.width, texture.height), mipmapLevel: 0)
+        }
+        return bytes
+    }
+
+    /// With the Metal renderer, the render view and a local terminal view
+    /// produce the same pixels: same renderer, same shaders, same rows.
+    @Test(.enabled(if: MetalTerminalRenderer.shaderLibraryIsAvailable))
+    func metalRenderMatchesTerminalView() throws {
+        let columns = 20
+        let rows = 3
+        let local = TerminalView(frame: .zero)
+        local.font = font
+        local.nativeBackgroundColor = .black
+        local.nativeForegroundColor = .orange
+        local.setFrameSize(NSSize(width: local.cellDimension.width * CGFloat(columns),
+                                  height: local.cellDimension.height * CGFloat(rows)))
+        local.feed(text: "\u{1b}[?25l\u{1b}[1;32mhello\u{1b}[0m \u{1b}[44mworld\u{1b}[0m\r\nplain text ─│┼")
+        let remote = TerminalRenderView(frame: .zero, font: font)
+        remote.nativeBackgroundColor = .black
+        remote.nativeForegroundColor = .orange
+        remote.setFrameSize(local.frame.size)
+        let source = mirror(local, columns: columns, rows: rows)
+        remote.frameSource = source
+
+        let width = Int(local.frame.width)
+        let height = Int(local.frame.height)
+        let localPixels = try #require(metalPixels(width: width, height: height) {
+            local.renderSnapshotForMetal(renderer: $0, target: $1)
+        })
+        let remotePixels = try #require(metalPixels(width: width, height: height) {
+            remote.renderSnapshotForMetal(renderer: $0, target: $1)
+        })
+        #expect(localPixels.count == remotePixels.count)
+        var different = 0
+        for index in stride(from: 0, to: min(localPixels.count, remotePixels.count), by: 4) where
+            localPixels[index] != remotePixels[index] || localPixels[index + 1] != remotePixels[index + 1] ||
+            localPixels[index + 2] != remotePixels[index + 2] {
+            different += 1
+        }
+        #expect(different == 0, "\(different) pixels differ")
+        // Not everything is background: the text was drawn.
+        let lit = stride(from: 0, to: remotePixels.count, by: 4).filter {
+            Int(remotePixels[$0]) + Int(remotePixels[$0 + 1]) + Int(remotePixels[$0 + 2]) > 120
+        }.count
+        #expect(lit > 0)
+    }
+
+    @Test(.enabled(if: MetalTerminalRenderer.shaderLibraryIsAvailable))
+    func metalCanBeTurnedOnAndOff() throws {
+        let source = FixedFrameSource(columns: 10, rows: 3, topLine: 0)
+        source.setLine(0, "metal")
+        let view = TerminalRenderView(frame: .zero, font: font)
+        view.setFrameSize(NSSize(width: view.cellSize.width * 10, height: view.cellSize.height * 3))
+        view.frameSource = source
+        let overlay = NSView(frame: .zero)
+        view.addSubview(overlay)
+        for _ in 0 ..< 3 {
+            try view.setUseMetal(true)
+            #expect(view.isUsingMetalRenderer)
+            // The surface goes below the host's overlays.
+            #expect(view.subviews.last === overlay)
+            view.frameTick()
+            try view.setUseMetal(false)
+            #expect(!view.isUsingMetalRenderer)
+            view.frameTick()
+        }
+        // Core Graphics draws again.
+        let image = try bitmap(view)
+        #expect(image.pixelsWide > 0)
+    }
+#endif
 
     @Test func onlyChangedRowsAreRepainted() throws {
         let source = FixedFrameSource(columns: 10, rows: 3, topLine: 0)
