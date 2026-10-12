@@ -321,11 +321,214 @@ struct TerminalRenderViewTests {
             #expect(!view.isUsingMetalRenderer)
             view.frameTick()
         }
-        // Core Graphics draws again.
+        // Core Graphics draws again, as a view that never used Metal.
+        view.nativeBackgroundColor = .black
+        view.nativeForegroundColor = .white
+        view.frameTick()
         let image = try bitmap(view)
-        #expect(image.pixelsWide > 0)
+        let fresh = TerminalRenderView(frame: .zero, font: font)
+        fresh.nativeBackgroundColor = .black
+        fresh.nativeForegroundColor = .white
+        fresh.setFrameSize(view.frame.size)
+        fresh.frameSource = source
+        fresh.frameTick()
+        let expected = try bitmap(fresh)
+        let different = differingPixels(image, expected)
+        if different > 0, let directory = ProcessInfo.processInfo.environment["RENDER_DIFF_DIR"] {
+            try image.representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: directory + "/toggled.png"))
+            try expected.representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: directory + "/fresh.png"))
+        }
+        #expect(different == 0, "\(different) pixels differ after Metal was turned off")
     }
 #endif
+
+    /// Copies every line of a local terminal (scrollback too) into a fixed
+    /// source, with the wrap and bidi state, numbered like `buffer.lines`.
+    private func mirrorAll(_ local: TerminalView, columns: Int, rows: Int) -> FixedFrameSource {
+        let terminal: Terminal = local.terminal
+        let top = terminal.buffer.yDisp
+        let source = FixedFrameSource(columns: columns, rows: rows, topLine: top)
+        for index in 0..<terminal.buffer.lines.count {
+            guard let line = terminal.bufferLine(atRow: index) else { continue }
+            let copy = source.store.makeLine(columns: columns)
+            for column in 0..<min(columns, line.count) {
+                let cell = line[column]
+                let text = cell.getText()
+                source.store.setCell(copy, column: column, text: text == "\u{0}" ? nil : text,
+                                     width: Int(cell.width), attribute: cell.attribute)
+            }
+            source.store.setLineState(copy, isWrapped: line.isWrapped, bidiState: line.bidiState)
+            source.lines[index] = copy
+        }
+        source.frame.palette = terminal.ansiColors
+        source.frame.cursorVisible = false
+        return source
+    }
+
+    private func differingPixels(_ a: NSBitmapImageRep, _ b: NSBitmapImageRep) -> Int {
+        var different = 0
+        for y in 0..<min(a.pixelsHigh, b.pixelsHigh) {
+            for x in 0..<min(a.pixelsWide, b.pixelsWide) {
+                guard let p = a.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                      let q = b.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                if abs(p.redComponent - q.redComponent) > 0.02 ||
+                    abs(p.greenComponent - q.greenComponent) > 0.02 ||
+                    abs(p.blueComponent - q.blueComponent) > 0.02 {
+                    different += 1
+                }
+            }
+        }
+        return different
+    }
+
+    /// Bidi on external rows: an Arabic paragraph that wraps across the top
+    /// of the view, and a mixed Hebrew and Latin row, draw as in a local
+    /// terminal, and the column maps are the local ones.
+    @Test func bidiRowsMatchTerminalView() throws {
+        let columns = 20
+        let rows = 3
+        let local = TerminalView(frame: .zero)
+        local.font = font
+        local.nativeBackgroundColor = .black
+        local.nativeForegroundColor = .white
+        local.setFrameSize(NSSize(width: local.cellDimension.width * CGFloat(columns),
+                                  height: local.cellDimension.height * CGFloat(rows)))
+        let arabic = String(repeating: "مرحبا بالعالم ", count: 4)
+        local.feed(text: "\u{1b}[?25l" + arabic + "\r\nשלום abc 123")
+        local.frameTick()
+        let localImage = try bitmap(local)
+        let terminal: Terminal = local.terminal
+        let top = terminal.buffer.yDisp
+        // The paragraph starts above the view.
+        #expect(top > 0)
+        #expect(terminal.bufferLine(atRow: top)?.isWrapped == true)
+
+        let source = mirrorAll(local, columns: columns, rows: rows)
+        let remote = TerminalRenderView(frame: .zero, font: font)
+        remote.nativeBackgroundColor = .black
+        remote.nativeForegroundColor = .white
+        remote.setFrameSize(local.frame.size)
+        remote.frameSource = source
+        remote.frameTick()
+        let remoteImage = try bitmap(remote)
+
+        var reordered = false
+        for row in 0..<rows {
+            let expected = TerminalBidi.layout(row: top + row, buffer: terminal.buffer, cols: columns,
+                                               terminal: terminal, font: remote.font,
+                                               hostPolicy: .respectTerminal)
+            for column in 0..<columns {
+                let mapped = remote.logicalColumn(forVisualColumn: column, row: row)
+                #expect(mapped == (expected?.visualToLogicalCol[column] ?? column),
+                        "row \(row) column \(column)")
+                if mapped != column { reordered = true }
+            }
+            #expect(remote.baseDirection(row: row) == (expected?.baseDirection ?? .leftToRight))
+        }
+        #expect(reordered)
+        #expect(remote.baseDirection(row: 0) == .rightToLeft)
+        let different = differingPixels(localImage, remoteImage)
+        if different > 0, let directory = ProcessInfo.processInfo.environment["RENDER_DIFF_DIR"] {
+            try localImage.representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: directory + "/bidi-local.png"))
+            try remoteImage.representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: directory + "/bidi-remote.png"))
+        }
+        #expect(different == 0, "\(different) pixels differ")
+
+        // The legacy policy draws every row in logical order.
+        remote.bidiHostPolicy = .legacyLeftToRight
+        remote.frameTick()
+        #expect(remote.logicalColumn(forVisualColumn: 0, row: 0) == 0)
+        #expect(remote.baseDirection(row: 0) == .leftToRight)
+    }
+
+    /// Sixel slices and Kitty placements on external rows draw as in a local
+    /// terminal.
+    @Test func imagesMatchTerminalView() throws {
+        let columns = 20
+        let rows = 6
+        let local = TerminalView(frame: .zero)
+        local.font = font
+        local.nativeBackgroundColor = .black
+        local.nativeForegroundColor = .white
+        local.setFrameSize(NSSize(width: local.cellDimension.width * CGFloat(columns),
+                                  height: local.cellDimension.height * CGFloat(rows)))
+        // A red 20 × 18 Sixel image, then a green 2 × 2 Kitty image (RGB).
+        let sixel = "\u{1b}Pq#0;2;100;0;0#0!20~-!20~-!20~\u{1b}\\"
+        let green = Data([0, 255, 0, 0, 255, 0, 0, 255, 0, 0, 255, 0]).base64EncodedString()
+        let kitty = "\u{1b}_Gf=24,s=2,v=2,a=T,c=3,r=1;\(green)\u{1b}\\"
+        local.feed(text: "\u{1b}[?25lA" + sixel + "\r\nB" + kitty)
+        local.frameTick()
+        let localImage = try bitmap(local)
+
+        let terminal: Terminal = local.terminal
+        let source = mirrorAll(local, columns: columns, rows: rows)
+        var slices = 0
+        for index in 0..<terminal.buffer.lines.count {
+            let images = (terminal.buffer.lines[index].images ?? []).compactMap { $0 as? TerminalView.AppleImage }
+            guard !images.isEmpty else { continue }
+            slices += images.count
+            source.frame.images[index] = images.map {
+                TerminalExternalImage(image: $0.image, column: $0.col, width: $0.pixelWidth, height: $0.pixelHeight)
+            }
+        }
+        let kittySnapshot = terminal.terminalLock.withLock { terminal.kittyGraphicsRenderSnapshot() }
+        #expect(slices > 0)
+        #expect(!kittySnapshot.placements.isEmpty)
+        source.frame.kitty = kittySnapshot
+
+        let remote = TerminalRenderView(frame: .zero, font: font)
+        remote.nativeBackgroundColor = .black
+        remote.nativeForegroundColor = .white
+        remote.setFrameSize(local.frame.size)
+        remote.frameSource = source
+        remote.frameTick()
+        let remoteImage = try bitmap(remote)
+
+        let red = count(remoteImage) { $0.redComponent > 0.8 && $0.greenComponent < 0.2 && $0.blueComponent < 0.2 }
+        let greenPixels = count(remoteImage) { $0.greenComponent > 0.8 && $0.redComponent < 0.2 && $0.blueComponent < 0.2 }
+        #expect(red > 0)
+        #expect(greenPixels > 0)
+        let different = differingPixels(localImage, remoteImage)
+        if different > 0, let directory = ProcessInfo.processInfo.environment["RENDER_DIFF_DIR"] {
+            try localImage.representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: directory + "/images-local.png"))
+            try remoteImage.representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: directory + "/images-remote.png"))
+        }
+        #expect(different == 0, "\(different) pixels differ")
+
+#if canImport(MetalKit)
+        // The Metal renderer draws the same images from the same snapshot.
+        if MetalTerminalRenderer.shaderLibraryIsAvailable {
+            let width = Int(local.frame.width)
+            let height = Int(local.frame.height)
+            let localPixels = try #require(metalPixels(width: width, height: height) {
+                local.renderSnapshotForMetal(renderer: $0, target: $1)
+            })
+            let remotePixels = try #require(metalPixels(width: width, height: height) {
+                remote.renderSnapshotForMetal(renderer: $0, target: $1)
+            })
+            var metalDifferent = 0
+            for index in stride(from: 0, to: min(localPixels.count, remotePixels.count), by: 4) where
+                localPixels[index] != remotePixels[index] || localPixels[index + 1] != remotePixels[index + 1] ||
+                localPixels[index + 2] != remotePixels[index + 2] {
+                metalDifferent += 1
+            }
+            #expect(metalDifferent == 0, "\(metalDifferent) Metal pixels differ")
+        }
+#endif
+
+        // Removing the Kitty placement repaints the frame.
+        source.frame.kitty = nil
+        let owner = try #require(Mirror(reflecting: remote).descendant("owner") as? ExternalRenderOwner)
+        let viewState = try #require(remote.captureFrameViewState())
+        let prepared = try #require(owner.prepare(source: source, viewState: viewState))
+        #expect(prepared.damage == .all)
+    }
 
     @Test func onlyChangedRowsAreRepainted() throws {
         let source = FixedFrameSource(columns: 10, rows: 3, topLine: 0)

@@ -23,6 +23,13 @@ final class SnapshotImage: TerminalImage {
         col = source.col
     }
 
+    init (external source: TerminalExternalImage) {
+        image = source.image
+        pixelWidth = source.width
+        pixelHeight = source.height
+        col = source.column
+    }
+
     func hasSameValue (as other: SnapshotImage) -> Bool {
         image === other.image &&
             pixelWidth == other.pixelWidth && pixelHeight == other.pixelHeight &&
@@ -560,16 +567,19 @@ extension TerminalSnapshot {
     /// Refreshes the snapshot from a frame that does not come from a local
     /// `Terminal` (see `TerminalRenderView`).
     ///
-    /// The rows are copied exactly as `refresh(terminal:)` copies them, so the
-    /// renderers draw them with the same code. External rows have no bidi
-    /// layout, no images and no Kitty placements.
+    /// The rows are copied exactly as `refresh(terminal:)` copies them, and
+    /// bidi layout uses the same paragraph code, so the renderers draw them
+    /// the same way. Bidi typesetting runs here, synchronously: an external
+    /// frame has no terminal lock to release first.
     ///
     /// - Parameters:
     ///   - line: returns the line for a line number, or nil to draw a blank row.
     ///   - blank: an empty line from `store`, used for missing rows.
     ///
     /// `line` may build lines on demand (and so intern new styles): every line
-    /// is looked up before the snapshot copies the store's tables.
+    /// is looked up before the snapshot copies the store's tables. That
+    /// includes the lines of each visible row's soft-wrapped paragraph that
+    /// lie outside the visible rows.
     @discardableResult
     func refresh (external frame: TerminalExternalFrame, store: TerminalRowStore,
                   line lookup: (Int) -> BufferLine?, blank: BufferLine,
@@ -578,14 +588,37 @@ extension TerminalSnapshot {
         let sourceArena = store.arena
         let columns = max(1, frame.columns)
         let rowTotal = max(0, frame.rows)
+        let maximumParagraphRows = max(1, frame.maximumBidiParagraphRows)
+        let respectBidi = viewState.bidiHostPolicy == .respectTerminal
 
         // Look up every line before the arena copy is synchronized: a source
         // may build lines lazily, and building interns new styles.
-        func source (_ lineNumber: Int) -> BufferLine {
-            guard let line = lookup(lineNumber), line.cellArena === sourceArena else { return blank }
+        var known: [Int: BufferLine] = [:]
+        func lookUp (_ lineNumber: Int) -> BufferLine? {
+            if let line = known[lineNumber] { return line }
+            guard let line = lookup(lineNumber), line.cellArena === sourceArena else { return nil }
+            known[lineNumber] = line
             return line
         }
-        let sources = (0..<rowTotal).map { source(frame.topLine + $0) }
+        let sources = (0..<rowTotal).map { lookUp(frame.topLine + $0) ?? blank }
+        if respectBidi && rowTotal > 0 {
+            // The paragraph above the first row, while rows continue it.
+            var lineNumber = frame.topLine
+            var steps = 0
+            while steps < maximumParagraphRows, let line = known[lineNumber], line.isWrapped,
+                  lookUp(lineNumber - 1) != nil {
+                lineNumber -= 1
+                steps += 1
+            }
+            // The rows below the last row that continue its paragraph.
+            lineNumber = frame.topLine + rowTotal - 1
+            steps = 0
+            while steps < maximumParagraphRows, let next = lookUp(lineNumber + 1), next.isWrapped {
+                lineNumber += 1
+                steps += 1
+            }
+        }
+        let paragraphLines = LookupBidiLines(identity: ObjectIdentifier(sourceArena), lines: known)
         let screenRow = frame.cursorLine - frame.topLine
         let cursorSource = screenRow >= 0 && screenRow < rowTotal ? sources[screenRow] : nil
 
@@ -605,6 +638,9 @@ extension TerminalSnapshot {
         let styleChanged = previousStyle?.hasSameValue(as: newStyle) != true ||
             previousAnsiColors != frame.palette
         appearanceChanged = styleChanged
+        let bidiFont = ObjectIdentifier(viewState.fonts.normal)
+        let bidiInputsChanged = previousBidiHostPolicy != viewState.bidiHostPolicy ||
+            previousBidiFont != bidiFont || maximumBidiParagraphRows != maximumParagraphRows
 
         firstRow = frame.topLine
         yDisp = frame.topLine
@@ -616,11 +652,11 @@ extension TerminalSnapshot {
         linesCount = frame.topLine + rowTotal
         linesTop = 0
         totalLinesTrimmed = 0
-        hasAnyImages = false
+        hasAnyImages = !frame.images.isEmpty || frame.kitty?.placements.isEmpty == false
         isAltBuffer = frame.isAlternateBuffer
         cursorHidden = !frame.cursorVisible
         cursorStyle = frame.cursorStyle
-        maximumBidiParagraphRows = 1
+        maximumBidiParagraphRows = maximumParagraphRows
         style = newStyle
         ansiColors = frame.palette
 
@@ -632,6 +668,7 @@ extension TerminalSnapshot {
         }
 
         for index in 0..<rowTotal {
+            let lineNumber = frame.topLine + index
             let source = sources[index]
             let destination = rows[index]
             let contentChanged = destination.sourceIdentity !=
@@ -654,16 +691,60 @@ extension TerminalSnapshot {
                     col += max(1, Int(cell.width))
                 }
             }
-            let hadExtras = destination.bidiLayout != nil || !destination.images.isEmpty
-            destination.bidiLayout = nil
-            destination.bidiParagraphRevision = Int.min
-            destination.images = []
-            if contentChanged || styleChanged || hadExtras {
+
+            // Bidi, as in `refresh(terminal:)`. A missing row has no layout.
+            let bidiRevision = respectBidi && known[lineNumber] != nil
+                ? TerminalBidi.layoutRevision(row: lineNumber, lines: paragraphLines,
+                                              maximumRows: maximumParagraphRows)
+                : Int.min
+            let bidiChanged = contentChanged || bidiInputsChanged ||
+                destination.bidiParagraphRevision != bidiRevision
+            if bidiChanged {
+                destination.bidiParagraphRevision = bidiRevision
+                destination.bidiLayout = nil
+                if respectBidi && known[lineNumber] != nil {
+                    let shared = pendingBidi.first {
+                        $0.deferred.firstRow <= lineNumber && lineNumber <= $0.deferred.lastRow
+                    }?.deferred
+                    if let shared {
+                        pendingBidi.append((rowIndex: index, absoluteRow: lineNumber, deferred: shared))
+                    } else {
+                        switch TerminalBidi.collectLayout(
+                            row: lineNumber, lines: paragraphLines, cols: columns,
+                            maximumRows: maximumParagraphRows, font: viewState.fonts.normal,
+                            hostPolicy: viewState.bidiHostPolicy) {
+                        case .resolved(let layout):
+                            destination.bidiLayout = layout
+                        case .pending(let deferred):
+                            pendingBidi.append((rowIndex: index, absoluteRow: lineNumber,
+                                                deferred: deferred))
+                        }
+                    }
+                }
+            }
+
+            let newImages = (frame.images[lineNumber] ?? []).map(SnapshotImage.init(external:))
+            let imagesChanged = newImages.count != destination.images.count ||
+                zip(newImages, destination.images).contains { !$0.hasSameValue(as: $1) }
+            if imagesChanged {
+                // Keep the old objects otherwise: renderers cache by identity.
+                destination.images = newImages
+            }
+            if contentChanged || styleChanged || bidiChanged || imagesChanged {
                 destination.revision &+= 1
             }
         }
+        // There is no lock to release: finish the paragraphs now.
+        if !pendingBidi.isEmpty {
+            TerminalBidi.finish(pendingBidi.map { $0.deferred })
+            for entry in pendingBidi where entry.rowIndex < rows.count {
+                rows[entry.rowIndex].bidiLayout = TerminalBidi.rowLayout(entry.deferred,
+                                                                         row: entry.absoluteRow)
+            }
+            pendingBidi.removeAll(keepingCapacity: true)
+        }
 
-        kitty = SnapshotKitty()
+        kitty = frame.kitty.map { SnapshotKitty(renderSnapshot: $0) } ?? SnapshotKitty()
         let context = SnapshotRenderContext(viewState: viewState, snapshot: self)
         renderContext = context
 
@@ -684,11 +765,16 @@ extension TerminalSnapshot {
                 attributes[.font] = fallback.font
                 attributes[SwiftTermGlyphPolicyKey] = fallback.policy
             }
+            var visualCol = cursorCol
+            if let layout = row(atAbsolute: frame.cursorLine)?.bidiLayout,
+               cursorCol < layout.logicalToVisualCol.count {
+                visualCol = layout.logicalToVisualCol[cursorCol]
+            }
             cursor = SnapshotCursor(
                 absoluteRow: frame.cursorLine,
                 screenRow: screenRow,
                 logicalCol: cursorCol,
-                visualCol: cursorCol,
+                visualCol: visualCol,
                 columnWidth: max(1, Int(cell.width)),
                 renderMode: cursorLine.renderMode,
                 hidden: !frame.cursorVisible,
@@ -709,7 +795,7 @@ extension TerminalSnapshot {
         previousStyle = newStyle
         previousAnsiColors = frame.palette
         previousBidiHostPolicy = viewState.bidiHostPolicy
-        previousBidiFont = ObjectIdentifier(viewState.fonts.normal)
+        previousBidiFont = bidiFont
         return .refreshed
     }
 }

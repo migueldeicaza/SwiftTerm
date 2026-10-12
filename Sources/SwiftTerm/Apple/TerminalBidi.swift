@@ -45,6 +45,38 @@ struct BidiRowLayout {
     let paragraphRevision: Int
 }
 
+/// Read access to consecutive rows for paragraph layout: the rows of a live
+/// `Buffer`, or the lines of an external frame by line number.
+protocol BidiLineSource {
+    /// Identifies the row space in the paragraph cache.
+    var identity: ObjectIdentifier { get }
+    /// The line at `row`, or nil when there is none.
+    func line (_ row: Int) -> BufferLine?
+}
+
+/// The rows of a buffer. Callers hold the terminal lock.
+struct BufferBidiLines: BidiLineSource {
+    let buffer: Buffer
+
+    var identity: ObjectIdentifier { ObjectIdentifier(buffer) }
+
+    @inline(__always)
+    func line (_ row: Int) -> BufferLine? {
+        row >= 0 && row < buffer.lines.count ? buffer.lines[row] : nil
+    }
+}
+
+/// Lines by line number, for frames that come from outside a local terminal
+/// (`TerminalSnapshot.refresh(external:)`).
+struct LookupBidiLines: BidiLineSource {
+    let identity: ObjectIdentifier
+    let lines: [Int: BufferLine]
+
+    func line (_ row: Int) -> BufferLine? {
+        lines[row]
+    }
+}
+
 enum TerminalBidi {
 
     // MARK: - Row scanning
@@ -579,23 +611,24 @@ enum TerminalBidi {
     /// Finds a paragraph without visiting more than `maximumRows` rows. A nil
     /// result means that the row is invalid or that the paragraph is too large
     /// for paragraph-wide rendering.
-    private static func paragraphBounds(row: Int, buffer: Buffer,
-                                        maximumRows: Int) -> ClosedRange<Int>? {
-        guard row >= 0, row < buffer.lines.count else {
+    private static func paragraphBounds<Lines: BidiLineSource>(row: Int, lines: Lines,
+                                                               maximumRows: Int) -> ClosedRange<Int>? {
+        guard var current = lines.line(row) else {
             return nil
         }
         let limit = max(1, maximumRows)
         var first = row
         var count = 1
-        while first > 0 && buffer.lines[first].isWrapped {
+        while current.isWrapped, let previous = lines.line(first - 1) {
             guard count < limit else {
                 return nil
             }
             first -= 1
             count += 1
+            current = previous
         }
         var last = row
-        while last + 1 < buffer.lines.count && buffer.lines[last + 1].isWrapped {
+        while let next = lines.line(last + 1), next.isWrapped {
             guard count < limit else {
                 return nil
             }
@@ -611,10 +644,13 @@ enum TerminalBidi {
         hasher.combine(line.isWrapped)
     }
 
-    private static func paragraphRevision(_ bounds: ClosedRange<Int>, buffer: Buffer) -> Int {
+    private static func paragraphRevision<Lines: BidiLineSource>(_ bounds: ClosedRange<Int>,
+                                                                 lines: Lines) -> Int {
         var hasher = Hasher()
         for row in bounds {
-            hashLineRevision(buffer.lines[row], into: &hasher)
+            if let line = lines.line(row) {
+                hashLineRevision(line, into: &hasher)
+            }
         }
         return hasher.finalize()
     }
@@ -824,22 +860,31 @@ enum TerminalBidi {
     /// the CoreText work.
     static func collectLayout(row: Int, buffer: Buffer, cols: Int, terminal: Terminal,
                               font: AnyObject, hostPolicy: BidiHostPolicy) -> LayoutOutcome {
+        collectLayout(row: row, lines: BufferBidiLines(buffer: buffer), cols: cols,
+                      maximumRows: terminal.options.maximumBidiParagraphRows,
+                      font: font, hostPolicy: hostPolicy)
+    }
+
+    /// `collectLayout` over any line source. `maximumRows` is the terminal's
+    /// `maximumBidiParagraphRows`.
+    static func collectLayout<Lines: BidiLineSource>(row: Int, lines: Lines, cols: Int,
+                                                     maximumRows: Int, font: AnyObject,
+                                                     hostPolicy: BidiHostPolicy) -> LayoutOutcome {
         guard hostPolicy == .respectTerminal else {
             return .resolved(nil)
         }
-        guard row >= 0, row < buffer.lines.count else {
+        guard let line = lines.line(row) else {
             return .resolved(nil)
         }
-        let state = buffer.lines[row].bidiState
+        let state = line.bidiState
         if state.supportMode == .explicit {
             guard state.fallbackDirection == .rightToLeft else {
                 return .resolved(nil)
             }
-            return .resolved(explicitRightToLeftLayout(row: row, buffer: buffer, cols: cols,
-                                                       terminal: terminal))
+            return .resolved(explicitRightToLeftLayout(line: line, row: row, cols: cols))
         }
-        switch collectParagraph(row: row, buffer: buffer, cols: cols,
-                                terminal: terminal, font: font) {
+        switch collectParagraph(row: row, lines: lines, cols: cols,
+                                maximumRows: maximumRows, font: font) {
         case .ready(let result):
             return .resolved(result?.rows[row])
         case .deferred(let job):
@@ -870,8 +915,9 @@ enum TerminalBidi {
 
     private static func paragraphResult(row: Int, buffer: Buffer, cols: Int,
                                         terminal: Terminal, font: AnyObject) -> ParagraphResult? {
-        switch collectParagraph(row: row, buffer: buffer, cols: cols,
-                                terminal: terminal, font: font) {
+        switch collectParagraph(row: row, lines: BufferBidiLines(buffer: buffer), cols: cols,
+                                maximumRows: terminal.options.maximumBidiParagraphRows,
+                                font: font) {
         case .ready(let result):
             return result
         case .deferred(let job):
@@ -881,28 +927,34 @@ enum TerminalBidi {
 
     /// The part of `paragraphResult` that reads the live buffer. Must run with
     /// the terminal lock held.
-    fileprivate static func collectParagraph(row: Int, buffer: Buffer, cols: Int,
-                                            terminal: Terminal, font: AnyObject) -> ParagraphOutcome {
-        guard row >= 0, row < buffer.lines.count,
-              buffer.lines[row].bidiState.supportMode == .implicit else {
+    fileprivate static func collectParagraph<Lines: BidiLineSource>(row: Int, lines: Lines,
+                                                                    cols: Int, maximumRows: Int,
+                                                                    font: AnyObject) -> ParagraphOutcome {
+        guard let rowLine = lines.line(row),
+              rowLine.bidiState.supportMode == .implicit else {
             return .ready(nil)
         }
-        let maximumRows = max(1, terminal.options.maximumBidiParagraphRows)
-        guard let bounds = paragraphBounds(row: row, buffer: buffer,
-                                           maximumRows: maximumRows) else {
+        guard let bounds = paragraphBounds(row: row, lines: lines,
+                                           maximumRows: max(1, maximumRows)) else {
             return .ready(nil)
         }
-        let state = buffer.lines[bounds.lowerBound].bidiState
+        // The bounds come from the source, so every row in them has a line.
+        var paragraphLines: [BufferLine] = []
+        paragraphLines.reserveCapacity(bounds.count)
+        for row in bounds {
+            guard let line = lines.line(row) else { return .ready(nil) }
+            paragraphLines.append(line)
+        }
+        let state = paragraphLines[0].bidiState
         var lineIdentities: [BufferLine.RenderIdentity] = []
         lineIdentities.reserveCapacity(bounds.count)
         var revisionHasher = Hasher()
-        for row in bounds {
-            let line = buffer.lines[row]
+        for line in paragraphLines {
             lineIdentities.append(line.renderIdentity)
             hashLineRevision(line, into: &revisionHasher)
         }
         let revision = revisionHasher.finalize()
-        let key = ParagraphKey(buffer: ObjectIdentifier(buffer),
+        let key = ParagraphKey(buffer: lines.identity,
                                firstRow: bounds.lowerBound,
                                lastRow: bounds.upperBound,
                                revision: revision,
@@ -916,8 +968,8 @@ enum TerminalBidi {
 
         // Pure-LTR paragraphs never reach the typesetter; answer before
         // paying for cell extraction and content hashing.
-        let hasPotentialRTL = bounds.contains {
-            mayNeedBidi(line: buffer.lines[$0], cols: cols)
+        let hasPotentialRTL = paragraphLines.contains {
+            mayNeedBidi(line: $0, cols: cols)
         }
         if !hasPotentialRTL && state.fallbackDirection == .leftToRight {
             let result = ParagraphResult(rows: [:], baseDirection: .leftToRight)
@@ -929,9 +981,10 @@ enum TerminalBidi {
         cells.reserveCapacity(bounds.count * min(cols, 80))
         var ranges: [Int: Range<Int>] = [:]
         var usedColumns: [Int: Int] = [:]
-        for row in bounds {
+        for (offset, line) in paragraphLines.enumerated() {
+            let row = bounds.lowerBound + offset
             let start = cells.count
-            usedColumns[row] = appendCells(line: buffer.lines[row], row: row,
+            usedColumns[row] = appendCells(line: line, row: row,
                                            cols: cols, to: &cells)
             ranges[row] = start..<cells.count
         }
@@ -1010,13 +1063,8 @@ enum TerminalBidi {
     /// Explicit RTL is a cell-path operation, not UAX #9. The application has
     /// already prepared display-order cells. Put column zero at the right edge
     /// and reverse every cell in the row without shaping the text.
-    private static func explicitRightToLeftLayout(row: Int, buffer: Buffer,
-                                                   cols: Int, terminal: Terminal)
+    private static func explicitRightToLeftLayout(line: BufferLine, row: Int, cols: Int)
         -> BidiRowLayout? {
-        guard row >= 0, row < buffer.lines.count else {
-            return nil
-        }
-        let line = buffer.lines[row]
         let state = line.bidiState
         var cells: [Cell] = []
         cells.reserveCapacity(min(cols, line.count))
@@ -1086,8 +1134,7 @@ enum TerminalBidi {
             guard state.fallbackDirection == .rightToLeft else {
                 return nil
             }
-            return explicitRightToLeftLayout(row: row, buffer: buffer, cols: cols,
-                                              terminal: terminal)
+            return explicitRightToLeftLayout(line: buffer.lines[row], row: row, cols: cols)
         }
         return paragraphResult(row: row, buffer: buffer, cols: cols,
                                terminal: terminal, font: font)?.rows[row]
@@ -1124,7 +1171,7 @@ enum TerminalBidi {
 
         var firstBounds: ClosedRange<Int>?
         if buffer.lines[firstRow].bidiState.supportMode == .implicit {
-            firstBounds = paragraphBounds(row: firstRow, buffer: buffer,
+            firstBounds = paragraphBounds(row: firstRow, lines: BufferBidiLines(buffer: buffer),
                                           maximumRows: maximumRows)
             if let firstBounds {
                 first = firstBounds.lowerBound
@@ -1135,7 +1182,7 @@ enum TerminalBidi {
         }
         if firstBounds?.contains(lastRow) != true,
            buffer.lines[lastRow].bidiState.supportMode == .implicit,
-           let lastBounds = paragraphBounds(row: lastRow, buffer: buffer,
+           let lastBounds = paragraphBounds(row: lastRow, lines: BufferBidiLines(buffer: buffer),
                                             maximumRows: maximumRows) {
             last = lastBounds.upperBound
         }
@@ -1144,13 +1191,25 @@ enum TerminalBidi {
 
     static func layoutRevision(row: Int, buffer: Buffer,
                                maximumRows: Int) -> Int {
-        guard row >= 0, row < buffer.lines.count,
-              buffer.lines[row].bidiState.supportMode == .implicit,
-              let bounds = paragraphBounds(row: row, buffer: buffer,
+        layoutRevision(row: row, lines: BufferBidiLines(buffer: buffer), maximumRows: maximumRows)
+    }
+
+    static func layoutRevision<Lines: BidiLineSource>(row: Int, lines: Lines,
+                                                      maximumRows: Int) -> Int {
+        guard let line = lines.line(row),
+              line.bidiState.supportMode == .implicit,
+              let bounds = paragraphBounds(row: row, lines: lines,
                                            maximumRows: maximumRows) else {
             return 0
         }
-        return paragraphRevision(bounds, buffer: buffer)
+        return paragraphRevision(bounds, lines: lines)
+    }
+
+    /// The rows of the paragraph that holds `row`, or nil when the row is
+    /// missing or the paragraph has more than `maximumRows` rows.
+    static func paragraphRows<Lines: BidiLineSource>(row: Int, lines: Lines,
+                                                     maximumRows: Int) -> ClosedRange<Int>? {
+        paragraphBounds(row: row, lines: lines, maximumRows: maximumRows)
     }
 }
 #endif

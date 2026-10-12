@@ -65,6 +65,9 @@ open class TerminalRenderView: NSView, CaretHost {
         }
     }
     public var glyphFallbackProvider: (any TerminalGlyphFallbackProvider)? { didSet { invalidateAll() } }
+    /// Whether rows use the bidi state that the terminal set on them, as in
+    /// `TerminalView`. `.legacyLeftToRight` draws every row in logical order.
+    public var bidiHostPolicy: BidiHostPolicy = .respectTerminal { didSet { invalidateAll() } }
     /// How the Metal renderer builds its GPU buffers, as in `TerminalView`.
     public var metalBufferingMode: MetalBufferingMode = .perRowPersistent { didSet { invalidateAll() } }
 
@@ -117,6 +120,27 @@ open class TerminalRenderView: NSView, CaretHost {
                       y: bounds.height - CGFloat(row + 1) * cellDimension.height,
                       width: CGFloat(width) * cellDimension.width,
                       height: cellDimension.height)
+    }
+
+    /// The logical column (the column in the line's cells) shown at a visual
+    /// column of a screen row. Rows that bidi reorders map differently;
+    /// other rows map each column to itself. Use it for hit testing.
+    public func logicalColumn (forVisualColumn column: Int, row: Int) -> Int {
+        guard let layout = owner.layout(screenRow: row),
+              column >= 0, column < layout.visualToLogicalCol.count else { return column }
+        return layout.visualToLogicalCol[column]
+    }
+
+    /// The visual column where a logical column of a screen row is shown.
+    public func visualColumn (forLogicalColumn column: Int, row: Int) -> Int {
+        guard let layout = owner.layout(screenRow: row),
+              column >= 0, column < layout.logicalToVisualCol.count else { return column }
+        return layout.logicalToVisualCol[column]
+    }
+
+    /// The base direction of the paragraph of a screen row, as drawn.
+    public func baseDirection (row: Int) -> BidiDirection {
+        owner.layout(screenRow: row)?.baseDirection ?? .leftToRight
     }
 
     /// The caret frame in view coordinates.
@@ -485,7 +509,7 @@ extension FrameViewState {
         customBlockGlyphs = view.customBlockGlyphs
         useBrightColors = view.useBrightColors
         minimumContrastRatio = view.minimumContrastRatio
-        bidiHostPolicy = .legacyLeftToRight
+        bidiHostPolicy = view.bidiHostPolicy
         glyphFallbackProvider = view.glyphFallbackProvider
     }
 }
