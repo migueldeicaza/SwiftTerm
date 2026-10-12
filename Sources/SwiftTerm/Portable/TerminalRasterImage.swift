@@ -95,6 +95,22 @@ extension Terminal {
         updateFullScreen()
     }
 
+    /// The inline image slices that `insertRasterImage` attached to one line of
+    /// the active buffer, numbered as `bufferLine(atRow:)` numbers them; `row`
+    /// in the result is that same number. Read it while holding terminalLock.
+    public func rasterImageSlices(atRow index: Int) -> [TerminalRasterPlacement] {
+        guard index >= 0, index < buffer.lines.count,
+              let images = buffer.lines[index].images, !images.isEmpty else { return [] }
+        return images.compactMap { value in
+            guard let stripe = value as? RasterLineImage, !stripe.image.rgba.isEmpty else { return nil }
+            return TerminalRasterPlacement(
+                image: stripe.image, column: stripe.col, row: index,
+                width: stripe.width, height: stripe.height,
+                sourceY: stripe.sourceY, sourceHeight: stripe.sourceHeight
+            )
+        }
+    }
+
     /// Return visible inline image geometry. Read it while holding terminalLock.
     public func rasterImagePlacements() -> [TerminalRasterPlacement] {
         var result: [TerminalRasterPlacement] = []

@@ -42,6 +42,8 @@ final class ExternalRenderOwner {
     private var signature: Signature?
     private var cursorRow: Int?
     private var cursorKey: CursorKey?
+    /// Kitty placements are not tied to rows; any change repaints the frame.
+    private var kittyKey: (generation: UInt64, placements: [KittyGraphicsRenderPlacement])?
     private(set) var hasSnapshot = false
 
     private struct CursorKey: Equatable {
@@ -70,9 +72,14 @@ final class ExternalRenderOwner {
                                          cellDimension: viewState.cellDimension,
                                          bounds: viewState.viewBounds.size)
             let newRevisions = snapshot.rows.map(\.revision)
+            let kitty = snapshot.kitty.renderSnapshot
+            let kittyChanged = kittyKey.map {
+                $0.generation != kitty.storageGeneration || $0.placements != kitty.placements
+            } ?? !kitty.placements.isEmpty
+            kittyKey = (kitty.storageGeneration, kitty.placements)
             var damage: Damage
             if !hasSnapshot || signature != newSignature || snapshot.appearanceChanged ||
-                revisions.count != newRevisions.count {
+                revisions.count != newRevisions.count || kittyChanged {
                 damage = .all
             } else {
                 var changed = IndexSet()
@@ -106,6 +113,12 @@ final class ExternalRenderOwner {
         let context = snapshot.renderContext ??
             SnapshotRenderContext(viewState: viewState, snapshot: snapshot)
         body(snapshot, context)
+    }
+
+    /// The bidi layout of a screen row in the last frame, if it has one.
+    func layout (screenRow: Int) -> BidiRowLayout? {
+        guard hasSnapshot, screenRow >= 0, screenRow < snapshot.rows.count else { return nil }
+        return snapshot.rows[screenRow].bidiLayout
     }
 
     /// Forgets the previous frame, so that the next one repaints everything.
