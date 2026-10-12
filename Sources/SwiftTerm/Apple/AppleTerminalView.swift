@@ -1962,7 +1962,13 @@ extension TerminalView {
         // let cellWidth = (0..<95).reduce(into: 0) { partialResult, idx in
         //     partialResult = max(partialResult, sizes[idx].width)
         // }
-        let glyph = fontSet.normal.glyph(withName: "W")
+        // Look W up by character, not by glyph name: fonts whose glyphs are
+        // unnamed or named by CID (BIZ UDGothic, STHeiti, Songti) have no glyph
+        // named "W", and the name lookup returns .notdef, which is usually a
+        // full em wide and spreads the text across twice as many columns.
+        var characters: [UniChar] = [0x57]
+        var glyphs: [CGGlyph] = [0]
+        let glyph = CTFontGetGlyphsForCharacters (fontSet.normal, &characters, &glyphs, 1) ? NSGlyph (glyphs [0]) : fontSet.normal.glyph(withName: "W")
         let cellWidth = fontSet.normal.advancement(forGlyph: glyph).width
         #else
         let fontAttributes = [NSAttributedString.Key.font: fontSet.normal]
