@@ -20,10 +20,7 @@ public extension Terminal {
     func sendHostText(_ text: String) -> Bool {
         let event = KittyKeyEvent(key: .none, modifiers: [], eventType: .press,
                                  text: text, shiftedKey: nil, baseLayoutKey: nil)
-        let encoder = KittyKeyboardEncoder(flags: keyboardEnhancementFlags,
-            applicationCursor: applicationCursor, applicationKeypad: applicationKeypad,
-            backspaceSendsControlH: false)
-        guard let bytes = encoder.encode(event), !bytes.isEmpty else { return false }
+        guard let bytes = encodeKeyEvent(event), !bytes.isEmpty else { return false }
         sendUserInput(bytes[...])
         return true
     }
@@ -45,6 +42,8 @@ public extension Terminal {
 
     /// Call on the terminal processing executor, as for feed.
     /// Encode a browser key through the same encoder as the native views.
+    /// The Left and Right arrow keys swap in a right-to-left paragraph, as
+    /// ``bidiArrowKeySwap`` and ``bidiHostPolicy`` specify.
     /// Return 0 for browser text input, 1 when bytes were queued, and 2 when
     /// the event was handled without bytes (for example a key release).
     @discardableResult
@@ -63,9 +62,7 @@ public extension Terminal {
         let event = KittyKeyEvent(key: key, modifiers: KittyKeyboardModifiers(rawValue: Int(modifiers)),
             eventType: type, text: text, shiftedKey: shiftedKey == 0 ? nil : UnicodeScalar(shiftedKey),
             baseLayoutKey: baseLayoutKey == 0 ? nil : UnicodeScalar(baseLayoutKey))
-        let encoder = KittyKeyboardEncoder(flags: flags, applicationCursor: applicationCursor,
-            applicationKeypad: applicationKeypad, backspaceSendsControlH: false)
-        guard let bytes = encoder.encode(event) else { return 2 }
+        guard let bytes = encodeKeyEvent(event) else { return 2 }
         sendUserInput(bytes[...])
         return 1
     }

@@ -87,6 +87,7 @@ change terminal state.
 
 - ``currentBidiState``
 - ``bidiArrowKeySwap``
+- ``bidiHostPolicy``
 - ``bidiSupportEnabled``
 - ``bidiAutodetectDirection``
 - ``bidiRTLPreference``

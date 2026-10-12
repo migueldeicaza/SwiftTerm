@@ -314,18 +314,6 @@ public protocol TerminalDelegate: AnyObject {
     func progressReport(source: Terminal, report: Terminal.ProgressReport)
 
     /**
-     * Returns true when the host swaps the Left and Right arrow keys in
-     * right-to-left paragraphs while ``Terminal/bidiArrowKeySwap`` is on.
-     *
-     * The terminal reports DEC private mode 1243 as permanently reset when
-     * this returns false. The default implementation returns false.
-     * `TerminalView` returns true.
-     * - Parameters:
-     *  - source: identifies the instance of the terminal that sent this request
-     */
-    func supportsBidiArrowKeySwap(source: Terminal) -> Bool
-
-    /**
      * Invoked to create an image from an RGBA buffer at the current cursor position
      *
      * The default implementation does nothing.
@@ -672,9 +660,22 @@ open class Terminal {
     /// True when left and right cursor keys follow the resolved paragraph
     /// direction. Hosts can change this while the terminal is running. A reset
     /// restores `options.initialBidiArrowKeySwap`, which is true by default.
-    /// The host applies the swap. A host that does not swap returns false from
-    /// ``TerminalDelegate/supportsBidiArrowKeySwap(source:)``.
+    /// The terminal applies the swap when the host encodes keys through the
+    /// terminal, as `TerminalView` and
+    /// ``sendHostKey(key:code:modifiers:eventType:text:shiftedKey:baseLayoutKey:)`` do.
     public var bidiArrowKeySwap: Bool = true
+
+    /// How the host presents the BiDi state of the terminal. The default is
+    /// ``BidiHostPolicy/respectTerminal``. A host that draws all cells in
+    /// logical left-to-right order sets ``BidiHostPolicy/legacyLeftToRight``.
+    /// Then the arrow keys do not swap, and DECRQM reports mode 1243 as
+    /// permanently reset. `TerminalView` sets this from its `bidiHostPolicy`.
+    /// A reset does not change this value.
+    public var bidiHostPolicy: BidiHostPolicy = .respectTerminal
+
+    /// The BiDi swap that each horizontal arrow key chose at its press. The
+    /// key is the physical key. Repeats and the release use this choice.
+    var bidiArrowKeyPressSwaps: [KittyFunctionalKey: Bool] = [:]
 
     // These properties keep source compatibility with the first BiDi patch.
     public var bidiSupportEnabled: Bool { currentBidiState.supportMode == .implicit }
@@ -1316,6 +1317,7 @@ open class Terminal {
             altBuffer.clear ()
         }
         _buffer = normalBuffer
+        bidiArrowKeyPressSwaps.removeAll()
         kittyGraphicsState.activeIsAlternate = false
         kittyGraphicsDidActivateScreen()
     }
@@ -1333,6 +1335,7 @@ open class Terminal {
         
         altBuffer.fillViewportRows(attribute: fillAttr)
         _buffer = altBuffer
+        bidiArrowKeyPressSwaps.removeAll()
         kittyGraphicsState.activeIsAlternate = true
         clearKittyImages(in: altBuffer, isAlternateBuffer: true)
         kittyGraphicsDidActivateScreen()
@@ -5527,8 +5530,8 @@ open class Terminal {
         if mode == SpecialDECPrivateMode.graphemeClustering.rawValue {
             return .permanentlySet
         }
-        // Report the behavior of the host, not only the stored state.
-        if mode == 1243, tdel?.supportsBidiArrowKeySwap(source: self) != true {
+        // A host that draws logical order never swaps the arrow keys.
+        if mode == 1243, bidiHostPolicy == .legacyLeftToRight {
             return .permanentlyReset
         }
 #if SWIFTTERM_EMBEDDED
@@ -5772,6 +5775,7 @@ open class Terminal {
     {
         setCurrentBidiState(options.initialBidiState)
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
+        bidiArrowKeyPressSwaps.removeAll()
         for mode in [1243, 2500, 2501] {
             savedPrivateModes.removeValue(forKey: mode)
         }
@@ -7787,6 +7791,7 @@ open class Terminal {
     {
         setCurrentBidiState(options.initialBidiState)
         bidiArrowKeySwap = options.initialBidiArrowKeySwap
+        bidiArrowKeyPressSwaps.removeAll()
         options.rows = rows
         options.cols = cols
         let savedCursorHidden = cursorHidden
@@ -10052,10 +10057,6 @@ public extension TerminalDelegate {
     }
 
     func progressReport(source: Terminal, report: Terminal.ProgressReport) {
-    }
-
-    func supportsBidiArrowKeySwap(source: Terminal) -> Bool {
-        false
     }
 
     func createImageFromBitmap (source: Terminal, bytes: inout [UInt8], width: Int, height: Int){

@@ -138,12 +138,22 @@ public class TerminalAccessory: UIInputView, UIInputViewAudioFeedback {
     
     @objc func left (_ sender: UIButton)
     {
-        startTimerForKeypress { self.terminalView?.sendKeyLeft() }
+        startTimerForHorizontalKey(left: true)
     }
     
     @objc func right (_ sender: UIButton)
     {
-        startTimerForKeypress { self.terminalView?.sendKeyRight() }
+        startTimerForHorizontalKey(left: false)
+    }
+
+    /// The press chooses the BiDi arrow swap. The auto-repeats keep it.
+    func startTimerForHorizontalKey(left: Bool)
+    {
+        var eventType = KittyKeyboardEventType.press
+        startTimerForKeypress {
+            self.terminalView?.sendHorizontalKey(left: left, eventType: eventType)
+            eventType = .repeatPress
+        }
     }
 
 

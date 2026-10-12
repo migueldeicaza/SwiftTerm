@@ -175,7 +175,8 @@ public struct TerminalOptions: Sendable {
     public var maximumBidiParagraphRows: Int
     /// Initial state for terminal-wg left and right arrow swapping. The default
     /// is true. Set this to false to disable swapping after startup and reset.
-    /// The host applies the swap. See ``TerminalDelegate/supportsBidiArrowKeySwap(source:)``.
+    /// The terminal applies the swap when the host sends keys through it.
+    /// See ``Terminal/bidiArrowKeySwap`` and ``Terminal/bidiHostPolicy``.
     public var initialBidiArrowKeySwap: Bool
     /// An ASCII-alphanumeric iTerm2 feature report. Nil disables reporting.
     /// The host must include only features that the terminal and host implement together.

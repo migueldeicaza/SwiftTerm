@@ -71,7 +71,9 @@ public struct BidiPresentationState: Sendable, Hashable {
     }
 }
 
-/// Selects how an Apple terminal view applies terminal BiDi state.
+/// Selects how a host applies terminal BiDi state. The AppKit and UIKit
+/// terminal views use it for drawing. ``Terminal/bidiHostPolicy`` uses it for
+/// the arrow-key swap and for the DECRQM report of mode 1243.
 public enum BidiHostPolicy: Sendable, Hashable {
     /// Apply the state that the terminal protocol stores with each paragraph.
     case respectTerminal

@@ -1285,9 +1285,14 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     public var useBrightColors: Bool = true
 
     /// Controls whether this view applies the terminal's BiDi presentation state.
+    /// The view copies the value to ``Terminal/bidiHostPolicy``, so the arrow
+    /// keys and DECRQM follow the presentation.
     public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
         didSet {
-            withTerminal { $0.updateFullScreen() }
+            withTerminal { terminal in
+                terminal.bidiHostPolicy = bidiHostPolicy
+                terminal.updateFullScreen()
+            }
             frameDriver.markDirty()
             updateCursorPosition()
         }
@@ -2054,8 +2059,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
         let previousKeyDownCode = kittyKeyDownCode
+        let previousKeyDownIsRepeat = kittyKeyDownIsRepeat
         kittyKeyDownCode = event.keyCode
-        defer { kittyKeyDownCode = previousKeyDownCode }
+        kittyKeyDownIsRepeat = event.isARepeat
+        defer {
+            kittyKeyDownCode = previousKeyDownCode
+            kittyKeyDownIsRepeat = previousKeyDownIsRepeat
+        }
         withTerminal { _ in
             selection.active = false
         }
@@ -2168,7 +2178,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                     switch Int (fs.value) {
                     case NSLeftArrowFunctionKey, NSRightArrowFunctionKey:
                         let left = sendsLeftArrowSequence(
-                            forLeftKey: Int(fs.value) == NSLeftArrowFunctionKey)
+                            forLeftKey: Int(fs.value) == NSLeftArrowFunctionKey,
+                            eventType: event.isARepeat ? .repeatPress : .press)
                         send (left ? EscapeSequences.emacsBack : EscapeSequences.emacsForward)
                         return
                     default: break
@@ -2191,9 +2202,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 if let fs = ch.unicodeScalars.first {
                     switch Int (fs.value) {
                     case NSLeftArrowFunctionKey, NSRightArrowFunctionKey:
-                        let left = sendsLeftArrowSequence(
-                            forLeftKey: Int(fs.value) == NSLeftArrowFunctionKey)
-                        send (left ? EscapeSequences.controlLeft : EscapeSequences.controlRight)
+                        // The legacy encoder makes `controlLeft` and `controlRight`.
+                        let key: KittyFunctionalKey = Int(fs.value) == NSLeftArrowFunctionKey
+                            ? .left : .right
+                        _ = sendKittyEvent(KittyKeyEvent(
+                            key: .functional(key), modifiers: [.ctrl],
+                            eventType: event.isARepeat ? .repeatPress : .press,
+                            text: nil, shiftedKey: nil, baseLayoutKey: nil))
                         return
                     default:
                         break
@@ -2315,6 +2330,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     
     public override func doCommand(by selector: Selector) {
         let keyboardEnhancementFlags = withTerminal { $0.keyboardEnhancementFlags }
+        // The press or repeat of the key that AppKit interprets. The BiDi
+        // arrow swap keeps the choice of the press for the repeats.
+        let keyDownEventType: KittyKeyboardEventType = kittyKeyDownIsRepeat ? .repeatPress : .press
         if !keyboardEnhancementFlags.isEmpty && kittyIsComposing {
             pendingKittyKeyEvent = nil
             return
@@ -2338,9 +2356,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             case #selector(moveDown(_:)):
                 if sendKittyFunctionalKey(.down, modifiers: mods) { return }
             case #selector(moveLeft(_:)):
-                if sendKittyFunctionalKey(.left, modifiers: mods) { return }
+                if sendKittyFunctionalKey(.left, modifiers: mods, eventType: keyDownEventType) { return }
             case #selector(moveRight(_:)):
-                if sendKittyFunctionalKey(.right, modifiers: mods) { return }
+                if sendKittyFunctionalKey(.right, modifiers: mods, eventType: keyDownEventType) { return }
             case #selector(insertTab(_:)):
                 if sendKittyFunctionalKey(.tab, modifiers: mods) { return }
             case #selector(insertBacktab(_:)):
@@ -2387,9 +2405,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         case #selector(moveDown(_:)):
             sendKeyDown()
         case #selector(moveLeft(_:)):
-            sendKeyLeft()
+            sendHorizontalKey(left: true, eventType: keyDownEventType)
         case #selector(moveRight(_:)):
-            sendKeyRight()
+            sendHorizontalKey(left: false, eventType: keyDownEventType)
         case #selector(insertTab(_:)):
             send (EscapeSequences.cmdTab)
         case #selector(insertBacktab(_:)):
@@ -2427,7 +2445,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         case #selector(moveToLeftEndOfLine(_:)), #selector(moveToRightEndOfLine(_:)):
             // Apple sends the Emacs back-word commands
             let left = sendsLeftArrowSequence(
-                forLeftKey: selector == #selector(moveToLeftEndOfLine(_:)))
+                forLeftKey: selector == #selector(moveToLeftEndOfLine(_:)),
+                eventType: keyDownEventType)
             send (left ? EscapeSequences.emacsBack : EscapeSequences.emacsForward)
         default:
             // Nothing is sent for this key. Under the kitty protocol its
@@ -2652,16 +2671,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             width: overlayWidth,
             height: overlayHeight
         )
-    }
-
-    private func kittyEncoder() -> KittyKeyboardEncoder {
-        let terminalState = withTerminal { terminal in
-            (terminal.keyboardEnhancementFlags, terminal.applicationCursor, terminal.applicationKeypad)
-        }
-        return KittyKeyboardEncoder(flags: terminalState.0,
-                                    applicationCursor: terminalState.1,
-                                    applicationKeypad: terminalState.2,
-                                    backspaceSendsControlH: backspaceSendsControlH)
     }
 
     private func kittyModifiers(from event: NSEvent, includeOption: Bool) -> KittyKeyboardModifiers {
@@ -3078,10 +3087,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     @discardableResult
     private func sendKittyEvent(_ event: KittyKeyEvent) -> Bool {
-        let encoder = kittyEncoder()
-        guard let bytes = encoder.encode(bidiSwappedKeyEvent(event)) else { return false }
+        let (encoded, flags) = withTerminal { terminal in
+            (terminal.encodeKeyEvent(event, backspaceSendsControlH: backspaceSendsControlH),
+             terminal.keyboardEnhancementFlags)
+        }
+        guard let bytes = encoded else { return false }
         send(bytes)
-        if encoder.flags.contains(.reportEvents),
+        if flags.contains(.reportEvents),
            event.eventType != .release,
            let keyCode = kittyKeyDownCode {
             switch event.key {
@@ -4748,8 +4760,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     private var kittyKeysWithReportedPress: Set<UInt16> = []
     private var kittyKeyDownCode: UInt16?
-    /// The BiDi arrow swap chosen at each arrow key press, for its repeats and release.
-    var arrowKeySwapsAtPress: [KittyFunctionalKey: Bool] = [:]
+    /// True while `keyDown` handles an auto-repeat of its key.
+    private var kittyKeyDownIsRepeat = false
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}

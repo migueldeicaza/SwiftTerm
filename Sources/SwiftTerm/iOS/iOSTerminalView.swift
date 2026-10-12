@@ -1688,9 +1688,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     public var useBrightColors: Bool = true
 
     /// Controls whether this view applies the terminal's BiDi presentation state.
+    /// The view copies the value to ``Terminal/bidiHostPolicy``, so the arrow
+    /// keys and DECRQM follow the presentation.
     public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
         didSet {
-            withTerminal { $0.updateFullScreen() }
+            withTerminal { terminal in
+                terminal.bidiHostPolicy = bidiHostPolicy
+                terminal.updateFullScreen()
+            }
             frameDriver.markDirty()
             updateCursorPosition()
         }
@@ -2345,16 +2350,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         uitiLog("insertText(\(text.debugDescription)) \(textInputStateDescription())")
         commitTextInput(text, applyModifiers: true)
     }
-    private func kittyEncoder() -> KittyKeyboardEncoder {
-        let terminalState = withTerminal { terminal in
-            (terminal.keyboardEnhancementFlags, terminal.applicationCursor, terminal.applicationKeypad)
-        }
-        return KittyKeyboardEncoder(flags: terminalState.0,
-                                    applicationCursor: terminalState.1,
-                                    applicationKeypad: terminalState.2,
-                                    backspaceSendsControlH: backspaceSendsControlH)
-    }
-
     private func kittyModifiers(from key: UIKey, includeOption: Bool) -> KittyKeyboardModifiers {
         var modifiers: KittyKeyboardModifiers = []
         if key.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
@@ -2644,7 +2639,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     @discardableResult
     private func sendKittyEvent(_ event: KittyKeyEvent) -> Bool {
-        guard let bytes = kittyEncoder().encode(bidiSwappedKeyEvent(event)) else { return false }
+        guard let bytes = withTerminal({
+            $0.encodeKeyEvent(event, backspaceSendsControlH: backspaceSendsControlH)
+        }) else { return false }
         send(bytes)
         return true
     }
@@ -3221,7 +3218,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             case .keyboardDownArrow:
                 data = .bytes (withTerminal({ $0.applicationCursor }) ? EscapeSequences.moveDownApp : EscapeSequences.moveDownNormal)
             case .keyboardLeftArrow, .keyboardRightArrow:
-                let left = sendsLeftArrowSequence(forLeftKey: key.keyCode == .keyboardLeftArrow)
+                // The repeats send the bytes of the press.
+                let left = sendsLeftArrowSequence(forLeftKey: key.keyCode == .keyboardLeftArrow,
+                                                  eventType: .press)
                 if key.modifierFlags.contains ([.alternate]) {
                     data = .bytes (left ? EscapeSequences.emacsBack : EscapeSequences.emacsForward)
                 } else if key.modifierFlags.contains ([.control]) {
@@ -3726,8 +3725,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // Keep new stored properties at the end of the class. Moving the existing
     // render-path fields changes their Release layout and can reduce throughput.
     nonisolated let kittyClipboardBridge = AppleKittyClipboardBridge()
-    /// The BiDi arrow swap chosen at each arrow key press, for its repeats and release.
-    var arrowKeySwapsAtPress: [KittyFunctionalKey: Bool] = [:]
 }
 
 // Default implementations for TerminalViewDelegate

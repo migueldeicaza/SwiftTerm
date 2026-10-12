@@ -11,14 +11,9 @@ import Testing
 
 final class BidiEscapeTests: TerminalDelegate {
     var sent: [UInt8] = []
-    var hostSwapsArrowKeys = true
 
     func send(source: Terminal, data: ArraySlice<UInt8>) {
         sent.append(contentsOf: data)
-    }
-
-    func supportsBidiArrowKeySwap(source: Terminal) -> Bool {
-        hostSwapsArrowKeys
     }
 
     var sentString: String {
@@ -540,9 +535,9 @@ final class BidiEscapeTests: TerminalDelegate {
         #expect(sentString == "\u{1b}[?1243;1$y", "arrow swapping set by default")
     }
 
-    @Test func decrqmReportsArrowSwappingPermanentlyResetWhenTheHostDoesNotSwap() {
-        hostSwapsArrowKeys = false
+    @Test func decrqmReportsArrowSwappingPermanentlyResetWhenTheHostDrawsLogicalOrder() {
         let terminal = makeTerminal()
+        terminal.bidiHostPolicy = .legacyLeftToRight
         #expect(terminal.bidiArrowKeySwap)
         for sequence in ["", "\u{1b}[?1243h", "\u{1b}[?1243l"] {
             sent.removeAll()

@@ -1260,11 +1260,6 @@ extension TerminalView {
         kittyClipboardBridge.capabilities.withLock { $0 }
     }
 
-    /// The view swaps the Left and Right keys on every key input path.
-    public nonisolated func supportsBidiArrowKeySwap(source: Terminal) -> Bool {
-        true
-    }
-
     @discardableResult
     public nonisolated func kittyClipboardAvailableMimeTypes(
         source: Terminal,
@@ -1620,6 +1615,7 @@ extension TerminalView {
         let cursorStyle = terminal.terminalLock.withLock {
             terminal.backgroundColor = Color.defaultBackground
             terminal.foregroundColor = Color.defaultForeground
+            terminal.bidiHostPolicy = bidiHostPolicy
             selection = SelectionService(terminal: terminal)
             return terminal.options.cursorStyle
         }
@@ -4617,65 +4613,21 @@ extension TerminalView {
              ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
     }
 
-    /// True when the Left and Right keys swap: ``Terminal/bidiArrowKeySwap``
-    /// is on and the cursor's paragraph resolves right to left. Call this
-    /// while holding the terminal lock.
-    private func swapsHorizontalArrowKeys(_ terminal: Terminal) -> Bool {
-        guard terminal.bidiArrowKeySwap else {
-            return false
-        }
-        let buffer = terminal.displayBuffer
-        let baseDirection = TerminalBidi.resolvedBaseDirection(
-            row: buffer.yBase + buffer.y, buffer: buffer, cols: terminal.cols,
-            terminal: terminal, font: fontSet.normal, hostPolicy: bidiHostPolicy)
-        return baseDirection == .rightToLeft
+    /// Returns true when this event of the Left key (`left` is true) or the
+    /// Right key (`left` is false) must send a sequence of the Left key. The
+    /// terminal chooses the BiDi swap at the press and keeps it for the
+    /// repeats and the release. Use this for the sequences that
+    /// ``Terminal/encodeKeyEvent(_:backspaceSendsControlH:)`` does not make.
+    func sendsLeftArrowSequence(forLeftKey left: Bool,
+                                eventType: KittyKeyboardEventType = .press) -> Bool {
+        withTerminal { $0.sendsLeftArrowSequence(forLeftKey: left, eventType: eventType) }
     }
 
-    /// Returns true when a press of the Left key (`left` is true) or the Right
-    /// key (`left` is false) must send the sequences of the Left key. Every
-    /// key input path uses this function, also for modified arrow keys.
-    func sendsLeftArrowSequence(forLeftKey left: Bool) -> Bool {
-        withTerminal { swapsHorizontalArrowKeys($0) } ? !left : left
-    }
-
-    /// Applies BiDi arrow-key swapping to a kitty or legacy key event. This
-    /// includes the keypad arrows. A press chooses the swap from the cursor's
-    /// paragraph. Its repeats and its release use the same choice, so the
-    /// application never gets a release for a key that it did not see pressed.
-    func bidiSwappedKeyEvent(_ event: KittyKeyEvent) -> KittyKeyEvent {
-        guard case .functional(let key) = event.key else {
-            return event
-        }
-        let mirrored: KittyFunctionalKey
-        switch key {
-        case .left: mirrored = .right
-        case .right: mirrored = .left
-        case .keypadLeft: mirrored = .keypadRight
-        case .keypadRight: mirrored = .keypadLeft
-        default: return event
-        }
-        let swap: Bool
-        switch event.eventType {
-        case .press:
-            swap = withTerminal { swapsHorizontalArrowKeys($0) }
-            arrowKeySwapsAtPress[key] = swap
-        case .repeatPress:
-            swap = arrowKeySwapsAtPress[key] ?? withTerminal { swapsHorizontalArrowKeys($0) }
-        case .release:
-            swap = arrowKeySwapsAtPress.removeValue(forKey: key)
-                ?? withTerminal { swapsHorizontalArrowKeys($0) }
-        }
-        guard swap else {
-            return event
-        }
-        var result = event
-        result.key = .functional(mirrored)
-        return result
-    }
-
-    private func sendHorizontalKey(left: Bool) {
+    /// Sends the Left key (`left` is true) or the Right key with the active
+    /// cursor-key mode and the BiDi swap of the terminal.
+    func sendHorizontalKey(left: Bool, eventType: KittyKeyboardEventType = .press) {
         let sequence = withTerminal { terminal in
-            let sendLeft = swapsHorizontalArrowKeys(terminal) ? !left : left
+            let sendLeft = terminal.sendsLeftArrowSequence(forLeftKey: left, eventType: eventType)
             return sendLeft
                 ? (terminal.applicationCursor ? EscapeSequences.moveLeftApp : EscapeSequences.moveLeftNormal)
                 : (terminal.applicationCursor ? EscapeSequences.moveRightApp : EscapeSequences.moveRightNormal)
@@ -4683,13 +4635,17 @@ extension TerminalView {
         send(sequence)
     }
     
-    /// Sends the Left key with the active terminal modes.
+    /// Sends the Left key with the active terminal modes. In a right-to-left
+    /// paragraph, the terminal can send the Right key instead. See
+    /// ``Terminal/bidiArrowKeySwap``.
     public func sendKeyLeft()
     {
         sendHorizontalKey(left: true)
     }
     
-    /// Sends the Right key with the active terminal modes.
+    /// Sends the Right key with the active terminal modes. In a right-to-left
+    /// paragraph, the terminal can send the Left key instead. See
+    /// ``Terminal/bidiArrowKeySwap``.
     public func sendKeyRight ()
     {
         sendHorizontalKey(left: false)

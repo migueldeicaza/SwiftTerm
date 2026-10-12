@@ -150,5 +150,69 @@ struct BidiSpecificationTests {
             #expect(map == nil)
         }
     }
+
+    final class Image: TerminalImage {
+        let pixelWidth = 1
+        let pixelHeight = 1
+        var col: Int
+        let columnWidth: Int
+        init(_ col: Int, _ width: Int) {
+            self.col = col
+            columnWidth = width
+        }
+    }
+
+    // The arrow-key resolver must give the direction that the renderer draws.
+    @Test(arguments: [BidiPresentationMode.implicitLeftToRight, .implicitRightToLeft,
+                      .implicitAutoLeftToRight, .implicitAutoRightToLeft,
+                      .explicitLeftToRight, .explicitRightToLeft])
+    func portableResolverMatchesTheRenderer(mode: BidiPresentationMode) {
+        let explicitMode = mode == .explicitLeftToRight || mode == .explicitRightToLeft
+        let rtl = mode == .implicitRightToLeft || mode == .implicitAutoRightToLeft
+            || mode == .explicitRightToLeft
+        let auto = mode == .implicitAutoLeftToRight || mode == .implicitAutoRightToLeft
+        let state = BidiPresentationState(supportMode: explicitMode ? .explicit : .implicit,
+                                         autodetectDirection: auto,
+                                         fallbackDirection: rtl ? .rightToLeft : .leftToRight)
+        let texts = [
+            "", "abc", "שלום", "مرحبا بالعالم", "123 שלום abc", "(abc) מרחבא",
+            "12 34", "\u{1F600} שלום", "\u{1F1EE}\u{1F1F1} abc",
+            "\u{F02A2}\u{E0B0}", "\u{10900}\u{10901}", "\u{1EE00} abc", "\u{10400} שלום",
+            "\u{1D7D9}\u{10D30} abc", "שָׁלוֹם 🙂", "a界b", "1234567 שלום", "abcdefgh\r\nשלום",
+            "שלום\r\n\r\nabc", "\u{1b}[2 k12\u{1b}[0 k34",
+        ]
+        for text in texts {
+            for (cols, cap) in [(12, 512), (4, 512), (4, 2), (3, 1)] {
+                let terminal = makeTerminal(text, cols: cols, state: state, cap: cap)
+                for row in 0..<terminal.buffer.lines.count {
+                    let portable = TerminalBidi.baseDirection(
+                        row: row, buffer: terminal.buffer, cols: terminal.cols,
+                        maximumRows: cap, hostPolicy: .respectTerminal)
+                    #expect(portable == direction(terminal, row: row),
+                            "\(text.debugDescription) cols \(cols) cap \(cap) row \(row)")
+                    #expect(TerminalBidi.baseDirection(
+                        row: row, buffer: terminal.buffer, cols: terminal.cols,
+                        maximumRows: cap, hostPolicy: .legacyLeftToRight)
+                            == TerminalBidi.resolvedBaseDirection(
+                                row: row, buffer: terminal.buffer, cols: terminal.cols,
+                                terminal: terminal, font: font, hostPolicy: .legacyLeftToRight))
+                }
+            }
+        }
+    }
+
+    @Test func portableResolverMatchesTheRendererWithImages() {
+        let state = BidiPresentationState(autodetectDirection: true, fallbackDirection: .rightToLeft)
+        for (text, images) in [("שabc", [Image(0, 1)]), ("aשלום", [Image(0, 1)]),
+                               ("", [Image(2, 3)]), ("ab界שלום", [Image(3, 1)]),
+                               ("abשלום", [Image(0, 2), Image(1, 3)])] {
+            let terminal = makeTerminal(text, cols: 12, state: state)
+            terminal.buffer.lines[0].images = images
+            let portable = TerminalBidi.baseDirection(
+                row: 0, buffer: terminal.buffer, cols: terminal.cols,
+                maximumRows: 512, hostPolicy: .respectTerminal)
+            #expect(portable == direction(terminal), "\(text.debugDescription)")
+        }
+    }
 }
 #endif

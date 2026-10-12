@@ -189,9 +189,11 @@ terminal.bidiArrowKeySwap = true
 
 A terminal reset restores `initialBidiArrowKeySwap`. Terminal applications can
 also disable swapping with `CSI ? 1243 l` or enable it with `CSI ? 1243 h`.
-`TerminalView` applies the swap. A host with its own key handling must swap
-the keys itself and return `true` from the `TerminalDelegate` method
-`supportsBidiArrowKeySwap(source:)`.
+The terminal applies the swap when the host sends keys through it, as
+`TerminalView` and `sendHostKey` do. A host that draws all cells in logical
+order sets `terminal.bidiHostPolicy = .legacyLeftToRight`. Then the keys do
+not swap, and DECRQM reports mode 1243 as permanently reset. `TerminalView`
+sets this value from its own `bidiHostPolicy` property.
 
 The renderer processes up to 500 rows as one BiDi paragraph by default. Set
 `maximumBidiParagraphRows` to change this limit. Longer paragraphs use explicit

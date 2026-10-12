@@ -338,9 +338,9 @@ final class BidiRenderTests {
     @Test func swappedKeyEventChangesOnlyHorizontalArrows() {
         let view = makeView(feed: "אב")
         func swapped(_ key: KittyFunctionalKey) -> KittyKeyEvent {
-            view.bidiSwappedKeyEvent(KittyKeyEvent(
+            view.withTerminal { $0.bidiSwappedKeyEvent(KittyKeyEvent(
                 key: .functional(key), modifiers: [.alt], eventType: .release,
-                text: nil, shiftedKey: nil, baseLayoutKey: nil))
+                text: nil, shiftedKey: nil, baseLayoutKey: nil)) }
         }
         func functionalKey(_ event: KittyKeyEvent) -> KittyFunctionalKey? {
             if case .functional(let key) = event.key { return key }
@@ -360,9 +360,9 @@ final class BidiRenderTests {
     @Test func repeatAndReleaseUseTheSwapChosenAtPress() {
         let view = makeView(feed: "אב")
         func send(_ key: KittyFunctionalKey, _ type: KittyKeyboardEventType) -> KittyFunctionalKey? {
-            let event = view.bidiSwappedKeyEvent(KittyKeyEvent(
+            let event = view.withTerminal { $0.bidiSwappedKeyEvent(KittyKeyEvent(
                 key: .functional(key), modifiers: [], eventType: type,
-                text: nil, shiftedKey: nil, baseLayoutKey: nil))
+                text: nil, shiftedKey: nil, baseLayoutKey: nil)) }
             if case .functional(let sent) = event.key { return sent }
             return nil
         }
@@ -374,6 +374,119 @@ final class BidiRenderTests {
         // The next press chooses again.
         #expect(send(.left, .press) == .left)
         #expect(send(.left, .release) == .left)
+    }
+
+    func arrowEvent(left: Bool, type: NSEvent.EventType, isARepeat: Bool,
+                    modifiers: NSEvent.ModifierFlags = []) -> NSEvent {
+        let character = String(UnicodeScalar(UInt16(left ? NSLeftArrowFunctionKey
+                                                          : NSRightArrowFunctionKey))!)
+        return NSEvent.keyEvent(with: type, location: .zero,
+                                modifierFlags: modifiers.union([.function, .numericPad]),
+                                timestamp: 0, windowNumber: 0, context: nil,
+                                characters: character, charactersIgnoringModifiers: character,
+                                isARepeat: isARepeat, keyCode: left ? 123 : 124)!
+    }
+
+    @Test(arguments: [false, true])
+    func heldArrowKeyKeepsTheKeyOfThePress(kitty: Bool) {
+        let view = makeView(feed: "אב\r\nabc\u{1b}[1;1H")
+        let delegate = CapturingDelegate()
+        view.terminalDelegate = delegate
+        if kitty {
+            view.feed(text: "\u{1b}[>3u")
+        }
+        view.keyDown(with: arrowEvent(left: true, type: .keyDown, isARepeat: false))
+        #expect(delegate.sent == Array("\u{1b}[C".utf8))
+        // The cursor moves into a left-to-right paragraph while the key is down.
+        view.feed(text: "\u{1b}[2;1H")
+        delegate.sent.removeAll()
+        view.keyDown(with: arrowEvent(left: true, type: .keyDown, isARepeat: true))
+        #expect(delegate.sent == Array((kitty ? "\u{1b}[1;1:2C" : "\u{1b}[C").utf8))
+        delegate.sent.removeAll()
+        view.keyUp(with: arrowEvent(left: true, type: .keyUp, isARepeat: false))
+        #expect(delegate.sent == (kitty ? Array("\u{1b}[1;1:3C".utf8) : []))
+        // The next press chooses again.
+        delegate.sent.removeAll()
+        view.keyDown(with: arrowEvent(left: true, type: .keyDown, isARepeat: false))
+        #expect(delegate.sent == Array("\u{1b}[D".utf8))
+    }
+
+    @Test func commandArrowWordMotionSwaps() {
+        let view = makeView(feed: "אב\r\nabc")
+        let delegate = CapturingDelegate()
+        view.terminalDelegate = delegate
+        let toLeftEnd = #selector(NSResponder.moveToLeftEndOfLine(_:))
+        let toRightEnd = #selector(NSResponder.moveToRightEndOfLine(_:))
+        view.doCommand(by: toLeftEnd)
+        view.doCommand(by: toRightEnd)
+        #expect(delegate.sent == EscapeSequences.emacsBack + EscapeSequences.emacsForward)
+        view.feed(text: "\u{1b}[1;1H")
+        delegate.sent.removeAll()
+        view.doCommand(by: toLeftEnd)
+        view.doCommand(by: toRightEnd)
+        #expect(delegate.sent == EscapeSequences.emacsForward + EscapeSequences.emacsBack)
+    }
+
+    @Test func commandArrowKeyRepeatKeepsTheKeyOfThePress() {
+        let view = makeView(feed: "אב\r\nabc\u{1b}[1;1H")
+        let delegate = CapturingDelegate()
+        view.terminalDelegate = delegate
+        view.keyDown(with: arrowEvent(left: true, type: .keyDown, isARepeat: false,
+                                      modifiers: .command))
+        #expect(delegate.sent == EscapeSequences.emacsForward)
+        view.feed(text: "\u{1b}[2;1H")
+        delegate.sent.removeAll()
+        view.keyDown(with: arrowEvent(left: true, type: .keyDown, isARepeat: true,
+                                      modifiers: .command))
+        #expect(delegate.sent == EscapeSequences.emacsForward)
+        delegate.sent.removeAll()
+        view.keyDown(with: arrowEvent(left: true, type: .keyDown, isARepeat: false,
+                                      modifiers: .command))
+        #expect(delegate.sent == EscapeSequences.emacsBack)
+    }
+
+    @Test func moveCommandsSwap() {
+        let view = makeView(feed: "אב")
+        let delegate = CapturingDelegate()
+        view.terminalDelegate = delegate
+        view.doCommand(by: #selector(NSResponder.moveLeft(_:)))
+        view.doCommand(by: #selector(NSResponder.moveRight(_:)))
+        #expect(delegate.sent == EscapeSequences.moveRightNormal + EscapeSequences.moveLeftNormal)
+    }
+
+    /// The view sends terminal responses on the main queue.
+    func drainMainQueue() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+    }
+
+    @Test func viewHostPolicyControlsTheSwapAndTheReport() async {
+        let view = makeView(feed: "אב")
+        let delegate = CapturingDelegate()
+        view.terminalDelegate = delegate
+        view.feed(text: "\u{1b}[?1243$p")
+        await drainMainQueue()
+        #expect(delegate.sent == Array("\u{1b}[?1243;1$y".utf8))
+
+        view.bidiHostPolicy = .legacyLeftToRight
+        #expect(view.withTerminal { $0.bidiHostPolicy } == .legacyLeftToRight)
+        delegate.sent.removeAll()
+        view.feed(text: "\u{1b}[?1243$p")
+        await drainMainQueue()
+        #expect(delegate.sent == Array("\u{1b}[?1243;4$y".utf8))
+        delegate.sent.removeAll()
+        view.sendKeyLeft()
+        view.keyDown(with: arrowEvent(left: true))
+        view.doCommand(by: #selector(NSResponder.moveToLeftEndOfLine(_:)))
+        #expect(delegate.sent == EscapeSequences.moveLeftNormal + EscapeSequences.moveLeftNormal
+                + EscapeSequences.emacsBack)
+
+        view.bidiHostPolicy = .respectTerminal
+        delegate.sent.removeAll()
+        view.feed(text: "\u{1b}[?1243l\u{1b}[?1243$p")
+        await drainMainQueue()
+        #expect(delegate.sent == Array("\u{1b}[?1243;2$y".utf8))
     }
 
     @Test func forcedDirectionsRenderAllRows() throws {

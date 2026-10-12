@@ -101,8 +101,9 @@ as a compatibility alias because the original BiDi patches used it:
 - **DECRQM** reports every mode above: `CSI 8 $ p` for BDSM and
   `CSI ? 2500 $ p`, `CSI ? 2501 $ p`, `CSI ? 1243 $ p` for the private
   modes. The reply is `CSI Ps ; Pm $ y` with `Pm` = 1 (set) or 2 (reset).
-  For mode 1243, `Pm` is 4 (permanently reset) when the host does not swap
-  the arrow keys.
+  For mode 1243, `Pm` is 4 (permanently reset) when the host draws all
+  cells in logical order: ``Terminal/bidiHostPolicy`` is `.legacyLeftToRight`.
+  The terminal does not ask the host for the report.
 - **XTSAVE/XTRESTORE** (`CSI ? Pm s` and `CSI ? Pm r`) save and restore
   modes 2500, 2501, and 1243. The recommendation asks BiDi-aware
   applications to *save and disable* arrow swapping on startup and restore
@@ -162,6 +163,8 @@ let terminal = Terminal(delegate: delegate, options: options)
   progress and to new paragraphs (read-only; escape sequences change it).
 - ``Terminal/bidiArrowKeySwap`` — read-write; the host can toggle arrow
   swapping directly, for example from a menu item.
+- ``Terminal/bidiHostPolicy`` — read-write; how the host presents the BiDi
+  state. A reset does not change it. `TerminalView` sets it.
 - ``Terminal/bidiSupportEnabled``, ``Terminal/bidiAutodetectDirection``,
   ``Terminal/bidiRTLPreference``, ``Terminal/bidiBoxMirroring`` —
   convenience read-only views of the current state.
@@ -180,6 +183,11 @@ The AppKit and UIKit `TerminalView`s expose `bidiHostPolicy`
 terminalView.bidiHostPolicy = .legacyLeftToRight   // opt out of BiDi rendering
 ```
 
+The view copies the policy to ``Terminal/bidiHostPolicy``. With
+`.legacyLeftToRight`, the arrow keys do not swap, and DECRQM reports mode
+1243 as permanently reset. A host without a `TerminalView` that draws logical
+order sets ``Terminal/bidiHostPolicy`` itself.
+
 Selection, cursor placement, and mouse hit-testing map through the visual
 layout, so they land on the cell the user sees, while the underlying
 operations keep working on logical content.
@@ -187,18 +195,35 @@ operations keep working on logical content.
 ### Arrow-key swapping
 
 When ``Terminal/bidiArrowKeySwap`` is on and the cursor is on a paragraph
-whose resolved base direction is RTL, the view swaps the sequences that the
-Left and Right arrows send, so the cursor moves in the visual direction of
-the key. The swap applies to the arrow keys with and without modifiers, and
-to the legacy and kitty keyboard encodings. Home and End are not swapped. The
-feature is on by default. To disable it, set
+whose resolved base direction is RTL, the terminal swaps the sequences that
+the Left and Right arrows send, so the cursor moves in the visual direction
+of the key. The swap applies to the arrow keys and the keypad arrow keys, with
+and without modifiers, and to the legacy and kitty keyboard encodings. Home
+and End are not swapped. The feature is on by default. To disable it, set
 ``TerminalOptions/initialBidiArrowKeySwap`` to `false`, set
 ``Terminal/bidiArrowKeySwap`` to `false` at runtime, or send `CSI ? 1243 l`
 from the application. A reset restores the configured initial value.
 
-The host applies the swap. `TerminalView` does this. Another host returns
-`true` from ``TerminalDelegate/supportsBidiArrowKeySwap(source:)`` only when
-it swaps the keys. Otherwise DECRQM reports mode 1243 as permanently reset.
+The terminal applies the swap in its key encoding step. The AppKit and UIKit
+`TerminalView`s and the web host
+(``Terminal/sendHostKey(key:code:modifiers:eventType:text:shiftedKey:baseLayoutKey:)``)
+send all keys through this step. The `TerminalView` sequences that the kitty
+encoder does not make, such as `ESC b` and `ESC f` for the word motion keys,
+use the same swap.
+
+The terminal finds the paragraph direction with the rules of the renderer:
+the support mode, the fallback direction, and, with autodetection, the first
+strong letter of the paragraph. Icons, flags, digits, and inline images do
+not set the direction. A paragraph above
+``TerminalOptions/maximumBidiParagraphRows`` uses explicit display. This
+step reads the buffer only. It does not typeset text.
+
+A key press chooses the swap. The auto-repeats and the release of that key
+use the same choice, also when the cursor moves into a paragraph with a
+different direction. Thus the application never gets a release for a key
+that it did not see pressed. Each call of `sendKeyLeft()` or `sendKeyRight()`
+and each step of the iOS floating cursor is a new press. A reset or a switch
+between the normal and the alternate screen removes the stored choices.
 
 ## Rendering details
 
@@ -239,6 +264,7 @@ marks, selection, cursor movement, and scrollback. See its README for usage.
 
 - ``Terminal/currentBidiState``
 - ``Terminal/bidiArrowKeySwap``
+- ``Terminal/bidiHostPolicy``
 - ``Terminal/bidiSupportEnabled``
 - ``Terminal/bidiAutodetectDirection``
 - ``Terminal/bidiRTLPreference``

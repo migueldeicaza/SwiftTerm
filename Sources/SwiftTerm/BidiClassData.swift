@@ -3,8 +3,6 @@
 // SHA-256: 4867b4b7f0731ed1bfcd34cc6251211ff1542541fce0734b6fbda139ee80b3a4
 // The default class is L. Isolated marks and invisible controls use a neutral probe.
 
-#if !SWIFTTERM_EMBEDDED
-#if os(macOS) || os(iOS) || os(visionOS) || os(macCatalyst)
 extension TerminalBidi {
     static let supplementaryBidiProbes: [(ClosedRange<UInt32>, UInt16)] = [
         (0x10101...0x10101, 0x00B7),
@@ -287,5 +285,3 @@ extension TerminalBidi {
         (0x10FFFE...0x10FFFF, 0x00B7),
     ]
 }
-#endif
-#endif

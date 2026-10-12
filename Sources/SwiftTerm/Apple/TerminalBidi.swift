@@ -47,33 +47,9 @@ struct BidiRowLayout {
     let paragraphRevision: Int
 }
 
-enum TerminalBidi {
+extension TerminalBidi {
 
     // MARK: - Row scanning
-
-    /// Fast check: does this scalar require BiDi processing?
-    /// Covers Hebrew through Arabic Extended-A contiguously, the presentation
-    /// form blocks, and the RTL directional formatting characters.
-    @inline(__always)
-    static func isRTLTrigger(_ v: UInt32) -> Bool {
-        if v > 0xFFFF {
-            let probe = supplementaryProbeScalar(v)
-            return probe == 0x05D0 || probe == 0x0621
-        }
-        if v < 0x0590 { return false }
-        switch v {
-        case 0x0590...0x08FF,           // Hebrew ... Arabic Extended-A
-             0xFB1D...0xFDFF,           // Hebrew/Arabic presentation forms A
-             0xFE70...0xFEFC,           // Arabic presentation forms B
-             0x10800...0x10FFF,         // historic right-to-left scripts
-             0x1E800...0x1EFFF,         // Mende, Adlam, and Arabic math
-             0x200F, 0x202B, 0x202E,    // RLM, RLE, RLO
-             0x2067:                    // RLI
-            return true
-        default:
-            return false
-        }
-    }
 
     // MARK: - Arabic joining classification
 
@@ -202,27 +178,10 @@ enum TerminalBidi {
     /// to this adapter. SwiftTerm continues to use grapheme clusters and cells.
     static func appendCells(line: BufferLine, row: Int, cols: Int,
                             to cells: inout [Cell]) -> Int {
-        let images = imageSpans(line: line, cols: cols)
-        let contentLimit = min(cols, line.count,
-                               max(line.getTrimmedLength(), images.last?.endColumn ?? 0))
-        var col = 0
-        var imageIndex = 0
-        while col < contentLimit {
-            if imageIndex < images.count, images[imageIndex].logicalColumn == col {
-                let image = images[imageIndex]
-                cells.append(Cell(row: row, logicalCol: col, width: image.width,
-                                  text: "\u{FFFC}"))
-                col = image.endColumn
-                imageIndex += 1
-                continue
-            }
-            let ch = line.packedView(at: col)
-            let width = max(1, Int(ch.width))
-            let character: Character = ch.code == 0 ? " " : ch.getCharacter()
-            cells.append(Cell(row: row, logicalCol: col, width: width, text: character))
-            col += width
+        forEachCell(line: line, cols: cols) { col, width, text in
+            cells.append(Cell(row: row, logicalCol: col, width: width, text: text))
+            return true
         }
-        return col
     }
 
     // MARK: - Visual ordering via CoreText (UAX #9)
@@ -258,24 +217,6 @@ enum TerminalBidi {
             return supplementaryProbeScalar(v)
         }
         return unichar(v)
-    }
-
-    /// Keep supplementary letters and digits in their Unicode direction class.
-    static func supplementaryProbeScalar(_ value: UInt32) -> unichar {
-        var lower = 0
-        var upper = supplementaryBidiProbes.count
-        while lower < upper {
-            let middle = lower + (upper - lower) / 2
-            let entry = supplementaryBidiProbes[middle]
-            if value < entry.0.lowerBound {
-                upper = middle
-            } else if value > entry.0.upperBound {
-                lower = middle + 1
-            } else {
-                return entry.1
-            }
-        }
-        return 0x0041
     }
 
     /// Mirror the base scalar and keep the marks in the same cell.
@@ -622,35 +563,6 @@ enum TerminalBidi {
         return ParagraphResult(rows: rows, baseDirection: entry.baseDirection)
     }
 
-    /// Finds a paragraph without visiting more than `maximumRows` rows. A nil
-    /// result means that the row is invalid or that the paragraph is too large
-    /// for paragraph-wide rendering.
-    private static func paragraphBounds(row: Int, buffer: Buffer,
-                                        maximumRows: Int) -> ClosedRange<Int>? {
-        guard row >= 0, row < buffer.lines.count else {
-            return nil
-        }
-        let limit = max(1, maximumRows)
-        var first = row
-        var count = 1
-        while first > 0 && buffer.lines[first].isWrapped {
-            guard count < limit else {
-                return nil
-            }
-            first -= 1
-            count += 1
-        }
-        var last = row
-        while last + 1 < buffer.lines.count && buffer.lines[last + 1].isWrapped {
-            guard count < limit else {
-                return nil
-            }
-            last += 1
-            count += 1
-        }
-        return first...last
-    }
-
     private static func hashLineRevision(_ line: BufferLine, into hasher: inout Hasher) {
         hasher.combine(ObjectIdentifier(line.renderIdentity))
         hasher.combine(line.generation)
@@ -669,34 +581,12 @@ enum TerminalBidi {
         return hasher.finalize()
     }
 
-    /// Returns the direction of a scalar that sets the paragraph direction.
-    /// Only letters and the LRM and RLM marks count, in all Unicode planes.
-    /// Icons, flags and other symbols do not set the direction.
-    @inline(__always)
-    private static func strongDirection(_ scalar: UnicodeScalar) -> BidiDirection? {
-        let value = scalar.value
-        if value < 0x80 {
-            let lower = value | 0x20
-            return lower >= 0x61 && lower <= 0x7A ? .leftToRight : nil
-        }
-        if value == 0x200F {
-            return .rightToLeft
-        }
-        if value == 0x200E {
-            return .leftToRight
-        }
-        guard scalar.properties.isAlphabetic else {
-            return nil
-        }
-        return isRTLTrigger(value) ? .rightToLeft : .leftToRight
-    }
-
+    /// Uses the portable letter rule, so the renderer and
+    /// ``baseDirection(row:buffer:cols:maximumRows:hostPolicy:)`` agree.
     private static func detectedBaseDirection(cells: [Cell]) -> BidiDirection? {
         for cell in cells {
-            for scalar in cell.text.unicodeScalars {
-                if let direction = strongDirection(scalar) {
-                    return direction
-                }
+            if let direction = strongDirection(of: cell.text) {
+                return direction
             }
         }
         return nil
