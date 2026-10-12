@@ -149,48 +149,60 @@ struct FrameColor: Sendable, Hashable {
 
     @MainActor
     init (_ color: TTColor, view: TerminalView) {
+#if os(macOS)
+        self.init(color, appearance: view.effectiveAppearance)
+#else
         var red: CGFloat = 0
         var green: CGFloat = 0
         var blue: CGFloat = 0
         var alpha: CGFloat = 1
-#if os(macOS)
-        var converted: TTColor?
-        view.effectiveAppearance.performAsCurrentDrawingAppearance {
-            converted = color.usingColorSpace(.sRGB)
-        }
-        let captured: Bool
-        if let converted {
-            converted.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-            captured = true
-        } else {
-            captured = false
-        }
-#else
         let resolved = color.resolvedColor(with: view.traitCollection)
         let captured = resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-#endif
         if !captured {
             // Pattern colors and colors in unsupported spaces use a stable
             // terminal-color fallback. Do this conversion on the main actor.
-#if os(macOS)
-            let fallback = color.getTerminalColor()
-#else
             let fallback = resolved.getTerminalColor()
-#endif
             red = CGFloat(fallback.red) / 65535
             green = CGFloat(fallback.green) / 65535
             blue = CGFloat(fallback.blue) / 65535
-#if os(macOS)
-            alpha = 1
-#else
             alpha = resolved.cgColor.alpha
+        }
+        self.red = min(max(red, 0), 1)
+        self.green = min(max(green, 0), 1)
+        self.blue = min(max(blue, 0), 1)
+        self.alpha = min(max(alpha, 0), 1)
 #endif
+    }
+
+#if os(macOS)
+    /// Resolves `color` in `appearance`. Views without a `TerminalView` use this.
+    @MainActor
+    init (_ color: TTColor, appearance: NSAppearance) {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 1
+        var converted: TTColor?
+        appearance.performAsCurrentDrawingAppearance {
+            converted = color.usingColorSpace(.sRGB)
+        }
+        if let converted {
+            converted.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        } else {
+            // Pattern colors and colors in unsupported spaces use a stable
+            // terminal-color fallback. Do this conversion on the main actor.
+            let fallback = color.getTerminalColor()
+            red = CGFloat(fallback.red) / 65535
+            green = CGFloat(fallback.green) / 65535
+            blue = CGFloat(fallback.blue) / 65535
+            alpha = 1
         }
         self.red = min(max(red, 0), 1)
         self.green = min(max(green, 0), 1)
         self.blue = min(max(blue, 0), 1)
         self.alpha = min(max(alpha, 0), 1)
     }
+#endif
 
     var nativeColor: TTColor {
 #if os(macOS)
@@ -1978,42 +1990,6 @@ extension TerminalView {
                                             cellHeight: currentCellDimension?.height ?? 0)
     }
 
-    /// Computes how to center `glyph` within its `columnWidth`-cell slot (and
-    /// scale it down if its ink overflows). Returns ``GlyphSlotFit/identity`` for
-    /// ordinary single-cell glyphs, so Latin text in a monospace font is rendered
-    /// exactly as before and the hot path stays untouched. Shared by the
-    /// CoreGraphics and Metal glyph renderers so they stay pixel-consistent.
-    func glyphSlotFit (font: CTFont, glyph: CGGlyph, columnWidth: Int) -> GlyphSlotFit
-    {
-        let currentCellDimension: CellDimension? = cellDimension
-        guard let currentCellDimension else { return .identity }
-        return GlyphSlotFit.calculate(font: font, glyph: glyph,
-                                      columnWidth: columnWidth,
-                                      cellDimension: currentCellDimension,
-                                      normalFont: fontSet.normal)
-    }
-
-    /// Policy-aware variant for host glyph-fallback runs: applies the run's
-    /// ``TerminalGlyphPlacementPolicy`` to one- and multi-column glyphs. Point
-    /// space, like the CoreGraphics draw path that calls it.
-    func glyphSlotFit (font: CTFont, glyph: CGGlyph, columnWidth: Int,
-                       policy: TerminalGlyphPlacementPolicy) -> GlyphSlotFit
-    {
-        let currentCellDimension: CellDimension? = cellDimension
-        guard let currentCellDimension else { return .identity }
-        let normalFont = fontSet.normal
-        let metrics = GlyphMetrics.measure(font: font, glyph: glyph)
-        let baselineFromBottom = CellGeometry.baselineOffset(
-            normalFont: normalFont, cellHeight: currentCellDimension.height)
-        return GlyphSlotFit.calculate(metrics: metrics,
-                                      policy: policy,
-                                      columnWidth: columnWidth,
-                                      cellDimension: currentCellDimension,
-                                      baselineFromBottom: baselineFromBottom,
-                                      iconHeight: CTFontGetAscent(normalFont),
-                                      renderingScale: 1)
-    }
-
     func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool, useBrightColors: Bool = true) -> TTColor
     {
         // Reads terminal.ansiColors below; only reachable from Locked helpers.
@@ -2528,43 +2504,6 @@ extension TerminalView {
 
 
 
-    nonisolated private func kittyImageFromRgba(bytes: [UInt8], width: Int, height: Int) -> TTImage? {
-        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGBitmapInfo(rawValue:
-            CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.last.rawValue)
-        let data = Data(bytes)
-        guard let providerRef = CGDataProvider(data: data as CFData) else {
-            return nil
-        }
-        guard let cgimage = CGImage(width: width,
-                                    height: height,
-                                    bitsPerComponent: 8,
-                                    bitsPerPixel: 32,
-                                    bytesPerRow: width * 4,
-                                    space: rgbColorSpace,
-                                    bitmapInfo: bitmapInfo,
-                                    provider: providerRef,
-                                    decode: nil,
-                                    shouldInterpolate: true,
-                                    intent: .defaultIntent) else {
-            return nil
-        }
-        return TTImage(cgImage: cgimage, size: CGSize(width: width, height: height))
-    }
-
-    private func kittyAspectFitRect(imageSize: CGSize, in rect: CGRect) -> CGRect {
-        guard imageSize.width > 0, imageSize.height > 0, rect.width > 0, rect.height > 0 else {
-            return rect
-        }
-        let scale = min(rect.width / imageSize.width, rect.height / imageSize.height)
-        let width = imageSize.width * scale
-        let height = imageSize.height * scale
-        return CGRect(x: rect.origin.x + (rect.width - width) / 2,
-                      y: rect.origin.y + (rect.height - height) / 2,
-                      width: width,
-                      height: height)
-    }
-    
     //
     // Helper used by buildAttributedString to construct segments.
     //
@@ -2810,6 +2749,86 @@ extension TerminalView {
     }
     
 
+}
+
+// MARK: - Core Graphics snapshot painter
+//
+// Everything below reads only the snapshot and `CoreGraphicsPaintHost`, so
+// that `TerminalView` and `TerminalRenderView` paint with the same code.
+extension CoreGraphicsPaintHost {
+    /// Computes how to center `glyph` within its `columnWidth`-cell slot (and
+    /// scale it down if its ink overflows). Returns ``GlyphSlotFit/identity`` for
+    /// ordinary single-cell glyphs, so Latin text in a monospace font is rendered
+    /// exactly as before and the hot path stays untouched. Shared by the
+    /// CoreGraphics and Metal glyph renderers so they stay pixel-consistent.
+    func glyphSlotFit (font: CTFont, glyph: CGGlyph, columnWidth: Int) -> GlyphSlotFit
+    {
+        let currentCellDimension: TerminalView.CellDimension? = cellDimension
+        guard let currentCellDimension else { return .identity }
+        return GlyphSlotFit.calculate(font: font, glyph: glyph,
+                                      columnWidth: columnWidth,
+                                      cellDimension: currentCellDimension,
+                                      normalFont: fontSet.normal)
+    }
+
+    /// Policy-aware variant for host glyph-fallback runs: applies the run's
+    /// ``TerminalGlyphPlacementPolicy`` to one- and multi-column glyphs. Point
+    /// space, like the CoreGraphics draw path that calls it.
+    func glyphSlotFit (font: CTFont, glyph: CGGlyph, columnWidth: Int,
+                       policy: TerminalGlyphPlacementPolicy) -> GlyphSlotFit
+    {
+        let currentCellDimension: TerminalView.CellDimension? = cellDimension
+        guard let currentCellDimension else { return .identity }
+        let normalFont = fontSet.normal
+        let metrics = GlyphMetrics.measure(font: font, glyph: glyph)
+        let baselineFromBottom = CellGeometry.baselineOffset(
+            normalFont: normalFont, cellHeight: currentCellDimension.height)
+        return GlyphSlotFit.calculate(metrics: metrics,
+                                      policy: policy,
+                                      columnWidth: columnWidth,
+                                      cellDimension: currentCellDimension,
+                                      baselineFromBottom: baselineFromBottom,
+                                      iconHeight: CTFontGetAscent(normalFont),
+                                      renderingScale: 1)
+    }
+
+    nonisolated private func kittyImageFromRgba(bytes: [UInt8], width: Int, height: Int) -> TTImage? {
+        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue:
+            CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.last.rawValue)
+        let data = Data(bytes)
+        guard let providerRef = CGDataProvider(data: data as CFData) else {
+            return nil
+        }
+        guard let cgimage = CGImage(width: width,
+                                    height: height,
+                                    bitsPerComponent: 8,
+                                    bitsPerPixel: 32,
+                                    bytesPerRow: width * 4,
+                                    space: rgbColorSpace,
+                                    bitmapInfo: bitmapInfo,
+                                    provider: providerRef,
+                                    decode: nil,
+                                    shouldInterpolate: true,
+                                    intent: .defaultIntent) else {
+            return nil
+        }
+        return TTImage(cgImage: cgimage, size: CGSize(width: width, height: height))
+    }
+
+    private func kittyAspectFitRect(imageSize: CGSize, in rect: CGRect) -> CGRect {
+        guard imageSize.width > 0, imageSize.height > 0, rect.width > 0, rect.height > 0 else {
+            return rect
+        }
+        let scale = min(rect.width / imageSize.width, rect.height / imageSize.height)
+        let width = imageSize.width * scale
+        let height = imageSize.height * scale
+        return CGRect(x: rect.origin.x + (rect.width - width) / 2,
+                      y: rect.origin.y + (rect.height - height) / 2,
+                      width: width,
+                      height: height)
+    }
+    
     func drawRunAttributes(_ attributes: [NSAttributedString.Key : Any], glyphPositions positions: [CGPoint], in currentContext: CGContext) {
         currentContext.saveGState()
 
@@ -3074,13 +3093,13 @@ extension TerminalView {
         // short to explain the stalls the baselines show.
         let drawInterval = Profiling.begin(.frameDraw)
         defer { drawInterval.end() }
-        diagnosticsState.withLock { $0.renders += 1 }
+        didDrawCoreGraphicsFrame()
 
         guard let viewState = captureFrameViewState() else { return }
         let kittyCellWidth = cellDimension.width
         let kittyCellHeight = cellDimension.height
         let kittyImageScale = getImageScale()
-        renderOwner.withSnapshotForDrawing(viewState: viewState) { snapshot, renderContext in
+        withSnapshotForDrawing(viewState: viewState) { snapshot, renderContext in
         let yOffset = renderContext.baselineOffset
         #if os(macOS)
         let renderBufferOffset = snapshot.yDisp
@@ -3711,6 +3730,9 @@ extension TerminalView {
         }
     }
     
+}
+
+extension TerminalView {
     /// What one prepared frame implies for the main thread.
     ///
     /// `PreparedFrame` stays in the render owner. Only its checked-Sendable

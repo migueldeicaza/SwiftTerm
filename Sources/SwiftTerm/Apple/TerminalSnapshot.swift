@@ -553,6 +553,166 @@ final class TerminalSnapshot {
         return .refreshed
     }
 }
+
+// MARK: - External sources
+
+extension TerminalSnapshot {
+    /// Refreshes the snapshot from a frame that does not come from a local
+    /// `Terminal` (see `TerminalRenderView`).
+    ///
+    /// The rows are copied exactly as `refresh(terminal:)` copies them, so the
+    /// renderers draw them with the same code. External rows have no bidi
+    /// layout, no images and no Kitty placements.
+    ///
+    /// - Parameters:
+    ///   - line: returns the line for a line number, or nil to draw a blank row.
+    ///   - blank: an empty line from `store`, used for missing rows.
+    ///
+    /// `line` may build lines on demand (and so intern new styles): every line
+    /// is looked up before the snapshot copies the store's tables.
+    @discardableResult
+    func refresh (external frame: TerminalExternalFrame, store: TerminalRowStore,
+                  line lookup: (Int) -> BufferLine?, blank: BufferLine,
+                  viewState: FrameViewState) -> RefreshResult {
+        pendingBidi.removeAll(keepingCapacity: true)
+        let sourceArena = store.arena
+        let columns = max(1, frame.columns)
+        let rowTotal = max(0, frame.rows)
+
+        // Look up every line before the arena copy is synchronized: a source
+        // may build lines lazily, and building interns new styles.
+        func source (_ lineNumber: Int) -> BufferLine {
+            guard let line = lookup(lineNumber), line.cellArena === sourceArena else { return blank }
+            return line
+        }
+        let sources = (0..<rowTotal).map { source(frame.topLine + $0) }
+        let screenRow = frame.cursorLine - frame.topLine
+        let cursorSource = screenRow >= 0 && screenRow < rowTotal ? sources[screenRow] : nil
+
+        if cellArenaSnapshot?.synchronizeSnapshotPrefix(from: sourceArena) != true {
+            cellArenaSnapshot = sourceArena.snapshotCopy()
+        }
+        let snapshotArena = cellArenaSnapshot!
+        let origin = Position(col: 0, row: 0)
+        let newStyle = SnapshotStyle(
+            selectionActive: frame.selection != nil,
+            selectionStart: frame.selection?.start ?? origin,
+            selectionEnd: frame.selection?.end ?? origin,
+            linkHighlightRange: viewState.linkHighlightRange,
+            linkHighlightMode: viewState.linkHighlightMode,
+            commandActive: viewState.commandActive,
+            textBlinkVisible: viewState.textBlinkVisible)
+        let styleChanged = previousStyle?.hasSameValue(as: newStyle) != true ||
+            previousAnsiColors != frame.palette
+        appearanceChanged = styleChanged
+
+        firstRow = frame.topLine
+        yDisp = frame.topLine
+        yBase = frame.topLine
+        x = frame.cursorColumn
+        y = frame.cursorLine - frame.topLine
+        cols = columns
+        rowCount = rowTotal
+        linesCount = frame.topLine + rowTotal
+        linesTop = 0
+        totalLinesTrimmed = 0
+        hasAnyImages = false
+        isAltBuffer = frame.isAlternateBuffer
+        cursorHidden = !frame.cursorVisible
+        cursorStyle = frame.cursorStyle
+        maximumBidiParagraphRows = 1
+        style = newStyle
+        ansiColors = frame.palette
+
+        while rows.count > rowTotal {
+            rowPool.append(rows.removeLast())
+        }
+        while rows.count < rowTotal {
+            rows.append(rowPool.popLast() ?? Row(source: blank, snapshotArena: snapshotArena))
+        }
+
+        for index in 0..<rowTotal {
+            let source = sources[index]
+            let destination = rows[index]
+            let contentChanged = destination.sourceIdentity !=
+                ObjectIdentifier(source.renderIdentity) ||
+                destination.sourceGeneration != source.generation
+            if contentChanged {
+                destination.line.copyForSnapshot(from: source, arena: snapshotArena)
+                destination.recordSource(source)
+                destination.resolvedCharacters.removeAll(keepingCapacity: true)
+                destination.resolvedText.removeAll(keepingCapacity: true)
+                var col = 0
+                let limit = min(columns, source.count)
+                while col < limit {
+                    let cell = source.packedView(at: col)
+                    if !cell.isSimpleRune {
+                        let text = cell.getText()
+                        destination.resolvedCharacters[col] = text.first
+                        destination.resolvedText[col] = text
+                    }
+                    col += max(1, Int(cell.width))
+                }
+            }
+            let hadExtras = destination.bidiLayout != nil || !destination.images.isEmpty
+            destination.bidiLayout = nil
+            destination.bidiParagraphRevision = Int.min
+            destination.images = []
+            if contentChanged || styleChanged || hadExtras {
+                destination.revision &+= 1
+            }
+        }
+
+        kitty = SnapshotKitty()
+        let context = SnapshotRenderContext(viewState: viewState, snapshot: self)
+        renderContext = context
+
+        if let cursorLine = cursorSource {
+            let cursorCol = max(0, min(frame.cursorColumn, cursorLine.count - 1))
+            let cell = cursorLine.packedView(at: cursorCol)
+            let character = cell.code == 0 ? " " : cell.getCharacter()
+            let cursorColor = context.caretColor
+            let textColor = context.caretTextColor
+            var attributes = attributedValue(for: cell.attribute,
+                                             usingFg: cursorColor,
+                                             andBg: textColor,
+                                             context: context)
+            let caretStyleFont = (attributes[.font] as? TTFont) ?? context.fonts.normal
+            if let fallback = GlyphFallbackResolver.selection(for: character,
+                                                              styleFont: caretStyleFont,
+                                                              context: context) {
+                attributes[.font] = fallback.font
+                attributes[SwiftTermGlyphPolicyKey] = fallback.policy
+            }
+            cursor = SnapshotCursor(
+                absoluteRow: frame.cursorLine,
+                screenRow: screenRow,
+                logicalCol: cursorCol,
+                visualCol: cursorCol,
+                columnWidth: max(1, Int(cell.width)),
+                renderMode: cursorLine.renderMode,
+                hidden: !frame.cursorVisible,
+                renderData: CaretRenderData(code: cell.code,
+                                            width: cell.width,
+                                            cellAttribute: cell.attribute,
+                                            character: character,
+                                            attributes: attributes,
+                                            cursorColor: cursorColor,
+                                            textColor: textColor,
+                                            textBlinkVisible: newStyle.textBlinkVisible,
+                                            customBlockGlyphs: viewState.customBlockGlyphs,
+                                            normalFont: viewState.fonts.normal))
+        } else {
+            cursor = nil
+        }
+
+        previousStyle = newStyle
+        previousAnsiColors = frame.palette
+        previousBidiHostPolicy = viewState.bidiHostPolicy
+        previousBidiFont = ObjectIdentifier(viewState.fonts.normal)
+        return .refreshed
+    }
+}
 #endif
 
 #endif // !SWIFTTERM_EMBEDDED
