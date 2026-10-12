@@ -382,6 +382,38 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func inputStateSnapshot() -> TerminalInputStateSnapshot? {
+        guard let terminal = currentSession()?.terminal else { return nil }
+        return terminal.terminalLock.withLock {
+            let buffer = terminal.buffer
+            let lineIndex = buffer.yBase + buffer.y
+            let cursorRow: TerminalVisibleRowSnapshot?
+            if lineIndex >= 0, lineIndex < buffer.lines.count {
+                let line = buffer.lines[lineIndex]
+                cursorRow = TerminalVisibleRowSnapshot(
+                    row: buffer.y,
+                    text: terminal.translateBufferLineToString(
+                        buffer: buffer, line: lineIndex, start: 0, end: -1),
+                    isWrapped: line.isWrapped,
+                    bidiState: line.bidiState,
+                    cellWidths: (0..<terminal.cols).map { Int(line[$0].width) })
+            } else {
+                cursorRow = nil
+            }
+            return TerminalInputStateSnapshot(
+                dimensions: TerminalDimensions(cols: terminal.cols, rows: terminal.rows),
+                cursor: Position(col: buffer.x, row: buffer.y),
+                isAlternateBuffer: terminal.isCurrentBufferAlternate,
+                applicationCursor: terminal.applicationCursor,
+                marginLeft: terminal.marginMode ? buffer.marginLeft : 0,
+                marginRight: terminal.marginMode ? buffer.marginRight : terminal.cols - 1,
+                scrollback: terminal.options.scrollback,
+                screenBaseRow: buffer.yBase,
+                viewportRow: buffer.yDisp,
+                cursorRow: cursorRow)
+        }
+    }
+
     func stateSnapshot() -> TerminalViewStateSnapshot {
         guard let terminal = currentSession()?.terminal else {
             return TerminalViewStateSnapshot(
