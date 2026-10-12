@@ -15,7 +15,9 @@ import Foundation
 public struct TerminalExternalSelection: Equatable, Sendable {
     /// The anchor of the selection.
     public var start: Position
-    /// The end of the selection (inclusive).
+    /// The end of the selection. As with `SelectionService`, the highlight
+    /// stops before this column, except that an end in the last column
+    /// includes that column.
     public var end: Position
 
     public init (start: Position, end: Position) {
