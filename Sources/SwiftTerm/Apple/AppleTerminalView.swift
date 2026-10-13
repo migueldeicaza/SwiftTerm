@@ -2426,6 +2426,20 @@ extension TerminalView {
 
     public nonisolated func setBackgroundColor(source: Terminal, color: Color) {
         let nativeColor = TTColor.make(color: color)
+#if !os(macOS)
+        // Native setters already run on the main thread. Apply their callback
+        // before settingBg is reset, so an RGB-only echo cannot replace .clear.
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                self.setNativeBackgroundColorFromTerminal(nativeColor)
+            }
+            // The callback can hold the terminal lock. Refresh colors later.
+            onMain { [weak self] in
+                self?.colorsChangedOnMain()
+            }
+            return
+        }
+#endif
         onMain { [weak self] in
             guard let self else { return }
             self.setNativeBackgroundColorFromTerminal(nativeColor)
