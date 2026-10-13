@@ -1602,6 +1602,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         settingBg = true
         _nativeBg = newValue
         terminal.backgroundColor = newValue.getTerminalColor()
+        updateBackgroundLayerColor(newValue)
         refreshCachedViewState()
         settingBg = false
     }
@@ -1620,8 +1621,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if settingBg { return }
         settingBg = true
         _nativeBg = newValue
+        updateBackgroundLayerColor(newValue)
         refreshCachedViewState()
         settingBg = false
+    }
+
+    private func updateBackgroundLayerColor (_ color: UIColor)
+    {
+        // A clear native color lets default cells use the host's layer color.
+        guard color.cgColor.alpha > 0 else { return }
+        let background = color.cgColor.copy(alpha: backgroundOpacity)
+        if reverseColorsActiveValue() || reverseColorsSavedLayerBackground != nil {
+            // Also update a restore that is waiting for its color callback.
+            reverseColorsSavedLayerBackground = background
+        } else {
+            layer.backgroundColor = background
+        }
     }
 
     /**
