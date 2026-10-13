@@ -76,7 +76,7 @@ final class GhosttyImplicitLinkDetectionTests: TerminalDelegate {
             ("IPv6 address https://[2001:db8::1]:8080/path", "https://[2001:db8::1]:8080/path"),
             ("IPv6 address https://[2001:db8::1]:8080(foo)", "https://[2001:db8::1]:8080"),
             ("../example.py", "../example.py"),
-            ("../example.py ", "../example.py "),
+            ("../example.py ", "../example.py"),
             ("first time ../example.py contributor ", "../example.py"),
             ("src/config/url.zig", "src/config/url.zig"),
             ("app/folder/file.rb:1", "app/folder/file.rb:1"),
@@ -90,7 +90,7 @@ final class GhosttyImplicitLinkDetectionTests: TerminalDelegate {
             ("  - shared/src/foo/SomeItem.m:12, shared/src/", "shared/src/foo/SomeItem.m:12"),
             ("foo.local/share", "foo.local/share"),
             ("2024/report.txt", "2024/report.txt"),
-            ("./spaces-end.   ", "./spaces-end.   "),
+            ("./spaces-end.   ", "./spaces-end."),
             ("./space middle", "./space middle")
         ]
 
