@@ -1003,7 +1003,21 @@ final class EscapeSequenceParser {
         // process input string
         var i = 0
         let end = data.count
-        var input = data
+        // A read from the host can end in the middle of a UTF-8 scalar in an
+        // OSC payload, so this chunk starts with its continuation bytes. The
+        // table would take 0x80-0x9f for C1 controls, abort the sequence and
+        // print the rest of its payload on screen. Within a chunk the `oscPut`
+        // run already keeps them as payload, and 0x9c is routed there by the
+        // table, so the rest are kept here. This runs once per chunk rather
+        // than in the loop: a per-byte check slows ordinary ESC and CSI input.
+        if currentState == ParserState.oscString.rawValue {
+            while i < end, data[i] >= 0x80, data[i] < 0xa0, data[i] != 0x9c,
+                  oscLimitExceeded || EscapeSequenceParser.oscExpectsUTF8Continuation(osc) {
+                appendOscBytes(i..<(i + 1), to: &osc, &oscLimitExceeded)
+                i += 1
+            }
+        }
+        var input = data.extracting(droppingFirst: i)
         while !input.isEmpty {
             code = input[0]
             
@@ -1032,19 +1046,7 @@ final class EscapeSequenceParser {
             }
             
             // Normal transition and action loop
-            var lookup = code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable
-            // A read from the host can end in the middle of a UTF-8 scalar in an
-            // OSC payload, so the next chunk starts with a continuation byte.
-            // The table would take 0x80-0x9f for a C1 control, abort the
-            // sequence and print the rest of its payload on screen. Within a
-            // chunk the `oscPut` run already keeps these bytes as payload, and
-            // 0x9c is routed there by the table, so do the same for the rest.
-            if code >= 0x80 && code < 0xa0 && code != 0x9c
-                && currentState == ParserState.oscString.rawValue
-                && (oscLimitExceeded || EscapeSequenceParser.oscExpectsUTF8Continuation(osc)) {
-                lookup = EscapeSequenceParser.NonAsciiPrintable
-            }
-            transition = tableData [(Int(currentState) << 8) | Int (lookup)]
+            transition = tableData [(Int(currentState) << 8) | Int (UInt8 ((code < 0xa0 ? code : EscapeSequenceParser.NonAsciiPrintable)))]
             let action = ParserAction.decode (transition >> 4)
             var consumed = 1
             switch action {
