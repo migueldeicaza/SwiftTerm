@@ -39,10 +39,11 @@ public struct TerminalKeyboardModes: Equatable, Sendable {
 /// A key that the router sends to the terminal program.
 ///
 /// A host that owns the terminal sends the bytes that come with the event. A
-/// host whose terminal runs somewhere else sends the event, and the other
-/// side gives its fields to `Terminal.sendHostKey`, or `text` to
-/// `Terminal.sendHostText` when `isText` is true. The terminal then encodes
-/// the key with its modes at that time.
+/// host whose terminal runs somewhere else sends the event too: when the
+/// terminal's modes changed before the key arrived, the other side gives its
+/// fields to `Terminal.sendHostKey`, or `text` to `Terminal.sendHostText`
+/// when `isText` is true. The terminal then encodes the key with its modes
+/// at that time.
 public struct TerminalKeyEvent {
     let event: KittyKeyEvent
     /// The `backspaceSendsControlH` setting of the host.
@@ -92,6 +93,10 @@ public protocol TerminalKeyboardHost: NSView {
     var keyboardModes: TerminalKeyboardModes { get }
     /// Option is the Meta key (it sends ESC before the character).
     var optionAsMetaKey: Bool { get set }
+    /// While `optionAsMetaKey` is false, Option is still Meta on the keys
+    /// that the keyboard layout composes nothing for; see
+    /// `TerminalView.optionAsMetaKeyForFunctionalKeys`.
+    var optionAsMetaKeyForFunctionalKeys: Bool { get }
     var backspaceSendsControlH: Bool { get }
     /// Return true to give a Command key to a program that enabled the
     /// kitty keyboard protocol, instead of the menu.
@@ -103,16 +108,21 @@ public protocol TerminalKeyboardHost: NSView {
     /// A key went down and the menu did not take it: the host can clear its
     /// selection, hide the pointer, and so on.
     func keyboardRouterKeyDown (_ event: NSEvent)
-    /// Sends a key. `bytes` is the key encoded with `keyboardModes`.
+    /// Sends a key. `bytes` is the key encoded with `keyboardModes` (the
+    /// value that the router read last).
     func keyboardRouter (send event: TerminalKeyEvent, bytes: [UInt8])
-    /// Sends bytes as they are (legacy sequences that do not depend on modes
-    /// the program can change, except as `keyboardModes` gives them).
+    /// Sends bytes that do not come from one key, as they are (for example
+    /// the legacy sequences of editing commands).
     func keyboardRouter (send bytes: [UInt8])
     /// Sends typed text as it is.
     func keyboardRouter (sendText text: String)
     /// Page Up or Page Down without modifiers: scroll the view, or send the
     /// key on the alternate screen.
     func keyboardRouterScrollPage (up: Bool)
+}
+
+extension TerminalKeyboardHost {
+    public var optionAsMetaKeyForFunctionalKeys: Bool { false }
 }
 
 /// Decides what each key event sends, for a `TerminalKeyboardHost`. Call it
@@ -148,6 +158,46 @@ public final class TerminalKeyboardRouter {
     ]
 
     private var optionAsMetaKey: Bool { host?.optionAsMetaKey ?? true }
+
+    /// Whether Option acts as Meta for this key: on every key when
+    /// `optionAsMetaKey` is on, and on the keys the layout composes nothing
+    /// for when `optionAsMetaKeyForFunctionalKeys` is on. Escape, Enter, Tab
+    /// and Backspace compose nothing, so they count as functional here, as
+    /// they do in iTerm2. While the input method holds marked text, every key
+    /// belongs to it.
+    private func optionIsMeta(for event: NSEvent) -> Bool {
+        if optionAsMetaKey {
+            return true
+        }
+        guard host?.optionAsMetaKeyForFunctionalKeys == true, !isComposing else {
+            return false
+        }
+        return textlessKey(for: event) != nil || kittyFunctionalKey(from: event) != nil
+    }
+
+    /// Escape, Enter, Tab and Backspace by their physical key. AppKit keeps
+    /// Shift in `charactersIgnoringModifiers`, so Shift+Tab reads as U+0019
+    /// there; the key code says Tab whatever the modifiers.
+    private func textlessKey(for event: NSEvent) -> KittyFunctionalKey? {
+        switch Int(event.keyCode) {
+        case kVK_Escape: return .escape
+        case kVK_Return: return .enter
+        case kVK_Tab: return .tab
+        case kVK_Delete: return .backspace
+        default: return nil
+        }
+    }
+
+    /// Sends Option plus Escape, Enter, Tab or Backspace through the encoder,
+    /// which applies the Meta prefix (or the kitty Alt modifier), Shift on Tab
+    /// and the `backspaceSendsControlH` byte the same way it does for the key
+    /// without Option.
+    private func sendMetaTextlessKey(_ event: NSEvent, eventType: KittyKeyboardEventType) -> Bool {
+        guard let key = textlessKey(for: event) else { return false }
+        return sendKittyFunctionalKey(key,
+                                      modifiers: kittyModifiers(from: event, includeOption: true),
+                                      eventType: eventType)
+    }
 
     // MARK: Text input state
 
@@ -227,6 +277,10 @@ public final class TerminalKeyboardRouter {
         if keyboardEnhancementFlags.isEmpty,
            eventFlags.contains(.command),
            !(eventFlags.contains(.option) && event.charactersIgnoringModifiers == "o") {
+            // The menu has had its turn. Command-arrow sends no terminal input.
+            if Self.regularArrowKeyCodes.contains(event.keyCode) {
+                return
+            }
             host.interpretKeyEvents([event])
             return
         }
@@ -241,11 +295,34 @@ public final class TerminalKeyboardRouter {
             return
         }
 
+        // Apply the macOS Option-arrow bindings before the legacy encoder.
+        // These bindings do not depend on the Option-as-Meta text setting.
+        // An application that enables the Kitty protocol gets the full key.
+        if keyboardEnhancementFlags.isEmpty,
+           eventFlags.intersection([.shift, .control, .option, .command]) == .option {
+            switch event.keyCode {
+            case UInt16(kVK_LeftArrow):
+                host.keyboardRouter(send: EscapeSequences.emacsBack)
+                return
+            case UInt16(kVK_RightArrow):
+                host.keyboardRouter(send: EscapeSequences.emacsForward)
+                return
+            case UInt16(kVK_UpArrow):
+                sendCursorKey(.up)
+                return
+            case UInt16(kVK_DownArrow):
+                sendCursorKey(.down)
+                return
+            default:
+                break
+            }
+        }
+
         if keyboardEnhancementFlags.isEmpty,
            !eventFlags.contains(.command),
-           (!eventFlags.contains(.option) || optionAsMetaKey),
+           (!eventFlags.contains(.option) || optionIsMeta(for: event)),
            let functionKey = functionalKey(from: event) {
-            let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+            let modifiers = kittyModifiers(from: event, includeOption: optionIsMeta(for: event))
             let isUnmodifiedPageKey = (functionKey == .pageUp || functionKey == .pageDown)
                 && modifiers.intersection([.shift, .alt, .ctrl]).isEmpty
                 && !applicationCursor
@@ -281,7 +358,7 @@ public final class TerminalKeyboardRouter {
 
             if let functionKey = functionalKey(from: event) {
                 let kittyEvent = KittyKeyEvent(key: .functional(functionKey),
-                                               modifiers: kittyModifiers(from: event, includeOption: optionAsMetaKey),
+                                               modifiers: kittyModifiers(from: event, includeOption: optionIsMeta(for: event)),
                                                eventType: repeatEventType,
                                                text: kittyTextForFunctionalKey(functionKey, event: event),
                                                shiftedKey: nil,
@@ -292,7 +369,12 @@ public final class TerminalKeyboardRouter {
                 }
             }
 
-            if eventFlags.contains(.control) || (optionAsMetaKey && eventFlags.contains(.option)) {
+            if optionIsMeta(for: event) && eventFlags.contains(.option),
+               sendMetaTextlessKey(event, eventType: repeatEventType) {
+                return
+            }
+
+            if eventFlags.contains(.control) || (optionIsMeta(for: event) && eventFlags.contains(.option)) {
                 if let kittyEvent = kittyTextEvent(from: event, eventType: repeatEventType),
                    sendKittyEvent(kittyEvent) {
                     return
@@ -309,7 +391,10 @@ public final class TerminalKeyboardRouter {
             if event.charactersIgnoringModifiers == "o" {
                 host.optionAsMetaKey.toggle()
             }
-        } else if optionAsMetaKey && eventFlags.contains (.option) {
+        } else if optionIsMeta(for: event) && eventFlags.contains (.option) {
+            if sendMetaTextlessKey(event, eventType: event.isARepeat ? .repeatPress : .press) {
+                return
+            }
             if let rawCharacter = event.charactersIgnoringModifiers {
                 if let fs = rawCharacter.unicodeScalars.first {
                     switch Int (fs.value) {
@@ -322,8 +407,7 @@ public final class TerminalKeyboardRouter {
                     default: break
                     }
                 }
-                host.keyboardRouter(send: EscapeSequences.cmdEsc)
-                host.keyboardRouter(sendText: rawCharacter)
+                sendLegacyKey(event, bytes: EscapeSequences.cmdEsc + Array(rawCharacter.utf8))
             }
             return
         } else if eventFlags.contains (.control) {
@@ -332,7 +416,7 @@ public final class TerminalKeyboardRouter {
             // instead of the unmodified space. Use the physical Space key so
             // that the terminal always sends the NUL byte expected for C-SPC.
             if event.keyCode == UInt16(kVK_Space) {
-                host.keyboardRouter(send: [0])
+                sendLegacyKey(event, bytes: [0])
                 return
             }
             if let ch = event.charactersIgnoringModifiers {
@@ -379,7 +463,7 @@ public final class TerminalKeyboardRouter {
                 }
 
                 if !controlBytes.isEmpty {
-                    host.keyboardRouter(send: controlBytes)
+                    sendLegacyKey(event, bytes: controlBytes)
                 }
                 return
             }
@@ -495,7 +579,7 @@ public final class TerminalKeyboardRouter {
         if !isComposing {
             let mods: KittyKeyboardModifiers
             if let pending = pendingKittyKeyEvent {
-                mods = kittyModifiers(from: pending.event, includeOption: optionAsMetaKey)
+                mods = kittyModifiers(from: pending.event, includeOption: optionIsMeta(for: pending.event))
             } else {
                 mods = []
             }
@@ -644,7 +728,7 @@ public final class TerminalKeyboardRouter {
         // text directly instead, matching how kitty/Ghostty handle
         // AltGr layers.
         if let pendingEvent,
-           !optionAsMetaKey,
+           !optionIsMeta(for: pendingEvent.event),
            pendingEvent.event.modifierFlags.contains(.option),
            !pendingEvent.event.modifierFlags.contains(.control),
            !pendingEvent.event.modifierFlags.contains(.command),
@@ -674,6 +758,20 @@ public final class TerminalKeyboardRouter {
     }
 
     // MARK: Sending
+
+    /// Sends the legacy bytes of a text key (Control or Option as Meta),
+    /// with the key. A host whose terminal runs somewhere else can then
+    /// encode the key again when the program enabled the kitty protocol
+    /// before the key arrived.
+    private func sendLegacyKey (_ event: NSEvent, bytes: [UInt8]) {
+        guard let host else { return }
+        guard let kittyEvent = kittyTextEvent(from: event, eventType: event.isARepeat ? .repeatPress : .press) else {
+            host.keyboardRouter(send: bytes)
+            return
+        }
+        host.keyboardRouter(send: TerminalKeyEvent(event: kittyEvent, backspaceSendsControlH: host.backspaceSendsControlH),
+                            bytes: bytes)
+    }
 
     @discardableResult
     private func sendKittyEvent (_ event: KittyKeyEvent) -> Bool {
@@ -1137,7 +1235,7 @@ public final class TerminalKeyboardRouter {
         }
         let baseLayout = kittyBaseLayoutKey(from: event)
         let baseLayoutKey = baseLayout == baseScalar ? nil : baseLayout
-        let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+        let modifiers = kittyModifiers(from: event, includeOption: optionIsMeta(for: event))
         return KittyKeyEvent(key: .unicode(baseScalar.value),
                              modifiers: modifiers,
                              eventType: eventType,
@@ -1149,7 +1247,7 @@ public final class TerminalKeyboardRouter {
 
     private func kittyKeyEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
         if let functionKey = kittyFunctionalKey(from: event) {
-            let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
+            let modifiers = kittyModifiers(from: event, includeOption: optionIsMeta(for: event))
             return KittyKeyEvent(key: .functional(functionKey),
                                  modifiers: modifiers,
                                  eventType: eventType,

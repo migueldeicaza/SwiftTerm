@@ -76,6 +76,11 @@ final class SnapshotTextBuilder {
     /// through ObjC.
     private(set) var attributeCache: [AttributeCacheKey: SnapshotTextAttributes] = [:]
     private var packedAttributeCache: [PackedAttributeCacheKey: SnapshotTextAttributes] = [:]
+    /// The style table that the keys of `packedAttributeCache` come from. A
+    /// style ID means a different style in another table: an external source
+    /// (`TerminalRowStore`) can replace its table when it is nearly full.
+    /// Kept as a strong reference, so a new table cannot reuse its address.
+    private var packedAttributeCacheArena: CellArena?
     private(set) var attributeCacheContextID: UInt64 = .max
 
     private func resolvedFont(for character: Character, base: TTFont) -> TTFont {
@@ -342,6 +347,10 @@ final class SnapshotTextBuilder {
     {
         var segments: [ViewLineSegment] = []
         let line = snapshotRow.line
+        if line.cellArena !== packedAttributeCacheArena {
+            packedAttributeCache.removeAll(keepingCapacity: true)
+            packedAttributeCacheArena = line.cellArena
+        }
         let cols = context.cols
         let selectionColumns = context.selection.columns(forRow: absoluteRow)
         var col = 0

@@ -213,6 +213,7 @@ open class TerminalRenderView: NSView, CaretHost {
 
     isolated deinit {
         frameDriver.invalidate()
+        progressTimer?.invalidate()
     }
 
     open override var isFlipped: Bool { false }
@@ -246,6 +247,7 @@ open class TerminalRenderView: NSView, CaretHost {
     open override func setFrameSize (_ newSize: NSSize) {
         super.setFrameSize(newSize)
         reportGridSizeIfChanged()
+        updateProgressBarFrame()
         invalidateAll()
     }
 
@@ -389,6 +391,57 @@ open class TerminalRenderView: NSView, CaretHost {
 #if canImport(MetalKit)
         metalRenderer?.resetCursorBlinkAfterInput()
 #endif
+    }
+
+    // MARK: Progress (OSC 9;4)
+
+    private var progressBarView: TerminalProgressBarView?
+    private var progressTimer: Timer?
+
+    /// The progress report that the view shows, or nil when it shows none.
+    public private(set) var progressReport: Terminal.ProgressReport?
+
+    /// Shows a progress report (OSC 9;4) as a bar at the top of the view, as
+    /// `TerminalView` does. The bar goes away on a `.remove` report, or
+    /// `duration` seconds after the last report (15, as in `TerminalView`).
+    /// A host that shows a report that came earlier gives the time that is
+    /// left.
+    public func showProgress (_ report: Terminal.ProgressReport, duration: TimeInterval = 15) {
+        guard report.state != .remove, duration > 0 else {
+            clearProgress()
+            return
+        }
+        let bar: TerminalProgressBarView
+        if let progressBarView {
+            bar = progressBarView
+        } else {
+            bar = TerminalProgressBarView(frame: .zero)
+            progressBarView = bar
+        }
+        // Above the Metal surface and the caret.
+        if subviews.last !== bar {
+            addSubview(bar, positioned: .above, relativeTo: nil)
+        }
+        updateProgressBarFrame()
+        progressReport = report
+        bar.apply(state: report.state, progress: report.progress)
+        progressTimer?.invalidate()
+        progressTimer = Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.clearProgress() }
+        }
+    }
+
+    private func clearProgress () {
+        progressTimer?.invalidate()
+        progressTimer = nil
+        progressReport = nil
+        progressBarView?.apply(state: .remove, progress: nil)
+    }
+
+    private func updateProgressBarFrame () {
+        guard let progressBarView else { return }
+        let height = TerminalProgressBarView.preferredHeight
+        progressBarView.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
     }
 
 #if canImport(MetalKit)

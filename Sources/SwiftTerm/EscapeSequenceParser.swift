@@ -194,7 +194,13 @@ public final class TerminalOscObservation: Sendable {
 final class TerminalOscEventDispatcher: @unchecked Sendable {
     private struct Registration: Sendable {
         let id: UInt64
+        /// The OSC codes to observe, or nil for every code.
+        let codes: Set<Int>?
         let handler: @Sendable (TerminalOscEvent) -> Void
+
+        func accepts(_ code: Int) -> Bool {
+            codes?.contains(code) ?? true
+        }
     }
 
     private struct State {
@@ -210,18 +216,19 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
 #endif
 
     func observe(
+        codes: Set<Int>? = nil,
         _ handler: @escaping @Sendable (TerminalOscEvent) -> Void
     ) -> TerminalOscObservation {
 #if SWIFTTERM_EMBEDDED
         let id = state.nextID
         state.nextID &+= 1
-        state.registrations.append(Registration(id: id, handler: handler))
+        state.registrations.append(Registration(id: id, codes: codes, handler: handler))
         return TerminalOscObservation { [self] in cancel(id: id) }
 #else
         let id = state.withLock { state in
             let id = state.nextID
             state.nextID &+= 1
-            state.registrations.append(Registration(id: id, handler: handler))
+            state.registrations.append(Registration(id: id, codes: codes, handler: handler))
             return id
         }
 
@@ -232,10 +239,11 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
     }
 
     func publish(code: Int, payload: ArraySlice<UInt8>, cursor: Position) {
+        // Copy the payload only for the observers of this code.
 #if SWIFTTERM_EMBEDDED
-        let registrations = state.registrations
+        let registrations = state.registrations.filter { $0.accepts(code) }
 #else
-        let registrations = state.withLock { $0.registrations }
+        let registrations = state.withLock { $0.registrations.filter { $0.accepts(code) } }
 #endif
         guard !registrations.isEmpty else { return }
         let event = TerminalOscEvent(code: code, payload: Array(payload), cursor: cursor)

@@ -1765,17 +1765,19 @@ extension TerminalView {
     /// Observes copied OSC sequences as the view's terminal encounters them,
     /// without changing how the view handles them.
     ///
-    /// This forwards to ``Terminal/observeOscEvents(_:)`` on the terminal the
-    /// view owns, so a host can react to sequences the view does not surface
-    /// itself — desktop notifications sent with OSC 9, 99 or 777, for
-    /// instance — without access to the mutable terminal. Events are delivered
-    /// asynchronously on a private serial queue in encounter order. Retain the
-    /// returned token for as long as events are needed.
+    /// This forwards to ``Terminal/observeOscEvents(codes:_:)`` on the
+    /// terminal the view owns, so a host can react to sequences the view does
+    /// not surface itself — desktop notifications sent with OSC 9, 99 or 777,
+    /// for instance — without access to the mutable terminal. `codes` limits
+    /// the events to these OSC codes (nil observes every code). Events are
+    /// delivered asynchronously on a private serial queue in encounter order.
+    /// Retain the returned token for as long as events are needed.
     @MainActor
     public func observeOscEvents(
+        codes: Set<Int>? = nil,
         _ handler: @escaping @Sendable (TerminalOscEvent) -> Void
     ) -> TerminalOscObservation {
-        terminal.observeOscEvents(handler)
+        terminal.observeOscEvents(codes: codes, handler)
     }
 
     /// Records the light/dark preference represented by the current palette and optionally
@@ -4378,6 +4380,13 @@ extension TerminalView {
     ///
     func applyControlToEventCharacters (_ ch: String) -> [UInt8]
     {
+        Self.controlBytes(forEventCharacters: ch)
+    }
+
+    /// The Control version of a key's characters, for the characters that
+    /// have one (see ``applyControlToEventCharacters(_:)``).
+    nonisolated static func controlBytes (forEventCharacters ch: String) -> [UInt8]
+    {
         let arr = [UInt8](ch.utf8)
         if arr.count == 1 {
             let ch = Character (UnicodeScalar (arr [0]))
@@ -4853,11 +4862,22 @@ extension TerminalView {
         guard let metrics = cachedImageMetricsValue() else {
             return
         }
-        let terminalWidth = CGFloat(source.cols) * metrics.cellSize.width
         insertImage(image, terminal: source,
-                    width: CGFloat(width) > terminalWidth ? .percent(100) : .auto,
+                    width: Self.sixelWidthRequest(imageWidth: width, columns: source.cols,
+                                                  cellWidth: metrics.cellSize.width,
+                                                  imageScale: metrics.imageScale),
                     height: .auto,
                     preserveAspectRatio: true)
+    }
+
+    /// The width of a Sixel image of `imageWidth` pixels. Programs size Sixel
+    /// images with the cell size that the terminal reports, in device pixels,
+    /// and `.auto` shows one image pixel on one device pixel. Only an image
+    /// wider than the terminal in device pixels takes the terminal's width.
+    nonisolated static func sixelWidthRequest (imageWidth: Int, columns: Int, cellWidth: CGFloat,
+                                               imageScale: CGFloat) -> ImageSizeRequest {
+        let terminalPixels = CGFloat(columns) * cellWidth * imageScale
+        return CGFloat(imageWidth) > terminalPixels ? .percent(100) : .auto
     }
    
     public nonisolated func createImage (source: Terminal, data: Data, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)

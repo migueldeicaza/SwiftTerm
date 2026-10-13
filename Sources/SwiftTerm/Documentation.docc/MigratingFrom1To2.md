@@ -102,14 +102,14 @@ Use the narrowest read API that gives the data you need:
 | The text of a few visible rows | ``TerminalView/visibleRowsText(_:)`` | Copied `String`s for the rows asked for, using the same NUL-free display-text conversion as ``TerminalContentRowSnapshot/text`` and ``TerminalVisibleRowSnapshot/text``. Cheaper than a content snapshot when a host polls the bottom of the screen or reads the row under a click. |
 | Bounded viewport or history contents | ``TerminalView/terminalContentSnapshot(region:)`` | A copied ``TerminalContentSnapshot`` with input state, row coordinates, cell text, widths, attributes, wrap flags, and row text using the same conversion as ``TerminalView/visibleRowsText(_:)``. |
 | Whether the application enabled the kitty keyboard protocol | ``TerminalView/keyboardEnhancementFlags`` | A copied `KittyKeyboardFlags`. Read it before a host event monitor rebinds a key the view would otherwise encode itself. |
-| A terminal event outside the displayed content | `TerminalView.observeOscEvents(_:)` | A copied ``TerminalOscEvent`` goes to an `@Sendable` handler. Retain its ``TerminalOscObservation`` token for the required lifetime. |
+| A terminal event outside the displayed content | `TerminalView.observeOscEvents(codes:_:)` | A copied ``TerminalOscEvent`` goes to an `@Sendable` handler. Retain its ``TerminalOscObservation`` token for the required lifetime. |
 
-`TerminalView.observeOscEvents(_:)` is for passive observation, such as OSC 9,
+`TerminalView.observeOscEvents(codes:_:)` is for passive observation, such as OSC 9,
 99, or 777 desktop notifications that the view does not display. It preserves
 normal OSC handling. Its handler runs asynchronously. Do not use it for a
 response that must change parser behavior. If an application owns a
 ``Terminal`` directly, it can instead use
-``Terminal/observeOscEvents(_:)`` or
+``Terminal/observeOscEvents(codes:_:)`` or
 ``Terminal/registerOscHandler(code:handler:)``.
 
 ### Send data and change terminal state
@@ -251,7 +251,7 @@ Before you release the updated application:
 - ``TerminalView/pasteText(_:)``
 - ``TerminalView/softReset()``
 - ``TerminalView/resetToInitialState()``
-- ``Terminal/observeOscEvents(_:)``
+- ``Terminal/observeOscEvents(codes:_:)``
 - ``TerminalOscEvent``
 - ``TerminalOscObservation``
 - ``LocalProcess``

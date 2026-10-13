@@ -1724,12 +1724,17 @@ open class Terminal {
     /// cancellation. An observer does not receive events encountered before
     /// its registration.
     ///
-    /// - Parameter handler: A callback that receives an owned, sendable event.
+    /// - Parameters:
+    ///   - codes: The OSC codes to observe, or nil for every code. The
+    ///     terminal copies the payloads of these codes only, so a filter
+    ///     keeps large payloads of other codes (for example images) cheap.
+    ///   - handler: A callback that receives an owned, sendable event.
     /// - Returns: A token that controls the observation lifetime.
     public func observeOscEvents(
+        codes: Set<Int>? = nil,
         _ handler: @escaping @Sendable (TerminalOscEvent) -> Void
     ) -> TerminalOscObservation {
-        oscEventDispatcher.observe(handler)
+        oscEventDispatcher.observe(codes: codes, handler)
     }
 
     /// Enqueues one copied event before synchronous parser dispatch continues.

@@ -33,6 +33,18 @@ public final class TerminalRowStore {
         BufferLine(cols: max(1, columns), fillData: nil, arena: arena)
     }
 
+    /// How many more distinct attributes the store can hold. A cell whose
+    /// attribute does not fit draws with the default attribute.
+    public var remainingStyleCapacity: Int {
+        max(0, arena.attributeLimit - arena.attributeCount)
+    }
+
+    /// How many more grapheme clusters (cells with more than one scalar) the
+    /// store can hold.
+    public var remainingGraphemeCapacity: Int {
+        max(0, arena.graphemeLimit - arena.graphemeCount)
+    }
+
     /// True when the style or grapheme table is more than 90% full.
     public var isNearCapacity: Bool {
         let styles: Int = arena.attributeCount * 10
