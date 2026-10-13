@@ -11,6 +11,15 @@ import MetalKit
 /// the fallback uses `metalVisibleRange()`, not `yDisp ...`.
 final class IOSMetalDirtyRangeTests: XCTestCase {
 
+    private final class CountingMetalView: MTKView {
+        var redrawRequests = 0
+
+        override func setNeedsDisplay(_ rect: CGRect) {
+            redrawRequests += 1
+            super.setNeedsDisplay(rect)
+        }
+    }
+
     /// Scrolled so a row's bottom sliver sits above the first fully
     /// visible row (yDisp = 23 while the viewport starts inside row
     /// 22): a full redraw must dirty 22...N, not 23...N.
@@ -93,6 +102,48 @@ final class IOSMetalDirtyRangeTests: XCTestCase {
         view.invalidateLinkHighlightRow(22)
         XCTAssertTrue(view.metalDirtyRange?.contains(22) ?? false,
                       "link highlight must dirty the partial top row")
+    }
+
+    private func assertRedrawWaitsForSynchronizedOutput(
+        blinkRow: Int? = nil, invalidate: (TerminalView) -> Void
+    ) throws {
+        let view = try makeScrolledView(blinkRow: blinkRow)
+        let metal = CountingMetalView(frame: view.bounds,
+                                      device: MTLCreateSystemDefaultDevice())
+        view.metalView = metal
+        view.terminal.feed(text: "\u{1b}[?2026h")
+        XCTAssertTrue(view.terminal.synchronizedOutputActive)
+        metal.redrawRequests = 0
+
+        invalidate(view)
+        view.updateDisplay(notifyAccessibility: false)
+
+        XCTAssertEqual(metal.redrawRequests, 0,
+                       "do not redraw while synchronized output is active")
+        XCTAssertEqual(view.metalDirtyRange, 22...22,
+                       "retain the partial row for the next redraw")
+
+        view.terminal.feed(text: "\u{1b}[?2026l")
+        XCTAssertFalse(view.terminal.synchronizedOutputActive)
+        view.updateDisplay(notifyAccessibility: false)
+
+        XCTAssertGreaterThan(metal.redrawRequests, 0,
+                             "redraw when synchronized output ends")
+        XCTAssertTrue(view.metalDirtyRange?.contains(22) ?? false,
+                      "the redraw must include the pending partial row")
+    }
+
+    func testBlinkRedrawWaitsForSynchronizedOutput() throws {
+        try assertRedrawWaitsForSynchronizedOutput(blinkRow: 22) { view in
+            XCTAssertEqual(view.visibleBlinkRows(), [22])
+            view.setTextBlinkVisibleForTesting(false)
+        }
+    }
+
+    func testLinkHighlightRedrawWaitsForSynchronizedOutput() throws {
+        try assertRedrawWaitsForSynchronizedOutput { view in
+            view.invalidateLinkHighlightRow(22)
+        }
     }
 }
 #endif
