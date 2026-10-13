@@ -6,6 +6,7 @@ import Testing
 
 @testable import SwiftTerm
 
+#if os(macOS) || os(Linux)
 final class KittyCursorTests {
     private func makeHeadlessTerminal() -> HeadlessTerminal {
         HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
@@ -54,3 +55,5 @@ final class KittyCursorTests {
         #expect(t.buffer.y == 0)
     }
 }
+
+#endif
