@@ -746,7 +746,11 @@ extension TerminalView {
             } else {
                 metalDirtyRange = row...row
             }
-            requestMetalDisplay()
+            // Keep the dirty range until synchronized output ends.
+            // Its final refresh will request the redraw.
+            if !terminal.synchronizedOutputActive {
+                requestMetalDisplay()
+            }
         }
         #endif
     }
