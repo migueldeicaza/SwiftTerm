@@ -6,6 +6,7 @@ import Testing
 
 @testable import SwiftTerm
 
+#if os(macOS) || os(Linux)
 final class KittyGraphicsLifecycleTests {
     private func makeHeadlessTerminal() -> HeadlessTerminal {
         HeadlessTerminal(queue: SwiftTermTestSupport.queue, options: TerminalOptions(cols: 10, rows: 5)) { _ in }
@@ -386,3 +387,5 @@ final class KittyGraphicsLifecycleTests {
         #expect(t.kittyGraphicsState.imagesById[1] != nil)
     }
 }
+
+#endif

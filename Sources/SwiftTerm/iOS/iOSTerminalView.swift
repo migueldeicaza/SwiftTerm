@@ -203,6 +203,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      * a one-finger vertical drag is reported as bounded wheel presses; two fingers keep scrolling
      * the local scrollback. On an alternate screen that does not track the mouse, Alternate
      * Scroll Mode turns the same one-finger drag into cursor keys.
+     * An attached mouse or trackpad reports wheel movement through the same routes.
+     * Pointer hover reports require Any Event Tracking (mode 1003).
      *
      * While this is false the terminal never reports the mouse. Taps select, and one-finger
      * drags return to UIKit, which scrolls the local scrollback as for any scroll view. No
@@ -1201,50 +1203,73 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         distance: CGFloat,
         gestureRecognizer: UIGestureRecognizer
     ) {
+        forwardWheel(distance: distance,
+                     point: gestureRecognizer.location(in: self),
+                     modifiers: gestureRecognizer.modifierFlags,
+                     accumulator: &wheelDragAccumulator)
+    }
+
+    /// Pointer travel is separate from finger travel. Positive pan translation moves up.
+    func forwardPointerScroll(distance: CGFloat, gestureRecognizer: UIGestureRecognizer) {
+        forwardWheel(distance: distance,
+                     point: gestureRecognizer.location(in: self),
+                     modifiers: gestureRecognizer.modifierFlags,
+                     accumulator: &pointerScrollAccumulator,
+                     isPrecise: (gestureRecognizer as? UIPanGestureRecognizer)?
+                        .allowedScrollTypesMask != .discrete)
+    }
+
+    private func forwardWheel(
+        distance: CGFloat,
+        point: CGPoint,
+        modifiers: UIKeyModifierFlags,
+        accumulator: inout WheelDistanceAccumulator<ProgramScrollRoute>,
+        isPrecise: Bool = true
+    ) {
         let cellHeight = cellDimension.height
         guard cellHeight > 0 else { return }
 
-        // Route before banking. Travel that a Shift bypass or a reset mode suppressed is
-        // dropped, so the first report the same drag sends once its route returns does not
-        // include movement the application was never meant to see.
-        let route = withTerminal { terminal in
-            ProgramScrollRouting.route(
+        // Keep routing, coordinate conversion, and reports in one terminal operation.
+        let cursorLines = withTerminal { terminal -> Int in
+            let route = ProgramScrollRouting.route(
                 allowMouseReporting: allowMouseReporting,
                 shiftBypassesMouseReporting:
-                    shiftBypassesMouseReportingLocked(for: gestureRecognizer),
+                    modifiers.contains(.shift) && !terminal.mouseShiftCapture,
                 mouseTracking: terminal.mouseMode != .off,
                 alternateBuffer: terminal.isDisplayBufferAlternate,
                 alternateScrollMode: terminal.alternateScrollMode)
-        }
-        guard route != .none else {
-            wheelDragAccumulator.reset()
-            return
-        }
+            guard route != .none else {
+                accumulator.reset()
+                return 0
+            }
 
-        let lines = wheelDragAccumulator.takeWholeLines(
-            distance: distance,
-            cellHeight: cellHeight,
-            route: route)
-        guard lines != 0 else { return }
+            let lines: Int
+            if isPrecise {
+                lines = accumulator.takeWholeLines(
+                    distance: distance, cellHeight: cellHeight, route: route)
+            } else {
+                accumulator.reset()
+                lines = distance == 0 ? 0 : (distance > 0 ? 1 : -1)
+            }
+            guard lines != 0 else { return 0 }
 
-        switch route {
-        case .mouse:
-            let wantedReports = WheelReportBudget.requestedReports(
-                lineCount: lines,
-                isPrecise: true)
-            let reports = wheelReportBudget.grant(wantedReports)
-            guard reports > 0 else { return }
-            withTerminal { terminal in
-                let hit = calculateTapHitLocked(point: gestureRecognizer.location(in: self))
-                guard let grid = hit.grid.toScreenCoordinate(from: terminal.displayBuffer) else {
-                    return
+            switch route {
+            case .mouse:
+                guard bounds.contains(point) else { return 0 }
+                let hit = calculateTapHitLocked(point: point)
+                guard let grid = hit.grid.toScreenCoordinate(from: terminal.displayBuffer),
+                      grid.row < terminal.rows else {
+                    return 0
                 }
+                let reports = wheelReportBudget.grant(
+                    WheelReportBudget.requestedReports(lineCount: lines, isPrecise: isPrecise))
                 let flags = terminal.encodeButton(
                     button: lines > 0 ? 4 : 5,
                     release: false,
-                    shift: false,
-                    meta: false,
-                    control: false)
+                    shift: modifiers.contains(.shift),
+                    meta: modifiers.contains(.alternate),
+                    control: modifiers.contains(.control) ||
+                        (terminalAccessory?.controlModifier ?? controlModifier))
                 for _ in 0..<reports {
                     terminal.sendEvent(
                         buttonFlags: flags,
@@ -1253,19 +1278,49 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                         pixelX: hit.pixels.col,
                         pixelY: hit.pixels.row)
                 }
+                return 0
+            case .cursorKeys:
+                let keys = wheelReportBudget.grant(
+                    WheelReportBudget.requestedKeys(lineCount: lines))
+                return lines > 0 ? keys : -keys
+            case .none:
+                return 0
             }
-        case .cursorKeys:
-            let keys = wheelReportBudget.grant(
-                WheelReportBudget.requestedKeys(lineCount: lines))
-            for _ in 0..<keys {
-                if lines > 0 {
-                    sendKeyUp()
-                } else {
-                    sendKeyDown()
-                }
+        }
+        // The key helpers acquire the terminal lock themselves.
+        for _ in 0..<abs(cursorLines) {
+            if cursorLines > 0 {
+                sendKeyUp()
+            } else {
+                sendKeyDown()
             }
-        case .none:
+        }
+    }
+
+    @objc func handlePointerScroll(_ gestureRecognizer: UIPanGestureRecognizer) {
+        switch gestureRecognizer.state {
+        case .began:
+            pointerScrollAccumulator.reset()
+            fallthrough
+        case .changed:
+            let distance = gestureRecognizer.translation(in: self).y
+            gestureRecognizer.setTranslation(.zero, in: self)
+            forwardPointerScroll(distance: distance, gestureRecognizer: gestureRecognizer)
+        case .ended, .cancelled, .failed:
+            pointerScrollAccumulator.reset()
+        default:
             break
+        }
+    }
+
+    func shouldCapturePointerScroll(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard terminal != nil else { return false }
+        return withTerminal { terminal in
+            !shiftBypassesMouseReportingLocked(for: gestureRecognizer) &&
+                ProgramScrollRouting.capturesGesture(
+                    allowMouseReporting: allowMouseReporting,
+                    mouseTracking: terminal.mouseMode != .off,
+                    alternateBuffer: terminal.isDisplayBufferAlternate)
         }
     }
    
@@ -1421,6 +1476,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     func setupLinkReportingInteractions ()
     {
+        let scrollDelegate = PointerScrollGestureDelegate(terminalView: self)
+        pointerScrollDelegate = scrollDelegate
+        for scrollType: UIScrollTypeMask in [.continuous, .discrete] {
+            let scroll = UIPanGestureRecognizer(target: self, action: #selector(handlePointerScroll(_:)))
+            scroll.allowedScrollTypesMask = scrollType
+            scroll.allowedTouchTypes = []
+            scroll.delegate = scrollDelegate
+            addGestureRecognizer(scroll)
+            // The application gets pointer scrolls first. Rejected gestures scroll locally.
+            panGestureRecognizer.require(toFail: scroll)
+        }
+
         if #available(iOS 13.4, visionOS 1.0, *) {
             let interaction = UIPointerInteraction(delegate: self)
             addInteraction(interaction)
@@ -1450,7 +1517,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             lastPointerLocation = location
             reportLinkIfNeeded(at: location, modifiers: [], force: true)
             updateLinkHighlightIfNeeded(at: location, modifiers: [.command], force: true)
+            forwardPointerHover(at: location, modifiers: gestureRecognizer.modifierFlags)
         case .ended, .cancelled:
+            lastPointerLocation = nil
             lastReportedLink = nil
             if linkHighlightMode == .hover || linkHighlightMode == .hoverWithModifier {
                 let oldRange = linkHighlightRange
@@ -1460,6 +1529,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             }
         default:
             break
+        }
+    }
+
+    /// Hover has no pressed button. Only Any Event Tracking (1003) requests these reports.
+    func forwardPointerHover(at point: CGPoint, modifiers: UIKeyModifierFlags) {
+        guard allowMouseReporting, bounds.contains(point) else { return }
+        withTerminal { terminal in
+            guard terminal.mouseMode.sendMotionEvent(),
+                  !modifiers.contains(.shift) || terminal.mouseShiftCapture else { return }
+            let hit = calculateTapHitLocked(point: point)
+            guard let grid = hit.grid.toScreenCoordinate(from: terminal.displayBuffer),
+                  grid.row < terminal.rows else { return }
+            // Do not consume the keyboard's pending Control modifier on pointer motion.
+            let flags = terminal.encodeButton(
+                button: 0, release: true,
+                shift: modifiers.contains(.shift),
+                meta: modifiers.contains(.alternate),
+                control: modifiers.contains(.control))
+            terminal.sendMotion(buttonFlags: flags, x: grid.col, y: grid.row,
+                                pixelX: hit.pixels.col, pixelY: hit.pixels.row)
         }
     }
 
@@ -3614,6 +3703,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     private func refreshProgramScrollGesture(mouseMode: Terminal.MouseMode? = nil) {
+        pointerScrollAccumulator.reset()
         let capturesProgramScroll = withTerminal { terminal in
             ProgramScrollRouting.capturesGesture(
                 allowMouseReporting: allowMouseReporting,
@@ -3745,6 +3835,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // Keep new stored properties at the end of the class. Moving the existing
     // render-path fields changes their Release layout and can reduce throughput.
     nonisolated let kittyClipboardBridge = AppleKittyClipboardBridge()
+    private var pointerScrollAccumulator = WheelDistanceAccumulator<ProgramScrollRoute>()
+    private var pointerScrollDelegate: PointerScrollGestureDelegate?
+}
+
+@MainActor
+private final class PointerScrollGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+    private weak var terminalView: TerminalView?
+
+    init(terminalView: TerminalView) {
+        self.terminalView = terminalView
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        terminalView?.shouldCapturePointerScroll(gestureRecognizer) ?? false
+    }
 }
 
 // Default implementations for TerminalViewDelegate

@@ -4,6 +4,7 @@
 import Testing
 @testable import SwiftTerm
 
+#if os(macOS) || os(Linux)
 final class KittyUnicodeTests {
 
     private func decodePlaceholders(line: BufferLine, row: Int, cols: Int, terminal: Terminal) -> [KittyPlaceholderCell] {
@@ -381,3 +382,5 @@ final class KittyUnicodeTests {
         #expect(placement?.destHeight == 22)
     }
 }
+
+#endif

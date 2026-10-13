@@ -12,6 +12,7 @@ import XCTest
 
 @testable import SwiftTerm
 
+#if os(macOS) || os(Linux)
 final class SelectionScrollTests: XCTestCase {
 
     private func makeTerminal (rows: Int = 10, cols: Int = 40) -> Terminal {
@@ -282,3 +283,5 @@ final class SelectionScrollTests: XCTestCase {
         XCTAssertEqual (selectedText (selection), "LINE_5")
     }
 }
+
+#endif

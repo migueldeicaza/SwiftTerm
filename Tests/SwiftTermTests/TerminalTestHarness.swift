@@ -23,6 +23,7 @@ final class LockedTerminalTestAccess: @unchecked Sendable {
 }
 
 /// Exposes only the thread-safe queued input operation of HeadlessTerminal.
+#if os(macOS) || os(Linux)
 final class HeadlessInputTestAccess: @unchecked Sendable {
     private let headless: HeadlessTerminal
 
@@ -34,6 +35,7 @@ final class HeadlessInputTestAccess: @unchecked Sendable {
         headless.send(data: data)
     }
 }
+#endif
 
 final class TerminalTestDelegate: TerminalDelegate {
     private(set) var sentData: [[UInt8]] = []
