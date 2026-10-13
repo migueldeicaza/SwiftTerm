@@ -39,10 +39,11 @@ public struct TerminalKeyboardModes: Equatable, Sendable {
 /// A key that the router sends to the terminal program.
 ///
 /// A host that owns the terminal sends the bytes that come with the event. A
-/// host whose terminal runs somewhere else sends the event, and the other
-/// side gives its fields to `Terminal.sendHostKey`, or `text` to
-/// `Terminal.sendHostText` when `isText` is true. The terminal then encodes
-/// the key with its modes at that time.
+/// host whose terminal runs somewhere else sends the event too: when the
+/// terminal's modes changed before the key arrived, the other side gives its
+/// fields to `Terminal.sendHostKey`, or `text` to `Terminal.sendHostText`
+/// when `isText` is true. The terminal then encodes the key with its modes
+/// at that time.
 public struct TerminalKeyEvent {
     let event: KittyKeyEvent
     /// The `backspaceSendsControlH` setting of the host.
@@ -103,10 +104,11 @@ public protocol TerminalKeyboardHost: NSView {
     /// A key went down and the menu did not take it: the host can clear its
     /// selection, hide the pointer, and so on.
     func keyboardRouterKeyDown (_ event: NSEvent)
-    /// Sends a key. `bytes` is the key encoded with `keyboardModes`.
+    /// Sends a key. `bytes` is the key encoded with `keyboardModes` (the
+    /// value that the router read last).
     func keyboardRouter (send event: TerminalKeyEvent, bytes: [UInt8])
-    /// Sends bytes as they are (legacy sequences that do not depend on modes
-    /// the program can change, except as `keyboardModes` gives them).
+    /// Sends bytes that do not come from one key, as they are (for example
+    /// the legacy sequences of editing commands).
     func keyboardRouter (send bytes: [UInt8])
     /// Sends typed text as it is.
     func keyboardRouter (sendText text: String)
@@ -322,8 +324,7 @@ public final class TerminalKeyboardRouter {
                     default: break
                     }
                 }
-                host.keyboardRouter(send: EscapeSequences.cmdEsc)
-                host.keyboardRouter(sendText: rawCharacter)
+                sendLegacyKey(event, bytes: EscapeSequences.cmdEsc + Array(rawCharacter.utf8))
             }
             return
         } else if eventFlags.contains (.control) {
@@ -332,7 +333,7 @@ public final class TerminalKeyboardRouter {
             // instead of the unmodified space. Use the physical Space key so
             // that the terminal always sends the NUL byte expected for C-SPC.
             if event.keyCode == UInt16(kVK_Space) {
-                host.keyboardRouter(send: [0])
+                sendLegacyKey(event, bytes: [0])
                 return
             }
             if let ch = event.charactersIgnoringModifiers {
@@ -379,7 +380,7 @@ public final class TerminalKeyboardRouter {
                 }
 
                 if !controlBytes.isEmpty {
-                    host.keyboardRouter(send: controlBytes)
+                    sendLegacyKey(event, bytes: controlBytes)
                 }
                 return
             }
@@ -674,6 +675,20 @@ public final class TerminalKeyboardRouter {
     }
 
     // MARK: Sending
+
+    /// Sends the legacy bytes of a text key (Control or Option as Meta),
+    /// with the key. A host whose terminal runs somewhere else can then
+    /// encode the key again when the program enabled the kitty protocol
+    /// before the key arrived.
+    private func sendLegacyKey (_ event: NSEvent, bytes: [UInt8]) {
+        guard let host else { return }
+        guard let kittyEvent = kittyTextEvent(from: event, eventType: event.isARepeat ? .repeatPress : .press) else {
+            host.keyboardRouter(send: bytes)
+            return
+        }
+        host.keyboardRouter(send: TerminalKeyEvent(event: kittyEvent, backspaceSendsControlH: host.backspaceSendsControlH),
+                            bytes: bytes)
+    }
 
     @discardableResult
     private func sendKittyEvent (_ event: KittyKeyEvent) -> Bool {

@@ -123,6 +123,22 @@ struct TerminalRenderViewTests {
         // Lines of another store are refused.
         #expect(!TerminalRowStore().setCell(line, column: 0, text: "x", width: 1, attribute: .empty))
         #expect(!store.isNearCapacity)
+
+        // Each new attribute takes one style, once.
+        let empty = TerminalRowStore()
+        let row = empty.makeLine(columns: 4)
+        empty.setCell(row, column: 0, text: "a", width: 1, attribute: .empty)
+        let styles = empty.remainingStyleCapacity
+        let graphemes = empty.remainingGraphemeCapacity
+        empty.setCell(row, column: 1, text: "b", width: 1, attribute: .empty)
+        #expect(empty.remainingStyleCapacity == styles)
+        for blue in 0 ..< 3 {
+            empty.setCell(row, column: blue, text: "e\u{301}", width: 1,
+                          attribute: Attribute(foreground: .trueColor(red: 1, green: 2, blue: UInt8(blue)),
+                                               background: .defaultColor, style: []))
+        }
+        #expect(empty.remainingStyleCapacity == styles - 3)
+        #expect(empty.remainingGraphemeCapacity < graphemes)
     }
 
     @Test func renderViewDrawsExternalRows() throws {
@@ -544,6 +560,61 @@ struct TerminalRenderViewTests {
         let viewState = try #require(view.captureFrameViewState())
         let prepared = try #require(owner.prepare(source: source, viewState: viewState))
         #expect(prepared.damage == .rows(IndexSet(integer: 1)))
+    }
+
+    /// A new row store gives its first style the same ID as the old store
+    /// gave a different style. The view must draw the new style.
+    @Test func aNewRowStoreDrawsItsOwnStyles() throws {
+        let red = Attribute(foreground: .defaultColor, background: .trueColor(red: 220, green: 0, blue: 0), style: [])
+        let green = Attribute(foreground: .defaultColor, background: .trueColor(red: 0, green: 200, blue: 0), style: [])
+        let first = FixedFrameSource(columns: 10, rows: 1, topLine: 0)
+        first.setLine(0, "MMMM", attribute: red)
+        let view = TerminalRenderView(frame: .zero, font: font)
+        view.nativeBackgroundColor = .black
+        view.setFrameSize(NSSize(width: view.cellSize.width * 10, height: view.cellSize.height))
+        view.frameSource = first
+        view.frameTick()
+        _ = try bitmap(view)
+
+        let second = FixedFrameSource(columns: 10, rows: 1, topLine: 0)
+        second.setLine(0, "MMMM", attribute: green)
+        view.frameSource = second
+        view.frameTick()
+        let image = try bitmap(view)
+        let reddish = count(image) { $0.redComponent > 0.6 && $0.greenComponent < 0.3 }
+        let greenish = count(image) { $0.greenComponent > 0.6 && $0.redComponent < 0.3 }
+        #expect(reddish == 0)
+        #expect(greenish > 0)
+    }
+
+    @Test func progressBarShowsAndGoesAway() throws {
+        let view = TerminalRenderView(frame: .zero, font: font)
+        view.setFrameSize(NSSize(width: view.cellSize.width * 10, height: view.cellSize.height * 3))
+        #expect(view.progressReport == nil)
+
+        view.showProgress(Terminal.ProgressReport(state: .set, progress: 40))
+        #expect(view.progressReport == Terminal.ProgressReport(state: .set, progress: 40))
+        let bar = try #require(view.subviews.last as? TerminalProgressBarView)
+        #expect(!bar.isHidden)
+        #expect(bar.frame.maxY == view.bounds.maxY)
+        #expect(bar.frame.width == view.bounds.width)
+
+        // The bar follows the view's width.
+        view.setFrameSize(NSSize(width: view.cellSize.width * 20, height: view.cellSize.height * 3))
+        #expect(bar.frame.width == view.bounds.width)
+
+        view.showProgress(Terminal.ProgressReport(state: .remove, progress: nil))
+        #expect(view.progressReport == nil)
+        #expect(bar.isHidden)
+
+        // A report with no time left shows nothing; a short one goes away
+        // when its time ends.
+        view.showProgress(Terminal.ProgressReport(state: .set, progress: 10), duration: 0)
+        #expect(view.progressReport == nil)
+        view.showProgress(Terminal.ProgressReport(state: .set, progress: 10), duration: 0.05)
+        #expect(view.progressReport != nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        #expect(view.progressReport == nil)
     }
 }
 #endif

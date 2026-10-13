@@ -116,13 +116,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         return true
     }()
 #endif
-    private static let regularArrowKeyCodes: Set<UInt16> = [
-        UInt16(kVK_LeftArrow),
-        UInt16(kVK_RightArrow),
-        UInt16(kVK_DownArrow),
-        UInt16(kVK_UpArrow)
-    ]
-
     // Per-window state for the macOS 26 mouse-moved fallback. `acceptsMouseMovedEvents`
     // is an NSWindow-wide setting and a single `.mouseMoved` local monitor is enough
     // to service every terminal view in the window, so this state is shared per window
@@ -1017,7 +1010,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         guard uiShutdownState == .active, terminal != nil else { return }
         let focused = hasFocus
         // Releases can be lost when either the responder or the key window changes.
-        if !focused { kittyKeysWithReportedPress.removeAll() }
+        if !focused { keyboardRouter.focusLost() }
         withTerminal { terminal in
             if terminal.reportedFocusState != focused {
                 terminal.setTerminalFocus(focused)
@@ -1956,26 +1949,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         } else {
             turnOffUrlPreview ()
         }
-        let keyboardEnhancementFlags = withTerminal { $0.keyboardEnhancementFlags }
-        if keyboardEnhancementFlags.contains(.reportAllKeys),
-           !kittyIsComposing,
-           let modifierKey = kittyModifierKey(from: event.keyCode),
-           let isDown = kittyModifierIsPressed(modifierKey, in: event) {
-            let eventType: KittyKeyboardEventType = isDown ? .press : .release
-            if eventType == .release && !keyboardEnhancementFlags.contains(.reportEvents) {
-                super.flagsChanged(with: event)
-                return
-            }
-            let modifiers = kittyModifiers(from: event, includeOption: true)
-            let kittyEvent = KittyKeyEvent(key: .functional(modifierKey),
-                                           modifiers: modifiers,
-                                           eventType: eventType,
-                                           text: nil,
-                                           shiftedKey: nil,
-                                           baseLayoutKey: nil,
-                                           composing: kittyIsComposing)
-            _ = sendKittyEvent(kittyEvent)
-        }
+        keyboardRouter.flagsChanged(event)
         super.flagsChanged(with: event)
     }
     
@@ -1999,16 +1973,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// OS specific feature.
     public var optionAsMetaKey: Bool = true
 
-    private struct PendingKittyKeyEvent {
-        let event: NSEvent
-        let eventType: KittyKeyboardEventType
-    }
-
-    private var pendingKittyKeyEvent: PendingKittyKeyEvent?
-    private var kittyIsComposing = false
-    /// The key code of the last key that the input method interpreted
-    /// during a preedit. Cleared by the next key down or by its key up.
-    private var kittyComposingKeyCode: UInt16?
 
     //
     // We capture a handful of keydown events and pre-process those, and then let
@@ -2023,420 +1987,23 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     // of those keys.
     //
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        // AppKit offers key equivalents to every view in the window, so only
-        // the focused terminal can take the key for its program.
-        guard event.type == .keyDown,
-              let window, window.isKeyWindow, window.firstResponder === self,
-              event.modifierFlags.contains(.command),
-              withTerminal({ !$0.keyboardEnhancementFlags.isEmpty }),
-              shouldSendCommandKeyToTerminal?(event) == true else {
-            return super.performKeyEquivalent(with: event)
+        if keyboardRouter.performKeyEquivalent(event) {
+            return true
         }
-        keyDown(with: event)
-        return true
+        return super.performKeyEquivalent(with: event)
     }
 
     public override func keyDown(with event: NSEvent) {
-        kittyComposingKeyCode = nil
-        if !event.isARepeat {
-            kittyKeysWithReportedPress.remove(event.keyCode)
-        }
-        let keyboardEnhancementFlags = withTerminal { $0.keyboardEnhancementFlags }
-        let terminalOwnsCommandKey = !keyboardEnhancementFlags.isEmpty
-            && event.modifierFlags.contains(.command)
-            && shouldSendCommandKeyToTerminal?(event) == true
-        // The host menu owns its shortcuts. If AppKit reaches keyDown before
-        // running a menu action, give the menu a chance before clearing the
-        // selection or encoding the key for the terminal application.
-        if event.modifierFlags.contains(.command),
-           !terminalOwnsCommandKey,
-           NSApp.mainMenu?.performKeyEquivalent(with: event) == true {
-            return
-        }
-        let previousKeyDownCode = kittyKeyDownCode
-        kittyKeyDownCode = event.keyCode
-        defer { kittyKeyDownCode = previousKeyDownCode }
-        withTerminal { _ in
-            selection.active = false
-        }
-        let eventFlags = event.modifierFlags
-
-        let applicationCursor = withTerminal { $0.applicationCursor }
-
-        let isOptionAsMetaShortcut = eventFlags.contains([.option, .command])
-            && event.charactersIgnoringModifiers == "o"
-        if !keyboardEnhancementFlags.isEmpty,
-           eventFlags.contains(.command),
-           (!isOptionAsMetaShortcut || terminalOwnsCommandKey),
-           let kittyEvent = kittyKeyEvent(from: event,
-                                          eventType: event.isARepeat ? .repeatPress : .press),
-           sendKittyEvent(kittyEvent) {
-            return
-        }
-
-        if keyboardEnhancementFlags.isEmpty,
-           eventFlags.contains(.command),
-           !(eventFlags.contains(.option) && event.charactersIgnoringModifiers == "o") {
-            interpretKeyEvents([event])
-            return
-        }
-
-        if keyboardEnhancementFlags.isEmpty,
-           !eventFlags.contains(.command),
-           (!eventFlags.contains(.option) || optionAsMetaKey),
-           let functionKey = kittyFunctionalKey(from: event) {
-            let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
-            let isUnmodifiedPageKey = (functionKey == .pageUp || functionKey == .pageDown)
-                && modifiers.intersection([.shift, .alt, .ctrl]).isEmpty
-                && !applicationCursor
-            if isUnmodifiedPageKey {
-                if functionKey == .pageUp {
-                    pageUp()
-                } else {
-                    pageDown()
-                }
-                return
-            }
-            let keyEvent = KittyKeyEvent(key: .functional(functionKey),
-                                         modifiers: modifiers,
-                                         eventType: event.isARepeat ? .repeatPress : .press,
-                                         text: kittyTextForFunctionalKey(functionKey, event: event),
-                                         shiftedKey: nil,
-                                         baseLayoutKey: nil,
-                                         composing: kittyIsComposing)
-            if sendKittyEvent(keyEvent) {
-                return
-            }
-        }
-
-        if !keyboardEnhancementFlags.isEmpty {
-            pendingKittyKeyEvent = nil
-            if eventFlags.contains([.option, .command]), event.charactersIgnoringModifiers == "o" {
-                optionAsMetaKey.toggle()
-                // No press was reported for this key, so its release must
-                // not be reported either.
-                return
-            }
-
-            let wantsEvents = keyboardEnhancementFlags.contains(.reportEvents)
-            let wantsAllKeys = keyboardEnhancementFlags.contains(.reportAllKeys)
-            let repeatEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents) ? .repeatPress : .press
-            let textEventType: KittyKeyboardEventType = (event.isARepeat && wantsEvents && wantsAllKeys) ? .repeatPress : .press
-
-            // A key event during preedit belongs to the input method. AppKit can
-            // commit text or issue a command while it interprets this event. Do
-            // not send the physical key as a second event.
-            if kittyIsComposing {
-                kittyComposingKeyCode = event.keyCode
-                interpretKeyEvents([event])
-                return
-            }
-
-            if let functionKey = kittyFunctionalKey(from: event) {
-                let kittyEvent = KittyKeyEvent(key: .functional(functionKey),
-                                               modifiers: kittyModifiers(from: event, includeOption: optionAsMetaKey),
-                                               eventType: repeatEventType,
-                                               text: kittyTextForFunctionalKey(functionKey, event: event),
-                                               shiftedKey: nil,
-                                               baseLayoutKey: nil,
-                                               composing: kittyIsComposing)
-                if sendKittyEvent(kittyEvent) {
-                    return
-                }
-            }
-
-            if eventFlags.contains(.control) || (optionAsMetaKey && eventFlags.contains(.option)) {
-                if let kittyEvent = kittyTextEvent(from: event, eventType: repeatEventType),
-                   sendKittyEvent(kittyEvent) {
-                    return
-                }
-            }
-
-            pendingKittyKeyEvent = PendingKittyKeyEvent(event: event, eventType: textEventType)
-            interpretKeyEvents([event])
-            return
-        }
-        
-        // Handle Option-letter to send the ESC sequence plus the letter as expected by terminals
-        if eventFlags.contains ([.option, .command]) {
-            if event.charactersIgnoringModifiers == "o" {
-                optionAsMetaKey.toggle()
-            }
-        } else if optionAsMetaKey && eventFlags.contains (.option) {
-            if let rawCharacter = event.charactersIgnoringModifiers {
-                if let fs = rawCharacter.unicodeScalars.first {
-                    switch Int (fs.value) {
-                    case NSLeftArrowFunctionKey:
-                        send (EscapeSequences.emacsBack)
-                        return
-                    case NSRightArrowFunctionKey:
-                        send (EscapeSequences.emacsForward)
-                        return
-                    default: break
-                    }
-                }
-                send (EscapeSequences.cmdEsc)
-                send (txt: rawCharacter)
-            }
-            return
-        } else if eventFlags.contains (.control) {
-            // Sends the control sequence
-            // AppKit can report Control-Space with no character, or with NUL,
-            // instead of the unmodified space. Use the physical Space key so
-            // that the terminal always sends the NUL byte expected for C-SPC.
-            if event.keyCode == UInt16(kVK_Space) {
-                send ([0])
-                return
-            }
-            if let ch = event.charactersIgnoringModifiers {
-                if let fs = ch.unicodeScalars.first {
-                    switch Int (fs.value) {
-                    case NSLeftArrowFunctionKey:
-                        send (EscapeSequences.controlLeft)
-                        return
-                    case NSRightArrowFunctionKey:
-                        send (EscapeSequences.controlRight)
-                        return
-                    default:
-                        break
-                    }
-                }
-                var controlBytes = applyControlToEventCharacters(ch)
-
-                // AppKit supplies the final C0 value for many layouts and
-                // input methods. On Latin ISO layouts its table is letter
-                // based rather than positional, so honor it before the
-                // PC-101 position guess below.
-                if controlBytes.isEmpty,
-                   let characters = event.characters,
-                   let scalar = singleControlScalar(in: characters) {
-                    if scalar.value == 0x7f {
-                        // Control-Backspace follows the same setting as Backspace.
-                        controlBytes = [backspaceSendsControlH ? 8 : 0x7f]
-                    } else {
-                        controlBytes = [UInt8(scalar.value)]
-                    }
-                }
-
-                // Non-Latin layouts can map an ASCII key to a Unicode
-                // character with no Control translation. In that case, use
-                // the key's standard PC-101 position for the legacy Control
-                // mapping. Keep the layout character for ASCII layouts such
-                // as Dvorak.
-                if controlBytes.isEmpty,
-                   ch.unicodeScalars.count == 1,
-                   let scalar = ch.unicodeScalars.first,
-                   scalar.value > 0x7f,
-                   let baseLayoutKey = kittyBaseLayoutKey(from: event) {
-                    controlBytes = applyControlToEventCharacters(String(baseLayoutKey))
-                }
-
-                if !controlBytes.isEmpty {
-                    send(controlBytes)
-                }
-                return
-            }
-        } else if eventFlags.contains (.function) {
-            if let str = event.charactersIgnoringModifiers {
-                if let fs = str.unicodeScalars.first {
-                    let c = Int (fs.value)
-                    switch c {
-                    case NSF1FunctionKey:
-                        send (EscapeSequences.cmdF [0])
-                    case NSF2FunctionKey:
-                        send (EscapeSequences.cmdF [1])
-                    case NSF3FunctionKey:
-                        send (EscapeSequences.cmdF [2])
-                    case NSF4FunctionKey:
-                        send (EscapeSequences.cmdF [3])
-                    case NSF5FunctionKey:
-                        send (EscapeSequences.cmdF [4])
-                    case NSF6FunctionKey:
-                        send (EscapeSequences.cmdF [5])
-                    case NSF7FunctionKey:
-                        send (EscapeSequences.cmdF [6])
-                    case NSF8FunctionKey:
-                        send (EscapeSequences.cmdF [7])
-                    case NSF9FunctionKey:
-                        send (EscapeSequences.cmdF [8])
-                    case NSF10FunctionKey:
-                        send (EscapeSequences.cmdF [9])
-                    case NSF11FunctionKey:
-                        send (EscapeSequences.cmdF [10])
-                    case NSF12FunctionKey:
-                        send (EscapeSequences.cmdF [11])
-                    case NSDeleteFunctionKey:
-                        send (EscapeSequences.cmdDelKey)
-                        //                    case NSUpArrowFunctionKey:
-                        //                        send (EscapeSequences.MoveUpNormal)
-                        //                    case NSDownArrowFunctionKey:
-                        //                        send (EscapeSequences.MoveDownNormal)
-                        //                    case NSLeftArrowFunctionKey:
-                        //                        send (EscapeSequences.MoveLeftNormal)
-                        //                    case NSRightArrowFunctionKey:
-                    //                        send (EscapeSequences.MoveRightNormal)
-                    case NSPageUpFunctionKey:
-                        pageUp ()
-                    case NSPageDownFunctionKey:
-                        pageDown()
-                    default:
-                        interpretKeyEvents([event])
-                    }
-                }
-            }
-            return
-        }
-        
-        interpretKeyEvents([event])
+        keyboardRouter.keyDown(event)
     }
 
     public override func keyUp(with event: NSEvent) {
-        if kittyComposingKeyCode == event.keyCode {
-            kittyComposingKeyCode = nil
-        }
-        let hadReportedPress = kittyKeysWithReportedPress.remove(event.keyCode) != nil
-        if !hadReportedPress {
-            super.keyUp(with: event)
-            return
-        }
-        let flags = withTerminal { $0.keyboardEnhancementFlags }
-        // Every key whose press reached the application gets a release,
-        // including plain text keys.
-        if flags.contains(.reportEvents),
-           let kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
-            if !flags.contains(.reportAllKeys),
-               case .unicode(let codepoint) = kittyEvent.key,
-               codepoint == 9 || codepoint == 13 || codepoint == 127 {
-                // Enter/Tab/Backspace only report release events in report-all-keys mode.
-            } else {
-                _ = sendKittyEvent(kittyEvent)
-            }
-        }
+        keyboardRouter.keyUp(event)
         super.keyUp(with: event)
     }
     
     public override func doCommand(by selector: Selector) {
-        let keyboardEnhancementFlags = withTerminal { $0.keyboardEnhancementFlags }
-        if !keyboardEnhancementFlags.isEmpty && kittyIsComposing {
-            pendingKittyKeyEvent = nil
-            return
-        }
-        if !kittyIsComposing {
-            let mods: KittyKeyboardModifiers
-            if let pending = pendingKittyKeyEvent {
-                mods = kittyModifiers(from: pending.event, includeOption: optionAsMetaKey)
-            } else {
-                mods = []
-            }
-            switch selector {
-            case #selector(insertNewline(_:)):
-                if sendKittyFunctionalKey(.enter, modifiers: mods) { return }
-            case #selector(cancelOperation(_:)):
-                if sendKittyFunctionalKey(.escape, modifiers: mods) { return }
-            case #selector(deleteBackward(_:)):
-                if sendKittyFunctionalKey(.backspace, modifiers: mods) { return }
-            case #selector(moveUp(_:)):
-                if sendKittyFunctionalKey(.up, modifiers: mods) { return }
-            case #selector(moveDown(_:)):
-                if sendKittyFunctionalKey(.down, modifiers: mods) { return }
-            case #selector(moveLeft(_:)):
-                if sendKittyFunctionalKey(.left, modifiers: mods) { return }
-            case #selector(moveRight(_:)):
-                if sendKittyFunctionalKey(.right, modifiers: mods) { return }
-            case #selector(insertTab(_:)):
-                if sendKittyFunctionalKey(.tab, modifiers: mods) { return }
-            case #selector(insertBacktab(_:)):
-                if sendKittyFunctionalKey(.tab, modifiers: mods.union([.shift])) { return }
-            case #selector(moveToBeginningOfLine(_:)):
-                if sendKittyFunctionalKey(.home, modifiers: mods) { return }
-            case #selector(scrollToBeginningOfDocument(_:)):
-                if sendKittyFunctionalKey(.home, modifiers: mods) { return }
-            case #selector(moveToEndOfLine(_:)):
-                if sendKittyFunctionalKey(.end, modifiers: mods) { return }
-            case #selector(scrollToEndOfDocument(_:)):
-                if sendKittyFunctionalKey(.end, modifiers: mods) { return }
-            case #selector(scrollPageUp(_:)):
-                fallthrough
-            case #selector(pageUp(_:)):
-                if withTerminal({ $0.applicationCursor }) {
-                    if sendKittyFunctionalKey(.pageUp, modifiers: mods) { return }
-                } else {
-                    pageUp()
-                    return
-                }
-            case #selector(scrollPageDown(_:)):
-                fallthrough
-            case #selector(pageDown(_:)):
-                if withTerminal({ $0.applicationCursor }) {
-                    if sendKittyFunctionalKey(.pageDown, modifiers: mods) { return }
-                } else {
-                    pageDown()
-                    return
-                }
-            default:
-                break
-            }
-        }
-        switch selector {
-        case #selector(insertNewline(_:)):
-            send (EscapeSequences.cmdRet)
-        case #selector(cancelOperation(_:)):
-            send (EscapeSequences.cmdEsc)
-        case #selector(deleteBackward(_:)):
-            send ([backspaceSendsControlH ? 8 : 0x7f])
-        case #selector(moveUp(_:)):
-            sendKeyUp()
-        case #selector(moveDown(_:)):
-            sendKeyDown()
-        case #selector(moveLeft(_:)):
-            sendKeyLeft()
-        case #selector(moveRight(_:)):
-            sendKeyRight()
-        case #selector(insertTab(_:)):
-            send (EscapeSequences.cmdTab)
-        case #selector(insertBacktab(_:)):
-            send (EscapeSequences.cmdBackTab)
-        case #selector(moveToBeginningOfLine(_:)):
-            send (withTerminal({ $0.applicationCursor }) ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
-        case #selector(scrollToBeginningOfDocument(_:)):
-            send (withTerminal({ $0.applicationCursor }) ? EscapeSequences.moveHomeApp : EscapeSequences.moveHomeNormal)
-        case #selector(moveToEndOfLine(_:)):
-            send (withTerminal({ $0.applicationCursor }) ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
-        case #selector(scrollToEndOfDocument(_:)):
-            send (withTerminal({ $0.applicationCursor }) ? EscapeSequences.moveEndApp : EscapeSequences.moveEndNormal)
-        case #selector(scrollPageUp(_:)):
-            fallthrough
-        case #selector(pageUp(_:)):
-            if withTerminal({ $0.applicationCursor }) {
-                send (EscapeSequences.cmdPageUp)
-            } else {
-                pageUp()
-            }
-        case #selector(scrollPageDown(_:)):
-            fallthrough
-        case #selector(pageDown(_:)):
-            if withTerminal({ $0.applicationCursor }) {
-                send (EscapeSequences.cmdPageDown)
-            } else {
-                pageDown()
-            }
-        case #selector(pageDownAndModifySelection(_:)):
-            if withTerminal({ $0.applicationCursor }) {
-                // TODO: view should scroll one page up.
-            } else {
-                send (EscapeSequences.cmdPageDown)
-            }
-        case #selector(moveToLeftEndOfLine(_:)):
-            // Apple sends the Emacs back-word commands
-            send (EscapeSequences.emacsBack)
-        case #selector(moveToRightEndOfLine(_:)):
-            send (EscapeSequences.emacsForward)
-        default:
-            // Nothing is sent for this key. Under the kitty protocol its
-            // release must not be reported without a press.
-            pendingKittyKeyEvent = nil
-            print ("Unhandle selector \(selector)")
-        }
+        keyboardRouter.doCommand(selector)
     }
     
     // NSTextInputClient protocol implementation
@@ -2445,113 +2012,24 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     func insertText(_ string: Any, replacementRange: NSRange, isPaste: Bool) {
-        // A commit ends the preedit in every mode. AppKit does not call
-        // unmarkText after a commit, so clear the state here.
-        let wasComposing = kittyIsComposing
-        kittyIsComposing = false
         markedTextStorage = nil
         markedSelectedRange = NSRange(location: NSNotFound, length: 0)
         updateMarkedTextOverlay()
-        if let str = string as? NSString {
-            if isPaste {
-                pendingKittyKeyEvent = nil
-                pasteText(str as String)
-                return
-            }
-            let terminalState = withTerminal { terminal in
-                terminal.keyboardEnhancementFlags
-            }
-            if !terminalState.isEmpty {
-                let pendingEvent = pendingKittyKeyEvent
-                pendingKittyKeyEvent = nil
-                let text = str as String
-
-                // Backspace or Delete that ends a preedit is an IME edit
-                // command. It is not committed text for the terminal. Other
-                // control input, such as Ctrl+C, is a real key press.
-                if wasComposing && isPreeditEditCharacter(text) {
-                    return
-                }
-
-                // Option acting as a compose/AltGr layer (e.g. on the Czech
-                // layout Option+2 produces "@" while the bare key is "ě"). When
-                // optionAsMetaKey is off, Option is not Meta, so the keypress
-                // simply produced a normal character. Encoding it as a kitty
-                // CSI-u event keys off charactersIgnoringModifiers (the
-                // base-layout glyph, "ě") and only carries the composed "@" as
-                // associated text, so apps that negotiate reportAlternates or
-                // reportAllKeys without reportText (e.g. OpenCode) receive the
-                // base key and the composed glyph is lost. Send the composed
-                // text directly instead, matching how kitty/Ghostty handle
-                // AltGr layers.
-                if let pendingEvent,
-                   !optionAsMetaKey,
-                   pendingEvent.event.modifierFlags.contains(.option),
-                   !pendingEvent.event.modifierFlags.contains(.control),
-                   !pendingEvent.event.modifierFlags.contains(.command),
-                   isPlainPrintableText(text) {
-                    send(txt: text)
-                    return
-                }
-
-                let kittyEvent: KittyKeyEvent
-                if text.unicodeScalars.count == 1,
-                   let pendingEvent,
-                   let event = kittyTextEvent(from: pendingEvent.event, eventType: pendingEvent.eventType, text: text) {
-                    kittyEvent = event
-                } else {
-                    kittyEvent = kittyTextEventFromText(text)
-                }
-                let wasSent = sendKittyEvent(kittyEvent)
-                if wasSent,
-                   terminalState.contains(.reportEvents),
-                   let pendingEvent {
-                    if case .none = kittyEvent.key {
-                        // Committed text has no physical key to release.
-                    } else {
-                        kittyKeysWithReportedPress.insert(pendingEvent.event.keyCode)
-                    }
-                }
-                return
-            }
-            send (txt: str as String)
+        guard let str = string as? NSString else {
+            keyboardRouter.markedTextChanged(composing: false)
+            return
         }
-        // TODO: I do not think we actually need this needsDisplay, the data fed should bubble this up
-        // needsDisplay = true
+        if isPaste {
+            keyboardRouter.textWillBePasted()
+            pasteText(str as String)
+            return
+        }
+        // A commit ends the preedit in every mode; the router clears it.
+        keyboardRouter.insertText(str as String)
     }
     
-    /// Whether `text` is a non-empty run of printable scalars (no C0/C1 control
-    /// characters). Used to decide when Option-composed input can be sent as
-    /// literal UTF-8 rather than encoded as a kitty key event.
-    private func isPlainPrintableText(_ text: String) -> Bool {
-        guard !text.isEmpty else { return false }
-        for scalar in text.unicodeScalars {
-            if scalar.value < 0x20 || (scalar.value >= 0x7f && scalar.value <= 0x9f) {
-                return false
-            }
-        }
-        return true
-    }
-
-    /// Returns the single scalar of `text` when it is a C0 control or DEL.
-    private func singleControlScalar(in text: String) -> UnicodeScalar? {
-        let scalars = text.unicodeScalars
-        guard let scalar = scalars.first,
-              scalars.index(after: scalars.startIndex) == scalars.endIndex,
-              scalar.value < 0x20 || scalar.value == 0x7f else {
-            return nil
-        }
-        return scalar
-    }
-
-    private func isPreeditEditCharacter(_ text: String) -> Bool {
-        guard let scalar = singleControlScalar(in: text) else { return false }
-        return scalar.value == 0x08 || scalar.value == 0x7f
-    }
-
     // NSTextInputClient protocol implementation
     open func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
-        pendingKittyKeyEvent = nil
         switch string {
         case let attributed as NSAttributedString:
             markedTextStorage = attributed.length > 0 ? attributed : nil
@@ -2563,7 +2041,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         markedSelectedRange = selectedRange
         // An empty marked string ends the preedit. hasMarkedText() reports
         // the same state to AppKit.
-        kittyIsComposing = markedTextStorage != nil
+        keyboardRouter.markedTextChanged(composing: markedTextStorage != nil)
         updateMarkedTextOverlay()
     }
 
@@ -2656,476 +2134,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         )
     }
 
-    private func kittyEncoder() -> KittyKeyboardEncoder {
-        let terminalState = withTerminal { terminal in
-            (terminal.keyboardEnhancementFlags, terminal.applicationCursor, terminal.applicationKeypad)
-        }
-        return KittyKeyboardEncoder(flags: terminalState.0,
-                                    applicationCursor: terminalState.1,
-                                    applicationKeypad: terminalState.2,
-                                    backspaceSendsControlH: backspaceSendsControlH)
-    }
-
-    private func kittyModifiers(from event: NSEvent, includeOption: Bool) -> KittyKeyboardModifiers {
-        var modifiers: KittyKeyboardModifiers = []
-        if event.modifierFlags.contains(.shift) { modifiers.insert(.shift) }
-        if event.modifierFlags.contains(.control) { modifiers.insert(.ctrl) }
-        if includeOption, event.modifierFlags.contains(.option) { modifiers.insert(.alt) }
-        if event.modifierFlags.contains(.command) { modifiers.insert(.super) }
-        if event.modifierFlags.contains(.capsLock) { modifiers.insert(.capsLock) }
-        return modifiers
-    }
-
-    private func kittyFunctionalKey(from event: NSEvent) -> KittyFunctionalKey? {
-        switch Int(event.keyCode) {
-        case kVK_ANSI_Keypad0:
-            return .keypad0
-        case kVK_ANSI_Keypad1:
-            return .keypad1
-        case kVK_ANSI_Keypad2:
-            return .keypad2
-        case kVK_ANSI_Keypad3:
-            return .keypad3
-        case kVK_ANSI_Keypad4:
-            return .keypad4
-        case kVK_ANSI_Keypad5:
-            return .keypad5
-        case kVK_ANSI_Keypad6:
-            return .keypad6
-        case kVK_ANSI_Keypad7:
-            return .keypad7
-        case kVK_ANSI_Keypad8:
-            return .keypad8
-        case kVK_ANSI_Keypad9:
-            return .keypad9
-        case kVK_ANSI_KeypadDecimal:
-            return .keypadDecimal
-        case kVK_ANSI_KeypadDivide:
-            return .keypadDivide
-        case kVK_ANSI_KeypadMultiply:
-            return .keypadMultiply
-        case kVK_ANSI_KeypadMinus:
-            return .keypadSubtract
-        case kVK_ANSI_KeypadPlus:
-            return .keypadAdd
-        case kVK_ANSI_KeypadEnter:
-            return .keypadEnter
-        case kVK_ANSI_KeypadEquals:
-            return .keypadEqual
-        case kVK_ANSI_KeypadClear:
-            return .keypadBegin
-        default:
-            break
-        }
-        guard let chars = event.charactersIgnoringModifiers,
-              let scalar = chars.unicodeScalars.first else {
-            return nil
-        }
-        if event.modifierFlags.contains(.numericPad),
-           !Self.regularArrowKeyCodes.contains(event.keyCode) {
-            switch Int(scalar.value) {
-            case NSUpArrowFunctionKey:
-                return .keypadUp
-            case NSDownArrowFunctionKey:
-                return .keypadDown
-            case NSLeftArrowFunctionKey:
-                return .keypadLeft
-            case NSRightArrowFunctionKey:
-                return .keypadRight
-            case NSHomeFunctionKey:
-                return .keypadHome
-            case NSEndFunctionKey:
-                return .keypadEnd
-            case NSPageUpFunctionKey:
-                return .keypadPageUp
-            case NSPageDownFunctionKey:
-                return .keypadPageDown
-            case NSInsertFunctionKey:
-                return .keypadInsert
-            case NSDeleteFunctionKey:
-                return .keypadDelete
-            default:
-                break
-            }
-        }
-        switch Int(scalar.value) {
-        case NSUpArrowFunctionKey:
-            return .up
-        case NSDownArrowFunctionKey:
-            return .down
-        case NSLeftArrowFunctionKey:
-            return .left
-        case NSRightArrowFunctionKey:
-            return .right
-        case NSHomeFunctionKey:
-            return .home
-        case NSEndFunctionKey:
-            return .end
-        case NSPageUpFunctionKey:
-            return .pageUp
-        case NSPageDownFunctionKey:
-            return .pageDown
-        case NSInsertFunctionKey:
-            return .insert
-        case NSDeleteFunctionKey:
-            return .delete
-        case NSPrintScreenFunctionKey:
-            return .printScreen
-        case NSScrollLockFunctionKey:
-            return .scrollLock
-        case NSPauseFunctionKey:
-            return .pause
-        case NSMenuFunctionKey:
-            return .menu
-        case NSF1FunctionKey:
-            return .f1
-        case NSF2FunctionKey:
-            return .f2
-        case NSF3FunctionKey:
-            return .f3
-        case NSF4FunctionKey:
-            return .f4
-        case NSF5FunctionKey:
-            return .f5
-        case NSF6FunctionKey:
-            return .f6
-        case NSF7FunctionKey:
-            return .f7
-        case NSF8FunctionKey:
-            return .f8
-        case NSF9FunctionKey:
-            return .f9
-        case NSF10FunctionKey:
-            return .f10
-        case NSF11FunctionKey:
-            return .f11
-        case NSF12FunctionKey:
-            return .f12
-        case NSF13FunctionKey:
-            return .f13
-        case NSF14FunctionKey:
-            return .f14
-        case NSF15FunctionKey:
-            return .f15
-        case NSF16FunctionKey:
-            return .f16
-        case NSF17FunctionKey:
-            return .f17
-        case NSF18FunctionKey:
-            return .f18
-        case NSF19FunctionKey:
-            return .f19
-        case NSF20FunctionKey:
-            return .f20
-        case NSF21FunctionKey:
-            return .f21
-        case NSF22FunctionKey:
-            return .f22
-        case NSF23FunctionKey:
-            return .f23
-        case NSF24FunctionKey:
-            return .f24
-        case NSF25FunctionKey:
-            return .f25
-        case NSF26FunctionKey:
-            return .f26
-        case NSF27FunctionKey:
-            return .f27
-        case NSF28FunctionKey:
-            return .f28
-        case NSF29FunctionKey:
-            return .f29
-        case NSF30FunctionKey:
-            return .f30
-        case NSF31FunctionKey:
-            return .f31
-        case NSF32FunctionKey:
-            return .f32
-        case NSF33FunctionKey:
-            return .f33
-        case NSF34FunctionKey:
-            return .f34
-        case NSF35FunctionKey:
-            return .f35
-        default:
-            return nil
-        }
-    }
-
-    private func kittyTextForFunctionalKey(_ key: KittyFunctionalKey, event: NSEvent) -> String? {
-        switch key {
-        case .keypad0, .keypad1, .keypad2, .keypad3, .keypad4,
-             .keypad5, .keypad6, .keypad7, .keypad8, .keypad9,
-             .keypadDecimal, .keypadDivide, .keypadMultiply, .keypadSubtract,
-             .keypadAdd, .keypadEqual, .keypadSeparator:
-            let text = event.characters ?? event.charactersIgnoringModifiers
-            return text?.isEmpty == false ? text : nil
-        default:
-            return nil
-        }
-    }
-
-    private func kittyModifierKey(from keyCode: UInt16) -> KittyFunctionalKey? {
-        switch keyCode {
-        case 54:
-            return .rightSuper
-        case 55:
-            return .leftSuper
-        case 56:
-            return .leftShift
-        case 57:
-            return .capsLock
-        case 58:
-            return .leftAlt
-        case 59:
-            return .leftControl
-        case 60:
-            return .rightShift
-        case 61:
-            return .rightAlt
-        case 62:
-            return .rightControl
-        default:
-            return nil
-        }
-    }
-
-    private func modifierFlag(for key: KittyFunctionalKey) -> NSEvent.ModifierFlags? {
-        switch key {
-        case .leftShift, .rightShift:
-            return .shift
-        case .leftControl, .rightControl:
-            return .control
-        case .leftAlt, .rightAlt:
-            return .option
-        case .leftSuper, .rightSuper:
-            return .command
-        case .capsLock:
-            return .capsLock
-        default:
-            return nil
-        }
-    }
-
-    /// Returns the state of the specific modifier key that produced the event.
-    /// The standard AppKit flags combine the left and right keys. The device
-    /// flags keep the side information when both keys are down.
-    private func kittyModifierIsPressed(_ key: KittyFunctionalKey, in event: NSEvent) -> Bool? {
-        let keyMask: UInt
-        let familyMask: UInt
-        switch key {
-        case .leftShift:
-            keyMask = UInt(NX_DEVICELSHIFTKEYMASK)
-            familyMask = keyMask | UInt(NX_DEVICERSHIFTKEYMASK)
-        case .rightShift:
-            keyMask = UInt(NX_DEVICERSHIFTKEYMASK)
-            familyMask = UInt(NX_DEVICELSHIFTKEYMASK) | keyMask
-        case .leftControl:
-            keyMask = UInt(NX_DEVICELCTLKEYMASK)
-            familyMask = keyMask | UInt(NX_DEVICERCTLKEYMASK)
-        case .rightControl:
-            keyMask = UInt(NX_DEVICERCTLKEYMASK)
-            familyMask = UInt(NX_DEVICELCTLKEYMASK) | keyMask
-        case .leftAlt:
-            keyMask = UInt(NX_DEVICELALTKEYMASK)
-            familyMask = keyMask | UInt(NX_DEVICERALTKEYMASK)
-        case .rightAlt:
-            keyMask = UInt(NX_DEVICERALTKEYMASK)
-            familyMask = UInt(NX_DEVICELALTKEYMASK) | keyMask
-        case .leftSuper:
-            keyMask = UInt(NX_DEVICELCMDKEYMASK)
-            familyMask = keyMask | UInt(NX_DEVICERCMDKEYMASK)
-        case .rightSuper:
-            keyMask = UInt(NX_DEVICERCMDKEYMASK)
-            familyMask = UInt(NX_DEVICELCMDKEYMASK) | keyMask
-        case .capsLock:
-            return event.modifierFlags.contains(.capsLock)
-        default:
-            return nil
-        }
-
-        let rawFlags = event.modifierFlags.rawValue
-        if rawFlags & familyMask != 0 {
-            return rawFlags & keyMask != 0
-        }
-        guard let flag = modifierFlag(for: key) else { return nil }
-        return event.modifierFlags.contains(flag)
-    }
-
-    private static let kittyBaseLayoutKeyMap: [UInt16: UnicodeScalar] = {
-        func scalar(_ char: Character) -> UnicodeScalar {
-            char.unicodeScalars.first!
-        }
-        return [
-            0: scalar("a"),
-            1: scalar("s"),
-            2: scalar("d"),
-            3: scalar("f"),
-            4: scalar("h"),
-            5: scalar("g"),
-            6: scalar("z"),
-            7: scalar("x"),
-            8: scalar("c"),
-            9: scalar("v"),
-            11: scalar("b"),
-            12: scalar("q"),
-            13: scalar("w"),
-            14: scalar("e"),
-            15: scalar("r"),
-            16: scalar("y"),
-            17: scalar("t"),
-            18: scalar("1"),
-            19: scalar("2"),
-            20: scalar("3"),
-            21: scalar("4"),
-            22: scalar("6"),
-            23: scalar("5"),
-            24: scalar("="),
-            25: scalar("9"),
-            26: scalar("7"),
-            27: scalar("-"),
-            28: scalar("8"),
-            29: scalar("0"),
-            30: scalar("]"),
-            31: scalar("o"),
-            32: scalar("u"),
-            33: scalar("["),
-            34: scalar("i"),
-            35: scalar("p"),
-            37: scalar("l"),
-            38: scalar("j"),
-            39: scalar("'"),
-            40: scalar("k"),
-            41: scalar(";"),
-            42: scalar("\\"),
-            43: scalar(","),
-            44: scalar("/"),
-            45: scalar("n"),
-            46: scalar("m"),
-            47: scalar("."),
-            49: scalar(" "),
-            50: scalar("`")
-        ]
-    }()
-
-    private func kittyBaseLayoutKey(from event: NSEvent) -> UnicodeScalar? {
-        Self.kittyBaseLayoutKeyMap[event.keyCode]
-    }
-
-    private func kittyTextEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
-        let isControlSpace = event.modifierFlags.contains(.control)
-            && event.keyCode == UInt16(kVK_Space)
-        // With Control held, charactersIgnoringModifiers retains Control's
-        // text translation on macOS (Ctrl+C gives U+0003). Translate the key
-        // code against the layout only in that case: the translation uses
-        // the key code, which synthesized events do not set correctly.
-        let hasControl = event.modifierFlags.contains(.control)
-        let reportedScalar: UnicodeScalar?
-        if hasControl {
-            reportedScalar = event.characters(byApplyingModifiers: [])?.unicodeScalars.first
-                ?? event.charactersIgnoringModifiers?.unicodeScalars.first
-        } else {
-            reportedScalar = event.charactersIgnoringModifiers?.unicodeScalars.first
-        }
-        guard let scalar = isControlSpace ? UnicodeScalar(0x20) : reportedScalar else {
-            return nil
-        }
-        let baseScalar = String(scalar).lowercased().unicodeScalars.first ?? scalar
-        let shiftedScalar: UnicodeScalar?
-        if event.modifierFlags.contains(.shift) && !isControlSpace {
-            if hasControl {
-                shiftedScalar = event.characters(byApplyingModifiers: [.shift])?.unicodeScalars.first
-                    ?? event.characters?.unicodeScalars.first
-            } else {
-                shiftedScalar = event.characters?.unicodeScalars.first
-            }
-        } else {
-            shiftedScalar = nil
-        }
-        let baseLayout = kittyBaseLayoutKey(from: event)
-        let baseLayoutKey = baseLayout == baseScalar ? nil : baseLayout
-        let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
-        return KittyKeyEvent(key: .unicode(baseScalar.value),
-                             modifiers: modifiers,
-                             eventType: eventType,
-                             text: text,
-                             shiftedKey: shiftedScalar,
-                             baseLayoutKey: baseLayoutKey,
-                             composing: kittyIsComposing)
-    }
-
-    private func kittyKeyEvent(from event: NSEvent, eventType: KittyKeyboardEventType, text: String? = nil) -> KittyKeyEvent? {
-        if let functionKey = kittyFunctionalKey(from: event) {
-            let modifiers = kittyModifiers(from: event, includeOption: optionAsMetaKey)
-            return KittyKeyEvent(key: .functional(functionKey),
-                                 modifiers: modifiers,
-                                 eventType: eventType,
-                                 text: text,
-                                 shiftedKey: nil,
-                                 baseLayoutKey: nil,
-                                 composing: kittyIsComposing)
-        }
-        return kittyTextEvent(from: event, eventType: eventType, text: text)
-    }
-
-    private func kittyTextEventFromText(_ text: String) -> KittyKeyEvent {
-        return KittyKeyEvent(key: .none,
-                             modifiers: [],
-                             eventType: .press,
-                             text: text,
-                             shiftedKey: nil,
-                             baseLayoutKey: nil,
-                             composing: kittyIsComposing)
-    }
-
-    @discardableResult
-    private func sendKittyEvent(_ event: KittyKeyEvent) -> Bool {
-        let encoder = kittyEncoder()
-        guard let bytes = encoder.encode(event) else { return false }
-        send(bytes)
-        if encoder.flags.contains(.reportEvents),
-           event.eventType != .release,
-           let keyCode = kittyKeyDownCode {
-            switch event.key {
-            case .none:
-                break
-            default:
-                kittyKeysWithReportedPress.insert(keyCode)
-            }
-        }
-        return true
-    }
-
-    @discardableResult
-    private func sendKittyFunctionalKey(_ key: KittyFunctionalKey, modifiers: KittyKeyboardModifiers = [], eventType: KittyKeyboardEventType = .press) -> Bool {
-        let event = KittyKeyEvent(key: .functional(key),
-                                  modifiers: modifiers,
-                                  eventType: eventType,
-                                  text: nil,
-                                  shiftedKey: nil,
-                                  baseLayoutKey: nil,
-                                  composing: kittyIsComposing)
-        guard sendKittyEvent(event) else { return false }
-        if eventType != .release,
-           withTerminal({ $0.keyboardEnhancementFlags.contains(.reportEvents) }),
-           let pending = pendingKittyKeyEvent {
-            kittyKeysWithReportedPress.insert(pending.event.keyCode)
-        }
-        // The input method forwarded the key that ended the preedit as a
-        // command. Its press is now reported, so its release must be too.
-        if let composingKeyCode = kittyComposingKeyCode {
-            if withTerminal({ $0.keyboardEnhancementFlags.contains(.reportEvents) }) {
-                kittyKeysWithReportedPress.insert(composingKeyCode)
-            }
-        }
-        return true
-    }
-    
     // NSTextInputClient protocol implementation
     open func unmarkText() {
         markedTextStorage = nil
         markedSelectedRange = NSRange(location: NSNotFound, length: 0)
-        kittyIsComposing = false
+        keyboardRouter.markedTextChanged(composing: false)
         updateMarkedTextOverlay()
     }
     
@@ -4751,11 +3764,59 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// the host menu handle its shortcuts first.
     public var shouldSendCommandKeyToTerminal: ((NSEvent) -> Bool)?
 
-    private var kittyKeysWithReportedPress: Set<UInt16> = []
-    private var kittyKeyDownCode: UInt16?
+    /// Decides what each key sends; persistent and remote views use the
+    /// same router (``TerminalKeyboardRouter``).
+    private lazy var keyboardRouter = TerminalKeyboardRouter(host: self)
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}
+
+extension TerminalView: TerminalKeyboardHost {
+    public var keyboardModes: TerminalKeyboardModes {
+        withTerminal { terminal in
+            TerminalKeyboardModes(kittyFlags: terminal.keyboardEnhancementFlags,
+                                  applicationCursor: terminal.applicationCursor,
+                                  applicationKeypad: terminal.applicationKeypad)
+        }
+    }
+
+    public var swapsHorizontalArrowKeys: Bool {
+        withTerminal { terminal in
+            guard terminal.bidiArrowKeySwap else { return false }
+            let buffer = terminal.displayBuffer
+            let row = buffer.yBase + buffer.y
+            return TerminalBidi.resolvedBaseDirection(
+                row: row, buffer: buffer, cols: terminal.cols, terminal: terminal,
+                font: fontSet.normal, hostPolicy: bidiHostPolicy) == .rightToLeft
+        }
+    }
+
+    public func keyboardRouterKeyDown(_ event: NSEvent) {
+        withTerminal { _ in
+            selection.active = false
+        }
+    }
+
+    public func keyboardRouter(send event: TerminalKeyEvent, bytes: [UInt8]) {
+        send(bytes)
+    }
+
+    public func keyboardRouter(send bytes: [UInt8]) {
+        send(bytes)
+    }
+
+    public func keyboardRouter(sendText text: String) {
+        send(txt: text)
+    }
+
+    public func keyboardRouterScrollPage(up: Bool) {
+        if up {
+            pageUp()
+        } else {
+            pageDown()
+        }
+    }
+}
 
 
 extension TerminalView {

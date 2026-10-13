@@ -47,9 +47,13 @@ public extension Terminal {
     /// Encode a browser key through the same encoder as the native views.
     /// Return 0 for browser text input, 1 when bytes were queued, and 2 when
     /// the event was handled without bytes (for example a key release).
+    ///
+    /// `composing` is true while an input method composes text, and
+    /// `backspaceSendsControlH` follows the host's setting.
     @discardableResult
     func sendHostKey(key name: String, code: String, modifiers: UInt32, eventType: UInt32,
-                     text: String?, shiftedKey: UInt32 = 0, baseLayoutKey: UInt32 = 0) -> Int {
+                     text: String?, shiftedKey: UInt32 = 0, baseLayoutKey: UInt32 = 0,
+                     composing: Bool = false, backspaceSendsControlH: Bool = false) -> Int {
         guard let type = KittyKeyboardEventType(rawValue: Int(eventType)) else { return 2 }
         let flags = keyboardEnhancementFlags
         let function = (code.hasPrefix("Numpad") ? Self.hostKeypadNavigation[name] : nil) ?? Self.hostPhysicalKeys[code] ?? Self.hostNamedKeys[name]
@@ -62,13 +66,42 @@ public extension Terminal {
         } else { return type == .release ? 2 : 0 }
         let event = KittyKeyEvent(key: key, modifiers: KittyKeyboardModifiers(rawValue: Int(modifiers)),
             eventType: type, text: text, shiftedKey: shiftedKey == 0 ? nil : UnicodeScalar(shiftedKey),
-            baseLayoutKey: baseLayoutKey == 0 ? nil : UnicodeScalar(baseLayoutKey))
+            baseLayoutKey: baseLayoutKey == 0 ? nil : UnicodeScalar(baseLayoutKey), composing: composing)
         let encoder = KittyKeyboardEncoder(flags: flags, applicationCursor: applicationCursor,
-            applicationKeypad: applicationKeypad, backspaceSendsControlH: false)
+            applicationKeypad: applicationKeypad, backspaceSendsControlH: backspaceSendsControlH)
         guard let bytes = encoder.encode(event) else { return 2 }
         sendUserInput(bytes[...])
         return 1
     }
+}
+
+extension Terminal {
+    /// The W3C `key` and `code` that ``sendHostKey(key:code:modifiers:eventType:text:shiftedKey:baseLayoutKey:composing:backspaceSendsControlH:)``
+    /// reads as `key`, for a view that forwards keys to a terminal elsewhere.
+    static func hostKeyFields(for key: KittyFunctionalKey) -> (key: String, code: String)? {
+        hostKeyFieldsByFunctionalKey[key]
+    }
+
+    private static let hostKeyFieldsByFunctionalKey: [KittyFunctionalKey: (key: String, code: String)] = {
+        var fields: [KittyFunctionalKey: (key: String, code: String)] = [:]
+        // A name alone; then a physical code, which takes precedence; then
+        // the keypad navigation keys, whose code is on the keypad.
+        for (name, key) in hostNamedKeys.sorted(by: { $0.key < $1.key }) where fields[key] == nil {
+            fields[key] = (name, name)
+        }
+        for (code, key) in hostPhysicalKeys {
+            fields[key] = (code, code)
+        }
+        let keypadCodes = [
+            "ArrowLeft": "Numpad4", "ArrowRight": "Numpad6", "ArrowUp": "Numpad8", "ArrowDown": "Numpad2",
+            "PageUp": "Numpad9", "PageDown": "Numpad3", "Home": "Numpad7", "End": "Numpad1",
+            "Insert": "Numpad0", "Delete": "NumpadDecimal", "Clear": "Numpad5",
+        ]
+        for (name, key) in hostKeypadNavigation {
+            fields[key] = (name, keypadCodes[name] ?? "Numpad0")
+        }
+        return fields
+    }()
 }
 
 private extension Terminal {
