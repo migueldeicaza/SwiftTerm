@@ -944,12 +944,12 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// - Returns: a string containing the contents of the BufferLine from [startCol..<endCol]
     public func translateToString (trimRight: Bool = false, startCol: Int = 0, endCol: Int = -1, skipNullCellsFollowingWide: Bool = false, characterProvider: ((CharData) -> Character)? = nil, textProvider: ((CharData) -> String)? = nil) -> String
     {
-        var ec = endCol == -1 ? storage.count : endCol
-        if trimRight {
-            ec = max (startCol, min (ec, getTrimmedLength()))
-        }
-        let limit = max(ec, startCol)
         if !skipNullCellsFollowingWide {
+            var ec = endCol == -1 ? storage.count : endCol
+            if trimRight {
+                ec = max (startCol, min (ec, getTrimmedLength()))
+            }
+            let limit = max(ec, startCol)
             var result = ""
             for i in startCol..<limit {
                 let text = textProvider.map { $0(storage.cell(at: i)) }
@@ -959,29 +959,18 @@ public final class BufferLine: CustomDebugStringConvertible {
             }
             return result
         }
-        var result = ""
-        var idx = startCol
-        while idx < limit {
-            let code = storage.logicalCode(at: idx)
-            let width = storage.width(at: idx)
-            if idx > 0 && code == 0 && storage.width(at: idx - 1) == 2 {
-                idx += 1
-                continue
-            }
-            let text = textProvider.map { $0(storage.cell(at: idx)) }
-                ?? characterProvider.map { String($0(storage.cell(at: idx))) }
-                ?? storage.text(at: idx)
-            result.append(contentsOf: text)
-            if width == 2 {
-                let nextIndex = idx + 1
-                if nextIndex < limit && storage.logicalCode(at: nextIndex) == 0 {
-                    idx += 2
-                    continue
-                }
-            }
-            idx += 1
-        }
-        return result
+        return terminalRowText(
+            cellCount: storage.count,
+            trimRight: trimRight,
+            startCol: startCol,
+            endCol: endCol,
+            logicalCode: { Int32(storage.logicalCode(at: $0)) },
+            width: { Int(storage.width(at: $0)) },
+            text: { index in
+                textProvider.map { provider in provider(storage.cell(at: index)) }
+                    ?? characterProvider.map { provider in String(provider(storage.cell(at: index))) }
+                    ?? storage.text(at: index)
+            })
     }
 
     /// Attaches the specified terminal image to this buffer line.

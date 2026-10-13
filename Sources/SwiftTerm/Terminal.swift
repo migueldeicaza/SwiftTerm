@@ -411,9 +411,11 @@ open class Terminal {
     let MINIMUM_COLS = 2
     let MINIMUM_ROWS = 1
 
-    /// Guards all mutable terminal state. `Terminal` methods do not acquire
-    /// this lock themselves; callers that feed, render, or query the terminal
-    /// synchronize through this object.
+    /// Guards all mutable terminal state. Most `Terminal` methods do not
+    /// acquire this lock themselves; callers that feed, render, or query the
+    /// terminal synchronize through this object. Methods whose documentation
+    /// says they copy state under one terminal lock acquire it themselves and
+    /// must not be called while it is already held.
     public let terminalLock = TerminalLock()
     
     /// The current terminal columns (counting from 1)
@@ -990,7 +992,7 @@ open class Terminal {
     /// Represents the mouse operation mode that the terminal is currently using and higher level
     /// implementations should use the functions in this enumeration to determine what events to
     /// send
-    public enum MouseMode: Sendable {
+    public enum MouseMode: Sendable, Equatable {
         /// No mouse events are reported
         case off
         
