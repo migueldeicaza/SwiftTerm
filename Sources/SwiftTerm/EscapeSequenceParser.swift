@@ -1172,7 +1172,7 @@ final class EscapeSequenceParser {
         if currentState == ParserState.oscString.rawValue {
             while i < end, data[i] >= 0x80, data[i] < 0xa0, data[i] != 0x9c,
                   oscLimitExceeded || EscapeSequenceParser.oscExpectsUTF8Continuation(osc) {
-                appendOscBytes(i..<(i + 1), to: &osc, &oscLimitExceeded)
+                appendOscBytes(i..<(i + 1), data: data, to: &osc, &oscLimitExceeded, terminal)
                 i += 1
             }
         }
