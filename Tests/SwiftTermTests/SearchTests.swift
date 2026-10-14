@@ -295,6 +295,29 @@ final class SearchTests {
 
     // MARK: - SearchService
 
+    @Test func testPreviousSearchAcrossVeryLongWrappedLine() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 2, scrollback: 15000)
+        let service = SearchService(terminal: terminal)
+        terminal.feed(text: String(repeating: "a", count: 80 * 11999) + "target")
+
+        let expected = SearchResult(term: "target", col: 0, row: 11999, size: 6)
+        #expect(service.findPrevious(term: "target") == expected)
+        #expect(service.findPrevious(term: "target") == expected)
+        #expect(service.findNext(term: "target") == expected)
+    }
+
+    @Test func testPreviousSearchAcrossTrimmedWrappedLine() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 2, scrollback: 100)
+        let service = SearchService(terminal: terminal)
+        terminal.feed(text: String(repeating: "a", count: 80 * 400) + "target")
+        #expect(terminal.displayBuffer.lines[0].isWrapped)
+
+        let expected = SearchResult(term: "target", col: 0,
+                                    row: terminal.displayBuffer.yBase + terminal.displayBuffer.y, size: 6)
+        #expect(service.findPrevious(term: "target") == expected)
+        #expect(service.findNext(term: "target") == expected)
+    }
+
     @Test func testSearchServiceFindAllAndLimit() {
         let terminal = makeTerminal()
         let service = SearchService(terminal: terminal)
@@ -320,6 +343,9 @@ final class SearchTests {
 
         #expect(range.start == Position(col: 8, row: 0))
         #expect(range.end == Position(col: 2, row: 1))
+
+        let rowEnd = service.selectionRange(for: SearchResult(term: "Hi", col: 8, row: 0, size: 2))
+        #expect(rowEnd.end == Position(col: 10, row: 0))
     }
 
     @Test func testSearchServiceFindNextUpdatesLastResult() {
