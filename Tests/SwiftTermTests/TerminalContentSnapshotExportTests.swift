@@ -334,7 +334,7 @@ struct TerminalContentSnapshotExportTests {
         #expect(plainCopy.rows.map(\.isWrapped) == [false, true, false])
         expectSameContents(plain.snapshot(), plainCopy)
         #expect(visible(plain.snapshot().ansiRepresentation())
-                == visible("\u{1b}[0;39;49mabcde g\u{1b}[A\u{1b}[6G\u{1b}[1X\u{1b}[B\u{1b}[2G\r\n"))
+                == visible("\u{1b}[0;39;49mabcde\u{1b}[6G\u{3000}\r\u{1b}[2Xg\r\n"))
     }
 
     @Test func wrapPlaceholdersDoNotLeakTheirColorIntoTheNextRow() {
@@ -428,14 +428,52 @@ struct TerminalContentSnapshotExportTests {
             for _ in 0..<Int.random(in: 1...14, using: &generator) {
                 input += pieces[choices.randomElement(using: &generator)!]()
             }
-            let fixture = Fixture(cols: 6, rows: 3, scrollback: 10)
+            // Enough scrollback that the first copied row is never the
+            // continuation of a row that scrolled out.
+            let fixture = Fixture(cols: 6, rows: 3, scrollback: 100)
             fixture.feed(input)
             let original = fixture.snapshot()
-            if let difference = firstDifference(original, replay(original)) {
+            if let difference = firstDifference(original, replay(original, scrollback: 100)) {
                 failures.append("\(visible(input)): \(difference)")
             }
         }
         #expect(failures.isEmpty, Comment(rawValue: failures.prefix(5).joined(separator: "\n")))
+    }
+
+    @Test func wrapsSurviveInAOneRowTerminal() {
+        // With one row, the row before a wrap is in the scrollback as soon
+        // as the wrap happens, so nothing written in its last column could
+        // be undone afterwards; the wrap must leave that column alone.
+        let fixture = Fixture(cols: 6, rows: 3)
+        fixture.feed("abcdefg\u{1b}[1;6H\u{1b}[X\u{1b}[2;2H")
+        fixture.terminal.resize(cols: 6, rows: 1)
+        let original = fixture.snapshot()
+        #expect(original.rows.map(\.text) == ["abcde", "g"])
+        #expect(original.rows.map(\.isWrapped) == [false, true])
+
+        let copy = replay(original)
+        #expect(copy.rows.map(\.text) == ["abcde", "g"])
+        #expect(copy.rows[0].cells[5].isBlank)
+        #expect(copy.rows.map(\.isWrapped) == [false, true])
+        expectSameContents(original, copy)
+    }
+
+    @Test func normalBufferKeepsItsOwnSizeWhileTheAlternateIsActive() {
+        // A resize reaches the normal buffer when it becomes visible again,
+        // so a snapshot of it describes its cells with its own dimensions.
+        let fixture = Fixture(cols: 12, rows: 4)
+        fixture.feed("abcdefghijkl\u{1b}[?1049h")
+        fixture.terminal.resize(cols: 6, rows: 2)
+        let snapshot = fixture.snapshot(kind: .normal)
+        #expect(snapshot.inputState.dimensions == TerminalDimensions(cols: 12, rows: 4))
+        #expect(snapshot.rows.map(\.text) == ["abcdefghijkl", "", "", ""])
+        #expect(snapshot.liveTopRow == 0)
+        #expect(snapshot.capturedRange == 0..<4)
+        #expect(fixture.snapshot(kind: .alt).inputState.dimensions == TerminalDimensions(cols: 6, rows: 2))
+
+        let copy = replay(snapshot)
+        #expect(copy.rows.map(\.text) == ["abcdefghijkl", "", "", ""])
+        expectSameContents(snapshot, copy)
     }
 
     @Test func changedPaletteAndDefaultColorsTravelWithTheExport() throws {
@@ -477,7 +515,8 @@ struct TerminalContentSnapshotExportTests {
         let wideWrap = Fixture(cols: 6, rows: 3)
         wideWrap.feed("12345界")
         #expect(wideWrap.snapshot(.viewport).rows[1].isWrapped)
-        #expect(visible(wideWrap.snapshot(.viewport).ansiRepresentation()) == visible("\u{1b}[0;39;49m12345界\r\n"))
+        #expect(visible(wideWrap.snapshot(.viewport).ansiRepresentation())
+                == visible("\u{1b}[0;39;49m12345\u{1b}[6G\u{3000}\r\u{1b}[2X界\r\n"))
 
         let erased = Fixture(cols: 6, rows: 2)
         erased.feed("\u{1b}[42m\u{1b}[2K\u{1b}[0mab")

@@ -177,13 +177,15 @@ extension TerminalContentSnapshot {
     /// the same.
     ///
     /// Rows end with `CR LF` unless the next row is a soft-wrapped
-    /// continuation, in which case the row is filled to the terminal width
-    /// and left to wrap on its own: a blank last cell is written as a space
-    /// and erased again once the wrap has happened, and a row the wrap
-    /// scrolled in under a colored background gets its default blank cells
-    /// erased back. Trailing blank cells of the other rows are dropped. The
-    /// output ends with a reset and no line break, so the receiving cursor
-    /// stays on the last row.
+    /// continuation. Only a written character wraps the cursor and marks the
+    /// next row as a continuation, and only a wide character does so without
+    /// writing into the last column: a continued row ends with the cursor
+    /// moved to its last column and an ideographic space (`U+3000`), which
+    /// does not fit there, wraps and is erased from the start of the next
+    /// row. Trailing blank cells of the other rows are dropped. The output
+    /// ends with a reset and no line break, so the receiving cursor stays on
+    /// the last row. The first copied row cannot be marked as a continuation
+    /// of a row that was not copied.
     ///
     /// This restores contents only. Cursor position, modes, margins and the
     /// active buffer are not part of the snapshot; replaying a live byte
@@ -205,24 +207,6 @@ extension TerminalContentSnapshot {
             current = attribute
         }
         let width = inputState.dimensions.cols
-        let height = inputState.dimensions.rows
-        // Only a written character wraps the cursor and marks the next row as
-        // a continuation; a cursor move would cancel the pending wrap instead.
-        // So a wrapping row whose last cell is blank ends with a written
-        // space, remembered here with the attribute the cell should have, and
-        // erased again once the next row has performed the wrap.
-        var placeholder: Attribute?
-        var wrapPending = false
-        func restorePlaceholder(cursor: Int) {
-            guard let attribute = placeholder else { return }
-            placeholder = nil
-            // The previous row is the one above, scrolled or not; a one-row
-            // terminal has already lost it.
-            guard height > 1 else { return }
-            result += "\u{1b}[A\u{1b}[\(width)G"
-            select(attribute)
-            result += "\u{1b}[1X\u{1b}[B\u{1b}[\(cursor + 1)G"
-        }
         for (index, row) in rows.enumerated() {
             let continues = index + 1 < rows.count && rows[index + 1].isWrapped
             let cells = row.cells
@@ -232,38 +216,8 @@ extension TerminalContentSnapshot {
                     end -= 1
                 }
             }
-            var cursor = 0
             var pending = 0
             var column = 0
-            if wrapPending {
-                wrapPending = false
-                let first = cells[..<end].firstIndex { $0.width > 0 }
-                if let first, !cells[first].isBlank {
-                    // The row's first character performs the wrap. A wrap can
-                    // scroll in a row filled with the current background: erase
-                    // the row again when it has blank cells meant to be default.
-                    let cell = cells[first]
-                    column = first + 1
-                    select(cell.attribute)
-                    result += cell.text
-                    cursor = cell.width
-                    restorePlaceholder(cursor: cursor)
-                    if cell.attribute.paintsBackground,
-                       cells.contains(where: { $0.width > 0 && $0.isBlank && !$0.attribute.showsWhenBlank }) {
-                        select(.empty)
-                        result += "\u{1b}[K"
-                    }
-                } else {
-                    // Nothing to write first: a default space performs the
-                    // wrap and is erased back to an unwritten cell.
-                    select(.empty)
-                    result += " "
-                    restorePlaceholder(cursor: 1)
-                    // The restore may have selected the placeholder's color.
-                    select(.empty)
-                    result += "\u{1b}[1D\u{1b}[1X"
-                }
-            }
             while column < end {
                 let cell = cells[column]
                 column += 1
@@ -274,7 +228,6 @@ extension TerminalContentSnapshot {
                 }
                 if pending > 0 {
                     result += "\u{1b}[\(pending)C"
-                    cursor += pending
                     pending = 0
                 }
                 if cell.isBlank {
@@ -295,46 +248,23 @@ extension TerminalContentSnapshot {
                     if attribute.stylesShowWhenBlank {
                         result += String(repeating: " ", count: run)
                     } else {
-                        // A cursor move cannot go past the last column, so a
-                        // run that reaches it on a wrapping row ends with a
-                        // written space to leave the cursor pending a wrap.
-                        let written = continues && cursor + run == width ? 1 : 0
-                        if run - written > 0 {
-                            result += "\u{1b}[\(run - written)X\u{1b}[\(run - written)C"
-                        }
-                        if written > 0 {
-                            result += " "
-                            placeholder = attribute
-                        }
+                        result += "\u{1b}[\(run)X\u{1b}[\(run)C"
                     }
-                    cursor += run
                 } else {
                     select(cell.attribute)
                     result += cell.text
-                    cursor += cell.width
                 }
             }
-            if continues {
-                let remaining = width - cursor
-                let nextStartsWide = rows[index + 1].cells.first { $0.width > 0 }?.width == 2
-                // One free column before a wide character is the wrap the
-                // terminal does on its own; anything else needs a written
-                // space in the last column so the cursor ends up pending a
-                // wrap.
-                if remaining > 0, !(remaining == 1 && nextStartsWide) {
-                    select(.empty)
-                    if remaining > 1 {
-                        result += "\u{1b}[\(remaining - 1)C"
-                    }
-                    result += " "
-                    placeholder = .empty
-                }
-                wrapPending = true
-            } else if index + 1 < rows.count {
-                // The line feed may scroll, and a scrolled-in row is filled
-                // with the current background: reset first so it stays blank.
+            if index + 1 < rows.count {
+                // A wrap or a line feed may scroll, and a scrolled-in row is
+                // filled with the current background: reset first so it
+                // stays blank.
                 select(.empty)
-                result += "\r\n"
+                if continues {
+                    result += "\u{1b}[\(width)G\u{3000}\r\u{1b}[2X"
+                } else {
+                    result += "\r\n"
+                }
             }
         }
         if currentSgr != reset {
@@ -400,10 +330,10 @@ extension Attribute {
 }
 
 extension Terminal {
-    func inputStateSnapshotLocked() -> TerminalInputStateSnapshot {
+    func inputStateSnapshotLocked(dimensions: TerminalDimensions? = nil) -> TerminalInputStateSnapshot {
         terminalLock.preconditionLocked()
         return TerminalInputStateSnapshot(
-            dimensions: TerminalDimensions(cols: cols, rows: rows),
+            dimensions: dimensions ?? TerminalDimensions(cols: cols, rows: rows),
             isAlternateBuffer: isCurrentBufferAlternate,
             applicationCursor: applicationCursor,
             applicationKeypad: applicationKeypad,
@@ -435,8 +365,11 @@ extension Terminal {
                                kind: BufferKind = .active) -> TerminalContentSnapshot {
         terminalLock.preconditionLocked()
         let source = bufferFromKind(kind: kind)
+        // The normal buffer keeps its own size while the alternate one is
+        // active: a resize reaches it when it becomes visible again.
+        let dimensions = TerminalDimensions(cols: source.cols, rows: source.rows)
         let count = source.lines.count
-        let screenRows = min(max(0, rows), count)
+        let screenRows = min(max(0, dimensions.rows), count)
         let liveStart = count - screenRows
         let start: Int
         let end: Int
@@ -456,7 +389,7 @@ extension Terminal {
         }
         let copiedRows = (start..<end).map { index in
             let line = source.lines[index]
-            let width = min(cols, line.count)
+            let width = min(dimensions.cols, line.count)
             let cells = (0..<width).map { column in
                 let cell = line[column]
                 return TerminalCellSnapshot(
@@ -470,7 +403,7 @@ extension Terminal {
                 isWrapped: line.isWrapped)
         }
         return TerminalContentSnapshot(
-            inputState: inputStateSnapshotLocked(),
+            inputState: inputStateSnapshotLocked(dimensions: dimensions),
             bufferKind: source === altBuffer ? .alt : .normal,
             capturedRange: (source.linesTop + start)..<(source.linesTop + end),
             liveTopRow: source.linesTop + liveStart,
