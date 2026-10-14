@@ -734,6 +734,9 @@ open class Terminal {
     /// An application that genuinely wants the mode can still ask for it with
     /// `CSI ? 40 h`.
     var allow80To132 = false
+
+    /// DECNCSM: Keep page data when DECCOLM changes the column count.
+    var noClearOnColumnChange = false
     
     /// The escape sequence parser driving this terminal.
     ///
@@ -1398,6 +1401,7 @@ open class Terminal {
         conformance = .vt500
         
         allow80To132 = false
+        noClearOnColumnChange = false
         
         xtermTitleSetUtf = false
         xtermTitleQueryUtf = false
@@ -4355,14 +4359,8 @@ open class Terminal {
             }
             updateRange (0)
         case 2:
-            j = rows
-            updateRange (j - 1)
-            while (j != 0) {
-                j -= 1
-                resetBufferLine (y: j, clearImages: true, bidiState: currentBidiState)
-            }
+            eraseEntireDisplay ()
             clearAllKittyImages()
-            updateRange (0)
         case 3:
             // Clear scrollback (everything not in viewport)
             let scrollBackSize = buffer.lines.count - rows
@@ -4376,6 +4374,18 @@ open class Terminal {
         default:
             break
         }
+    }
+
+    // Erases all rows of the page and their inline images (ED 2 and DECCOLM).
+    func eraseEntireDisplay ()
+    {
+        var j = rows
+        updateRange (j - 1)
+        while (j != 0) {
+            j -= 1
+            resetBufferLine (y: j, clearImages: true, bidiState: currentBidiState)
+        }
+        updateRange (0)
     }
 
     //
@@ -5602,7 +5612,7 @@ open class Terminal {
             case 80: // DECSDM - Sixel scrolling
                 res = modeAlwaysReset
             case 95: // DECNCSM - clear on DECCOLM changes
-                res = modeCouldBeImplementedButSet
+                res = noClearOnColumnChange ? modeSet : modeReset
             case 1000:
                 res = mouseMode == .vt200 ? modeSet : modeReset
             case 1001:
@@ -6338,6 +6348,33 @@ open class Terminal {
         resetMode (pars [0], collect)
     }
 
+    // DECCOLM changes the page. It does not reset the terminal.
+    private func changeColumnMode(columns: Int) {
+        guard allow80To132 else { return }
+
+        resize(cols: columns, rows: rows)
+        setMarginMode(false)
+        // As in xterm, DECCOLM resets the margins of the two buffers, not only the active buffer.
+        for page in [normalBuffer, altBuffer] {
+            page.scrollTop = 0
+            page.scrollBottom = rows - 1
+            page.marginLeft = 0
+            page.marginRight = cols - 1
+        }
+        buffer.x = 0
+        buffer.y = 0
+        if !noClearOnColumnChange {
+            // Buffers without reflow keep cells past a narrower width. The cleared page must not keep them.
+            for row in 0..<rows {
+                buffer.lines[buffer.yBase + row].resize(cols: cols, fill: PackedCell())
+            }
+            eraseEntireDisplay()
+            clearKittyImagesOnScreen()
+        }
+        refresh(startRow: 0, endRow: rows - 1)
+        tdel?.sizeChanged(source: self)
+    }
+
     func resetMode (_ par: Int, _ collect: cstring)
     {
         if collect == [] {
@@ -6366,12 +6403,7 @@ open class Terminal {
             case 1:
                 applicationCursor = false
             case 3:
-                if allow80To132 {
-                    // DECCOLM
-                    resize (cols: 80, rows: rows)
-                    tdel?.sizeChanged(source: self)
-                    resetToInitialState()
-                }
+                changeColumnMode(columns: 80)
             case 4: // DECSCLM - Jump scroll mode
                 smoothScroll = false
                 break
@@ -6402,9 +6434,8 @@ open class Terminal {
                 mouseMode = .off
             case 1000: // vt200 mouse
                 mouseMode = .off
-            case 95: // DECNCSM - clear on DECCOLM changes
-                // unsupported
-                break
+            case 95: // DECNCSM
+                noClearOnColumnChange = false
             case 1002: // button event mouse
                 mouseMode = .off
             case 1003: // any event mouse
@@ -6599,11 +6630,7 @@ open class Terminal {
                 // set VT100 mode here
                 
             case 3: // DECCOLM - go to 132 col mode
-                if allow80To132 {
-                    resize (cols: 132, rows: rows)
-                    resetToInitialState()
-                    tdel?.sizeChanged(source: self)
-                }
+                changeColumnMode(columns: 132)
             case 4: // Smooth scroll mode
                 smoothScroll = true
                 break
@@ -6634,9 +6661,8 @@ open class Terminal {
             case 69:
                 // Enable left and right margin mode (DECLRMM),
                 setMarginMode(true)
-            case 95: // DECNCSM - clear on DECCOLM changes
-                // unsupported
-                break
+            case 95: // DECNCSM
+                noClearOnColumnChange = true
             case 1000:
                 // SET_VT200_HIGHLIGHT_MOUSE
                 mouseMode = .vt200

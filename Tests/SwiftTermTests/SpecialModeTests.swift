@@ -10,6 +10,63 @@ import Glibc
 final class SpecialModeTests {
     private let esc = "\u{1b}"
 
+    @Test func columnSwitchingPreservesMode40() {
+        let (terminal, delegate) = TerminalTestHarness.makeTerminal()
+
+        terminal.feed(text: "\(esc)[?40h\(esc)[?3h")
+        #expect(terminal.cols == 132)
+        terminal.feed(text: "\(esc)[?40$p")
+
+        terminal.feed(text: "\(esc)[?3l")
+        #expect(terminal.cols == 80)
+        terminal.feed(text: "\(esc)[?40$p")
+
+        terminal.feed(text: "\(esc)[?3h")
+        #expect(terminal.cols == 132)
+        terminal.feed(text: "\(esc)[?40$p")
+
+        #expect(responses(from: delegate) == Array(repeating: "\(esc)[?40;1$y", count: 3))
+    }
+
+    @Test func columnSwitchingIsDisabledByDefault() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 100)
+
+        terminal.feed(text: "\(esc)[?3h")
+        #expect(terminal.cols == 100)
+        terminal.feed(text: "\(esc)[?3l")
+        #expect(terminal.cols == 100)
+    }
+
+    @Test func mode40ResetDisablesColumnSwitching() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal()
+
+        terminal.feed(text: "\(esc)[?40h\(esc)[?3h\(esc)[?40l\(esc)[?3l")
+        #expect(terminal.cols == 132)
+        #expect(!terminal.allow80To132)
+
+        terminal.feed(text: "\(esc)[?40h\(esc)[?3l")
+        #expect(terminal.cols == 80)
+        terminal.feed(text: "\(esc)[?40l\(esc)[?3h")
+        #expect(terminal.cols == 80)
+        #expect(!terminal.allow80To132)
+    }
+
+    @Test(arguments: [false, true])
+    func fullResetDisablesColumnSwitching(useRIS: Bool) {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 100)
+        terminal.feed(text: "\(esc)[?40h")
+
+        if useRIS {
+            terminal.feed(text: "\(esc)c")
+        } else {
+            terminal.resetToInitialState()
+        }
+
+        #expect(!terminal.allow80To132)
+        terminal.feed(text: "\(esc)[?3h\(esc)[?3l")
+        #expect(terminal.cols == 100)
+    }
+
     @Test func decrqm117AlwaysReportsPermanentlyReset() {
         let (terminal, delegate) = TerminalTestHarness.makeTerminal()
 

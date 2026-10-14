@@ -2028,6 +2028,23 @@ extension Terminal {
         updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
     }
 
+    /// Removes the placements on the screen rows, then each image of this screen that has no
+    /// placement, as Ghostty does for a full-screen erase. Placements in scrollback, virtual
+    /// placements, and the other screen stay.
+    func clearKittyImagesOnScreen() {
+        let screenTop = buffer.yBase
+        let screenBottom = buffer.yBase + rows - 1
+        // Only the rows decide: after DECCOLM, a placement can start past the right edge.
+        // Relative placements go with their parents (removeOrphanedKittyPlacements).
+        _ = removePlacementRecords { record in
+            guard !record.isVirtual, record.parentImageId == nil else { return false }
+            let bottom = record.row + max(1, record.rows) - 1
+            return record.row <= screenBottom && bottom >= screenTop
+        }
+        _ = removeOrphanedKittyPlacements()
+        cleanupUnusedKittyImages()
+    }
+
     private func resetKittyGraphicsStore(_ store: KittyGraphicsScreenState) {
         store.imagesById.removeAll()
         store.imageNumbers.removeAll()
