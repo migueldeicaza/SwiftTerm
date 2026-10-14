@@ -111,10 +111,12 @@ methods are safe to call from any thread, except inside a callback that already
 holds the terminal lock.
 
 A content snapshot captures its input state, row coordinates, complete cell
-text, widths, attributes, row-wrap flags, the 256-color palette and the default
-colors in one transaction. ``TerminalContentSnapshot/ansiRepresentation()``
-re-encodes the copied rows as text with SGR sequences that another terminal of
-the same width can replay; it restores contents, not cursor or modes. Its
+text, widths, attributes, row-wrap flags, the 256-color palette, the palette
+the terminal started from and the default colors in one transaction.
+``TerminalContentSnapshot/ansiRepresentation()`` re-encodes the copied rows as
+text with SGR sequences that another terminal of the same width can replay,
+preceded by the default colors and the palette entries the application
+changed; it restores contents, not cursor or modes. Its
 `capturedRange` uses scroll-invariant absolute row numbers; it describes only
 the copied window, not all retained history. The computed row text is
 right-trimmed display text using the same conversion as
@@ -130,7 +132,7 @@ instead of Swift string indices.
 
 This is a pure inspection snapshot and does not mutate renderer damage state.
 Use ``Terminal/makeRenderSnapshot(scope:)`` for renderer input. Content
-snapshots intentionally omit images, hyperlinks, and palette values.
+snapshots intentionally omit images and hyperlinks.
 
 ## Delegate callbacks and the terminal lock
 

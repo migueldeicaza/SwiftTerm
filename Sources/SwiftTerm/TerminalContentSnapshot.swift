@@ -126,6 +126,10 @@ public struct TerminalContentSnapshot: Sendable, Equatable {
     /// The 256 palette entries in force when the copy was made, so indexed
     /// cell colors keep their appearance after the palette changes.
     public let palette: [Color]
+    /// The palette the terminal derives from its installed colors and
+    /// default colors; the entries of ``palette`` that differ were set by
+    /// the application with `OSC 4`.
+    public let defaultPalette: [Color]
     /// The colors cells with ``Attribute/Color/defaultColor`` resolve to.
     public let foregroundColor: Color
     public let backgroundColor: Color
@@ -137,6 +141,7 @@ public struct TerminalContentSnapshot: Sendable, Equatable {
         liveTopRow: Int,
         rows: [TerminalContentRowSnapshot],
         palette: [Color] = [],
+        defaultPalette: [Color] = [],
         foregroundColor: Color = Color.defaultForeground,
         backgroundColor: Color = Color.defaultBackground
     ) {
@@ -146,6 +151,7 @@ public struct TerminalContentSnapshot: Sendable, Equatable {
         self.liveTopRow = liveTopRow
         self.rows = rows
         self.palette = palette
+        self.defaultPalette = defaultPalette
         self.foregroundColor = foregroundColor
         self.backgroundColor = backgroundColor
     }
@@ -155,16 +161,27 @@ extension TerminalContentSnapshot {
     /// The copied rows as text with SGR sequences, ready to feed into another
     /// terminal of the same width.
     ///
+    /// The output starts with the default colors, when they are not
+    /// SwiftTerm's stock ones, and the palette entries the application
+    /// changed, as `OSC 10`, `OSC 11` and `OSC 4`, so indexed cells and the
+    /// default colors keep their appearance in the receiving terminal.
     /// Every attribute is re-encoded with ``Attribute/sgrParameters()``,
     /// including dim, italic, strikethrough, underline styles and underline
     /// colors. Wide characters are emitted once and their continuation cells
     /// are skipped. Cells nothing was written to stay that way: runs of them
     /// are stepped over with a cursor move, and runs that carry a background
     /// are erased into place with `ECH`, so the receiving buffer keeps the
-    /// same blank cells and the same colored blanks instead of spaces. Rows
-    /// end with `CR LF` unless the next row is a soft-wrapped continuation,
-    /// in which case the row is filled to the terminal width and left to wrap
-    /// on its own; trailing blank cells of the other rows are dropped. The
+    /// same blank cells and the same colored blanks instead of spaces. Blank
+    /// cells with a style that shows without text (inverse, underline,
+    /// crossed out), which an erase cannot produce, become spaces that look
+    /// the same.
+    ///
+    /// Rows end with `CR LF` unless the next row is a soft-wrapped
+    /// continuation, in which case the row is filled to the terminal width
+    /// and left to wrap on its own: a blank last cell is written as a space
+    /// and erased again once the wrap has happened, and a row the wrap
+    /// scrolled in under a colored background gets its default blank cells
+    /// erased back. Trailing blank cells of the other rows are dropped. The
     /// output ends with a reset and no line break, so the receiving cursor
     /// stays on the last row.
     ///
@@ -173,7 +190,7 @@ extension TerminalContentSnapshot {
     /// stream after the export is the host's responsibility.
     public func ansiRepresentation() -> String {
         let reset = Attribute.empty.sgrParameters()
-        var result = "\u{1b}[" + reset + "m"
+        var result = colorSequences() + "\u{1b}[" + reset + "m"
         // Attributes are compared by their SGR encoding: the two spellings of
         // the default colors look the same and must not produce a sequence.
         var current = Attribute.empty
@@ -188,23 +205,70 @@ extension TerminalContentSnapshot {
             current = attribute
         }
         let width = inputState.dimensions.cols
+        let height = inputState.dimensions.rows
+        // Only a written character wraps the cursor and marks the next row as
+        // a continuation; a cursor move would cancel the pending wrap instead.
+        // So a wrapping row whose last cell is blank ends with a written
+        // space, remembered here with the attribute the cell should have, and
+        // erased again once the next row has performed the wrap.
+        var placeholder: Attribute?
+        var wrapPending = false
+        func restorePlaceholder(cursor: Int) {
+            guard let attribute = placeholder else { return }
+            placeholder = nil
+            // The previous row is the one above, scrolled or not; a one-row
+            // terminal has already lost it.
+            guard height > 1 else { return }
+            result += "\u{1b}[A\u{1b}[\(width)G"
+            select(attribute)
+            result += "\u{1b}[1X\u{1b}[B\u{1b}[\(cursor + 1)G"
+        }
         for (index, row) in rows.enumerated() {
             let continues = index + 1 < rows.count && rows[index + 1].isWrapped
             let cells = row.cells
             var end = cells.count
             if !continues {
-                while end > 0, cells[end - 1].isBlank, !cells[end - 1].attribute.paintsBackground {
+                while end > 0, cells[end - 1].isBlank, !cells[end - 1].attribute.showsWhenBlank {
                     end -= 1
                 }
             }
             var cursor = 0
             var pending = 0
             var column = 0
+            if wrapPending {
+                wrapPending = false
+                let first = cells[..<end].firstIndex { $0.width > 0 }
+                if let first, !cells[first].isBlank {
+                    // The row's first character performs the wrap. A wrap can
+                    // scroll in a row filled with the current background: erase
+                    // the row again when it has blank cells meant to be default.
+                    let cell = cells[first]
+                    column = first + 1
+                    select(cell.attribute)
+                    result += cell.text
+                    cursor = cell.width
+                    restorePlaceholder(cursor: cursor)
+                    if cell.attribute.paintsBackground,
+                       cells.contains(where: { $0.width > 0 && $0.isBlank && !$0.attribute.showsWhenBlank }) {
+                        select(.empty)
+                        result += "\u{1b}[K"
+                    }
+                } else {
+                    // Nothing to write first: a default space performs the
+                    // wrap and is erased back to an unwritten cell.
+                    select(.empty)
+                    result += " "
+                    restorePlaceholder(cursor: 1)
+                    // The restore may have selected the placeholder's color.
+                    select(.empty)
+                    result += "\u{1b}[1D\u{1b}[1X"
+                }
+            }
             while column < end {
                 let cell = cells[column]
                 column += 1
                 guard cell.width > 0 else { continue }
-                if cell.isBlank, !cell.attribute.paintsBackground {
+                if cell.isBlank, !cell.attribute.showsWhenBlank {
                     pending += cell.width
                     continue
                 }
@@ -213,26 +277,39 @@ extension TerminalContentSnapshot {
                     cursor += pending
                     pending = 0
                 }
-                select(cell.attribute)
                 if cell.isBlank {
+                    // An erase keeps only the background, so blank cells are
+                    // grouped by what an erase would leave. The half of a
+                    // wide character left when the other half is overwritten
+                    // keeps the character's attribute, which can carry a
+                    // style that shows on a blank cell; those are written as
+                    // the spaces that look the same.
+                    let attribute = cell.attribute.blankForm
                     var run = cell.width
                     while column < end, cells[column].width > 0, cells[column].isBlank,
-                          cells[column].attribute == cell.attribute {
+                          cells[column].attribute.blankForm == attribute {
                         run += cells[column].width
                         column += 1
                     }
-                    // A cursor move cannot go past the last column, so a run
-                    // that reaches it on a wrapping row ends with a written
-                    // space to leave the cursor pending a wrap.
-                    let written = continues && cursor + run == width ? 1 : 0
-                    if run - written > 0 {
-                        result += "\u{1b}[\(run - written)X\u{1b}[\(run - written)C"
-                    }
-                    if written > 0 {
-                        result += " "
+                    select(attribute)
+                    if attribute.stylesShowWhenBlank {
+                        result += String(repeating: " ", count: run)
+                    } else {
+                        // A cursor move cannot go past the last column, so a
+                        // run that reaches it on a wrapping row ends with a
+                        // written space to leave the cursor pending a wrap.
+                        let written = continues && cursor + run == width ? 1 : 0
+                        if run - written > 0 {
+                            result += "\u{1b}[\(run - written)X\u{1b}[\(run - written)C"
+                        }
+                        if written > 0 {
+                            result += " "
+                            placeholder = attribute
+                        }
                     }
                     cursor += run
                 } else {
+                    select(cell.attribute)
                     result += cell.text
                     cursor += cell.width
                 }
@@ -241,12 +318,18 @@ extension TerminalContentSnapshot {
                 let remaining = width - cursor
                 let nextStartsWide = rows[index + 1].cells.first { $0.width > 0 }?.width == 2
                 // One free column before a wide character is the wrap the
-                // terminal does on its own; anything else needs written
-                // spaces so the cursor ends up pending a wrap.
+                // terminal does on its own; anything else needs a written
+                // space in the last column so the cursor ends up pending a
+                // wrap.
                 if remaining > 0, !(remaining == 1 && nextStartsWide) {
                     select(.empty)
-                    result += String(repeating: " ", count: remaining)
+                    if remaining > 1 {
+                        result += "\u{1b}[\(remaining - 1)C"
+                    }
+                    result += " "
+                    placeholder = .empty
                 }
+                wrapPending = true
             } else if index + 1 < rows.count {
                 // The line feed may scroll, and a scrolled-in row is filled
                 // with the current background: reset first so it stays blank.
@@ -256,6 +339,27 @@ extension TerminalContentSnapshot {
         }
         if currentSgr != reset {
             result += "\u{1b}[" + reset + "m"
+        }
+        return result
+    }
+
+    /// `OSC 10` and `OSC 11` when the default colors are not SwiftTerm's
+    /// stock ones, then `OSC 4` for the palette entries the application
+    /// changed. The default colors go first because a terminal that derives
+    /// its palette from them rebuilds it when they change. A stock terminal
+    /// produces nothing, so its export starts with the SGR reset.
+    func colorSequences() -> String {
+        var result = ""
+        if foregroundColor != Color.defaultForeground {
+            result += "\u{1b}]10;\(foregroundColor.formatAsXcolor())\u{7}"
+        }
+        if backgroundColor != Color.defaultBackground {
+            result += "\u{1b}]11;\(backgroundColor.formatAsXcolor())\u{7}"
+        }
+        if palette.count == 256, defaultPalette.count == 256 {
+            for (index, color) in palette.enumerated() where color != defaultPalette[index] {
+                result += "\u{1b}]4;\(index);\(color.formatAsXcolor())\u{7}"
+            }
         }
         return result
     }
@@ -274,6 +378,24 @@ extension Attribute {
         case .ansi256, .trueColor:
             return true
         }
+    }
+
+    /// True when the renderer draws this attribute's style on a cell without
+    /// text: inverse fills it, underline and crossed-out draw their lines.
+    var stylesShowWhenBlank: Bool {
+        !style.intersection([.inverse, .underline, .crossedOut]).isEmpty
+    }
+
+    /// True when a cell with this attribute is visible without text.
+    var showsWhenBlank: Bool {
+        paintsBackground || stylesShowWhenBlank
+    }
+
+    /// The attribute that reproduces a blank cell with this one: the full
+    /// attribute when its style shows, otherwise what an erase leaves, which
+    /// is the background alone.
+    var blankForm: Attribute {
+        stylesShowWhenBlank ? self : Attribute(fg: .defaultColor, bg: bg, style: .none)
     }
 }
 
@@ -354,6 +476,7 @@ extension Terminal {
             liveTopRow: source.linesTop + liveStart,
             rows: copiedRows,
             palette: ansiColors,
+            defaultPalette: defaultAnsiColors,
             foregroundColor: foregroundColor,
             backgroundColor: backgroundColor)
     }
