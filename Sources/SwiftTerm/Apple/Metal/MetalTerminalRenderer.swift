@@ -1219,10 +1219,13 @@ final class MetalTerminalRenderer {
 #endif
         let encodeInterval = Profiling.begin(.metalEncode)
         defer { encodeInterval.end() }
+        // The drawable holds premultiplied values (the blend states assume so
+        // and Core Animation composites it that way), so a translucent default
+        // background is premultiplied here like every other color.
         let bgColor = colorToSIMD(renderContext.effectiveBackgroundColor)
-        passDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(Double(bgColor.x),
-                                                                         Double(bgColor.y),
-                                                                         Double(bgColor.z),
+        passDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(Double(bgColor.x * bgColor.w),
+                                                                         Double(bgColor.y * bgColor.w),
+                                                                         Double(bgColor.z * bgColor.w),
                                                                          Double(bgColor.w))
         passDescriptor.colorAttachments[0].loadAction = .clear
 

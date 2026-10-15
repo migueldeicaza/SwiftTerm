@@ -307,6 +307,39 @@ struct TranslucentCellBackgroundMetalTests {
         #expect(pixel[0] == 0 && pixel[1] == 0)
     }
 
+    /// The pass clear is premultiplied like the background quads, so a
+    /// translucent default background composites the way the Core Graphics
+    /// layer background does (BGRA: blue 255 * 0.4 = 102 at alpha 102).
+    @Test func metalTranslucentDefaultBackgroundIsPremultiplied() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 120, height: 120))
+        view.nativeBackgroundColor = NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)
+        view.backgroundOpacity = 0.4
+        guard let pixel = metalCenterPixel(view) else { return }
+        #expect(abs(Int(pixel[0]) - 102) <= 1)
+        #expect(pixel[1] == 0 && pixel[2] == 0)
+        #expect(abs(Int(pixel[3]) - 102) <= 1)
+    }
+
+    /// A cell whose explicit background is the default color looks like the
+    /// default cells around it.
+    @Test func metalExplicitDefaultColoredCellMatchesTheDefaultBackground() {
+        let explicitBlue = String(repeating: "\u{1b}[48;2;0;0;255m" + String(repeating: " ", count: 60)
+                                  + "\u{1b}[0m\r\n", count: 10)
+        let explicit = TerminalView(frame: CGRect(x: 0, y: 0, width: 120, height: 120))
+        explicit.nativeBackgroundColor = NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)
+        explicit.backgroundOpacity = 0.4
+        explicit.translucentCellBackgrounds = true
+        explicit.feed(text: explicitBlue)
+        let plain = TerminalView(frame: CGRect(x: 0, y: 0, width: 120, height: 120))
+        plain.nativeBackgroundColor = NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)
+        plain.backgroundOpacity = 0.4
+        plain.translucentCellBackgrounds = true
+        guard let a = metalCenterPixel(explicit), let b = metalCenterPixel(plain) else { return }
+        for channel in 0..<4 {
+            #expect(abs(Int(a[channel]) - Int(b[channel])) <= 1, "\(a) vs \(b)")
+        }
+    }
+
     @Test func metalExplicitBackgroundIsOpaqueWhenOff() {
         guard let pixel = metalCenterPixel(makeView(translucent: false)) else { return }
         #expect(pixel == [0, 0, 200, 255])
