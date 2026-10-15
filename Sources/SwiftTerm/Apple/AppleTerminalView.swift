@@ -556,6 +556,7 @@ struct FrameViewState: Sendable {
     let customBlockGlyphs: Bool
     let useBrightColors: Bool
     let minimumContrastRatio: CGFloat
+    let translucentCellBackgrounds: Bool
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
 
@@ -597,6 +598,11 @@ struct FrameViewState: Sendable {
         customBlockGlyphs = view.customBlockGlyphs
         useBrightColors = view.useBrightColors
         minimumContrastRatio = view.minimumContrastRatio
+#if os(macOS)
+        translucentCellBackgrounds = view.translucentCellBackgrounds
+#else
+        translucentCellBackgrounds = false
+#endif
         bidiHostPolicy = view.bidiHostPolicy
         glyphFallbackProvider = view.glyphFallbackProvider
     }
@@ -663,6 +669,21 @@ struct SnapshotRenderContext {
     let customBlockGlyphs: Bool
     let useBrightColors: Bool
     let minimumContrastRatio: CGFloat
+    /// The alpha explicit cell backgrounds are drawn with, or nil when they
+    /// stay opaque. Set when `translucentCellBackgrounds` is on and the
+    /// default background is translucent; it is the default background's own
+    /// alpha, so colored rows read as part of the same surface.
+    ///
+    /// While it is set, both renderers paint background fills by *replacing*
+    /// the default background beneath them instead of compositing over it,
+    /// so an explicit cell ends at exactly this alpha (a source-over fill at
+    /// 0.4 over a 0.4 underlay would end at 0.64).
+    let translucentCellBackgroundAlpha: CGFloat?
+    /// The selection highlight as it is painted. While
+    /// `translucentCellBackgroundAlpha` is set, background fills replace the
+    /// default background, so the selection color arrives already composited
+    /// over it; the pixels match the highlight drawn over the default background.
+    let selectionFillColor: TTColor
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
     let cols: Int
@@ -722,6 +743,15 @@ struct SnapshotRenderContext {
         customBlockGlyphs = viewState.customBlockGlyphs
         useBrightColors = viewState.useBrightColors
         minimumContrastRatio = viewState.minimumContrastRatio
+        let defaultBackgroundAlpha = effectiveBackgroundColor.cgColor.alpha
+        if viewState.translucentCellBackgrounds && defaultBackgroundAlpha < 1 {
+            translucentCellBackgroundAlpha = defaultBackgroundAlpha
+            selectionFillColor = compositedColor(selectedTextBackgroundColor,
+                                                 over: effectiveBackgroundColor)
+        } else {
+            translucentCellBackgroundAlpha = nil
+            selectionFillColor = selectedTextBackgroundColor
+        }
         bidiHostPolicy = viewState.bidiHostPolicy
         glyphFallbackProvider = viewState.glyphFallbackProvider
         self.cols = cols
@@ -743,6 +773,7 @@ struct SnapshotRenderContext {
         }
         identityHasher.combine(useBrightColors)
         identityHasher.combine(minimumContrastRatio)
+        identityHasher.combine(translucentCellBackgroundAlpha)
         identity = UInt64(bitPattern: Int64(identityHasher.finalize()))
     }
 
@@ -3373,6 +3404,13 @@ extension TerminalView {
         // scroll region, line insert/delete) otherwise keeps stale glyphs/backgrounds.
         // Clear to transparent — not fill — so a translucent background is preserved.
         context.clear(dirtyRect)
+        if renderContext.translucentCellBackgroundAlpha != nil {
+            // Translucent cell backgrounds: the layer stays clear (see
+            // updateBackingLayerBackground) and the default background is
+            // painted here, so the explicit fills below can replace it.
+            context.setFillColor(coreGraphicsRenderCache.cgColor(for: renderContext.effectiveBackgroundColor))
+            context.fill(dirtyRect)
+        }
         #endif
 
         for row in firstRow...lastRow {
@@ -3499,6 +3537,13 @@ extension TerminalView {
             context.setShouldAntialias(false)
             context.setLineCap(.square)
             context.setLineWidth(0)
+            if renderContext.translucentCellBackgroundAlpha != nil {
+                // Translucent cell backgrounds replace the default background
+                // painted above instead of compositing over it, so a cell ends
+                // at the alpha it carries. Selection fills arrive already
+                // composited over the default background.
+                context.setBlendMode(.copy)
+            }
 
             for prepared in preparedSegments {
                 for preparedRun in prepared.runs {

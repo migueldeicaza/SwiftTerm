@@ -268,7 +268,8 @@ final class SnapshotTextBuilder {
         var result: [NSAttributedString.Key: Any] = [
             .font: font,
             .foregroundColor: foregroundColor,
-            .backgroundColor: backgroundColor,
+            .backgroundColor: cellBackgroundFill(backgroundColor, for: background,
+                                                 context: context),
             SwiftTermShapeColorKey: shapeColor,
             ltrWritingDirectionKey: ltrWritingDirectionValue,
             .paragraphStyle: ltrParagraphStyle,
@@ -295,6 +296,29 @@ final class SnapshotTextBuilder {
             result[SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
         }
         return SnapshotTextAttributes(result)
+    }
+
+    /// The color a cell's background is filled with. Dim and contrast keep
+    /// using the opaque color: the text is legible against the color the cell
+    /// shows, not against its alpha.
+    ///
+    /// With `translucentCellBackgroundAlpha` set, explicit palette and
+    /// truecolor backgrounds take that alpha. The alpha is applied here and
+    /// not in `mapColor`, so the same palette entry used as a foreground stays
+    /// opaque. Reverse-video highlights (`defaultInvertedColor`) stay opaque:
+    /// they are the one block that must remain readable at any opacity.
+    private func cellBackgroundFill(_ color: TTColor, for background: Attribute.Color,
+                                    context: SnapshotRenderContext) -> TTColor
+    {
+        guard let alpha = context.translucentCellBackgroundAlpha else {
+            return color
+        }
+        switch background {
+        case .ansi256, .trueColor:
+            return color.withAlphaComponent(alpha)
+        case .defaultColor, .defaultInvertedColor:
+            return color
+        }
     }
 
     /// The color for Powerline separators, box drawing, and block elements:
@@ -496,7 +520,7 @@ final class SnapshotTextBuilder {
                         batchAttributes[.foregroundColor] = shapeColor(of: attributes, context: context)
                     }
                     if isSelected {
-                        batchAttributes[.selectionBackgroundColor] = context.selectedTextBackgroundColor
+                        batchAttributes[.selectionBackgroundColor] = context.selectionFillColor
                         batchAttributes[.foregroundColor] = context.selectedTextForegroundColor
                         batchAttributes[SwiftTermShapeColorKey] = context.selectedTextForegroundColor
                         if batchAttributes[.underlineColor] != nil {
@@ -696,6 +720,33 @@ func nsUnderlineStyle(_ style: UnderlineStyle) -> NSUnderlineStyle {
     case .dashed:
         return [.single, .patternDash]
     }
+}
+
+/// `color` composited source-over onto `underlay`, in sRGB. Used where a
+/// renderer replaces the underlay instead of blending over it, so the result
+/// still shows what blending would have.
+func compositedColor (_ color: TTColor, over underlay: TTColor) -> TTColor
+{
+    guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+          let top = color.cgColor.converted(to: space, intent: .defaultIntent, options: nil),
+          let bottom = underlay.cgColor.converted(to: space, intent: .defaultIntent, options: nil),
+          let tc = top.components, tc.count == 4,
+          let bc = bottom.components, bc.count == 4 else {
+        return color
+    }
+    let topAlpha = tc[3]
+    if topAlpha >= 1 {
+        return color
+    }
+    let bottomAlpha = bc[3] * (1 - topAlpha)
+    let alpha = topAlpha + bottomAlpha
+    guard alpha > 0 else {
+        return color
+    }
+    func channel (_ index: Int) -> CGFloat {
+        (tc[index] * topAlpha + bc[index] * bottomAlpha) / alpha
+    }
+    return TTColor.make(red: channel(0), green: channel(1), blue: channel(2), alpha: alpha)
 }
 
 func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool,
