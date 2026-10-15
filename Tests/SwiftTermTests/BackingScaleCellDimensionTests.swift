@@ -1,6 +1,8 @@
 #if os(macOS)
 import AppKit
+import Darwin
 import Testing
+import XCTest
 @testable import SwiftTerm
 
 /// The cell grid is snapped to the pixel density of the screen the view was on
@@ -73,6 +75,74 @@ struct BackingScaleCellDimensionTests {
         #expect(view.cellDimensionBackingScale == view.backingScaleFactor())
         let expectedCols = Int(view.getEffectiveWidth(size: frame.size) / expected.width)
         #expect(view.withTerminal { $0.cols } == expectedCols)
+    }
+
+    @Test func backingChangeWithoutGridResizeRequestsAFrame() throws {
+        let view = try makeView()
+        host(view)
+        view.frameDriver.invalidate()
+        let measured = view.cellDimension!
+        let stableSize = CGSize(width: measured.width * 50.5,
+                                height: measured.height * 10.5)
+        view.setFrameSize(stableSize)
+        _ = view.prepareFrame(viewState: FrameViewState(view: view))
+
+        view.cellDimension = CGSize(width: measured.width + 0.01,
+                                    height: measured.height + 0.01)
+        view.cellDimensionBackingScale = 0.5
+        let cols = view.withTerminal { $0.cols }
+        view.viewDidChangeBackingProperties()
+        #expect(view.withTerminal { $0.cols } == cols)
+
+        // AppKit can draw before the frame tick refreshes its snapshot. The
+        // tick must request another draw using the corrected cell geometry.
+        view.displayIfNeeded()
+        let prepared = view.prepareFrame(viewState: FrameViewState(view: view))
+        #expect(prepared?.region != nil)
+    }
+
+    @Test func pixelOnlyBackingChangeUpdatesLocalProcessWindowSize() throws {
+        let view = LocalProcessTerminalView(frame: frame)
+        host(view)
+        view.frameDriver.invalidate()
+        let measured = view.cellDimension!
+        let stableSize = CGSize(width: measured.width * 50.5,
+                                height: measured.height * 10.5)
+        view.setFrameSize(stableSize)
+
+        let launched = view.process.startProcessChecked(
+            executable: "/bin/sleep", args: ["30"])
+        if case .failure(.forkFailed(let code)) = launched,
+           code == EPERM || code == EACCES || code == ENXIO {
+            throw XCTSkip("PTY launch is unavailable in this environment: errno \(code)")
+        }
+        try launched.get()
+        defer { view.process.terminate() }
+
+        // Keep the grid counts fixed while making the cached PTY pixel size
+        // differ from the size that the backing callback will restore.
+        let cols = view.withTerminal { $0.cols }
+        let rows = view.withTerminal { $0.rows }
+        view.cellDimension = CGSize(width: measured.width + 0.05,
+                                    height: measured.height + 0.05)
+        view.cellDimensionBackingScale = 0.5
+        view.processSizeChange(newSize: stableSize)
+        #expect(view.withTerminal { $0.cols } == cols)
+        #expect(view.withTerminal { $0.rows } == rows)
+        view.sizeChanged(source: view, newCols: cols, newRows: rows)
+
+        var oldPTYSize = winsize()
+        #expect(ioctl(view.process.childfd, TIOCGWINSZ, &oldPTYSize) == 0)
+        view.viewDidChangeBackingProperties()
+        #expect(view.withTerminal { $0.cols } == cols)
+        #expect(view.withTerminal { $0.rows } == rows)
+
+        var newPTYSize = winsize()
+        #expect(ioctl(view.process.childfd, TIOCGWINSZ, &newPTYSize) == 0)
+        let expected = view.getWindowSize()
+        #expect(oldPTYSize.ws_xpixel != newPTYSize.ws_xpixel)
+        #expect(newPTYSize.ws_xpixel == expected.ws_xpixel)
+        #expect(newPTYSize.ws_ypixel == expected.ws_ypixel)
     }
 
     /// `resize(cols:rows:)` soft-resets the terminal; a screen move must not

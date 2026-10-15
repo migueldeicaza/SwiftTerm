@@ -2001,6 +2001,10 @@ extension TerminalView {
         cellDimension = computeFontDimensions()
         refreshCachedViewState()
         processSizeChange(newSize: frame.size)
+        // Core Graphics draws from the frame snapshot. If the grid still has
+        // the same row and column counts, a size change leaves no dirty rows;
+        // request a full frame after the snapshot has the new cell geometry.
+        withTerminal { $0.updateFullScreen() }
         // A live resize may have queued counts measured with the old cell
         // size (or a frame may already be applying them), and the next frame
         // would restore them over the ones just set. Queue the corrected
