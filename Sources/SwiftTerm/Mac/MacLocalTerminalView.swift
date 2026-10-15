@@ -317,13 +317,39 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         }
     }
 
+    open override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            syncProcessWindowSizeIfNeeded()
+        }
+    }
+
+    open override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        if window != nil {
+            syncProcessWindowSizeIfNeeded()
+        }
+    }
+
+    /// A backing scale change can alter the pixel size without changing the
+    /// terminal's rows or columns. Keep the PTY size current in that case too.
+    private func syncProcessWindowSizeIfNeeded() {
+        guard let processAdapter, let process else { return }
+        var size = getWindowSize()
+        let previous = processAdapter.getWindowSize()
+        guard size.ws_row != previous.ws_row || size.ws_col != previous.ws_col ||
+              size.ws_xpixel != previous.ws_xpixel || size.ws_ypixel != previous.ws_ypixel else {
+            return
+        }
+        processAdapter.updateWindowSize(size)
+        _ = process.updateWindowSize(&size)
+    }
+
     /**
      * This method is invoked to notify the client of the new columsn and rows that have been set by the UI
      */
     public func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-        var size = getWindowSize()
-        processAdapter.updateWindowSize(size)
-        _ = process.updateWindowSize(&size)
+        syncProcessWindowSizeIfNeeded()
         
         processDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
     }

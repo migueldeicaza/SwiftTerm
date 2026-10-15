@@ -1,0 +1,244 @@
+#if os(macOS)
+import AppKit
+import Darwin
+import Testing
+import XCTest
+@testable import SwiftTerm
+
+/// The cell grid is snapped to the pixel density of the screen the view was on
+/// when the font was set. These tests cover re-snapping it when that density
+/// changes, which `viewDidChangeBackingProperties` reports.
+@MainActor
+struct BackingScaleCellDimensionTests {
+    private let frame = CGRect(x: 0, y: 0, width: 400, height: 200)
+
+    private func makeView() throws -> TerminalView {
+        let font = try #require(NSFont(name: "Monaco", size: 12))
+        return TerminalView(frame: frame, font: font)
+    }
+
+    /// Hosts views under a plain content view, so a test can detach and
+    /// reattach one without tearing the window down.
+    private let window: NSWindow
+
+    init() {
+        window = NSWindow(contentRect: frame, styleMask: .borderless,
+                          backing: .buffered, defer: false)
+        window.contentView = NSView(frame: frame)
+    }
+
+    private func host(_ view: TerminalView) {
+        window.contentView?.addSubview(view)
+    }
+
+    /// Stands in for a grid measured, and a terminal sized, on a screen of
+    /// another density: cell sizes that do not sit on this screen's pixel
+    /// grid, recorded for a scale no screen has (so it differs from both the
+    /// main screen and the test window).
+    private func pretendMeasuredOnAnotherScreen(_ view: TerminalView) {
+        let current = view.cellDimension!
+        view.cellDimension = TerminalView.CellDimension(width: current.width + 0.3,
+                                                        height: current.height + 0.3)
+        view.cellDimensionBackingScale = 0.5
+        view.processSizeChange(newSize: frame.size)
+    }
+
+    @Test func cellDimensionRecordsTheScaleItWasMeasuredAt() throws {
+        let view = try makeView()
+        #expect(view.cellDimensionBackingScale == view.backingScaleFactor())
+    }
+
+    @Test func backingChangeAtTheSameScaleKeepsTheGrid() throws {
+        let view = try makeView()
+        host(view)
+        let before = view.cellDimension!
+        let cols = view.withTerminal { $0.cols }
+
+        #expect(view.remeasureCellDimensionIfBackingScaleChanged() == false)
+        view.viewDidChangeBackingProperties()
+
+        #expect(view.cellDimension.width == before.width)
+        #expect(view.cellDimension.height == before.height)
+        #expect(view.withTerminal { $0.cols } == cols)
+    }
+
+    @Test func backingChangeToAnotherScaleResnapsTheGrid() throws {
+        let view = try makeView()
+        host(view)
+        let expected = view.computeFontDimensions()
+        pretendMeasuredOnAnotherScreen(view)
+
+        view.viewDidChangeBackingProperties()
+
+        #expect(view.cellDimension.width == expected.width)
+        #expect(view.cellDimension.height == expected.height)
+        #expect(view.cellDimensionBackingScale == view.backingScaleFactor())
+        let expectedCols = Int(view.getEffectiveWidth(size: frame.size) / expected.width)
+        #expect(view.withTerminal { $0.cols } == expectedCols)
+    }
+
+    @Test func backingChangeWithoutGridResizeRequestsAFrame() throws {
+        let view = try makeView()
+        host(view)
+        view.frameDriver.invalidate()
+        let measured = view.cellDimension!
+        let stableSize = CGSize(width: measured.width * 50.5,
+                                height: measured.height * 10.5)
+        view.setFrameSize(stableSize)
+        _ = view.prepareFrame(viewState: FrameViewState(view: view))
+
+        view.cellDimension = CGSize(width: measured.width + 0.01,
+                                    height: measured.height + 0.01)
+        view.cellDimensionBackingScale = 0.5
+        let cols = view.withTerminal { $0.cols }
+        view.viewDidChangeBackingProperties()
+        #expect(view.withTerminal { $0.cols } == cols)
+
+        // AppKit can draw before the frame tick refreshes its snapshot. The
+        // tick must request another draw using the corrected cell geometry.
+        view.displayIfNeeded()
+        let prepared = view.prepareFrame(viewState: FrameViewState(view: view))
+        #expect(prepared?.region != nil)
+    }
+
+    @Test func pixelOnlyBackingChangeUpdatesLocalProcessWindowSize() throws {
+        let view = LocalProcessTerminalView(frame: frame)
+        host(view)
+        view.frameDriver.invalidate()
+        let measured = view.cellDimension!
+        let stableSize = CGSize(width: measured.width * 50.5,
+                                height: measured.height * 10.5)
+        view.setFrameSize(stableSize)
+
+        let launched = view.process.startProcessChecked(
+            executable: "/bin/sleep", args: ["30"])
+        if case .failure(.forkFailed(let code)) = launched,
+           code == EPERM || code == EACCES || code == ENXIO {
+            throw XCTSkip("PTY launch is unavailable in this environment: errno \(code)")
+        }
+        try launched.get()
+        defer { view.process.terminate() }
+
+        // Keep the grid counts fixed while making the cached PTY pixel size
+        // differ from the size that the backing callback will restore.
+        let cols = view.withTerminal { $0.cols }
+        let rows = view.withTerminal { $0.rows }
+        view.cellDimension = CGSize(width: measured.width + 0.05,
+                                    height: measured.height + 0.05)
+        view.cellDimensionBackingScale = 0.5
+        view.processSizeChange(newSize: stableSize)
+        #expect(view.withTerminal { $0.cols } == cols)
+        #expect(view.withTerminal { $0.rows } == rows)
+        view.sizeChanged(source: view, newCols: cols, newRows: rows)
+
+        var oldPTYSize = winsize()
+        #expect(ioctl(view.process.childfd, TIOCGWINSZ, &oldPTYSize) == 0)
+        view.viewDidChangeBackingProperties()
+        #expect(view.withTerminal { $0.cols } == cols)
+        #expect(view.withTerminal { $0.rows } == rows)
+
+        var newPTYSize = winsize()
+        #expect(ioctl(view.process.childfd, TIOCGWINSZ, &newPTYSize) == 0)
+        let expected = view.getWindowSize()
+        #expect(oldPTYSize.ws_xpixel != newPTYSize.ws_xpixel)
+        #expect(newPTYSize.ws_xpixel == expected.ws_xpixel)
+        #expect(newPTYSize.ws_ypixel == expected.ws_ypixel)
+    }
+
+    /// `resize(cols:rows:)` soft-resets the terminal; a screen move must not
+    /// clear modes the running program set.
+    @Test func backingChangeKeepsApplicationCursorMode() throws {
+        let view = try makeView()
+        host(view)
+        view.feed(text: "\u{1b}[?1h")
+        #expect(view.withTerminal { $0.applicationCursor })
+        pretendMeasuredOnAnotherScreen(view)
+        let cols = view.withTerminal { $0.cols }
+
+        view.viewDidChangeBackingProperties()
+
+        // The column count changed, so this went through a terminal resize.
+        #expect(view.withTerminal { $0.cols } != cols)
+        #expect(view.withTerminal { $0.applicationCursor })
+    }
+
+    private final class LiveResizingView: TerminalView {
+        override var inLiveResize: Bool { true }
+    }
+
+    /// A live resize queues row and column counts for the next frame. If the
+    /// backing scale changes before that frame, the queued counts were
+    /// measured with the old cell size and must not replace the corrected ones.
+    @Test func backingChangeReplacesAQueuedLiveResize() throws {
+        let font = try #require(NSFont(name: "Monaco", size: 12))
+        let view = LiveResizingView(frame: frame, font: font)
+        host(view)
+        // Frames are prepared by hand below.
+        view.frameDriver.invalidate()
+        pretendMeasuredOnAnotherScreen(view)
+
+        view.setFrameSize(CGSize(width: 410, height: 200))
+        let queuedCols = Int(view.getEffectiveWidth(size: view.frame.size)
+                             / view.cellDimension.width)
+        view.viewDidChangeBackingProperties()
+        let expectedCols = Int(view.getEffectiveWidth(size: view.frame.size)
+                               / view.cellDimension.width)
+        #expect(queuedCols != expectedCols)
+        #expect(view.withTerminal { $0.cols } == expectedCols)
+
+        let state = try #require(view.captureFrameViewState())
+        _ = view.prepareFrame(viewState: state)
+        #expect(view.withTerminal { $0.cols } == expectedCols)
+    }
+
+    @Test func detachingDoesNotResizeTheTerminal() throws {
+        let view = try makeView()
+        host(view)
+        pretendMeasuredOnAnotherScreen(view)
+        let before = view.cellDimension!
+        let cols = view.withTerminal { $0.cols }
+        let delegate = SizeChangeCountingDelegate()
+        view.terminalDelegate = delegate
+
+        view.removeFromSuperview()
+        view.viewDidChangeBackingProperties()
+
+        #expect(view.cellDimension.width == before.width)
+        #expect(view.cellDimension.height == before.height)
+        #expect(view.withTerminal { $0.cols } == cols)
+        #expect(delegate.sizeChanges == 0)
+    }
+
+    @Test func attachingToAWindowAtAnotherScaleMeasuresOnce() throws {
+        let view = try makeView()
+        pretendMeasuredOnAnotherScreen(view)
+        let delegate = SizeChangeCountingDelegate()
+        view.terminalDelegate = delegate
+
+        host(view)
+
+        #expect(view.cellDimensionBackingScale == window.backingScaleFactor)
+        #expect(delegate.sizeChanges == 1)
+        let measured = view.cellDimension!
+
+        // Later backing callbacks at the same scale leave the grid alone.
+        #expect(view.remeasureCellDimensionIfBackingScaleChanged() == false)
+        view.viewDidChangeBackingProperties()
+        #expect(delegate.sizeChanges == 1)
+        let expected = view.computeFontDimensions()
+        #expect(measured.width == expected.width)
+        #expect(measured.height == expected.height)
+    }
+}
+
+private final class SizeChangeCountingDelegate: TerminalViewDelegate {
+    var sizeChanges = 0
+
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) { sizeChanges += 1 }
+    func setTerminalTitle(source: TerminalView, title: String) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func send(source: TerminalView, data: ArraySlice<UInt8>) {}
+    func scrolled(source: TerminalView, position: Double) {}
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+}
+#endif

@@ -481,6 +481,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 #endif
 
     var cellDimension: CellDimension!
+    /// The backing scale `cellDimension` was snapped to; see `computeFontDimensions`.
+    var cellDimensionBackingScale: CGFloat = 1
     var caretView: CaretView!
     var _fontSmoothing: Bool = true
     var _lineSpacing: CGFloat = 1.0
@@ -971,6 +973,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         frameDriver.bind(to: window == nil ? nil : self)
         hasFocus = window?.firstResponder === self
         updateTerminalFocus()
+        // A view created before it had a window measured its cells against
+        // the main screen; the window it lands in may be on another one.
+        // On detach the helper does nothing, so the view keeps its grid until
+        // it joins a window instead of re-measuring against the main screen.
+        remeasureCellDimensionIfBackingScaleChanged()
         refreshCachedViewState()
         frameDriver.markDirty()
         if window == nil {
@@ -999,7 +1006,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     open override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         guard uiShutdownState == .active else { return }
-        refreshCachedViewState()
+        // This also fires for color space changes, where the grid is still
+        // right and a full re-measure (and the resize it can imply) would be
+        // wrong. The re-measure refreshes the cached view state itself, and
+        // does nothing while the view has no window.
+        if !remeasureCellDimensionIfBackingScaleChanged() {
+            refreshCachedViewState()
+        }
         frameDriver.markDirty()
     }
 
