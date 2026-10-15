@@ -245,6 +245,43 @@ struct TranslucentCellBackgroundTests {
         #expect(abs(Int(on[3]) - 102) <= 1)
     }
 
+    /// The strip below the last full row (a view height that is not a whole
+    /// number of rows) shows the default background once, like the rows
+    /// above it, with the option on or off.
+    @Test func coreGraphicsBottomGapIsPaintedOnce() {
+        for translucent in [false, true] {
+            let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 120, height: 120))
+            view.nativeBackgroundColor = NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)
+            view.backgroundOpacity = 0.4
+            view.translucentCellBackgrounds = translucent
+            let gap = view.bounds.height.truncatingRemainder(dividingBy: view.cellDimension.height)
+            #expect(gap >= 2, "no gap to sample (cell height \(view.cellDimension.height))")
+            guard gap >= 2 else { continue }
+            let width = 120, height = 120
+            if let state = view.captureFrameViewState() {
+                _ = view.prepareFrame(viewState: state)
+            }
+            let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+            view.cacheDisplay(in: view.bounds, to: rep)
+            var pixels = [UInt8](repeating: 0, count: width * height * 4)
+            pixels.withUnsafeMutableBytes { storage in
+                let context = CGContext(data: storage.baseAddress, width: width, height: height,
+                                        bitsPerComponent: 8, bytesPerRow: width * 4,
+                                        space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+                let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+                if let background = view.layer?.backgroundColor {
+                    context.setFillColor(background)
+                    context.fill(bounds)
+                }
+                context.draw(rep.cgImage!, in: bounds)
+            }
+            // The last bitmap row is the view's bottom edge: inside the gap.
+            let alpha = pixels[((height - 2) * width + 60) * 4 + 3]
+            #expect(abs(Int(alpha) - 102) <= 1, "translucent=\(translucent): gap alpha \(alpha)")
+        }
+    }
+
     @Test func coreGraphicsLayerBackgroundFollowsTheOption() {
         let view = makePixelView(translucent: true)
         #expect(view.layer?.backgroundColor?.alpha == 0)

@@ -3839,9 +3839,12 @@ extension TerminalView {
         }
         
 #if os(macOS)
-        // Fills gaps at the end with the default terminal background
+        // Fills gaps at the end with the default terminal background. A
+        // translucent background is already there: the layer paints it (or,
+        // with translucent cell backgrounds, the fill at the top of this
+        // draw), and filling it again would composite it twice.
         let box = CGRect (x: 0, y: 0, width: bounds.width, height: bounds.height.truncatingRemainder(dividingBy: cellHeight))
-        if dirtyRect.intersects(box) {
+        if dirtyRect.intersects(box) && renderContext.effectiveBackgroundColor.cgColor.alpha >= 1 {
             renderContext.effectiveBackgroundColor.setFill()
             context.fill ([box])
         }
