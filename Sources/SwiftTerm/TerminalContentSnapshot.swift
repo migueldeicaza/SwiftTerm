@@ -218,8 +218,10 @@ extension TerminalContentSnapshot {
             }
             var pending = 0
             var column = 0
+            var previousScalar: UInt32?
             while column < end {
                 let cell = cells[column]
+                let cellColumn = column
                 column += 1
                 guard cell.width > 0 else { continue }
                 if cell.isBlank, !cell.attribute.showsWhenBlank {
@@ -229,6 +231,7 @@ extension TerminalContentSnapshot {
                 if pending > 0 {
                     result += "\u{1b}[\(pending)C"
                     pending = 0
+                    previousScalar = nil
                 }
                 if cell.isBlank {
                     // An erase keeps only the background, so blank cells are
@@ -247,12 +250,30 @@ extension TerminalContentSnapshot {
                     select(attribute)
                     if attribute.stylesShowWhenBlank {
                         result += String(repeating: " ", count: run)
+                        previousScalar = 32
                     } else {
                         result += "\u{1b}[\(run)X\u{1b}[\(run)C"
+                        previousScalar = nil
                     }
                 } else {
+                    if let previousScalar, let first = cell.text.unicodeScalars.first {
+                        let mayJoin = UnicodeUtil.isEmojiModifier(first.value)
+                            ? UnicodeUtil.isEmojiModifierBase(previousScalar)
+                            : UnicodeUtil.graphemeJoinNonEmojiModifier(
+                                previous: previousScalar,
+                                previousProperties: UnicodeUtil.graphemeProperties(previousScalar),
+                                incoming: first.value,
+                                incomingProperties: UnicodeUtil.graphemeProperties(first.value),
+                                incomingWidth: cell.width) != .breaks
+                        if mayJoin {
+                            // These are separate stored cells, even when their
+                            // text would form one grapheme without a cursor move.
+                            result += "\u{1b}[\(cellColumn + 1)G"
+                        }
+                    }
                     select(cell.attribute)
                     result += cell.text
+                    previousScalar = cell.text.unicodeScalars.last?.value
                 }
             }
             if index + 1 < rows.count {

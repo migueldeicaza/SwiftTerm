@@ -458,6 +458,46 @@ struct TerminalContentSnapshotExportTests {
         expectSameContents(original, copy)
     }
 
+    @Test(arguments: [2, 6], [1, 3])
+    func wrapCharacterDoesNotJoinAPrependCell(cols: Int, rows: Int) {
+        let fixture = Fixture(cols: cols, rows: 3)
+        fixture.feed(String(repeating: "a", count: cols) + "g")
+        fixture.feed("\u{1b}[1;\(cols - 1)H\u{0d4e}\u{1b}[1;\(cols)H\u{1b}[X\u{1b}[2;2H")
+        fixture.terminal.terminalLock.withLock {
+            fixture.terminal.resize(cols: cols, rows: rows)
+        }
+        let original = fixture.snapshot()
+        #expect(original.rows[0].text == String(repeating: "a", count: cols - 2) + "\u{0d4e}")
+        #expect(original.rows[1].text == "g")
+        #expect(original.rows[1].isWrapped)
+        expectSameContents(original, replay(original))
+
+        // A cursor command must also break the cluster when the wide wrap
+        // character arrives as incomplete UTF-8 in separate feeds.
+        let copy = Fixture(cols: cols, rows: rows)
+        for byte in original.ansiRepresentation().utf8 {
+            copy.terminal.terminalLock.withLock {
+                copy.terminal.feed(byteArray: [byte])
+            }
+        }
+        expectSameContents(original, copy.snapshot())
+    }
+
+    @Test(arguments: [("\u{0d4e}", "\u{3000}", 1),
+                      ("👩\u{200d}", "👩", 2),
+                      ("\u{1f1eb}", "\u{1f1f7}", 2),
+                      ("👍", "\u{1f3fd}", 2)])
+    func separatelyPositionedCellsDoNotJoinOnReplay(sample: (String, String, Int)) {
+        let (first, second, width) = sample
+        let fixture = Fixture()
+        fixture.feed(first)
+        fixture.feed("\u{1b}[\(width + 1)G" + second)
+        let original = fixture.snapshot()
+        #expect(original.rows[0].cells[0].text == first)
+        #expect(original.rows[0].cells[width].text == second)
+        expectSameContents(original, replay(original))
+    }
+
     @Test func normalBufferKeepsItsOwnSizeWhileTheAlternateIsActive() {
         // A resize reaches the normal buffer when it becomes visible again,
         // so a snapshot of it describes its cells with its own dimensions.
