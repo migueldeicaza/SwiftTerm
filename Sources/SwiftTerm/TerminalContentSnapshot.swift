@@ -187,6 +187,16 @@ extension TerminalContentSnapshot {
     /// the last row. The first copied row cannot be marked as a continuation
     /// of a row that was not copied.
     ///
+    /// Two adjacent stored cells whose text the terminal would merge when
+    /// written in sequence, such as a cell ending in a scalar with the
+    /// Unicode `Prepend` property and the cell after it, are separated by a
+    /// cursor move to the second cell's column, which starts a new spacing
+    /// character; the test is the terminal's, with the pairs it leaves to
+    /// segmentation counted as joining. A narrow cell in
+    /// the last column whose text would widen it when written, which only
+    /// autowrap being off can produce, is written with autowrap off, and
+    /// autowrap is turned back on after it.
+    ///
     /// This restores contents only. Cursor position, modes, margins and the
     /// active buffer are not part of the snapshot; replaying a live byte
     /// stream after the export is the host's responsibility.
@@ -209,72 +219,20 @@ extension TerminalContentSnapshot {
         let width = inputState.dimensions.cols
         for (index, row) in rows.enumerated() {
             let continues = index + 1 < rows.count && rows[index + 1].isWrapped
-            let cells = row.cells
-            var end = cells.count
-            if !continues {
-                while end > 0, cells[end - 1].isBlank, !cells[end - 1].attribute.showsWhenBlank {
-                    end -= 1
+            var cursor = 0
+            var previous: TerminalExportPiece?
+            for piece in exportPieces(of: row, width: width, continues: continues) {
+                if piece.column > cursor {
+                    result += "\u{1b}[\(piece.column - cursor)C"
+                } else if let previous, previous.joins(piece) {
+                    // Two stored cells whose text would form one grapheme:
+                    // a cursor move starts a new spacing character.
+                    result += "\u{1b}[\(piece.column + 1)G"
                 }
-            }
-            var pending = 0
-            var column = 0
-            var previousScalar: UInt32?
-            while column < end {
-                let cell = cells[column]
-                let cellColumn = column
-                column += 1
-                guard cell.width > 0 else { continue }
-                if cell.isBlank, !cell.attribute.showsWhenBlank {
-                    pending += cell.width
-                    continue
-                }
-                if pending > 0 {
-                    result += "\u{1b}[\(pending)C"
-                    pending = 0
-                    previousScalar = nil
-                }
-                if cell.isBlank {
-                    // An erase keeps only the background, so blank cells are
-                    // grouped by what an erase would leave. The half of a
-                    // wide character left when the other half is overwritten
-                    // keeps the character's attribute, which can carry a
-                    // style that shows on a blank cell; those are written as
-                    // the spaces that look the same.
-                    let attribute = cell.attribute.blankForm
-                    var run = cell.width
-                    while column < end, cells[column].width > 0, cells[column].isBlank,
-                          cells[column].attribute.blankForm == attribute {
-                        run += cells[column].width
-                        column += 1
-                    }
-                    select(attribute)
-                    if attribute.stylesShowWhenBlank {
-                        result += String(repeating: " ", count: run)
-                        previousScalar = 32
-                    } else {
-                        result += "\u{1b}[\(run)X\u{1b}[\(run)C"
-                        previousScalar = nil
-                    }
-                } else {
-                    if let previousScalar, let first = cell.text.unicodeScalars.first {
-                        let mayJoin = UnicodeUtil.isEmojiModifier(first.value)
-                            ? UnicodeUtil.isEmojiModifierBase(previousScalar)
-                            : UnicodeUtil.graphemeJoinNonEmojiModifier(
-                                previous: previousScalar,
-                                previousProperties: UnicodeUtil.graphemeProperties(previousScalar),
-                                incoming: first.value,
-                                incomingProperties: UnicodeUtil.graphemeProperties(first.value),
-                                incomingWidth: cell.width) != .breaks
-                        if mayJoin {
-                            // These are separate stored cells, even when their
-                            // text would form one grapheme without a cursor move.
-                            result += "\u{1b}[\(cellColumn + 1)G"
-                        }
-                    }
-                    select(cell.attribute)
-                    result += cell.text
-                    previousScalar = cell.text.unicodeScalars.last?.value
-                }
+                select(piece.attribute)
+                result += piece.text
+                cursor = piece.column + piece.width
+                previous = piece
             }
             if index + 1 < rows.count {
                 // A wrap or a line feed may scroll, and a scrolled-in row is
@@ -292,6 +250,66 @@ extension TerminalContentSnapshot {
             result += "\u{1b}[" + reset + "m"
         }
         return result
+    }
+
+    /// The sequences that write `row`, in column order. Cells nothing was
+    /// written to produce none unless they carry a background, which is
+    /// erased into place.
+    private func exportPieces(of row: TerminalContentRowSnapshot, width: Int, continues: Bool) -> [TerminalExportPiece] {
+        let cells = row.cells
+        var end = cells.count
+        if !continues {
+            while end > 0, cells[end - 1].isBlank, !cells[end - 1].attribute.showsWhenBlank {
+                end -= 1
+            }
+        }
+        var pieces: [TerminalExportPiece] = []
+        var column = 0
+        while column < end {
+            let cell = cells[column]
+            let start = column
+            column += 1
+            guard cell.width > 0, !cell.isBlank || cell.attribute.showsWhenBlank else { continue }
+            if cell.isBlank {
+                // An erase keeps only the background, so blank cells are
+                // grouped by what an erase would leave. The half of a wide
+                // character left when the other half is overwritten keeps
+                // the character's attribute, which can carry a style that
+                // shows on a blank cell; those are written as the spaces
+                // that look the same.
+                let attribute = cell.attribute.blankForm
+                var run = cell.width
+                while column < end, cells[column].width > 0, cells[column].isBlank,
+                      cells[column].attribute.blankForm == attribute {
+                    run += cells[column].width
+                    column += 1
+                }
+                if attribute.stylesShowWhenBlank {
+                    pieces.append(TerminalExportPiece(
+                        column: start, width: run, attribute: attribute,
+                        text: String(repeating: " ", count: run), lastCell: " "))
+                } else {
+                    pieces.append(TerminalExportPiece(
+                        column: start, width: run, attribute: attribute,
+                        text: "\u{1b}[\(run)X\u{1b}[\(run)C", lastCell: nil))
+                }
+            } else {
+                let scalars = cell.text.unicodeScalars
+                var text = cell.text
+                if cell.width == 1, start == width - 1,
+                   scalars.dropFirst().contains(where: TerminalExportPiece.widens) {
+                    // A scalar that widens the cell it joins moves a cell in
+                    // the last column to the next row instead, unless
+                    // autowrap is off: only that leaves a narrow cell with
+                    // such text, so the cell is written the same way.
+                    text = "\u{1b}[?7l" + text + "\u{1b}[?7h"
+                }
+                pieces.append(TerminalExportPiece(
+                    column: start, width: cell.width, attribute: cell.attribute,
+                    text: text, lastCell: cell.text))
+            }
+        }
+        return pieces
     }
 
     /// `OSC 10` and `OSC 11` when the default colors are not SwiftTerm's
@@ -313,6 +331,52 @@ extension TerminalContentSnapshot {
             }
         }
         return result
+    }
+}
+
+/// One sequence of ``TerminalContentSnapshot/ansiRepresentation()``: a cell's
+/// text, a run of styled spaces or an erase, with the columns it covers.
+private struct TerminalExportPiece {
+    let column: Int
+    let width: Int
+    let attribute: Attribute
+    let text: String
+    /// The text of the last cell the sequence writes; nil for an erase,
+    /// which leaves cells the terminal never extends.
+    let lastCell: String?
+
+    /// True when writing `next` right after this piece would extend this
+    /// piece's last cell instead of starting a cell of its own.
+    func joins(_ next: TerminalExportPiece) -> Bool {
+        guard let lastCell, let nextCell = next.lastCell, next.column == column + width else { return false }
+        return TerminalExportPiece.joins(lastCell, nextCell.unicodeScalars.first!)
+    }
+
+    /// True when the terminal widens a narrow cell that `scalar` joins: a
+    /// scalar with a column width, a spacing mark or the emoji presentation
+    /// selector.
+    static func widens(_ scalar: Unicode.Scalar) -> Bool {
+        UnicodeUtil.columnWidth(rune: scalar) > 0
+            || UnicodeUtil.isSpacingMarkWidth(scalar.value)
+            || scalar.value == 0xFE0F
+    }
+
+    /// The test the terminal makes before it stores `scalar` after the cell
+    /// with text `cell`. The pairs the terminal leaves to the standard
+    /// library's segmentation count as joining: a cursor move they did not
+    /// need costs four bytes, a missing one merges two cells.
+    static func joins(_ cell: String, _ scalar: Unicode.Scalar) -> Bool {
+        let previous = cell.unicodeScalars.last!.value
+        let value = scalar.value
+        if UnicodeUtil.isEmojiModifier(value) {
+            return UnicodeUtil.isEmojiModifierBase(previous)
+        }
+        return UnicodeUtil.graphemeJoinNonEmojiModifier(
+            previous: previous,
+            previousProperties: UnicodeUtil.graphemeProperties(previous),
+            incoming: value,
+            incomingProperties: UnicodeUtil.graphemeProperties(value),
+            incomingWidth: UnicodeUtil.columnWidth(rune: scalar)) != .breaks
     }
 }
 

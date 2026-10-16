@@ -401,14 +401,14 @@ struct TerminalContentSnapshotExportTests {
         expectSameContents(original, replay(original))
     }
 
-    @Test func replayRoundTripsRandomScreens() {
-        // Random mixes of text, wide characters, colors and styles, cursor
-        // moves, erases, inserts, deletes, scrolls, margins and modes on a
-        // small screen with scrollback. Every screen must replay to the same
-        // appearance, and the copy must export to the same bytes.
-        var generator = SplitMix64(seed: 0x5e1f7e57)
+    /// Random mixes of `text` pieces, wide characters, colors and styles,
+    /// cursor moves, erases, inserts, deletes, scrolls, margins and modes on
+    /// a small screen with scrollback, each replayed: the inputs whose copy
+    /// differs in appearance or in its export, with the first difference.
+    private func replayFailures(seed: UInt64, text: [String]) -> [String] {
+        var generator = SplitMix64(seed: seed)
         let pieces: [() -> String] = [
-            { ["a", "bc", "xyz", " ", "  ", "hello", "mnopqrs"].randomElement(using: &generator)! },
+            { text.randomElement(using: &generator)! },
             { ["漢", "界", "日本"].randomElement(using: &generator)! },
             { ["\u{1b}[44m", "\u{1b}[31m", "\u{1b}[7m", "\u{1b}[0m", "\u{1b}[1;33m", "\u{1b}[27m", "\u{1b}[49m",
                "\u{1b}[4m", "\u{1b}[4:3m", "\u{1b}[58;5;1m", "\u{1b}[9m", "\u{1b}[2m", "\u{1b}[24m",
@@ -437,6 +437,26 @@ struct TerminalContentSnapshotExportTests {
                 failures.append("\(visible(input)): \(difference)")
             }
         }
+        return failures
+    }
+
+    @Test func replayRoundTripsRandomScreens() {
+        let failures = replayFailures(seed: 0x5e1f7e57, text: ["a", "bc", "xyz", " ", "  ", "hello", "mnopqrs"])
+        #expect(failures.isEmpty, Comment(rawValue: failures.prefix(5).joined(separator: "\n")))
+    }
+
+    @Test func replayRoundTripsRandomScreensWithJoiningScalars() {
+        // Scalars the terminal joins to a neighbouring cell: two with the
+        // Prepend property, a combining mark on its own and on a base, a
+        // Devanagari consonant and virama, a Hangul leading consonant, two
+        // regional indicators, an emoji with a zero width joiner and the
+        // emoji presentation selector, and a heart the selector widens.
+        // An emoji modifier and a Hangul vowel are left out: after a wide
+        // character that a terminal with autowrap off dropped, the terminal
+        // joins them as if that character had been written.
+        let failures = replayFailures(seed: 0x6a01, text: [
+            "a", "xyz", "hello", "\u{0d4e}", "\u{0600}", "e\u{0301}", "\u{0301}", "\u{0915}\u{094d}", "\u{0915}",
+            "\u{094d}", "\u{1100}", "\u{1f1ea}", "\u{1f1f8}", "👩", "\u{200d}", "\u{fe0f}", "\u{2764}"])
         #expect(failures.isEmpty, Comment(rawValue: failures.prefix(5).joined(separator: "\n")))
     }
 
@@ -562,5 +582,48 @@ struct TerminalContentSnapshotExportTests {
         erased.feed("\u{1b}[42m\u{1b}[2K\u{1b}[0mab")
         #expect(visible(erased.snapshot(.viewport).ansiRepresentation())
                 == visible("\u{1b}[0;39;49mab\u{1b}[0;39;42m\u{1b}[4X\u{1b}[4C\u{1b}[0;39;49m\r\n"))
+    }
+
+    @Test func cellsTheTerminalWouldMergeAreSeparatedByACursorMove() {
+        // U+0D4E has the Unicode Prepend property: written in sequence, the
+        // terminal extends a cell ending in it with whatever comes next. A
+        // cursor move to the next cell's column starts a new cell instead,
+        // for a styled blank written as a space as much as for text.
+        let fixture = Fixture(cols: 6, rows: 3)
+        fixture.feed("\u{1b}[7m漢\u{1b}[1;1H\u{0d4e}\u{1b}[1;3H\u{1b}[0mx\u{1b}[1;5H\u{0d4e}\u{1b}[1;4H\u{0d4e}")
+        let original = fixture.snapshot()
+        #expect(Array(original.rows[0].cells.map(\.text)[0...4]) == ["\u{0d4e}", "\u{0}", "x", "\u{0d4e}", "\u{0d4e}"])
+        #expect(original.rows[0].cells[1].attribute.style.contains(.inverse))
+        #expect(visible(original.ansiRepresentation())
+                == visible("\u{1b}[0;39;49m\u{1b}[0;7;39;49m\u{0d4e}\u{1b}[2G \u{1b}[0;39;49mx\u{0d4e}\u{1b}[5G\u{0d4e}\r\n\r\n"))
+        expectSameContents(original, replay(original))
+
+        // The wrap moves the cursor to the last column, so the wrap character
+        // never joins the cell before it.
+        let wrapped = Fixture(cols: 6, rows: 3)
+        wrapped.feed("abcdefg\u{1b}[1;5H\u{0d4e}\u{1b}[1;6H\u{1b}[X")
+        let snapshot = wrapped.snapshot()
+        #expect(visible(snapshot.ansiRepresentation())
+                == visible("\u{1b}[0;39;49mabcd\u{0d4e}\u{1b}[6G\u{3000}\r\u{1b}[2Xg\r\n"))
+        expectSameContents(snapshot, replay(snapshot))
+    }
+
+    @Test func cellsOnlyAutowrapOffCanFormAreWrittenWithAutowrapOff() {
+        // With autowrap off, a scalar that joins the cell in the last column
+        // and would widen it leaves it narrow, since there is no room; with
+        // autowrap on the same text moves to the next row as a wide cell.
+        let joined = Fixture(cols: 6, rows: 3)
+        joined.feed("\u{1b}[?7l\u{1b}[1;6H\u{0d4e}漢")
+        let original = joined.snapshot()
+        #expect(original.rows[0].cells[5].text == "\u{0d4e}漢")
+        #expect(original.rows[0].cells[5].width == 1)
+        #expect(visible(original.ansiRepresentation())
+                == visible("\u{1b}[0;39;49m\u{1b}[5C\u{1b}[?7l\u{0d4e}漢\u{1b}[?7h\r\n\r\n"))
+        expectSameContents(original, replay(original))
+
+        // A combining mark does not widen the cell it joins.
+        let plain = Fixture(cols: 6, rows: 3)
+        plain.feed("\u{1b}[1;6He\u{301}")
+        #expect(visible(plain.snapshot().ansiRepresentation()) == visible("\u{1b}[0;39;49m\u{1b}[5Ce\u{301}\r\n\r\n"))
     }
 }
