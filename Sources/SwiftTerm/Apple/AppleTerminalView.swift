@@ -4348,7 +4348,10 @@ extension TerminalView {
     
     ///
     /// This takes a string returned by events (NSEvent or UIKey) as the 'charactersIngoringModifiers'
-    /// and returns the control-version of that, and only applies to a handful of characters
+    /// and returns the control-version of that, and only applies to a handful of characters.
+    ///
+    /// As in kitty and Ghostty, Control-/ also sends Control-_, the digits 2 to 8 send NUL, ESC,
+    /// FS, GS, RS, US and DEL, and Control-? sends DEL.
     ///
     func applyControlToEventCharacters (_ ch: String) -> [UInt8]
     {
@@ -4361,18 +4364,20 @@ extension TerminalView {
                 value = (ch.asciiValue! - 0x40 /* - 'A' + 1 */)
             case "a"..."z":
                 value = (ch.asciiValue! - 0x60 /* - 'a' + 1 */)
-            case "\\":
+            case "\\", "4":
                 value = 0x1c
-            case "_":
+            case "_", "/", "7":
                 value = 0x1f
-            case "]":
+            case "]", "5":
                 value = 0x1d
-            case "[":
+            case "[", "3":
                 value = 0x1b
             case "^", "6":
                 value = 0x1e
-            case " ":
+            case " ", "@", "2":
                 value = 0
+            case "?", "8":
+                value = 0x7f
             default:
                 return []
             }
