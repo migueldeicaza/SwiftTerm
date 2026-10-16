@@ -100,15 +100,23 @@ writing to one file descriptor would.
 ## Inspecting contents without mutable terminal access
 
 Use ``Terminal/inputStateSnapshot()`` for a cheap copy of dimensions and input
-modes. Use ``Terminal/contentSnapshot(region:)`` to copy either the viewport or
-the live screen plus a bounded number of scrollback rows. ``TerminalView`` and
-``HeadlessTerminal`` expose convenience wrappers with the `terminal` prefix.
+modes. Use ``Terminal/contentSnapshot(region:kind:)`` to copy rows: by default
+every retained row of the active buffer, or the viewport, the live screen plus
+a bounded number of scrollback rows, or a range of scroll-invariant row numbers.
+`kind` selects the normal or alternate buffer regardless of which one is
+displayed. ``TerminalView`` and ``HeadlessTerminal`` expose convenience wrappers
+with the `terminal` prefix.
 The view wrappers return `nil` when no terminal session is attached. These
 methods are safe to call from any thread, except inside a callback that already
 holds the terminal lock.
 
 A content snapshot captures its input state, row coordinates, complete cell
-text, widths, attributes, and row-wrap flags in one transaction. Its
+text, widths, attributes, row-wrap flags, the 256-color palette, the palette
+the terminal started from and the default colors in one transaction.
+``TerminalContentSnapshot/ansiRepresentation()`` re-encodes the copied rows as
+text with SGR sequences that another terminal of the same width can replay,
+preceded by the default colors and the palette entries the application
+changed; it restores contents, not cursor or modes. Its
 `capturedRange` uses scroll-invariant absolute row numbers; it describes only
 the copied window, not all retained history. The computed row text is
 right-trimmed display text using the same conversion as
@@ -124,7 +132,7 @@ instead of Swift string indices.
 
 This is a pure inspection snapshot and does not mutate renderer damage state.
 Use ``Terminal/makeRenderSnapshot(scope:)`` for renderer input. Content
-snapshots intentionally omit images, hyperlinks, and palette values.
+snapshots intentionally omit images and hyperlinks.
 
 ## Delegate callbacks and the terminal lock
 
