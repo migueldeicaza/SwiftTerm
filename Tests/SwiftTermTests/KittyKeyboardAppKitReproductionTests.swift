@@ -106,6 +106,57 @@ final class KittyKeyboardAppKitReproductionTests {
         return capture.sent
     }
 
+    private func modifiedArrow(_ code: UInt16, modifiers: NSEvent.ModifierFlags) -> NSEvent {
+        let values: [UInt16: Int] = [123: NSLeftArrowFunctionKey, 124: NSRightArrowFunctionKey,
+                                     125: NSDownArrowFunctionKey, 126: NSUpArrowFunctionKey]
+        let text = String(UnicodeScalar(UInt32(values[code]!))!)
+        return keyEvent(modifiers: modifiers.union([.function, .numericPad]),
+                        characters: text, charactersIgnoringModifiers: text, keyCode: code)
+    }
+
+    @Test func legacyOptionArrowsUseMacBindings() {
+        for optionAsMeta in [false, true] {
+            for applicationCursor in [false, true] {
+                let (view, capture, window) = configuredView(flags: 0)
+                window.isReleasedWhenClosed = false
+                defer { window.close() }
+                view.optionAsMetaKey = optionAsMeta
+                view.feed(text: "\u{1b}[?1\(applicationCursor ? "h" : "l")")
+                for code: UInt16 in [123, 124, 125, 126] {
+                    view.keyDown(with: modifiedArrow(code, modifiers: .option))
+                }
+                let prefix = applicationCursor ? "\u{1b}O" : "\u{1b}["
+                #expect(capture.sent == Array("\u{1b}b\u{1b}f\(prefix)B\(prefix)A".utf8))
+            }
+        }
+    }
+
+    @Test func legacyCommandArrowsSendNoInput() {
+        let (view, capture, window) = configuredView(flags: 0)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        for code: UInt16 in [123, 124, 125, 126] {
+            view.keyDown(with: modifiedArrow(code, modifiers: .command))
+            #expect(capture.sent.isEmpty)
+        }
+    }
+
+    @Test func enhancedArrowsKeepTheirModifiers() {
+        let (view, capture, window) = configuredView(flags: 1)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        for modifiers: NSEvent.ModifierFlags in [.option, .command] {
+            capture.sent = []
+            for code: UInt16 in [123, 124, 125, 126] {
+                view.keyDown(with: modifiedArrow(code, modifiers: modifiers))
+            }
+            let modifier = modifiers == .option ? "3" : "9"
+            #expect(capture.sent == Array(["D", "C", "B", "A"].map {
+                "\u{1b}[1;\(modifier)\($0)"
+            }.joined().utf8))
+        }
+    }
+
     @Test func legacyControlCUsesBaseLayoutForNonLatinInputSources() {
         let nonLatinCharacters = ["ㅊ", "с", "ذ", "ψ"]
 
