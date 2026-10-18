@@ -2280,7 +2280,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return false
         }
 
-        let targetRow = Int(floor(targetOffsetY / cellDimension.height))
+        let targetRow: Int
+        if targetOffsetY >= maxOffsetY {
+            // A partial text row makes the bottom offset smaller than the
+            // last display row's offset. Keep the last viewport and follow output.
+            targetRow = withTerminal { maxDisplayRow(in: $0.displayBuffer) }
+        } else {
+            targetRow = Int(floor(targetOffsetY / cellDimension.height))
+        }
         scrollTo(row: targetRow, notifyAccessibility: false)
         // Based on WWDC 2019 presentation: argument is nil
         UIAccessibility.post(notification: .pageScrolled, argument: nil)

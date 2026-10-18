@@ -37,6 +37,37 @@ struct ScrollbackSupportTests {
         #expect(view.withTerminal { $0.buffer.yDisp } < previous)
     }
 
+    @Test(arguments: [0.0, 0.25, 0.75])
+    func accessibilityScrollToBottomResumesLiveOutput(partialRowFraction: Double) throws {
+        let view = TrackingView(frame: CGRect(x: 0, y: 0, width: 640, height: 320))
+        defer { view.updateUiClosed() }
+        let cellHeight = view.cellDimension.height
+        view.frame.size.height = cellHeight * (15 + CGFloat(partialRowFraction))
+        view.layoutIfNeeded()
+        view.feed(text: (0..<100).map { "row\($0)\r\n" }.joined())
+        view.frameTick()
+        let maxRow = view.withTerminal { $0.buffer.lines.count - $0.buffer.rows }
+        view.scrollTo(row: maxRow - 2)
+        #expect(view.userScrolling)
+
+        #expect(view.accessibilityScroll(.down))
+        view.frameTick()
+        let bottomRow = view.withTerminal { $0.buffer.yDisp }
+        #expect(bottomRow == maxRow)
+        #expect(!view.userScrolling)
+        #expect(!view.withTerminal { $0.userScrolling })
+        let state = try #require(view.captureFrameViewState())
+        view.renderOwner.withSnapshotForDrawing(viewState: state) { snapshot, _ in
+            #expect(snapshot.yDisp == maxRow)
+        }
+
+        view.feed(text: "new output\r\n")
+        view.frameTick()
+        let position = view.withTerminal { (displayed: $0.buffer.yDisp, base: $0.buffer.yBase) }
+        #expect(position.displayed == position.base)
+        #expect(position.base > maxRow)
+    }
+
     @Test func touchScrollRefreshesRenderingSnapshot() async throws {
         let view = TrackingView(frame: CGRect(x: 0, y: 0, width: 640, height: 320))
         view.setCursorStyle(.steadyBlock)
