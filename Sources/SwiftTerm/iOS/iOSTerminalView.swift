@@ -548,6 +548,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             mtkView.framebufferOnly = true
             mtkView.colorPixelFormat = .bgra8Unorm
             mtkView.isUserInteractionEnabled = false
+            mtkView.isOpaque = backgroundOpacity >= 1.0
             // Tag the metal layer with sRGB so the compositor color-manages our
             // pixels the same way as a regular UIView's layer. Without this,
             // CAMetalLayer is untagged and raw bytes are treated as
@@ -555,8 +556,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             // displays.
             if let metalLayer = mtkView.layer as? CAMetalLayer {
                 metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
-                // Composite through the layer when the background is translucent
-                metalLayer.isOpaque = backgroundOpacity >= 1.0
             }
             let renderer = try MetalTerminalRenderer(target: mtkView)
             let frameSignal = frameDriver.signal
@@ -3599,6 +3598,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             if let background = layer.backgroundColor {
                 layer.backgroundColor = background.copy (alpha: clamped)
             }
+#if canImport(MetalKit)
+            // Update the existing surface when the host changes the background.
+            metalView?.isOpaque = backgroundOpacity >= 1.0
+#endif
             colorsChanged ()
         }
     }
