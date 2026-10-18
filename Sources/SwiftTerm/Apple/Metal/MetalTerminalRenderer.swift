@@ -1209,7 +1209,7 @@ final class MetalTerminalRenderer {
 #endif
         let encodeInterval = Profiling.begin(.metalEncode)
         defer { encodeInterval.end() }
-        let bgColor = colorToSIMD(renderContext.effectiveBackgroundColor)
+        let bgColor = colorToSIMD(renderContext.metalClearColor)
         passDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(Double(bgColor.x),
                                                                          Double(bgColor.y),
                                                                          Double(bgColor.z),

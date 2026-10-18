@@ -553,6 +553,7 @@ struct FrameViewState: Sendable {
     let antiAliasCustomBlockGlyphs: Bool
     let cursorHasFocus: Bool
     let appearance: FrameAppearance
+    let metalClearColor: FrameColor
     let customBlockGlyphs: Bool
     let useBrightColors: Bool
     let minimumContrastRatio: CGFloat
@@ -594,6 +595,15 @@ struct FrameViewState: Sendable {
         metalBufferingMode = view.metalBufferingMode
         antiAliasCustomBlockGlyphs = view.antiAliasCustomBlockGlyphs
         appearance = view.frameCaptureCache.appearance(for: view)
+#if os(macOS)
+        metalClearColor = appearance.effectiveBackgroundColor
+#else
+        // The terminal layer paints the default background on iOS. Clear the
+        // Metal surface so that this color and its alpha are applied once.
+        let clearColor = view.reverseColorsActiveValue()
+            ? view.effectiveNativeBackgroundColor.withAlphaComponent(1) : TTColor.clear
+        metalClearColor = FrameColor(clearColor, view: view)
+#endif
         customBlockGlyphs = view.customBlockGlyphs
         useBrightColors = view.useBrightColors
         minimumContrastRatio = view.minimumContrastRatio
@@ -639,6 +649,7 @@ struct SnapshotNativeColors {
 }
 
 struct SnapshotRenderContext {
+    let metalClearColor: TTColor
     let fonts: FrameFontSet
     let cellDimension: TerminalView.CellDimension
     let viewBounds: CGRect
@@ -709,6 +720,7 @@ struct SnapshotRenderContext {
         antiAliasCustomBlockGlyphs = viewState.antiAliasCustomBlockGlyphs
         effectiveForegroundColor = nativeColors.effectiveForegroundColor
         effectiveBackgroundColor = nativeColors.effectiveBackgroundColor
+        metalClearColor = viewState.metalClearColor.nativeColor
         selectedTextBackgroundColor = nativeColors.selectedTextBackgroundColor
         selectedTextForegroundColor = nativeColors.selectedTextForegroundColor
         caretColor = nativeColors.caretColor
@@ -734,6 +746,7 @@ struct SnapshotRenderContext {
         identityHasher.combine(glyphFallbackProvider?.cacheIdentity ?? 0)
         identityHasher.combine(effectiveForegroundColor.hash)
         identityHasher.combine(effectiveBackgroundColor.hash)
+        identityHasher.combine(metalClearColor.hash)
         identityHasher.combine(selectedTextBackgroundColor.hash)
         identityHasher.combine(selectedTextForegroundColor.hash)
         identityHasher.combine(caretColor.hash)
