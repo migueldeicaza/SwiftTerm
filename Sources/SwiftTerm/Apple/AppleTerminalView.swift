@@ -1736,9 +1736,10 @@ extension TerminalView {
     /// Returns nil when no terminal session is attached. The returned values
     /// remain valid after later feeds, resizes, scrolls, and history trimming.
     public nonisolated func terminalContentSnapshot(
-        region: TerminalContentRegion
+        region: TerminalContentRegion,
+        buffer: Terminal.BufferKind = .active
     ) -> TerminalContentSnapshot? {
-        renderOwner.contentSnapshot(region: region)
+        renderOwner.contentSnapshot(region: region, buffer: buffer)
     }
 
     /// Copies terminal buffer contents without exposing the mutable terminal.

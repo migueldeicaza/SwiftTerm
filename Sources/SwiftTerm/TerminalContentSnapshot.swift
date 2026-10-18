@@ -108,17 +108,25 @@ public struct TerminalContentSnapshot: Sendable, Equatable {
     public let capturedRange: Range<Int>
     public let liveTopRow: Int
     public let rows: [TerminalContentRowSnapshot]
+    /// The cursor row of the copied buffer, in the coordinates of `absoluteRow`.
+    public let cursorRow: Int
+    /// The cursor column of the copied buffer.
+    public let cursorColumn: Int
 
     public init(
         inputState: TerminalInputStateSnapshot,
         capturedRange: Range<Int>,
         liveTopRow: Int,
-        rows: [TerminalContentRowSnapshot]
+        rows: [TerminalContentRowSnapshot],
+        cursorRow: Int = 0,
+        cursorColumn: Int = 0
     ) {
         self.inputState = inputState
         self.capturedRange = capturedRange
         self.liveTopRow = liveTopRow
         self.rows = rows
+        self.cursorRow = cursorRow
+        self.cursorColumn = cursorColumn
     }
 }
 
@@ -154,9 +162,10 @@ extension Terminal {
         terminalLock.withLock { inputStateSnapshotLocked() }
     }
 
-    func contentSnapshotLocked(region: TerminalContentRegion) -> TerminalContentSnapshot {
+    func contentSnapshotLocked(region: TerminalContentRegion,
+                               buffer kind: BufferKind = .active) -> TerminalContentSnapshot {
         terminalLock.preconditionLocked()
-        let source = displayBuffer
+        let source = kind == .active ? displayBuffer : bufferFromKind(kind: kind)
         let count = source.lines.count
         let screenRows = min(max(0, rows), count)
         let liveStart = count - screenRows
@@ -189,7 +198,9 @@ extension Terminal {
             inputState: inputStateSnapshotLocked(),
             capturedRange: (source.linesTop + start)..<(source.linesTop + end),
             liveTopRow: source.linesTop + liveStart,
-            rows: copiedRows)
+            rows: copiedRows,
+            cursorRow: source.linesTop + source.yBase + source.y,
+            cursorColumn: source.x)
     }
 
     /// Copies a bounded region and its input state under one terminal lock.
@@ -201,7 +212,13 @@ extension Terminal {
     /// state and can include bounded scrollback history. It intentionally omits
     /// images, hyperlinks, and palette values; use render/graphics snapshots
     /// when a renderer needs those details.
-    public func contentSnapshot(region: TerminalContentRegion) -> TerminalContentSnapshot {
-        terminalLock.withLock { contentSnapshotLocked(region: region) }
+    ///
+    /// `buffer` selects the buffer to copy. The default copies the active
+    /// buffer; `.normal` copies the shell history also while a full-screen
+    /// program shows the alternate screen. ``TerminalInputStateSnapshot/isAlternateBuffer``
+    /// still tells which buffer is active.
+    public func contentSnapshot(region: TerminalContentRegion,
+                                buffer: BufferKind = .active) -> TerminalContentSnapshot {
+        terminalLock.withLock { contentSnapshotLocked(region: region, buffer: buffer) }
     }
 }

@@ -115,6 +115,24 @@ struct TerminalContentSnapshotCoreTests {
         #expect(row.text == "x")
     }
 
+    @Test func normalBufferIsCopiedWhileAlternateScreenIsActive() throws {
+        let fixture = Fixture()
+        fixture.feed("shell1\r\nshell2\r\nshell3\r\nshell4\r\nshell5")
+        fixture.feed("\u{1b}[?1049h\u{1b}[2J\u{1b}[Heditor")
+
+        let active = fixture.terminal.contentSnapshot(region: .history(maximumScrollbackRows: 10))
+        #expect(active.inputState.isAlternateBuffer)
+        #expect(active.rows.map(\.text).contains("editor"))
+
+        let normal = fixture.terminal.contentSnapshot(region: .history(maximumScrollbackRows: 10),
+                                                      buffer: .normal)
+        #expect(normal.inputState.isAlternateBuffer)
+        #expect(normal.rows.map(\.text) == ["shell1", "shell2", "shell3", "shell4", "shell5"])
+        let cursorIndex = normal.cursorRow - normal.capturedRange.lowerBound
+        #expect(normal.rows[cursorIndex].text == "shell5")
+        #expect(normal.cursorColumn == 6)
+    }
+
     @Test func historyIsBoundedAndUsesScrollInvariantCoordinates() throws {
         let fixture = Fixture(scrollback: 800)
         fixture.feed((0..<1_000).map { "row\($0)\r\n" }.joined())

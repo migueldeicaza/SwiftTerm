@@ -138,9 +138,10 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     /// not include images, hyperlinks, or palette values, and is not sufficient
     /// to reproduce the full display.
     public func terminalContentSnapshot(
-        region: TerminalContentRegion
+        region: TerminalContentRegion,
+        buffer: Terminal.BufferKind = .active
     ) -> TerminalContentSnapshot {
-        terminal.contentSnapshot(region: region)
+        terminal.contentSnapshot(region: region, buffer: buffer)
     }
 
     /// Changes scrollback size for the underlying terminal at runtime.
