@@ -2143,23 +2143,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 let maxRow = maxDisplayRow(in: displayBuffer)
                 if displayBuffer.yDisp != maxRow {
                     terminal.setViewYDisp(maxRow)
+                    terminal.refresh(startRow: 0, endRow: terminal.rows - 1)
                 }
                 setManualScrollingLocked(false, terminal: terminal)
             }
             return
         }
 
-        // Freeze auto-follow only while the finger is physically down
-        // (isTracking). Excluding the momentum coast is essential: after the
-        // finger lifts, deceleration keeps firing sync while streaming output
-        // extends the content and the bottom recedes ahead of the coasting
-        // offset — treating that "not at the bottom yet" reading as a manual
-        // scroll would re-freeze a view the user just flung to the bottom. This
-        // must key off isTracking, not isDragging: on device isDragging stays
-        // true through the entire coast, so it fails to exclude momentum. It also
-        // covers layout/system-driven offset changes (startup sizing, rotation,
-        // keyboard insets, buffer shrink), which are never a manual scroll.
-        guard isTracking else {
+        // A drag can disable auto-follow. Continue to update the displayed
+        // row while that drag decelerates. After the view reaches the bottom,
+        // deceleration must not disable auto-follow again.
+        // Ignore offset changes from layout while the view follows output.
+        guard isTracking || (userScrolling && isDecelerating) else {
             return
         }
 
@@ -2171,6 +2166,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             manualScrollOffsetWithinRow = offsetY - CGFloat(row) * cellDimension.height
             if displayBuffer.yDisp != row {
                 terminal.setViewYDisp(row)
+                terminal.refresh(startRow: 0, endRow: terminal.rows - 1)
             }
             setManualScrollingLocked(true, terminal: terminal)
         }
@@ -2258,11 +2254,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     open override var contentOffset: CGPoint {
         didSet {
             syncYDispFromContentOffset()
-#if canImport(MetalKit)
-            if useMetalRenderer, metalView != nil {
-                frameDriver.markDirty()
+            // Core Graphics also draws from a copied viewport snapshot.
+            // A scroll must refresh that snapshot before the next draw.
+            if oldValue != contentOffset {
+                frameDriver?.markDirty()
             }
-#endif
         }
     }
 
@@ -2284,8 +2280,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return false
         }
 
-        setContentOffset(CGPoint(x: contentOffset.x, y: targetOffsetY), animated: false)
-        setNeedsDisplay(bounds)
+        let targetRow: Int
+        if targetOffsetY >= maxOffsetY {
+            // A partial text row makes the bottom offset smaller than the
+            // last display row's offset. Keep the last viewport and follow output.
+            targetRow = withTerminal { maxDisplayRow(in: $0.displayBuffer) }
+        } else {
+            targetRow = Int(floor(targetOffsetY / cellDimension.height))
+        }
+        scrollTo(row: targetRow, notifyAccessibility: false)
         // Based on WWDC 2019 presentation: argument is nil
         UIAccessibility.post(notification: .pageScrolled, argument: nil)
         return true
