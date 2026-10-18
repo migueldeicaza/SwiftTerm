@@ -2156,8 +2156,36 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if keyboardEnhancementFlags.isEmpty,
            eventFlags.contains(.command),
            !(eventFlags.contains(.option) && event.charactersIgnoringModifiers == "o") {
+            // The menu has had its turn. Command-arrow sends no terminal input.
+            if Self.regularArrowKeyCodes.contains(event.keyCode) {
+                return
+            }
             interpretKeyEvents([event])
             return
+        }
+
+        // Apply the macOS Option-arrow bindings before the legacy encoder.
+        // These bindings do not depend on the Option-as-Meta text setting.
+        // An application that enables the Kitty protocol gets the full key.
+        if keyboardEnhancementFlags.isEmpty,
+           !kittyIsComposing,
+           eventFlags.intersection([.shift, .control, .option, .command]) == .option {
+            switch event.keyCode {
+            case UInt16(kVK_LeftArrow):
+                send(EscapeSequences.emacsBack)
+                return
+            case UInt16(kVK_RightArrow):
+                send(EscapeSequences.emacsForward)
+                return
+            case UInt16(kVK_UpArrow):
+                sendKeyUp()
+                return
+            case UInt16(kVK_DownArrow):
+                sendKeyDown()
+                return
+            default:
+                break
+            }
         }
 
         if keyboardEnhancementFlags.isEmpty,
