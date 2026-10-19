@@ -2299,8 +2299,9 @@ final class MetalTerminalRenderer {
     /// from the fonts' `cmap` instead of an attributed string and Core Text.
     ///
     /// It produces what the shaped path does for such a row, value for value:
-    /// one background per run, each cell's glyph at its column with no slot
-    /// fit (one column, no placement policy), and each run's decorations.
+    /// one background per run, each cell's glyph at its column (one column, no
+    /// placement policy, fitted to the cell only as a fallback-font glyph
+    /// would be), and each run's decorations.
     /// Core Text would give each cell its `cmap` glyph, on the baseline, in
     /// the font `PlainTextFont` found it reports, and that is all the shaped
     /// path takes from Core Text for such a row.
@@ -2340,6 +2341,7 @@ final class MetalTerminalRenderer {
 
         // Per face, resolved once a row rather than once a run.
         var scaledFonts: [CTFont?] = [nil, nil, nil, nil]
+        var fitsFallback: [Bool] = [false, false, false, false]
         var rasterTokens: [UInt32] = [0, 0, 0, 0]
         var fullTokens: [UInt32] = [0, 0, 0, 0]
         var metricsFonts: [GlyphMetricsFont?] = [nil, nil, nil, nil]
@@ -2356,6 +2358,10 @@ final class MetalTerminalRenderer {
             } else {
                 scaledFont = scaledFontFor(font: font.shapedFont, scale: scale)
                 scaledFonts[face] = scaledFont
+                // The shaped path fits a single-cell glyph to its cell when
+                // Core Text drew it from a font outside the frame's set. Every
+                // plain glyph is alone in its cell, so only the font decides.
+                fitsFallback[face] = !context.fonts.contains(font.shapedFont)
                 rasterTokens[face] = rasterFontToken(for: scaledFont)
                 fullTokens[face] = profileFullFontToken(rasterFont: scaledFont,
                                                         fittingFont: font.shapedFont,
@@ -2389,7 +2395,8 @@ final class MetalTerminalRenderer {
                                        font: scaledFont,
                                        fittingFont: font.shapedFont,
                                        renderingScale: scale,
-                                       metricsFont: &metricsFonts[face])
+                                       metricsFont: &metricsFonts[face],
+                                       fitsFallbackToCell: fitsFallback[face])
                 // One glyph per cell, so no offset within a cluster.
                 let intraCluster: CGFloat = 0
                 let basePosX = lineOriginX + (cellWidth * CGFloat(column)) + intraCluster + fit.dx
@@ -2410,6 +2417,9 @@ final class MetalTerminalRenderer {
                     usesColorAtlas: entry.atlasKind == .color))
             }
 
+            // The shaped path's decorations: one per source cell, one column
+            // wide, on the baseline of the run's first glyph, which is the
+            // baseline itself in a plain font.
             func decorationSpans() -> [PreparedDecorationSpan] {
                 (run.start..<run.end).map { column in
                     let basePosX = lineOriginX + (cellWidth * CGFloat(column))

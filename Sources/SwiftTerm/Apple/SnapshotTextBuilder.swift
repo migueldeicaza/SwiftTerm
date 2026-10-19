@@ -78,6 +78,9 @@ struct PlainRunStyle {
     /// 0 normal, 1 bold, 2 italic, 3 bold italic.
     var fontIndex: Int
     var foreground: PlainColor
+    /// The foreground before `minimumContrastRatio` adjusts it, which the
+    /// dictionary holds for shapes (`SwiftTermShapeColorKey`).
+    var shapeColor: PlainColor
     var background: PlainColor
     var explicitBackground: Bool
     var selectionBackground: TTColor? = nil
@@ -105,6 +108,11 @@ private struct DimmedColorKey: Hashable {
     let background: PlainColorKey
 }
 
+private struct ContrastedColorKey: Hashable {
+    let foreground: PlainColorKey
+    let background: PlainColorKey
+}
+
 /// Builds styled line segments from a snapshot row. Not thread safe on its
 /// own: one instance belongs to one renderer.
 final class SnapshotTextBuilder {
@@ -113,6 +121,10 @@ final class SnapshotTextBuilder {
     private var plainInvertedBackground: TTColor?
     /// Dimmed foregrounds by input colors, each kept with its inputs.
     private var dimmedColors: [DimmedColorKey: (dimmed: TTColor, foreground: TTColor, background: TTColor)] = [:]
+    /// Contrast-adjusted foregrounds by input colors at `contrastRatio`, each
+    /// kept with its inputs.
+    private var contrastedColors: [ContrastedColorKey: (adjusted: PlainColor, foreground: TTColor, background: TTColor)] = [:]
+    private var contrastRatio: CGFloat = 1
 
     private struct FallbackFontKey: Hashable {
         let baseFont: ObjectIdentifier
@@ -773,6 +785,7 @@ final class SnapshotTextBuilder {
             if isSelected {
                 style.selectionBackground = context.selectedTextBackgroundColor
                 style.foreground = .color(context.selectedTextForegroundColor)
+                style.shapeColor = .color(context.selectedTextForegroundColor)
                 style.underline?.color = .color(context.selectedTextForegroundColor)
                 if style.strikethrough != nil {
                     style.strikethrough = .color(context.selectedTextForegroundColor)
@@ -823,8 +836,11 @@ final class SnapshotTextBuilder {
             foregroundColor = .color(dimmedColor(foregroundColor, towards: backgroundColor,
                                                  context: context))
         }
+        let shapeColor = foregroundColor
+        foregroundColor = contrastedColor(foregroundColor, against: backgroundColor, context: context)
         var style = PlainRunStyle(fontIndex: fontIndex,
                                   foreground: foregroundColor,
+                                  shapeColor: shapeColor,
                                   background: backgroundColor,
                                   explicitBackground: background != .defaultColor)
         if flags.contains(.underline) {
@@ -902,6 +918,35 @@ final class SnapshotTextBuilder {
         return dimmed
     }
 
+    /// `withContrast(atLeast:against:)` on the colors the shaped path holds.
+    /// The adjustment returns its input unchanged when the ratio is off or
+    /// already met, and then the value is kept as it is.
+    private func contrastedColor (_ foreground: PlainColor, against background: PlainColor,
+                                  context: SnapshotRenderContext) -> PlainColor
+    {
+        let ratio = context.minimumContrastRatio
+        guard ratio > 1 else { return foreground }
+        if contrastRatio != ratio {
+            contrastedColors.removeAll(keepingCapacity: true)
+            contrastRatio = ratio
+        }
+        let key = ContrastedColorKey(foreground: foreground.key, background: background.key)
+        if let cached = contrastedColors[key] {
+            return cached.adjusted
+        }
+        let foregroundColor = platformColor(foreground, context: context)
+        let backgroundColor = platformColor(background, context: context)
+        let adjusted = foregroundColor.withContrast(atLeast: ratio, against: backgroundColor)
+        let result: PlainColor = adjusted === foregroundColor ? foreground : .color(adjusted)
+        if contrastedColors.count >= 1_024 {
+            contrastedColors.removeAll(keepingCapacity: true)
+        }
+        // The entry keeps both inputs alive, so their identities in the key
+        // cannot be reused by other colors while it exists.
+        contrastedColors[key] = (result, foregroundColor, backgroundColor)
+        return result
+    }
+
     /// Whether the attribute dictionaries `buildAttributedString` would give
     /// two cells are equal, which is when the attributed string merges them
     /// into one run.
@@ -919,6 +964,7 @@ final class SnapshotTextBuilder {
             return false
         }
         guard sameColor(a.foreground, b.foreground, context: context),
+              sameColor(a.shapeColor, b.shapeColor, context: context),
               sameColor(a.background, b.background, context: context) else {
             return false
         }

@@ -446,7 +446,8 @@ struct MetalRowCacheTests {
         await expectParity(harness, with: cleared)
     }
 
-    /// A new font, scale, palette or terminal size changes every row.
+    /// A new font, scale, palette, contrast ratio or terminal size changes
+    /// every row.
     @Test(.enabled(if: MetalRowCacheTests.metalIsUsable)) func frameWideChangesRebuildEveryRow() async throws {
         let harness = try #require(Harness())
         fill(harness, lines: Self.corpus, count: harness.screenRows + 2)
@@ -466,6 +467,11 @@ struct MetalRowCacheTests {
         let color = try #require(await harness.frame())
         #expect(color.rebuilt == color.rows.count)
         await expectParity(harness, with: color)
+
+        harness.view.minimumContrastRatio = 4.5
+        let contrast = try #require(await harness.frame())
+        #expect(contrast.rebuilt == contrast.rows.count)
+        await expectParity(harness, with: contrast)
 
         harness.view.withTerminal { $0.resize(cols: 50, rows: 10) }
         let size = try #require(await harness.frame())

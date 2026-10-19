@@ -44,6 +44,16 @@ struct MetalPlainTextTests {
         }
     }
 
+    /// A plain face shapes in the font the frame holds, so the shaped path
+    /// never fits its glyphs to the cell as fallback glyphs.
+    @Test func plainFacesShapeInTheFrameFont() throws {
+        let regular = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        for face in [regular, NSFont.monospacedSystemFont(ofSize: 13, weight: .bold)] {
+            let plain = try #require(PlainTextFont.analyze(face as CTFont))
+            #expect(CFEqual(plain.shapedFont, face as CTFont))
+        }
+    }
+
     /// Core Text shapes AAT fonts with `morx`, which the check does not read.
     @Test func aatFontsAreNotPlain() throws {
         let menlo = try #require(NSFont(name: "Menlo-Regular", size: 13))
@@ -325,6 +335,45 @@ struct MetalPlainTextTests {
         // dictionary: "AB", "CD" and "EF" on red are one run, one quad.
         let backgrounds = frame.rows[0].prefix(4).withUnsafeBytes { $0.load(as: UInt32.self) }
         #expect(backgrounds == 1)
+    }
+
+    /// With a minimum contrast ratio, foregrounds are adjusted against their
+    /// backgrounds, and the dictionary keeps the unadjusted color for shapes:
+    /// cells whose adjusted colors match but whose own colors differ are
+    /// separate runs.
+    @Test(.enabled(if: MetalPlainTextTests.metalIsUsable)) func contrastDrawsAsTheShapedPathDraws() async throws {
+        let harness = try #require(Harness())
+        let rows = Self.attributeRows(cols: 64)
+        harness.view.feed(text: rows.joined(separator: "\r\n") + "\r\n"
+            + "\u{1b}[38;2;20;20;20;40mnear black\u{1b}[38;2;30;30;30m on black\u{1b}[38;2;250;250;250;107m white on white\u{1b}[0m")
+        for ratio in [CGFloat(4.5), 7] {
+            harness.view.minimumContrastRatio = ratio
+            let frame = try #require(await expectParity(harness))
+            #expect(frame.plainRows == harness.screenRows)
+            harness.view.scrollUp(lines: harness.screenRows)
+            await expectParity(harness)
+            let top = harness.view.withTerminal { $0.displayBuffer.yDisp }
+            harness.view.selection.setSelection(start: Position(col: 5, row: top + 1),
+                                                end: Position(col: 30, row: top + 4))
+            await expectParity(harness)
+            harness.view.selection.selectNone()
+            harness.view.scrollDown(lines: harness.screenRows)
+        }
+        var dense = ""
+        var n = 0
+        for row in 0..<20 {
+            dense += "\r\n"
+            for column in 0..<64 {
+                let f = (n &* 37) % 256, b = (n &* 91) % 256
+                dense += "\u{1b}[38;2;\(f);\(255 - f);\(column * 2);48;2;\(b);\(row % 256);\(255 - b)m"
+                dense += String(UnicodeScalar(UInt8(0x21 + n % 94)))
+                n += 1
+            }
+            dense += "\u{1b}[0m"
+        }
+        harness.view.feed(text: dense)
+        let frame = try #require(await expectParity(harness))
+        #expect(frame.plainRows == harness.screenRows)
     }
 
     /// Links, underlined always rather than on hover.
