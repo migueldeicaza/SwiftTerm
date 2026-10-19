@@ -62,6 +62,11 @@ enum ProfilingEvent: Int, CaseIterable, Sendable {
     /// Placing a cached row at the screen row its line moved to, and writing
     /// its buffers: what a row that only scrolled costs instead of a build.
     case metalRowPlace = 14
+    /// The plain-cell check of a row and, when the row passes, its build
+    /// straight from the fonts' glyph maps in place of the attributed string
+    /// and shaping. A row that fails the check usually does at its first
+    /// cell, so its sample is short.
+    case rowPlain = 15
 
     var index: Int { rawValue }
 
@@ -85,6 +90,7 @@ enum ProfilingEvent: Int, CaseIterable, Sendable {
         case .metalEncode: return "Metal.Encode"
         case .metalRowBuild: return "Metal.RowBuild"
         case .metalRowPlace: return "Metal.RowPlace"
+        case .rowPlain: return "Row.Plain"
         case .rowAttributedString: return "Row.AttributedString"
         case .rowShape: return "Row.Shape"
         }
@@ -105,6 +111,7 @@ enum ProfilingEvent: Int, CaseIterable, Sendable {
         case .metalEncode: return "Metal.Encode"
         case .metalRowBuild: return "Metal.RowBuild"
         case .metalRowPlace: return "Metal.RowPlace"
+        case .rowPlain: return "Row.Plain"
         case .rowAttributedString: return "Row.AttributedString"
         case .rowShape: return "Row.Shape"
         }

@@ -67,6 +67,29 @@ final class MetalColorSIMDCache {
 
     var count: Int { entries.count }
 
+    /// Truecolor conversions by value, for plain rows, which carry truecolor
+    /// as values rather than as platform colors. Each is the conversion of
+    /// the color the shaped path makes for that value, so both paths agree.
+    private var rgbEntries: [UInt32: SIMD4<Float>] = [:]
+    let maxRGBEntries = 65_536
+
+    @inline(__always)
+    func value(rgb: UInt32) -> SIMD4<Float> {
+        if let cached = rgbEntries[rgb] {
+            return cached
+        }
+        let color = TTColor.make(red: CGFloat(rgb & 0xff) / 255,
+                                 green: CGFloat((rgb >> 8) & 0xff) / 255,
+                                 blue: CGFloat((rgb >> 16) & 0xff) / 255,
+                                 alpha: 1)
+        let value = convert(color)
+        if rgbEntries.count >= maxRGBEntries {
+            rgbEntries.removeAll(keepingCapacity: true)
+        }
+        rgbEntries[rgb] = value
+        return value
+    }
+
     @inline(__always)
     func value(for color: TTColor) -> SIMD4<Float> {
         let identity = ObjectIdentifier(color)
@@ -1160,18 +1183,33 @@ final class MetalTerminalRenderer {
     /// the view, is what frees this path from the main thread (io-gaps.md G1).
     /// It also means this cache is never shared with the Core Graphics path.
     private let textBuilder = SnapshotTextBuilder()
+
+    /// Whether rows of plain cells are mapped straight to glyphs. Off only in
+    /// tests that compare that path with the shaped one.
+    var plainTextEnabled = true
+
+    private enum PlainFontAnalysis {
+        case plain(PlainTextFont)
+        case notPlain
+    }
+    /// By font object; a font set holds the same objects frame to frame.
+    private var plainTextFonts: [RetainedFontIdentity: PlainFontAnalysis] = [:]
 #if DEBUG
     private var debugFrameCount = 0
     private var debugLastLogTime = CFAbsoluteTimeGetCurrent()
     private var debugRowsRebuilt = 0
     private var debugRowsCached = 0
     private var debugRowsMoved = 0
+    private var debugRowsPlain = 0
 
     /// The last frame's rows: built from scratch, taken from the cache, and
     /// of those taken from the cache, the ones placed at a new screen row.
     var debugRowCacheCounts: (rebuilt: Int, cached: Int, moved: Int) {
         (debugRowsRebuilt, debugRowsCached, debugRowsMoved)
     }
+
+    /// The last frame's rows built from plain cells without shaping.
+    var debugPlainRowCount: Int { debugRowsPlain }
 #endif
 #if DEBUG
     private var imageTextureFailures: Set<ObjectIdentifier> = []
@@ -1625,6 +1663,9 @@ final class MetalTerminalRenderer {
 
     private func buildDrawDataPass(snapshot: TerminalSnapshot,
                                    context: SnapshotRenderContext) -> DrawData {
+#if DEBUG
+        debugRowsPlain = 0
+#endif
         pruneKittyTextureCache(kitty: snapshot.kitty)
         let scale = context.renderingScale
         let cellWidth = context.cellDimension.width
@@ -1865,6 +1906,18 @@ final class MetalTerminalRenderer {
                             cellHeight: CGFloat,
                             yOffset: CGFloat,
                             scale: CGFloat) -> PreparedRow {
+        if plainTextEnabled, case .plain = plainTextFont(context.fonts.normal) {
+            let plainInterval = Profiling.begin(.rowPlain)
+            defer { plainInterval.end() }
+            if let plain = textBuilder.plainRow(row: row, absoluteRow: absoluteRow, context: context),
+               let fonts = plainTextFonts(for: plain, context: context) {
+#if DEBUG
+                debugRowsPlain += 1
+#endif
+                return preparePlainRow(plain, fonts: fonts, row: row, context: context,
+                                       cellWidth: cellWidth, yOffset: yOffset, scale: scale)
+            }
+        }
         let line = row.line
         var prepared = PreparedRow(renderMode: line.renderMode)
         // Rows always start at the left edge; only their vertical origin
@@ -2205,6 +2258,190 @@ final class MetalTerminalRenderer {
         }
 
         prepared.kittyPlaceholders = lineInfo.kittyPlaceholders
+        return prepared
+    }
+
+    private func plainTextFont(_ font: TTFont) -> PlainFontAnalysis {
+        let key = RetainedFontIdentity(font as CTFont)
+        if let analysis = plainTextFonts[key] {
+            return analysis
+        }
+        if plainTextFonts.count >= 32 {
+            plainTextFonts.removeAll()
+        }
+        let analysis: PlainFontAnalysis = PlainTextFont.analyze(font as CTFont).map { .plain($0) } ?? .notPlain
+        plainTextFonts[key] = analysis
+        return analysis
+    }
+
+    /// The plain fonts of the four faces a row's runs use, or nil when one
+    /// of them must be shaped.
+    private func plainTextFonts(for plain: PlainRow, context: SnapshotRenderContext) -> [PlainTextFont?]? {
+        var fonts: [PlainTextFont?] = [nil, nil, nil, nil]
+        for run in plain.runs where fonts[run.style.fontIndex] == nil {
+            guard case .plain(let font) = plainTextFont(SnapshotTextBuilder.font(run.style.fontIndex, context)) else {
+                return nil
+            }
+            fonts[run.style.fontIndex] = font
+        }
+        return fonts
+    }
+
+    @inline(__always)
+    private func colorToSIMD(_ color: PlainColor) -> SIMD4<Float> {
+        switch color {
+        case .rgb(let value): return colorSIMDCache.value(rgb: value)
+        case .color(let color): return colorSIMDCache.value(for: color)
+        }
+    }
+
+    /// `prepareRow` for a row of plain cells in plain fonts: the glyphs come
+    /// from the fonts' `cmap` instead of an attributed string and Core Text.
+    ///
+    /// It produces what the shaped path does for such a row, value for value:
+    /// one background per run, each cell's glyph at its column with no slot
+    /// fit (one column, no placement policy), and each run's decorations.
+    /// Core Text would give each cell its `cmap` glyph, on the baseline, in
+    /// the font `PlainTextFont` found it reports, and that is all the shaped
+    /// path takes from Core Text for such a row.
+    private func preparePlainRow(_ plain: PlainRow,
+                                 fonts: [PlainTextFont?],
+                                 row: TerminalSnapshot.Row,
+                                 context: SnapshotRenderContext,
+                                 cellWidth: CGFloat,
+                                 yOffset: CGFloat,
+                                 scale: CGFloat) -> PreparedRow {
+        var prepared = PreparedRow(renderMode: row.line.renderMode)
+        let lineOriginX: CGFloat = 0
+        let underlinePosition = context.fonts.underlinePosition()
+        let underlineThickness = max(round(scale * context.fonts.underlineThickness()) / scale, 0.5)
+        let decorationCellWidth = ceil(cellWidth)
+
+        for run in plain.runs {
+            let style = run.style
+            let explicit = style.selectionBackground != nil || style.explicitBackground
+            if explicit {
+                let color = style.selectionBackground.map { colorToSIMD($0) } ?? colorToSIMD(style.background)
+                prepared.backgrounds.append(PreparedBackground(startColumn: run.start,
+                                                               columnSpan: run.end - run.start,
+                                                               color: color))
+            }
+        }
+
+        for image in row.images {
+            guard let texture = texture(for: image) else {
+                continue
+            }
+            prepared.images.append(PreparedImage(texture: texture,
+                                                 column: image.col,
+                                                 pixelWidth: image.pixelWidth,
+                                                 pixelHeight: image.pixelHeight))
+        }
+
+        // Per face, resolved once a row rather than once a run.
+        var scaledFonts: [CTFont?] = [nil, nil, nil, nil]
+        var rasterTokens: [UInt32] = [0, 0, 0, 0]
+        var fullTokens: [UInt32] = [0, 0, 0, 0]
+        var metricsFonts: [GlyphMetricsFont?] = [nil, nil, nil, nil]
+        prepared.glyphs.reserveCapacity(plain.codes.count)
+        for run in plain.runs {
+            let style = run.style
+            let face = style.fontIndex
+            guard let font = fonts[face] else {
+                preconditionFailure("plainTextFonts(for:) resolves every face a run uses")
+            }
+            let scaledFont: CTFont
+            if let resolved = scaledFonts[face] {
+                scaledFont = resolved
+            } else {
+                scaledFont = scaledFontFor(font: font.shapedFont, scale: scale)
+                scaledFonts[face] = scaledFont
+                rasterTokens[face] = rasterFontToken(for: scaledFont)
+                fullTokens[face] = profileFullFontToken(rasterFont: scaledFont,
+                                                        fittingFont: font.shapedFont,
+                                                        renderingScale: scale,
+                                                        rasterFontToken: rasterTokens[face])
+            }
+            let rasterFontToken = rasterTokens[face]
+            let textColorSIMD = colorToSIMD(style.foreground)
+            for column in run.start..<run.end {
+                let glyph = font.glyph(for: UInt32(plain.codes[column]))
+                recordProfileGlyphIdentityAlias(fullFontToken: fullTokens[face],
+                                                rasterFontToken: rasterFontToken,
+                                                glyph: glyph)
+                guard let resolvedGlyph = glyphEntry(rasterFontToken: rasterFontToken,
+                                                     font: scaledFont,
+                                                     fittingFont: font.shapedFont,
+                                                     renderingScale: scale,
+                                                     metricsFont: &metricsFonts[face],
+                                                     glyph: glyph) else {
+                    continue
+                }
+                let entry = resolvedGlyph.entry
+                if entry.size.width <= 0 || entry.size.height <= 0 {
+                    continue
+                }
+                let fit = glyphSlotFit(resolvedGlyph: resolvedGlyph,
+                                       glyph: glyph,
+                                       columnWidth: 1,
+                                       cellDimension: context.cellDimension,
+                                       baselineFromBottom: yOffset,
+                                       font: scaledFont,
+                                       fittingFont: font.shapedFont,
+                                       renderingScale: scale,
+                                       metricsFont: &metricsFonts[face])
+                // One glyph per cell, so no offset within a cluster.
+                let intraCluster: CGFloat = 0
+                let basePosX = lineOriginX + (cellWidth * CGFloat(column)) + intraCluster + fit.dx
+                let pxX = basePosX * scale + entry.bearing.x * fit.scaleX
+                let atlasSize = entry.atlasKind == .color ? colorAtlas.size : grayscaleAtlas.size
+                prepared.glyphs.append(PreparedGlyph(
+                    x0: pxX,
+                    x1: pxX + entry.size.width * fit.scaleX,
+                    coreTextY: 0,
+                    fitDY: fit.dy,
+                    bearingY: entry.bearing.y * fit.scaleY,
+                    height: entry.size.height * fit.scaleY,
+                    u0: Float(entry.region.x) / Float(atlasSize),
+                    v0: Float(entry.region.y) / Float(atlasSize),
+                    u1: Float(entry.region.x + entry.region.width) / Float(atlasSize),
+                    v1: Float(entry.region.y + entry.region.height) / Float(atlasSize),
+                    color: entry.isColor ? SIMD4<Float>(1, 1, 1, 1) : textColorSIMD,
+                    usesColorAtlas: entry.atlasKind == .color))
+            }
+
+            func decorationSpans() -> [PreparedDecorationSpan] {
+                (run.start..<run.end).map { column in
+                    let basePosX = lineOriginX + (cellWidth * CGFloat(column))
+                    return PreparedDecorationSpan(x0: basePosX * scale,
+                                                  x1: (basePosX + decorationCellWidth) * scale,
+                                                  coreTextY: 0)
+                }
+            }
+            if let underline = style.underline {
+                prepared.decorations.append(PreparedDecoration(
+                    style: underline.style == .double ? .single : underline.style,
+                    isDouble: underline.style == .double,
+                    color: colorToSIMD(underline.color),
+                    thicknessPx: underlineThickness * scale,
+                    position: underlinePosition,
+                    doubleGap: underlineThickness,
+                    spans: decorationSpans()))
+            }
+            if let strikethrough = style.strikethrough {
+                let ctFont = SnapshotTextBuilder.font(face, context) as CTFont
+                let strikeThickness = max(round(scale * CTFontGetUnderlineThickness(ctFont)) / scale, 0.5)
+                let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
+                prepared.decorations.append(PreparedDecoration(
+                    style: .single,
+                    isDouble: false,
+                    color: colorToSIMD(strikethrough),
+                    thicknessPx: strikeThickness * scale,
+                    position: strikePosition,
+                    doubleGap: strikeThickness,
+                    spans: decorationSpans()))
+            }
+        }
         return prepared
     }
 
