@@ -128,6 +128,59 @@ struct MetalPlainTextTests {
         #expect(OpenTypeSubstitutionCheck.canChange(runsOf: [6], gsub: table) == false)
     }
 
+    /// The system monospaced font with its GSUB swapped for one whose only
+    /// feature, `dlig`, ligates "fi" into the "X" glyph: a pair the font
+    /// check's samples never put side by side.
+    private func fontWithOptionalLigature() throws -> CTFont {
+        func u16(_ value: Int) -> [UInt8] { [UInt8(value >> 8 & 0xff), UInt8(value & 0xff)] }
+        func u32(_ value: Int) -> [UInt8] { u16(value >> 16 & 0xffff) + u16(value & 0xffff) }
+        let mono = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular) as CTFont
+        var characters = Array("fiX".utf16)
+        var glyphs = [CGGlyph](repeating: 0, count: 3)
+        #expect(CTFontGetGlyphsForCharacters(mono, &characters, &glyphs, 3))
+        // Ligature substitution format 1: coverage [f], one ligature set
+        // holding one ligature, X from f and i.
+        let ligature = u16(1) + u16(8) + u16(1) + u16(14) + coverage([Int(glyphs[0])])
+            + u16(1) + u16(4) + u16(Int(glyphs[2])) + u16(2) + u16(Int(glyphs[1]))
+        let gsubTag = CTFontTableTag(kCTFontTableGSUB)
+        var tables = [(tag: gsubTag, bytes: [UInt8](gsub(feature: "dlig", lookupType: 4, subtable: ligature)))]
+        let available = try #require(CTFontCopyAvailableTables(mono, []))
+        for index in 0..<CFArrayGetCount(available) {
+            let tag = CTFontTableTag(UInt(bitPattern: CFArrayGetValueAtIndex(available, index)))
+            guard tag != gsubTag, let data = CTFontCopyTable(mono, tag, []) as Data? else { continue }
+            tables.append((tag, [UInt8](data)))
+        }
+        tables.sort { $0.tag < $1.tag }
+        // An sfnt: the header, a record per table, then each table padded
+        // to four bytes. Core Text does not check the checksums.
+        var header = u32(0x00010000) + u16(tables.count) + u16(0) + u16(0) + u16(0)
+        var body: [UInt8] = []
+        for table in tables {
+            header += u32(Int(table.tag)) + u32(0) + u32(12 + 16 * tables.count + body.count) + u32(table.bytes.count)
+            body += table.bytes + [UInt8](repeating: 0, count: (4 - table.bytes.count % 4) % 4)
+        }
+        let descriptor = try #require(CTFontManagerCreateFontDescriptorFromData(Data(header + body) as CFData))
+        return CTFontCreateWithFontDescriptor(descriptor, 13, nil)
+    }
+
+    private func setting(_ feature: String, to value: Int, in font: CTFont) -> CTFont {
+        let settings = [[kCTFontOpenTypeFeatureTag as String: feature, kCTFontOpenTypeFeatureValue as String: value]]
+        let descriptor = CTFontDescriptorCreateWithAttributes(
+            [kCTFontFeatureSettingsAttribute as String: settings] as CFDictionary)
+        return CTFontCreateCopyWithAttributes(font, 0, nil, descriptor)
+    }
+
+    /// The table check counts optional features as off, so a font with one
+    /// turned on is shaped.
+    @Test func anOptionalFeatureTurnedOnIsShaped() throws {
+        let font = try fontWithOptionalLigature()
+        let dlig = setting("dlig", to: 1, in: font)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: "fi", attributes: [.font: dlig]))
+        #expect(CTLineGetGlyphCount(line) == 1)
+        #expect(PlainTextFont.analyze(font) != nil)
+        #expect(PlainTextFont.analyze(dlig) == nil)
+    }
+
     @Test func unreadableOrVariableTablesCountAgainstTheFont() {
         let table = gsub(feature: "liga", lookupType: 1, subtable: singleSubstitution([5]))
         #expect(OpenTypeSubstitutionCheck.canChange(runsOf: [6], gsub: table.prefix(table.count - 6)) == nil)
@@ -428,6 +481,15 @@ struct MetalPlainTextTests {
         let menlo = try #require(NSFont(name: "Menlo-Regular", size: 13))
         let harness = try #require(Harness(font: menlo))
         harness.view.feed(text: "\u{1b}[31mred\u{1b}[0m and plain text")
+        let frame = try #require(await expectParity(harness))
+        #expect(frame.plainRows == 0)
+    }
+
+    /// A ligature turned on in the font draws as the shaped path draws it.
+    @Test(.enabled(if: MetalPlainTextTests.metalIsUsable)) func anOptionalLigatureDrawsAsTheShapedPathDraws() async throws {
+        let font = setting("dlig", to: 1, in: try fontWithOptionalLigature())
+        let harness = try #require(Harness(font: font as NSFont))
+        harness.view.feed(text: "fi and \u{1b}[31mfile\u{1b}[0m")
         let frame = try #require(await expectParity(harness))
         #expect(frame.plainRows == 0)
     }

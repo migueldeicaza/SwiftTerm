@@ -12,11 +12,11 @@ import Foundation
 ///
 /// The proof is the font's own tables. Core Text shapes with AAT `morx` when a
 /// font has it and with OpenType otherwise, so a font qualifies only when it
-/// has no `morx`, `mort`, `kern` or `GPOS` table, and no `GSUB` lookup that a
-/// default-on feature could reach can apply to a run made only of ASCII
-/// glyphs (`OpenTypeSubstitutionCheck`). Shaping the repertoire through Core
-/// Text then confirms the result: one glyph per character, the `cmap` glyph,
-/// on the baseline, in one font.
+/// has no `morx`, `mort`, `kern` or `GPOS` table and no feature settings, and
+/// no `GSUB` lookup that a default-on feature could reach can apply to a run
+/// made only of ASCII glyphs (`OpenTypeSubstitutionCheck`).
+/// Shaping the repertoire through Core Text then confirms the result: one
+/// glyph per character, the `cmap` glyph, on the baseline, in one font.
 final class PlainTextFont {
     static let firstCode: UInt32 = 0x20
     static let lastCode: UInt32 = 0x7E
@@ -43,6 +43,11 @@ final class PlainTextFont {
 
     /// The analysis, or nil when the font does not qualify.
     static func analyze(_ font: CTFont) -> PlainTextFont? {
+        // The table check counts optional features as off, so a font with
+        // feature settings is shaped.
+        if let settings = CTFontCopyFeatureSettings(font), CFArrayGetCount(settings) > 0 {
+            return nil
+        }
         let tables = availableTables(font)
         for excluded in ["morx", "mort", "kern", "GPOS"] where tables.contains(tag(excluded)) {
             return nil
