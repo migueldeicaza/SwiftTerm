@@ -45,9 +45,87 @@ struct SnapshotTextAttributes {
     }
 }
 
+/// A color of a plain run. Truecolor stays a value, so a row of cells each in
+/// its own color makes no platform colors.
+enum PlainColor {
+    /// Red in the low byte, then green, then blue.
+    case rgb(UInt32)
+    case color(TTColor)
+
+    var key: PlainColorKey {
+        switch self {
+        case .rgb(let value): return .rgb(value)
+        case .color(let color): return .object(ObjectIdentifier(color))
+        }
+    }
+}
+
+enum PlainColorKey: Hashable {
+    case rgb(UInt32)
+    case object(ObjectIdentifier)
+}
+
+struct PlainUnderline {
+    var color: PlainColor
+    /// The `NSUnderlineStyle` raw value the attribute dictionary holds.
+    var nsStyle: Int
+    var style: UnderlineStyle
+}
+
+/// What one run's attribute dictionary holds, as values: the font, colors
+/// and decorations `buildAttributes` and the per-batch adjustments put in it.
+struct PlainRunStyle {
+    /// 0 normal, 1 bold, 2 italic, 3 bold italic.
+    var fontIndex: Int
+    var foreground: PlainColor
+    /// The foreground before `minimumContrastRatio` adjusts it, which the
+    /// dictionary holds for shapes (`SwiftTermShapeColorKey`).
+    var shapeColor: PlainColor
+    var background: PlainColor
+    var explicitBackground: Bool
+    var selectionBackground: TTColor? = nil
+    var underline: PlainUnderline? = nil
+    /// The strikethrough color; the style is always single.
+    var strikethrough: PlainColor? = nil
+}
+
+/// A span of cells `[start, end)` that the attributed string would hold as
+/// one run.
+struct PlainRun {
+    let start: Int
+    var end: Int
+    let style: PlainRunStyle
+}
+
+/// A row of plain cells: the ASCII code drawn in each column and the runs.
+struct PlainRow {
+    var codes: [UInt8]
+    var runs: [PlainRun]
+}
+
+private struct DimmedColorKey: Hashable {
+    let foreground: PlainColorKey
+    let background: PlainColorKey
+}
+
+private struct ContrastedColorKey: Hashable {
+    let foreground: PlainColorKey
+    let background: PlainColorKey
+}
+
 /// Builds styled line segments from a snapshot row. Not thread safe on its
 /// own: one instance belongs to one renderer.
 final class SnapshotTextBuilder {
+    private var plainInvertedColorsContextID: UInt64 = .max
+    private var plainInvertedForeground: TTColor?
+    private var plainInvertedBackground: TTColor?
+    /// Dimmed foregrounds by input colors, each kept with its inputs.
+    private var dimmedColors: [DimmedColorKey: (dimmed: TTColor, foreground: TTColor, background: TTColor)] = [:]
+    /// Contrast-adjusted foregrounds by input colors at `contrastRatio`, each
+    /// kept with its inputs.
+    private var contrastedColors: [ContrastedColorKey: (adjusted: PlainColor, foreground: TTColor, background: TTColor)] = [:]
+    private var contrastRatio: CGFloat = 1
+
     private struct FallbackFontKey: Hashable {
         let baseFont: ObjectIdentifier
         let character: Character
@@ -652,6 +730,288 @@ final class SnapshotTextBuilder {
                             blockElements: blockElements,
                             boxDrawings: boxDrawings,
                             powerlineGlyphs: powerlineGlyphs)
+    }
+
+    // MARK: Plain rows
+
+    /// The row as runs of plain cells, or nil when any cell is not plain.
+    ///
+    /// A plain cell is one column wide and holds printable ASCII or nothing.
+    /// For a row of them `buildAttributedString` makes a single segment whose
+    /// runs are the longest spans of cells with equal attribute dictionaries;
+    /// this returns the same runs, each with its dictionary's content as
+    /// values, without building the dictionaries or the attributed string.
+    /// The renderer shapes such runs itself when their fonts allow it
+    /// (`PlainTextFont`).
+    func plainRow (row snapshotRow: TerminalSnapshot.Row, absoluteRow: Int,
+                   context: SnapshotRenderContext) -> PlainRow?
+    {
+        guard snapshotRow.bidiLayout == nil else { return nil }
+        let line = snapshotRow.line
+        let cols = context.cols
+        let selectionColumns = context.selection.columns(forRow: absoluteRow)
+        var codes: [UInt8] = []
+        codes.reserveCapacity(cols)
+        var runs: [PlainRun] = []
+        var decodedStyleKey: PackedAttributeKey?
+        var decodedAttribute = CharData.defaultAttr
+        var lastStyleKey: PackedAttributeKey?
+        var lastHasUrl = false
+        var lastIsSelected = false
+        var lastBlinkHidden = false
+        for col in 0..<cols {
+            let cell = line.packedView(at: col)
+            guard cell.width == 1, cell.isSimpleRune else { return nil }
+            let code = UInt32(bitPattern: cell.code)
+            guard code == 0 || PlainTextFont.isPlain(code) else { return nil }
+            let styleKey = cell.attributeKey
+            let attribute: Attribute
+            if decodedStyleKey == styleKey {
+                attribute = decodedAttribute
+            } else {
+                attribute = cell.attribute
+                decodedStyleKey = styleKey
+                decodedAttribute = attribute
+            }
+            let hasUrl = shouldUnderlineLink(row: absoluteRow, column: col, width: 1,
+                                             cell: cell, context: context)
+            let isSelected = isColumnSelected(selectionColumns, column: col, width: 1)
+            let blinkHidden = !context.textBlinkVisible && attribute.style.contains(.blink)
+            codes.append(blinkHidden || code == 0 ? 0x20 : UInt8(code))
+            if let last = runs.indices.last, styleKey == lastStyleKey, hasUrl == lastHasUrl,
+               isSelected == lastIsSelected, blinkHidden == lastBlinkHidden {
+                runs[last].end = col + 1
+                continue
+            }
+            lastStyleKey = styleKey
+            lastHasUrl = hasUrl
+            lastIsSelected = isSelected
+            lastBlinkHidden = blinkHidden
+            var style = plainStyle(attribute, withUrl: hasUrl, context: context)
+            // The same adjustments `buildAttributedString` makes to a batch.
+            if isSelected {
+                style.selectionBackground = context.selectedTextBackgroundColor
+                style.foreground = .color(context.selectedTextForegroundColor)
+                style.shapeColor = .color(context.selectedTextForegroundColor)
+                style.underline?.color = .color(context.selectedTextForegroundColor)
+                if style.strikethrough != nil {
+                    style.strikethrough = .color(context.selectedTextForegroundColor)
+                }
+            }
+            if blinkHidden {
+                style.foreground = .color(TTColor.clear)
+                style.underline = nil
+                style.strikethrough = nil
+            }
+            if let last = runs.indices.last, sameAttributes(runs[last].style, style, context: context) {
+                runs[last].end = col + 1
+            } else {
+                runs.append(PlainRun(start: col, end: col + 1, style: style))
+            }
+        }
+        return PlainRow(codes: codes, runs: runs)
+    }
+
+    /// `buildAttributes` as values.
+    private func plainStyle (_ attribute: Attribute, withUrl: Bool,
+                             context: SnapshotRenderContext) -> PlainRunStyle
+    {
+        let flags = attribute.style
+        var background = attribute.bg
+        var foreground = attribute.fg
+        if flags.contains(.inverse) {
+            swap(&background, &foreground)
+            if foreground == .defaultColor { foreground = .defaultInvertedColor }
+            if background == .defaultColor { background = .defaultInvertedColor }
+        }
+        let brightNeedsBold: Bool
+        if case .ansi256(let code) = foreground {
+            brightNeedsBold = code > 7 && !context.useBrightColors
+        } else {
+            brightNeedsBold = false
+        }
+        let isBold = flags.contains(.bold)
+        let fontIndex: Int
+        if isBold || brightNeedsBold {
+            fontIndex = flags.contains(.italic) ? 3 : 1
+        } else {
+            fontIndex = flags.contains(.italic) ? 2 : 0
+        }
+        var foregroundColor = plainColor(foreground, isFg: true, isBold: isBold, context: context)
+        let backgroundColor = plainColor(background, isFg: false, isBold: false, context: context)
+        if flags.contains(.dim) {
+            foregroundColor = .color(dimmedColor(foregroundColor, towards: backgroundColor,
+                                                 context: context))
+        }
+        let shapeColor = foregroundColor
+        foregroundColor = contrastedColor(foregroundColor, against: backgroundColor, context: context)
+        var style = PlainRunStyle(fontIndex: fontIndex,
+                                  foreground: foregroundColor,
+                                  shapeColor: shapeColor,
+                                  background: backgroundColor,
+                                  explicitBackground: background != .defaultColor)
+        if flags.contains(.underline) {
+            let color = attribute.underlineColor.map {
+                plainColor($0, isFg: true, isBold: isBold, context: context)
+            } ?? foregroundColor
+            let variant = attribute.underlineStyle == .none ? UnderlineStyle.single : attribute.underlineStyle
+            style.underline = PlainUnderline(color: color,
+                                             nsStyle: nsUnderlineStyle(variant).rawValue,
+                                             style: variant)
+        }
+        if flags.contains(.crossedOut) {
+            style.strikethrough = foregroundColor
+        }
+        if withUrl {
+            style.underline = PlainUnderline(color: foregroundColor,
+                                             nsStyle: NSUnderlineStyle.single.rawValue,
+                                             style: .dashed)
+        }
+        return style
+    }
+
+    /// `mapColor` without making a platform color for a truecolor value.
+    private func plainColor (_ color: Attribute.Color, isFg: Bool, isBold: Bool,
+                             context: SnapshotRenderContext) -> PlainColor
+    {
+        switch color {
+        case .trueColor(let red, let green, let blue):
+            return .rgb(UInt32(red) | UInt32(green) << 8 | UInt32(blue) << 16)
+        case .defaultInvertedColor:
+            // `mapColor` makes a new color each call; the attribute cache
+            // makes it once per attribute. One per context is as good.
+            if plainInvertedColorsContextID != context.identity {
+                plainInvertedForeground = mapColor(color: .defaultInvertedColor, isFg: true,
+                                                   isBold: false, context: context)
+                plainInvertedBackground = mapColor(color: .defaultInvertedColor, isFg: false,
+                                                   isBold: false, context: context)
+                plainInvertedColorsContextID = context.identity
+            }
+            return .color(isFg ? plainInvertedForeground! : plainInvertedBackground!)
+        case .defaultColor, .ansi256:
+            return .color(SwiftTerm.mapColor(color: color, isFg: isFg, isBold: isBold, context: context))
+        }
+    }
+
+    /// The platform color the shaped path holds for `color`.
+    func platformColor (_ color: PlainColor, context: SnapshotRenderContext) -> TTColor {
+        switch color {
+        case .rgb(let value):
+            return mapColor(color: .trueColor(red: UInt8(value & 0xff),
+                                              green: UInt8((value >> 8) & 0xff),
+                                              blue: UInt8((value >> 16) & 0xff)),
+                            isFg: true, isBold: false, context: context)
+        case .color(let color):
+            return color
+        }
+    }
+
+    private func dimmedColor (_ foreground: PlainColor, towards background: PlainColor,
+                              context: SnapshotRenderContext) -> TTColor
+    {
+        let key = DimmedColorKey(foreground: foreground.key, background: background.key)
+        if let cached = dimmedColors[key] {
+            return cached.dimmed
+        }
+        let foregroundColor = platformColor(foreground, context: context)
+        let backgroundColor = platformColor(background, context: context)
+        let dimmed = foregroundColor.dimmedColor(towards: backgroundColor)
+        if dimmedColors.count >= 1_024 {
+            dimmedColors.removeAll(keepingCapacity: true)
+        }
+        // The entry keeps both inputs alive, so their identities in the key
+        // cannot be reused by other colors while it exists.
+        dimmedColors[key] = (dimmed, foregroundColor, backgroundColor)
+        return dimmed
+    }
+
+    /// `withContrast(atLeast:against:)` on the colors the shaped path holds.
+    /// The adjustment returns its input unchanged when the ratio is off or
+    /// already met, and then the value is kept as it is.
+    private func contrastedColor (_ foreground: PlainColor, against background: PlainColor,
+                                  context: SnapshotRenderContext) -> PlainColor
+    {
+        let ratio = context.minimumContrastRatio
+        guard ratio > 1 else { return foreground }
+        if contrastRatio != ratio {
+            contrastedColors.removeAll(keepingCapacity: true)
+            contrastRatio = ratio
+        }
+        let key = ContrastedColorKey(foreground: foreground.key, background: background.key)
+        if let cached = contrastedColors[key] {
+            return cached.adjusted
+        }
+        let foregroundColor = platformColor(foreground, context: context)
+        let backgroundColor = platformColor(background, context: context)
+        let adjusted = foregroundColor.withContrast(atLeast: ratio, against: backgroundColor)
+        let result: PlainColor = adjusted === foregroundColor ? foreground : .color(adjusted)
+        if contrastedColors.count >= 1_024 {
+            contrastedColors.removeAll(keepingCapacity: true)
+        }
+        // The entry keeps both inputs alive, so their identities in the key
+        // cannot be reused by other colors while it exists.
+        contrastedColors[key] = (result, foregroundColor, backgroundColor)
+        return result
+    }
+
+    /// Whether the attribute dictionaries `buildAttributedString` would give
+    /// two cells are equal, which is when the attributed string merges them
+    /// into one run.
+    private func sameAttributes (_ a: PlainRunStyle, _ b: PlainRunStyle,
+                                 context: SnapshotRenderContext) -> Bool
+    {
+        guard a.explicitBackground == b.explicitBackground,
+              (a.selectionBackground == nil) == (b.selectionBackground == nil),
+              (a.underline == nil) == (b.underline == nil),
+              (a.strikethrough == nil) == (b.strikethrough == nil) else {
+            return false
+        }
+        if a.fontIndex != b.fontIndex,
+           !Self.font(a.fontIndex, context).isEqual(Self.font(b.fontIndex, context)) {
+            return false
+        }
+        guard sameColor(a.foreground, b.foreground, context: context),
+              sameColor(a.shapeColor, b.shapeColor, context: context),
+              sameColor(a.background, b.background, context: context) else {
+            return false
+        }
+        if let selectionA = a.selectionBackground, let selectionB = b.selectionBackground,
+           !(selectionA === selectionB || selectionA.isEqual(selectionB)) {
+            return false
+        }
+        if let underlineA = a.underline, let underlineB = b.underline {
+            guard underlineA.nsStyle == underlineB.nsStyle, underlineA.style == underlineB.style,
+                  sameColor(underlineA.color, underlineB.color, context: context) else {
+                return false
+            }
+        }
+        if let strikeA = a.strikethrough, let strikeB = b.strikethrough,
+           !sameColor(strikeA, strikeB, context: context) {
+            return false
+        }
+        return true
+    }
+
+    /// Platform color equality. Two truecolor values make equal colors
+    /// exactly when they are the same value.
+    private func sameColor (_ a: PlainColor, _ b: PlainColor, context: SnapshotRenderContext) -> Bool {
+        switch (a, b) {
+        case (.rgb(let x), .rgb(let y)):
+            return x == y
+        case (.color(let x), .color(let y)):
+            return x === y || x.isEqual(y)
+        default:
+            return platformColor(a, context: context).isEqual(platformColor(b, context: context))
+        }
+    }
+
+    static func font (_ index: Int, _ context: SnapshotRenderContext) -> TTFont {
+        switch index {
+        case 1: return context.fonts.bold
+        case 2: return context.fonts.italic
+        case 3: return context.fonts.boldItalic
+        default: return context.fonts.normal
+        }
     }
 
     func shouldUnderlineLink(row: Int, column: Int, width: Int, cell: PackedCellView,

@@ -67,6 +67,29 @@ final class MetalColorSIMDCache {
 
     var count: Int { entries.count }
 
+    /// Truecolor conversions by value, for plain rows, which carry truecolor
+    /// as values rather than as platform colors. Each is the conversion of
+    /// the color the shaped path makes for that value, so both paths agree.
+    private var rgbEntries: [UInt32: SIMD4<Float>] = [:]
+    let maxRGBEntries = 65_536
+
+    @inline(__always)
+    func value(rgb: UInt32) -> SIMD4<Float> {
+        if let cached = rgbEntries[rgb] {
+            return cached
+        }
+        let color = TTColor.make(red: CGFloat(rgb & 0xff) / 255,
+                                 green: CGFloat((rgb >> 8) & 0xff) / 255,
+                                 blue: CGFloat((rgb >> 16) & 0xff) / 255,
+                                 alpha: 1)
+        let value = convert(color)
+        if rgbEntries.count >= maxRGBEntries {
+            rgbEntries.removeAll(keepingCapacity: true)
+        }
+        rgbEntries[rgb] = value
+        return value
+    }
+
     @inline(__always)
     func value(for color: TTColor) -> SIMD4<Float> {
         let identity = ObjectIdentifier(color)
@@ -378,16 +401,173 @@ struct RowDrawBuffers {
     var otherImageBuffers: [ImageDrawBuffer]
 }
 
-struct RowCacheEntry {
-    var sourceIdentity: ObjectIdentifier
-    // Both are needed: snapshot Row.revision counters are per-Row-object, and
-    // the snapshot's row pool can put a different Row (with an independently
-    // colliding revision) at this screen index across refreshes. The source
-    // generation pins the content; the revision pins style/bidi/image state.
-    var sourceGeneration: UInt64
+/// A box drawing, block element or Powerline cell with its atlas entry and
+/// color resolved.
+struct PreparedCustomGlyph {
+    let column: Int
+    let columnWidth: Int
+    let itemWidthPx: Int
+    let entrySize: CGSize
+    let codePoint: UInt32
+    let u0: Float
+    let v0: Float
+    let u1: Float
+    let v1: Float
+    let color: SIMD4<Float>
+}
+
+struct PreparedBackground {
+    let startColumn: Int
+    let columnSpan: Int
+    let color: SIMD4<Float>
+}
+
+/// One shaped glyph. Its horizontal extent does not depend on the row, so it
+/// is final; the vertical terms are kept apart so that placing the row
+/// repeats the arithmetic of a full build exactly.
+struct PreparedGlyph {
+    let x0: CGFloat
+    let x1: CGFloat
+    let coreTextY: CGFloat
+    let fitDY: CGFloat
+    /// The bitmap bearing scaled by the slot fit, in pixels.
+    let bearingY: CGFloat
+    /// The bitmap height scaled by the slot fit, in pixels.
+    let height: CGFloat
+    let u0: Float
+    let v0: Float
+    let u1: Float
+    let v1: Float
+    let color: SIMD4<Float>
+    let usesColorAtlas: Bool
+}
+
+struct PreparedDecorationSpan {
+    let x0: CGFloat
+    let x1: CGFloat
+    let coreTextY: CGFloat
+}
+
+/// An underline or strikethrough across one run.
+struct PreparedDecoration {
+    let style: UnderlineStyle
+    let isDouble: Bool
+    let color: SIMD4<Float>
+    let thicknessPx: CGFloat
+    /// Distance of the line's center above the baseline, in points.
+    let position: CGFloat
+    /// The second line of a double decoration sits this far plus one point
+    /// below the first.
+    let doubleGap: CGFloat
+    let spans: [PreparedDecorationSpan]
+}
+
+struct PreparedImage {
+    let texture: MTLTexture
+    let column: Int
+    let pixelWidth: Int
+    let pixelHeight: Int
+}
+
+/// The part of a row's draw data that does not depend on where the row is on
+/// screen: the attributed string, shaping, glyph lookup, slot fitting and
+/// colors. ``MetalTerminalRenderer`` caches it per buffer line, so a row that
+/// only moved, because the screen scrolled, is placed again instead of being
+/// rebuilt.
+struct PreparedRow {
+    var renderMode: BufferLine.RenderLineMode
+    var boxDrawings: [PreparedCustomGlyph] = []
+    var blockElements: [PreparedCustomGlyph] = []
+    var powerlineGlyphs: [PreparedCustomGlyph] = []
+    var backgrounds: [PreparedBackground] = []
+    var glyphs: [PreparedGlyph] = []
+    var decorations: [PreparedDecoration] = []
+    var images: [PreparedImage] = []
+    var kittyPlaceholders: [KittyPlaceholderCell] = []
+}
+
+/// What a row's pixels depend on besides the line's own cells, its screen
+/// position and the frame-wide ``CacheSignature``.
+struct RowCacheInputs {
+    /// The selected columns, from the row's buffer position.
+    var selection: Range<Int>?
+    /// The hovered link's columns, in the hover highlight modes.
+    var link: Range<Int>?
+    var images: [SnapshotImage]
+    var hasBidiLayout: Bool
+
+    init(row: TerminalSnapshot.Row, absoluteRow: Int, context: SnapshotRenderContext) {
+        selection = context.selection.columns(forRow: absoluteRow)
+        switch context.linkHighlightMode {
+        case .always, .alwaysWithModifier:
+            // Decided by the cells' own link payloads and the modifier, which
+            // is part of the signature.
+            link = nil
+        case .hover:
+            link = context.linkHighlightRange?.first(where: { $0.row == absoluteRow })?.range
+        case .hoverWithModifier:
+            link = context.commandActive
+                ? context.linkHighlightRange?.first(where: { $0.row == absoluteRow })?.range
+                : nil
+        }
+        images = row.images
+        hasBidiLayout = row.bidiLayout != nil
+    }
+
+    func matches(_ other: RowCacheInputs) -> Bool {
+        selection == other.selection && link == other.link &&
+            hasBidiLayout == other.hasBidiLayout &&
+            images.count == other.images.count &&
+            zip(images, other.images).allSatisfy { $0.hasSameValue(as: $1) }
+    }
+}
+
+/// A row's cached draw data, keyed by the buffer line it shows rather than by
+/// screen row, so it survives scrolling.
+///
+/// A class so that carrying every visible row from one frame's cache to the
+/// next costs a reference, not a copy of each of its arrays.
+final class RowCacheEntry {
+    /// The line's content generation when `prepared` was built. With the
+    /// line's identity, which keys the cache, it pins the cells.
+    let sourceGeneration: UInt64
+    /// The snapshot row's revision, compared only for BiDi rows (see
+    /// `canReuse`). Snapshot rows are per screen position, so it is only
+    /// meaningful at the same `screenRow`.
     var revision: UInt64
+    let inputs: RowCacheInputs
+    let prepared: PreparedRow
+    /// The screen row `data` or `buffers` are placed at.
+    var screenRow: Int
+    /// Kept in the per-frame aggregated mode.
     var data: RowDrawData?
+    /// Kept in the per-row persistent mode.
     var buffers: RowDrawBuffers?
+
+    init(sourceGeneration: UInt64, revision: UInt64, inputs: RowCacheInputs,
+         prepared: PreparedRow, screenRow: Int, data: RowDrawData?, buffers: RowDrawBuffers?) {
+        self.sourceGeneration = sourceGeneration
+        self.revision = revision
+        self.inputs = inputs
+        self.prepared = prepared
+        self.screenRow = screenRow
+        self.data = data
+        self.buffers = buffers
+    }
+
+    func canReuse(for row: TerminalSnapshot.Row, inputs: RowCacheInputs, screenRow: Int) -> Bool {
+        guard sourceGeneration == row.sourceGeneration, self.inputs.matches(inputs) else {
+            return false
+        }
+        // A BiDi row's layout depends on the other lines of its paragraph,
+        // which this line's generation does not cover. The snapshot row's
+        // revision does, but only for the row at that position, so such a row
+        // is reused only where it was built.
+        if inputs.hasBidiLayout {
+            return revision == row.revision && self.screenRow == screenRow
+        }
+        return true
+    }
 }
 
 struct FrameDrawData {
@@ -452,13 +632,15 @@ struct KittyCacheStamp: Hashable {
     let generation: UInt64
 }
 
+/// Frame-wide inputs to every row's draw data. A change drops the row cache.
+/// The scroll position is deliberately not one: rows are cached per buffer
+/// line and placed at their screen row each frame.
 struct CacheSignature: Hashable {
     let scale: Double
     let cellWidth: Double
     let cellHeight: Double
     let viewWidth: Double
     let viewHeight: Double
-    let yDisp: Int
     let rows: Int
     let cols: Int
     let fontName: String
@@ -468,6 +650,13 @@ struct CacheSignature: Hashable {
     let bidiHostPolicy: BidiHostPolicy
     let attributeContextIdentity: UInt64
     let glyphFallbackIdentity: UInt64
+    let textBlinkVisible: Bool
+    let linkHighlightMode: LinkHighlightMode
+    /// The modifier, in the highlight modes that read it.
+    let linkModifierActive: Bool
+    let customBlockGlyphs: Bool
+    let antiAliasCustomBlockGlyphs: Bool
+    let imageScale: Double
 }
 
 struct MetalProfileCounters {
@@ -892,8 +1081,8 @@ final class MetalTerminalRenderer {
     private var customGlyphCache: [CustomGlyphKey: CustomGlyphEntry] = [:]
     private let imageTextureCache = NSMapTable<AnyObject, MTLTexture>(keyOptions: .weakMemory, valueOptions: .strongMemory)
     private var kittyTextureCache: [UInt32: (signature: KittyImageSignature, texture: MTLTexture)] = [:]
-    private var rowCache: [Int: RowCacheEntry] = [:]
-    private var cacheBufferingMode: MetalBufferingMode?
+    /// Keyed by the identity of the buffer line each visible row shows.
+    private var rowCache: [ObjectIdentifier: RowCacheEntry] = [:]
     private var cacheSignature: CacheSignature?
     private var atlasInvalidatedDuringBuild = false
     private let redrawState: MetalRedrawState
@@ -968,6 +1157,17 @@ final class MetalTerminalRenderer {
     var capturesRenderedTexture = false
     private(set) var lastRenderedTexture: MTLTexture?
 
+    /// Testing hook: retains the draw data of the last frame built, so a test
+    /// can compare the vertex data a cached row draws with a fresh build's.
+    var capturesDrawData = false
+    private(set) var lastDrawData: DrawData?
+
+    /// Testing hook: drops every cached row, so the next frame builds each row
+    /// from scratch with the same glyph atlas.
+    func discardRowCache() {
+        rowCache.removeAll()
+    }
+
     /// Asks the host to schedule a frame. A callback rather than a reference to
     /// the view's frame driver, so the renderer needs no view access
     /// (io-gaps.md G1, WO-F1c).
@@ -983,15 +1183,33 @@ final class MetalTerminalRenderer {
     /// the view, is what frees this path from the main thread (io-gaps.md G1).
     /// It also means this cache is never shared with the Core Graphics path.
     private let textBuilder = SnapshotTextBuilder()
+
+    /// Whether rows of plain cells are mapped straight to glyphs. Off only in
+    /// tests that compare that path with the shaped one.
+    var plainTextEnabled = true
+
+    private enum PlainFontAnalysis {
+        case plain(PlainTextFont)
+        case notPlain
+    }
+    /// By font object; a font set holds the same objects frame to frame.
+    private var plainTextFonts: [RetainedFontIdentity: PlainFontAnalysis] = [:]
 #if DEBUG
     private var debugFrameCount = 0
     private var debugLastLogTime = CFAbsoluteTimeGetCurrent()
     private var debugRowsRebuilt = 0
     private var debugRowsCached = 0
+    private var debugRowsMoved = 0
+    private var debugRowsPlain = 0
 
-    var debugRowCacheCounts: (rebuilt: Int, cached: Int) {
-        (debugRowsRebuilt, debugRowsCached)
+    /// The last frame's rows: built from scratch, taken from the cache, and
+    /// of those taken from the cache, the ones placed at a new screen row.
+    var debugRowCacheCounts: (rebuilt: Int, cached: Int, moved: Int) {
+        (debugRowsRebuilt, debugRowsCached, debugRowsMoved)
     }
+
+    /// The last frame's rows built from plain cells without shaping.
+    var debugPlainRowCount: Int { debugRowsPlain }
 #endif
 #if DEBUG
     private var imageTextureFailures: Set<ObjectIdentifier> = []
@@ -1190,6 +1408,9 @@ final class MetalTerminalRenderer {
         let buildInterval = Profiling.begin(.metalBuildDrawData)
         let drawData = buildDrawData(snapshot: snapshot, context: renderContext)
         buildInterval.end()
+        if capturesDrawData {
+            lastDrawData = drawData
+        }
 #if canImport(os)
         if MetalTerminalRenderer.profileEnabled {
             os_signpost(.end, log: MetalTerminalRenderer.profileLog, name: "Metal.BuildDrawData", signpostID: buildID)
@@ -1442,6 +1663,9 @@ final class MetalTerminalRenderer {
 
     private func buildDrawDataPass(snapshot: TerminalSnapshot,
                                    context: SnapshotRenderContext) -> DrawData {
+#if DEBUG
+        debugRowsPlain = 0
+#endif
         pruneKittyTextureCache(kitty: snapshot.kitty)
         let scale = context.renderingScale
         let cellWidth = context.cellDimension.width
@@ -1454,6 +1678,7 @@ final class MetalTerminalRenderer {
 #if DEBUG
             debugRowsRebuilt = 0
             debugRowsCached = 0
+            debugRowsMoved = 0
 #endif
             return DrawData(rows: [],
                             frame: nil,
@@ -1462,25 +1687,22 @@ final class MetalTerminalRenderer {
                             cursorGlyphVerticesColor: [])
         }
         let bufferingMode = context.metalBufferingMode
-        if cacheBufferingMode != bufferingMode {
-            if bufferingMode == .perFrameAggregated {
-                for (key, var entry) in rowCache {
-                    entry.buffers = nil
-                    rowCache[key] = entry
-                }
-            }
-            cacheBufferingMode = bufferingMode
-        }
         let kittyStamp = KittyCacheStamp(
             imagesCount: snapshot.kitty.renderSnapshot.imagesById.count,
             placementsCount: snapshot.kitty.renderSnapshot.placements.count,
             generation: snapshot.kitty.renderSnapshot.storageGeneration)
+        let linkModifierActive: Bool
+        switch context.linkHighlightMode {
+        case .hoverWithModifier, .alwaysWithModifier:
+            linkModifierActive = context.commandActive
+        case .hover, .always:
+            linkModifierActive = false
+        }
         let signature = CacheSignature(scale: Double(scale),
                                        cellWidth: Double(cellWidth),
                                        cellHeight: Double(cellHeight),
                                        viewWidth: Double(context.viewBounds.width),
                                        viewHeight: Double(context.viewBounds.height),
-                                       yDisp: visibleDisp,
                                        rows: snapshot.rowCount,
                                        cols: snapshot.cols,
                                        fontName: context.fonts.normal.fontName,
@@ -1489,9 +1711,14 @@ final class MetalTerminalRenderer {
                                        kittyStamp: kittyStamp,
                                        bidiHostPolicy: context.bidiHostPolicy,
                                        attributeContextIdentity: context.identity,
-                                       glyphFallbackIdentity: context.glyphFallbackProvider?.cacheIdentity ?? 0)
-        let signatureChanged = signature != cacheSignature
-        if signatureChanged {
+                                       glyphFallbackIdentity: context.glyphFallbackProvider?.cacheIdentity ?? 0,
+                                       textBlinkVisible: context.textBlinkVisible,
+                                       linkHighlightMode: context.linkHighlightMode,
+                                       linkModifierActive: linkModifierActive,
+                                       customBlockGlyphs: context.customBlockGlyphs,
+                                       antiAliasCustomBlockGlyphs: context.antiAliasCustomBlockGlyphs,
+                                       imageScale: Double(context.imageScale))
+        if signature != cacheSignature {
             if signature.glyphFallbackIdentity != cacheSignature?.glyphFallbackIdentity {
                 // A replaced host fallback font can be CFEqual to its
                 // predecessor (same PostScript name and size), which would
@@ -1505,13 +1732,6 @@ final class MetalTerminalRenderer {
             rowCache.removeAll()
             cacheSignature = signature
         }
-
-        let visibleRange = firstRow...lastRow
-        if !rowCache.isEmpty {
-            rowCache = rowCache.filter { visibleRange.contains($0.key) }
-        }
-
-        let needsFullRebuild = signatureChanged || rowCache.isEmpty
 
         var rows: [RowDrawBuffers] = []
         var frameData: FrameDrawData?
@@ -1528,100 +1748,117 @@ final class MetalTerminalRenderer {
                                       otherImageDraws: [])
         }
 
+        // Entries move from the previous frame's cache to this frame's as
+        // their lines are found on screen; lines no longer visible drop out.
+        var visibleRowCache: [ObjectIdentifier: RowCacheEntry] = [:]
+        visibleRowCache.reserveCapacity(lastRow - firstRow + 1)
         var rebuiltRows = 0
         var cachedRows = 0
-        for absoluteRow in visibleRange {
+        var movedRows = 0
+        for absoluteRow in firstRow...lastRow {
             guard let snapshotRow = snapshot.row(atAbsolute: absoluteRow) else {
                 continue
             }
             let sourceIdentity = snapshotRow.sourceIdentity!
-            var entry = rowCache[absoluteRow]
-            let cacheValid = entry?.sourceIdentity == sourceIdentity &&
-                entry?.sourceGeneration == snapshotRow.sourceGeneration &&
-                entry?.revision == snapshotRow.revision
-            let needsRebuild = needsFullRebuild ||
-                !cacheValid ||
-                (bufferingMode == .perFrameAggregated && entry?.data == nil)
-            let rowBuffers: RowDrawBuffers?
-            let rowData: RowDrawData
-            if needsRebuild {
-                let rowInterval = Profiling.begin(.metalRowBuild)
-                defer { rowInterval.end() }
-                rowData = buildRowDrawData(row: snapshotRow,
-                                           absoluteRow: absoluteRow,
+            let screenRow = absoluteRow - visibleDisp
+            let inputs = RowCacheInputs(row: snapshotRow, absoluteRow: absoluteRow, context: context)
+            let entry: RowCacheEntry
+            // Removed, not just read: an entry is used at most once a frame,
+            // so writing into its buffers can never touch a row already drawn.
+            let previous = rowCache.removeValue(forKey: sourceIdentity)
+            if let cached = previous,
+               cached.canReuse(for: snapshotRow, inputs: inputs, screenRow: screenRow) {
+                let moved = cached.screenRow != screenRow
+                let needsPlacement: Bool
+                switch bufferingMode {
+                case .perRowPersistent:
+                    needsPlacement = moved || cached.buffers == nil
+                case .perFrameAggregated:
+                    needsPlacement = moved || cached.data == nil
+                }
+                if needsPlacement {
+                    let placeInterval = Profiling.begin(.metalRowPlace)
+                    defer { placeInterval.end() }
+                    let rowData = placeRow(cached.prepared,
+                                           screenRow: screenRow,
                                            snapshot: snapshot,
                                            context: context,
-                                           yDisp: visibleDisp,
                                            cellWidth: cellWidth,
                                            cellHeight: cellHeight,
                                            yOffset: yOffset,
                                            viewWidthPx: viewWidthPx,
                                            scale: scale)
-                let buffers = bufferingMode == .perRowPersistent ? makeRowBuffers(from: rowData) : nil
-                entry = RowCacheEntry(sourceIdentity: sourceIdentity,
-                                      sourceGeneration: snapshotRow.sourceGeneration,
-                                      revision: snapshotRow.revision,
-                                      data: rowData, buffers: buffers)
-                rowCache[absoluteRow] = entry
-                rowBuffers = buffers
-                rebuiltRows += 1
-            } else if let cached = entry {
-                rowData = cached.data ?? buildRowDrawData(row: snapshotRow,
-                                                          absoluteRow: absoluteRow,
-                                                          snapshot: snapshot,
-                                                          context: context,
-                                                          yDisp: visibleDisp,
-                                                          cellWidth: cellWidth,
-                                                          cellHeight: cellHeight,
-                                                          yOffset: yOffset,
-                                                          viewWidthPx: viewWidthPx,
-                                                          scale: scale)
-                if cached.data == nil {
-                    entry = RowCacheEntry(sourceIdentity: sourceIdentity,
-                                          sourceGeneration: snapshotRow.sourceGeneration,
-                                          revision: snapshotRow.revision,
-                                          data: rowData, buffers: cached.buffers)
-                    rowCache[absoluteRow] = entry
-                }
-                if bufferingMode == .perRowPersistent {
-                    if let buffers = cached.buffers {
-                        rowBuffers = buffers
-                    } else {
-                        let buffers = makeRowBuffers(from: rowData)
-                        entry?.buffers = buffers
-                        rowCache[absoluteRow] = entry
-                        rowBuffers = buffers
+                    switch bufferingMode {
+                    case .perRowPersistent:
+                        cached.buffers = makeRowBuffers(from: rowData, reusing: cached.buffers)
+                        cached.data = nil
+                    case .perFrameAggregated:
+                        cached.data = rowData
+                        cached.buffers = nil
                     }
-                } else {
-                    rowBuffers = nil
+                    cached.screenRow = screenRow
+                    if moved {
+                        movedRows += 1
+                    }
                 }
+                cached.revision = snapshotRow.revision
+                entry = cached
                 cachedRows += 1
             } else {
-                continue
+                let rowInterval = Profiling.begin(.metalRowBuild)
+                defer { rowInterval.end() }
+                let prepared = prepareRow(row: snapshotRow,
+                                          absoluteRow: absoluteRow,
+                                          context: context,
+                                          cellWidth: cellWidth,
+                                          cellHeight: cellHeight,
+                                          yOffset: yOffset,
+                                          scale: scale)
+                let rowData = placeRow(prepared,
+                                       screenRow: screenRow,
+                                       snapshot: snapshot,
+                                       context: context,
+                                       cellWidth: cellWidth,
+                                       cellHeight: cellHeight,
+                                       yOffset: yOffset,
+                                       viewWidthPx: viewWidthPx,
+                                       scale: scale)
+                entry = RowCacheEntry(sourceGeneration: snapshotRow.sourceGeneration,
+                                      revision: snapshotRow.revision,
+                                      inputs: inputs,
+                                      prepared: prepared,
+                                      screenRow: screenRow,
+                                      data: bufferingMode == .perFrameAggregated ? rowData : nil,
+                                      buffers: bufferingMode == .perRowPersistent
+                                        ? makeRowBuffers(from: rowData, reusing: previous?.buffers) : nil)
+                rebuiltRows += 1
             }
-            if let rowBuffers {
+            visibleRowCache[sourceIdentity] = entry
+            if let rowBuffers = entry.buffers {
                 rows.append(rowBuffers)
             }
-            if bufferingMode == .perFrameAggregated {
-                if var currentFrame = frameData {
-                    currentFrame.backgroundCells.append(contentsOf: rowData.backgroundCells)
-                    currentFrame.powerlineJoinCells.append(contentsOf: rowData.powerlineJoinCells)
-                    currentFrame.glyphCellsGray.append(contentsOf: rowData.glyphCellsGray)
-                    currentFrame.glyphCellsColor.append(contentsOf: rowData.glyphCellsColor)
-                    currentFrame.decorationCells.append(contentsOf: rowData.decorationCells)
-                    currentFrame.belowBackgroundImageDraws.append(
-                        contentsOf: rowData.belowBackgroundImageDraws)
-                    currentFrame.underImageDraws.append(contentsOf: rowData.underImageDraws)
-                    currentFrame.placeholderImageDraws.append(contentsOf: rowData.placeholderImageDraws)
-                    currentFrame.overImageDraws.append(contentsOf: rowData.overImageDraws)
-                    currentFrame.otherImageDraws.append(contentsOf: rowData.otherImageDraws)
-                    frameData = currentFrame
-                }
+            if let rowData = entry.data, var currentFrame = frameData {
+                currentFrame.backgroundCells.append(contentsOf: rowData.backgroundCells)
+                currentFrame.powerlineJoinCells.append(contentsOf: rowData.powerlineJoinCells)
+                currentFrame.glyphCellsGray.append(contentsOf: rowData.glyphCellsGray)
+                currentFrame.glyphCellsColor.append(contentsOf: rowData.glyphCellsColor)
+                currentFrame.decorationCells.append(contentsOf: rowData.decorationCells)
+                currentFrame.belowBackgroundImageDraws.append(
+                    contentsOf: rowData.belowBackgroundImageDraws)
+                currentFrame.underImageDraws.append(contentsOf: rowData.underImageDraws)
+                currentFrame.placeholderImageDraws.append(contentsOf: rowData.placeholderImageDraws)
+                currentFrame.overImageDraws.append(contentsOf: rowData.overImageDraws)
+                currentFrame.otherImageDraws.append(contentsOf: rowData.otherImageDraws)
+                frameData = currentFrame
             }
         }
+        // An atlas change during this pass already dropped the cache, and
+        // buildDrawData drops this pass's rows before it builds them again.
+        rowCache = visibleRowCache
 #if DEBUG
         debugRowsRebuilt = rebuiltRows
         debugRowsCached = cachedRows
+        debugRowsMoved = movedRows
 #endif
         if ProfilingStats.enabled {
             activeProfileCounters.rowsRebuilt += rebuiltRows
@@ -1655,32 +1892,37 @@ final class MetalTerminalRenderer {
         return (firstRow, lastRow, snapshot.yDisp)
     }
 
-    private func buildRowDrawData(row: TerminalSnapshot.Row,
-                                  absoluteRow: Int,
-                                  snapshot: TerminalSnapshot,
-                                  context: SnapshotRenderContext,
-                                  yDisp: Int,
-                                  cellWidth: CGFloat,
-                                  cellHeight: CGFloat,
-                                  yOffset: CGFloat,
-                                  viewWidthPx: CGFloat,
-                                  scale: CGFloat) -> RowDrawData {
-        var backgroundCells: [ColorCell] = []
-        var powerlineJoinCells: [ColorCell] = []
-        var glyphCellsGray: [TextCell] = []
-        var glyphCellsColor: [TextCell] = []
-        var decorationCells: [ColorCell] = []
-        var belowBackgroundImageDraws: [ImageDraw] = []
-        var underImageDraws: [ImageDraw] = []
-        var placeholderImageDraws: [ImageDraw] = []
-        var overImageDraws: [ImageDraw] = []
-        var otherImageDraws: [ImageDraw] = []
-
+    /// Builds everything about a row's draw data that does not depend on its
+    /// screen position. `placeRow` finishes it.
+    ///
+    /// The split falls where the row's origin first enters the arithmetic.
+    /// `placeRow` evaluates the remaining expressions with the same operands
+    /// in the same order, so a row placed from a cached `PreparedRow` draws
+    /// bit for bit what a row built from scratch at that position draws.
+    private func prepareRow(row: TerminalSnapshot.Row,
+                            absoluteRow: Int,
+                            context: SnapshotRenderContext,
+                            cellWidth: CGFloat,
+                            cellHeight: CGFloat,
+                            yOffset: CGFloat,
+                            scale: CGFloat) -> PreparedRow {
+        if plainTextEnabled, case .plain = plainTextFont(context.fonts.normal) {
+            let plainInterval = Profiling.begin(.rowPlain)
+            defer { plainInterval.end() }
+            if let plain = textBuilder.plainRow(row: row, absoluteRow: absoluteRow, context: context),
+               let fonts = plainTextFonts(for: plain, context: context) {
+#if DEBUG
+                debugRowsPlain += 1
+#endif
+                return preparePlainRow(plain, fonts: fonts, row: row, context: context,
+                                       cellWidth: cellWidth, yOffset: yOffset, scale: scale)
+            }
+        }
         let line = row.line
-        let renderMode = line.renderMode
-        let lineOffset = cellHeight * CGFloat(absoluteRow - yDisp + 1)
-        let lineOrigin = CGPoint(x: 0, y: context.viewBounds.height - lineOffset)
-        let rowBase = lineOrigin.y + cellHeight
+        var prepared = PreparedRow(renderMode: line.renderMode)
+        // Rows always start at the left edge; only their vertical origin
+        // depends on where they are, and that is `placeRow`'s.
+        let lineOriginX: CGFloat = 0
         let attrInterval = Profiling.begin(.rowAttributedString)
         let lineInfo = textBuilder.buildAttributedString(row: row,
                                                          absoluteRow: absoluteRow,
@@ -1689,32 +1931,10 @@ final class MetalTerminalRenderer {
         let shapeInterval = Profiling.begin(.rowShape)
         let shapedSegments = buildShapedSegments(lineInfo.segments, context: context)
         shapeInterval.end()
-        let lineOriginPx = CGPoint(x: lineOrigin.x * scale, y: lineOrigin.y * scale)
         let cellWidthPx = cellWidth * scale
         let cellHeightPx = cellHeight * scale
         let baseCellWidthPx = max(1, Int(round(cellWidthPx)))
         let baseCellHeightPx = max(1, Int(round(cellHeightPx)))
-        let clipRect: ClipRect? = {
-            switch renderMode {
-            case .doubledDown, .doubledTop:
-                return ClipRect(minX: 0,
-                                minY: Float(lineOriginPx.y),
-                                maxX: Float(viewWidthPx),
-                                maxY: Float(lineOriginPx.y + cellHeightPx))
-            case .single, .doubleWidth:
-                return nil
-            }
-        }()
-        let pivotY: CGFloat = {
-            switch renderMode {
-            case .doubledDown:
-                return lineOrigin.y * scale
-            case .doubledTop:
-                return (lineOrigin.y + cellHeight) * scale
-            case .single, .doubleWidth:
-                return 0
-            }
-        }()
         let underlinePosition = context.fonts.underlinePosition()
         let underlineThickness = max(round(scale * context.fonts.underlineThickness()) / scale, 0.5)
         let decorationCellWidth = ceil(cellWidth)
@@ -1737,30 +1957,17 @@ final class MetalTerminalRenderer {
                     continue
                 }
                 let atlasSize = Float(grayscaleAtlas.size)
-                let u0 = Float(entry.region.x) / atlasSize
-                let v0 = Float(entry.region.y) / atlasSize
-                let u1 = Float(entry.region.x + entry.region.width) / atlasSize
-                let v1 = Float(entry.region.y + entry.region.height) / atlasSize
-                let alignedOriginX = round(lineOriginPx.x)
-                let alignedOriginY = round(lineOriginPx.y)
-                let x0 = alignedOriginX + CGFloat(item.column * baseCellWidthPx)
-                let y0 = alignedOriginY
-                let x1 = x0 + CGFloat(itemWidthPx)
-                let placementHeightPx = antiAliasBlocks ? cellHeightPx : CGFloat(baseCellHeightPx)
-                let y1 = y0 + placementHeightPx
-                let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
-                if let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) {
-                    let color = colorToSIMD(item.foregroundColor)
-                    glyphCellsGray.append(makeTextCell(x0: clipped.x0,
-                                                       y0: clipped.y0,
-                                                       x1: clipped.x1,
-                                                       y1: clipped.y1,
-                                                       u0: clipped.u0,
-                                                       v0: clipped.v0,
-                                                       u1: clipped.u1,
-                                                       v1: clipped.v1,
-                                                       color: color))
-                }
+                prepared.boxDrawings.append(PreparedCustomGlyph(
+                    column: item.column,
+                    columnWidth: item.columnWidth,
+                    itemWidthPx: itemWidthPx,
+                    entrySize: entry.size,
+                    codePoint: item.codePoint,
+                    u0: Float(entry.region.x) / atlasSize,
+                    v0: Float(entry.region.y) / atlasSize,
+                    u1: Float(entry.region.x + entry.region.width) / atlasSize,
+                    v1: Float(entry.region.y + entry.region.height) / atlasSize,
+                    color: colorToSIMD(item.foregroundColor)))
             }
 
             for element in lineInfo.blockElements {
@@ -1779,39 +1986,17 @@ final class MetalTerminalRenderer {
                     continue
                 }
                 let atlasSize = Float(grayscaleAtlas.size)
-                let u0 = Float(entry.region.x) / atlasSize
-                let v0 = Float(entry.region.y) / atlasSize
-                let u1 = Float(entry.region.x + entry.region.width) / atlasSize
-                let v1 = Float(entry.region.y + entry.region.height) / atlasSize
-                let originX: CGFloat
-                let originY: CGFloat
-                if antiAliasBlocks {
-                    originX = lineOriginPx.x + CGFloat(element.column) * cellWidthPx
-                    originY = lineOriginPx.y
-                } else {
-                    let alignedOriginX = round(lineOriginPx.x)
-                    let alignedOriginY = round(lineOriginPx.y)
-                    originX = alignedOriginX + CGFloat(element.column * baseCellWidthPx)
-                    originY = alignedOriginY
-                }
-                let x0 = originX
-                let y0 = originY
-                let placementWidthPx = antiAliasBlocks ? (cellWidthPx * CGFloat(element.columnWidth)) : CGFloat(itemWidthPx)
-                let x1 = x0 + placementWidthPx
-                let y1 = y0 + CGFloat(baseCellHeightPx)
-                let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
-                if let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) {
-                    let color = colorToSIMD(element.foregroundColor)
-                    glyphCellsGray.append(makeTextCell(x0: clipped.x0,
-                                                       y0: clipped.y0,
-                                                       x1: clipped.x1,
-                                                       y1: clipped.y1,
-                                                       u0: clipped.u0,
-                                                       v0: clipped.v0,
-                                                       u1: clipped.u1,
-                                                       v1: clipped.v1,
-                                                       color: color))
-                }
+                prepared.blockElements.append(PreparedCustomGlyph(
+                    column: element.column,
+                    columnWidth: element.columnWidth,
+                    itemWidthPx: itemWidthPx,
+                    entrySize: entry.size,
+                    codePoint: element.codePoint,
+                    u0: Float(entry.region.x) / atlasSize,
+                    v0: Float(entry.region.y) / atlasSize,
+                    u1: Float(entry.region.x + entry.region.width) / atlasSize,
+                    v1: Float(entry.region.y + entry.region.height) / atlasSize,
+                    color: colorToSIMD(element.foregroundColor)))
             }
 
             for item in lineInfo.powerlineGlyphs {
@@ -1825,70 +2010,18 @@ final class MetalTerminalRenderer {
                     continue
                 }
                 let atlasSize = Float(grayscaleAtlas.size)
-                let u0 = Float(entry.region.x) / atlasSize
-                let v0 = Float(entry.region.y) / atlasSize
-                let u1 = Float(entry.region.x + entry.region.width) / atlasSize
-                let v1 = Float(entry.region.y + entry.region.height) / atlasSize
-                let alignedOriginX = round(lineOriginPx.x) + CGFloat(item.column * baseCellWidthPx)
-                let alignedOriginY = round(lineOriginPx.y)
-                let x0 = alignedOriginX
-                let y0 = alignedOriginY
-                let x1 = x0 + entry.size.width
-                let y1 = y0 + entry.size.height
-                let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
-                if let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) {
-                    let color = colorToSIMD(item.foregroundColor)
-                    glyphCellsGray.append(makeTextCell(x0: clipped.x0,
-                                                       y0: clipped.y0,
-                                                       x1: clipped.x1,
-                                                       y1: clipped.y1,
-                                                       u0: clipped.u0,
-                                                       v0: clipped.v0,
-                                                       u1: clipped.u1,
-                                                       v1: clipped.v1,
-                                                       color: color))
-                }
-                // Add the joining edge after the DEC line transform so it is
-                // exactly one final device pixel even for 2x line modes.
-                let transformedCellRect = CGRect(x: CGFloat(min(tx0, tx1)),
-                                                 y: CGFloat(min(ty0, ty1)),
-                                                 width: CGFloat(abs(tx1 - tx0)),
-                                                 height: CGFloat(abs(ty1 - ty0)))
-                if let joinRect = PowerlineRenderer.devicePixelJoinRect(codePoint: item.codePoint,
-                                                                        transformedCellRect: transformedCellRect),
-                   let clippedJoin = self.clipRect(Float(joinRect.minX),
-                                                   Float(joinRect.minY),
-                                                   Float(joinRect.maxX),
-                                                   Float(joinRect.maxY),
-                                                   clipRect) {
-                    powerlineJoinCells.append(makeColorCell(x0: clippedJoin.0,
-                                                            y0: clippedJoin.1,
-                                                            x1: clippedJoin.2,
-                                                            y1: clippedJoin.3,
-                                                            color: colorToSIMD(item.foregroundColor)))
-                }
+                prepared.powerlineGlyphs.append(PreparedCustomGlyph(
+                    column: item.column,
+                    columnWidth: item.columnWidth,
+                    itemWidthPx: itemWidthPx,
+                    entrySize: entry.size,
+                    codePoint: item.codePoint,
+                    u0: Float(entry.region.x) / atlasSize,
+                    v0: Float(entry.region.y) / atlasSize,
+                    u1: Float(entry.region.x + entry.region.width) / atlasSize,
+                    v1: Float(entry.region.y + entry.region.height) / atlasSize,
+                    color: colorToSIMD(item.foregroundColor)))
             }
-        }
-
-        func transformPoint(_ point: CGPoint) -> CGPoint {
-            switch renderMode {
-            case .single:
-                return point
-            case .doubleWidth:
-                return CGPoint(x: point.x * 2, y: point.y)
-            case .doubledDown, .doubledTop:
-                return CGPoint(x: point.x * 2, y: pivotY + (point.y - pivotY) * 2)
-            }
-        }
-
-        func transformRect(x0: CGFloat, y0: CGFloat, x1: CGFloat, y1: CGFloat) -> (Float, Float, Float, Float) {
-            let p0 = transformPoint(CGPoint(x: x0, y: y0))
-            let p1 = transformPoint(CGPoint(x: x1, y: y1))
-            let minX = min(p0.x, p1.x)
-            let minY = min(p0.y, p1.y)
-            let maxX = max(p0.x, p1.x)
-            let maxY = max(p0.y, p1.y)
-            return (Float(minX), Float(minY), Float(maxX), Float(maxY))
         }
 
         for shaped in shapedSegments {
@@ -1917,19 +2050,9 @@ final class MetalTerminalRenderer {
                         + run.sourceCells.upperBound * shaped.segment.columnWidth
                     let columnSpan = max(0, endColumn - startColumn)
                     if columnSpan > 0 {
-                        let x0 = lineOriginPx.x + (CGFloat(startColumn) * cellWidthPx)
-                        let y0 = lineOriginPx.y
-                        let x1 = lineOriginPx.x + (CGFloat(startColumn + columnSpan) * cellWidthPx)
-                        let y1 = lineOriginPx.y + cellHeightPx
-                        let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
-                        if let clipped = self.clipRect(tx0, ty0, tx1, ty1, clipRect) {
-                            let color = colorToSIMD(backgroundColor)
-                            backgroundCells.append(makeColorCell(x0: clipped.0,
-                                                                  y0: clipped.1,
-                                                                  x1: clipped.2,
-                                                                  y1: clipped.3,
-                                                                  color: color))
-                        }
+                        prepared.backgrounds.append(PreparedBackground(startColumn: startColumn,
+                                                                       columnSpan: columnSpan,
+                                                                       color: colorToSIMD(backgroundColor)))
                     }
                 }
             }
@@ -1943,70 +2066,10 @@ final class MetalTerminalRenderer {
                 guard let texture = texture(for: image) else {
                     continue
                 }
-                let rect = CGRect(x: CGFloat(image.col) * cellWidth,
-                                  y: rowBase - CGFloat(image.pixelHeight),
-                                  width: CGFloat(image.pixelWidth),
-                                  height: CGFloat(image.pixelHeight))
-                if let draw = imageDraw(texture: texture,
-                                        rect: rect,
-                                        uvRect: CGRect(x: 0, y: 0, width: 1, height: 1),
-                                        renderMode: renderMode,
-                                        clipRect: clipRect,
-                                        pivotY: pivotY,
-                                        scale: scale) {
-                    otherImageDraws.append(draw)
-                }
-            }
-        }
-
-        // Skipped whole on a frame with no image, which is the common case:
-        // the clip rectangle and the loop below produce nothing then.
-        if !snapshot.kitty.renderSnapshot.placements.isEmpty {
-            let screenRow = absoluteRow - yDisp
-            let kittyLineClip = ClipRect(
-                minX: 0,
-                minY: Float(lineOriginPx.y),
-                maxX: Float(viewWidthPx),
-                maxY: Float(lineOriginPx.y + cellHeightPx))
-            for placement in snapshot.kitty.renderSnapshot.placements where !placement.isVirtual {
-                let geometry = placement.geometry
-                guard screenRow >= geometry.row,
-                      screenRow < geometry.row + geometry.rows,
-                      let image = snapshot.kitty.renderSnapshot.imagesById[placement.imageId],
-                      let texture = kittyTexture(
-                        imageId: placement.imageId,
-                        renderSnapshot: snapshot.kitty.renderSnapshot) else { continue }
-                let offsetX = CGFloat(placement.pixelOffsetX) / context.imageScale
-                let offsetY = CGFloat(placement.pixelOffsetY) / context.imageScale
-                let rowsBelow = geometry.row + geometry.rows - 1 - screenRow
-                let rect = CGRect(
-                    x: CGFloat(geometry.column) * cellWidth + offsetX,
-                    y: lineOrigin.y - CGFloat(rowsBelow) * cellHeight + offsetY,
-                    width: max(0, CGFloat(geometry.columns) * cellWidth - offsetX),
-                    height: max(0, CGFloat(geometry.rows) * cellHeight - offsetY))
-                let source = placement.visibleSource
-                let sourceBottom = image.height - source.y - source.height
-                let uvRect = CGRect(
-                    x: CGFloat(source.x) / CGFloat(image.width),
-                    y: CGFloat(sourceBottom) / CGFloat(image.height),
-                    width: CGFloat(source.width) / CGFloat(image.width),
-                    height: CGFloat(source.height) / CGFloat(image.height))
-                guard let draw = imageDraw(
-                    texture: texture,
-                    rect: rect,
-                    uvRect: uvRect,
-                    renderMode: renderMode,
-                    clipRect: kittyLineClip,
-                    pivotY: pivotY,
-                    scale: scale) else { continue }
-                switch KittyGraphicsRenderLayer(zIndex: placement.zIndex) {
-                case .belowBackground:
-                    belowBackgroundImageDraws.append(draw)
-                case .belowText:
-                    underImageDraws.append(draw)
-                case .aboveText:
-                    overImageDraws.append(draw)
-                }
+                prepared.images.append(PreparedImage(texture: texture,
+                                                     column: image.col,
+                                                     pixelWidth: image.pixelWidth,
+                                                     pixelHeight: image.pixelHeight))
             }
         }
 
@@ -2019,10 +2082,10 @@ final class MetalTerminalRenderer {
                 let runAttributes = run.attributes
                 let runFont = runAttributes[.font] as? TTFont ?? context.fonts.normal
                 let ctFont = runFont as CTFont
-                // Decorations are drawn once per source cell, full cell width.
+                // Decorations are drawn once per source cell, full cell width,
+                // on the baseline of the run's first glyph.
                 let decorationWidth = decorationCellWidth * CGFloat(shaped.segment.columnWidth)
-                let decorationBaselineY = lineOrigin.y + yOffset
-                    + (run.shaperRun.glyphRuns.first?.positions.first?.y ?? 0)
+                let decorationCoreTextY = run.shaperRun.glyphRuns.first?.positions.first?.y ?? 0
 
                 let textColor = runAttributes[.foregroundColor] as? TTColor ?? context.effectiveForegroundColor
                 let textColorSIMD = colorToSIMD(textColor)
@@ -2119,42 +2182,37 @@ final class MetalTerminalRenderer {
                                                policy: glyphPolicy,
                                                iconHeight: policyIconHeight,
                                                fitsFallbackToCell: fitsFallbackGlyphs && isAlone)
-                        let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)) + intraCluster + fit.dx,
-                                              y: lineOrigin.y + yOffset + ctPos.y + fit.dy)
-                        let pxX = basePos.x * scale + entry.bearing.x * fit.scaleX
-                        let pxY = basePos.y * scale + entry.bearing.y * fit.scaleY
-
-                        let x0 = pxX
-                        let y0 = pxY
-                        let x1 = pxX + entry.size.width * fit.scaleX
-                        let y1 = pxY + entry.size.height * fit.scaleY
-                        let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
+                        let basePosX = lineOriginX + (cellWidth * CGFloat(glyphColumn)) + intraCluster + fit.dx
+                        let pxX = basePosX * scale + entry.bearing.x * fit.scaleX
 
                         let atlasSize = entry.atlasKind == .color ? colorAtlas.size : grayscaleAtlas.size
-                        let u0 = Float(entry.region.x) / Float(atlasSize)
-                        let v0 = Float(entry.region.y) / Float(atlasSize)
-                        let u1 = Float(entry.region.x + entry.region.width) / Float(atlasSize)
-                        let v1 = Float(entry.region.y + entry.region.height) / Float(atlasSize)
-
-                        let color = entry.isColor ? SIMD4<Float>(1, 1, 1, 1) : textColorSIMD
-                        if let clipped = self.clipRect(tx0, ty0, tx1, ty1, u0, v0, u1, v1, clipRect) {
-                            let cell = makeTextCell(x0: clipped.x0,
-                                                    y0: clipped.y0,
-                                                    x1: clipped.x1,
-                                                    y1: clipped.y1,
-                                                    u0: clipped.u0,
-                                                    v0: clipped.v0,
-                                                    u1: clipped.u1,
-                                                    v1: clipped.v1,
-                                                    color: color)
-                            switch entry.atlasKind {
-                            case .grayscale:
-                                glyphCellsGray.append(cell)
-                            case .color:
-                                glyphCellsColor.append(cell)
-                            }
-                        }
+                        prepared.glyphs.append(PreparedGlyph(
+                            x0: pxX,
+                            x1: pxX + entry.size.width * fit.scaleX,
+                            coreTextY: ctPos.y,
+                            fitDY: fit.dy,
+                            bearingY: entry.bearing.y * fit.scaleY,
+                            height: entry.size.height * fit.scaleY,
+                            u0: Float(entry.region.x) / Float(atlasSize),
+                            v0: Float(entry.region.y) / Float(atlasSize),
+                            u1: Float(entry.region.x + entry.region.width) / Float(atlasSize),
+                            v1: Float(entry.region.y + entry.region.height) / Float(atlasSize),
+                            color: entry.isColor ? SIMD4<Float>(1, 1, 1, 1) : textColorSIMD,
+                            usesColorAtlas: entry.atlasKind == .color))
                     }
+                }
+
+                func decorationSpans() -> [PreparedDecorationSpan] {
+                    var spans: [PreparedDecorationSpan] = []
+                    spans.reserveCapacity(run.sourceCells.count)
+                    for ordinal in run.sourceCells {
+                        let glyphColumn = shaped.segment.column + (ordinal * shaped.segment.columnWidth)
+                        let basePosX = lineOriginX + (cellWidth * CGFloat(glyphColumn))
+                        spans.append(PreparedDecorationSpan(x0: basePosX * scale,
+                                                            x1: (basePosX + decorationWidth) * scale,
+                                                            coreTextY: decorationCoreTextY))
+                    }
+                    return spans
                 }
 
                 if let rawStyle = runAttributes[.underlineStyle] as? Int,
@@ -2162,43 +2220,14 @@ final class MetalTerminalRenderer {
                     let underlineStyle = resolveUnderlineStyle(runAttributes)
                     let underlineColor = (runAttributes[.underlineColor] as? TTColor) ??
                         context.effectiveForegroundColor
-                    let underlineColorSIMD = colorToSIMD(underlineColor)
-                    let thickness = underlineThickness * scale
-                    let segmentStyle: UnderlineStyle = underlineStyle == .double ? .single : underlineStyle
-
-                    for ordinal in run.sourceCells {
-                        let glyphColumn = shaped.segment.column + (ordinal * shaped.segment.columnWidth)
-                        let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)),
-                                              y: decorationBaselineY)
-                        let x0 = basePos.x * scale
-                        let x1 = (basePos.x + decorationWidth) * scale
-                        let yCenter = (basePos.y + underlinePosition) * scale
-                        appendUnderlineSegments(x0: x0,
-                                                x1: x1,
-                                                yCenter: yCenter,
-                                                thickness: thickness,
-                                                color: underlineColorSIMD,
-                                                style: segmentStyle,
-                                                patternScale: scale,
-                                                renderMode: renderMode,
-                                                clipRect: clipRect,
-                                                pivotY: pivotY,
-                                                output: &decorationCells)
-                        if underlineStyle == .double {
-                            let yDouble = (basePos.y + underlinePosition - underlineThickness - 1) * scale
-                            appendUnderlineSegments(x0: x0,
-                                                    x1: x1,
-                                                    yCenter: yDouble,
-                                                    thickness: thickness,
-                                                    color: underlineColorSIMD,
-                                                    style: segmentStyle,
-                                                    patternScale: scale,
-                                                    renderMode: renderMode,
-                                                    clipRect: clipRect,
-                                                    pivotY: pivotY,
-                                                    output: &decorationCells)
-                        }
-                    }
+                    prepared.decorations.append(PreparedDecoration(
+                        style: underlineStyle == .double ? .single : underlineStyle,
+                        isDouble: underlineStyle == .double,
+                        color: colorToSIMD(underlineColor),
+                        thicknessPx: underlineThickness * scale,
+                        position: underlinePosition,
+                        doubleGap: underlineThickness,
+                        spans: decorationSpans()))
                 }
 
                 if let rawStyle = runAttributes[.strikethroughStyle] as? Int,
@@ -2206,7 +2235,6 @@ final class MetalTerminalRenderer {
                     let style = NSUnderlineStyle(rawValue: rawStyle)
                     let strikeColor = (runAttributes[.strikethroughColor] as? TTColor) ??
                         context.effectiveForegroundColor
-                    let strikeColorSIMD = colorToSIMD(strikeColor)
                     let strikeStyle: UnderlineStyle
                     if style.contains(.patternDot) {
                         strikeStyle = .dotted
@@ -2215,51 +2243,528 @@ final class MetalTerminalRenderer {
                     } else {
                         strikeStyle = .single
                     }
-                    let isDouble = style.contains(.double)
                     let strikeThickness = max(round(scale * CTFontGetUnderlineThickness(ctFont)) / scale, 0.5)
                     let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
-
-                    for ordinal in run.sourceCells {
-                        let glyphColumn = shaped.segment.column + (ordinal * shaped.segment.columnWidth)
-                        let basePos = CGPoint(x: lineOrigin.x + (cellWidth * CGFloat(glyphColumn)),
-                                              y: decorationBaselineY)
-                        let x0 = basePos.x * scale
-                        let x1 = (basePos.x + decorationWidth) * scale
-                        let yCenter = (basePos.y + strikePosition) * scale
-                        let thickness = strikeThickness * scale
-                        appendUnderlineSegments(x0: x0,
-                                                x1: x1,
-                                                yCenter: yCenter,
-                                                thickness: thickness,
-                                                color: strikeColorSIMD,
-                                                style: strikeStyle,
-                                                patternScale: scale,
-                                                renderMode: renderMode,
-                                                clipRect: clipRect,
-                                                pivotY: pivotY,
-                                                output: &decorationCells)
-                        if isDouble {
-                            let yDouble = (basePos.y + strikePosition - strikeThickness - 1) * scale
-                            appendUnderlineSegments(x0: x0,
-                                                    x1: x1,
-                                                    yCenter: yDouble,
-                                                    thickness: thickness,
-                                                    color: strikeColorSIMD,
-                                                    style: strikeStyle,
-                                                    patternScale: scale,
-                                                    renderMode: renderMode,
-                                                    clipRect: clipRect,
-                                                    pivotY: pivotY,
-                                                    output: &decorationCells)
-                        }
-                    }
+                    prepared.decorations.append(PreparedDecoration(
+                        style: strikeStyle,
+                        isDouble: style.contains(.double),
+                        color: colorToSIMD(strikeColor),
+                        thicknessPx: strikeThickness * scale,
+                        position: strikePosition,
+                        doubleGap: strikeThickness,
+                        spans: decorationSpans()))
                 }
-
             }
         }
 
-        if !lineInfo.kittyPlaceholders.isEmpty {
-            for placeholder in lineInfo.kittyPlaceholders {
+        prepared.kittyPlaceholders = lineInfo.kittyPlaceholders
+        return prepared
+    }
+
+    private func plainTextFont(_ font: TTFont) -> PlainFontAnalysis {
+        let key = RetainedFontIdentity(font as CTFont)
+        if let analysis = plainTextFonts[key] {
+            return analysis
+        }
+        if plainTextFonts.count >= 32 {
+            plainTextFonts.removeAll()
+        }
+        let analysis: PlainFontAnalysis = PlainTextFont.analyze(font as CTFont).map { .plain($0) } ?? .notPlain
+        plainTextFonts[key] = analysis
+        return analysis
+    }
+
+    /// The plain fonts of the four faces a row's runs use, or nil when one
+    /// of them must be shaped.
+    private func plainTextFonts(for plain: PlainRow, context: SnapshotRenderContext) -> [PlainTextFont?]? {
+        var fonts: [PlainTextFont?] = [nil, nil, nil, nil]
+        for run in plain.runs where fonts[run.style.fontIndex] == nil {
+            guard case .plain(let font) = plainTextFont(SnapshotTextBuilder.font(run.style.fontIndex, context)) else {
+                return nil
+            }
+            fonts[run.style.fontIndex] = font
+        }
+        return fonts
+    }
+
+    @inline(__always)
+    private func colorToSIMD(_ color: PlainColor) -> SIMD4<Float> {
+        switch color {
+        case .rgb(let value): return colorSIMDCache.value(rgb: value)
+        case .color(let color): return colorSIMDCache.value(for: color)
+        }
+    }
+
+    /// `prepareRow` for a row of plain cells in plain fonts: the glyphs come
+    /// from the fonts' `cmap` instead of an attributed string and Core Text.
+    ///
+    /// It produces what the shaped path does for such a row, value for value:
+    /// one background per run, each cell's glyph at its column (one column, no
+    /// placement policy, fitted to the cell only as a fallback-font glyph
+    /// would be), and each run's decorations.
+    /// Core Text would give each cell its `cmap` glyph, on the baseline, in
+    /// the font `PlainTextFont` found it reports, and that is all the shaped
+    /// path takes from Core Text for such a row.
+    private func preparePlainRow(_ plain: PlainRow,
+                                 fonts: [PlainTextFont?],
+                                 row: TerminalSnapshot.Row,
+                                 context: SnapshotRenderContext,
+                                 cellWidth: CGFloat,
+                                 yOffset: CGFloat,
+                                 scale: CGFloat) -> PreparedRow {
+        var prepared = PreparedRow(renderMode: row.line.renderMode)
+        let lineOriginX: CGFloat = 0
+        let underlinePosition = context.fonts.underlinePosition()
+        let underlineThickness = max(round(scale * context.fonts.underlineThickness()) / scale, 0.5)
+        let decorationCellWidth = ceil(cellWidth)
+
+        for run in plain.runs {
+            let style = run.style
+            let explicit = style.selectionBackground != nil || style.explicitBackground
+            if explicit {
+                let color = style.selectionBackground.map { colorToSIMD($0) } ?? colorToSIMD(style.background)
+                prepared.backgrounds.append(PreparedBackground(startColumn: run.start,
+                                                               columnSpan: run.end - run.start,
+                                                               color: color))
+            }
+        }
+
+        for image in row.images {
+            guard let texture = texture(for: image) else {
+                continue
+            }
+            prepared.images.append(PreparedImage(texture: texture,
+                                                 column: image.col,
+                                                 pixelWidth: image.pixelWidth,
+                                                 pixelHeight: image.pixelHeight))
+        }
+
+        // Per face, resolved once a row rather than once a run.
+        var scaledFonts: [CTFont?] = [nil, nil, nil, nil]
+        var fitsFallback: [Bool] = [false, false, false, false]
+        var rasterTokens: [UInt32] = [0, 0, 0, 0]
+        var fullTokens: [UInt32] = [0, 0, 0, 0]
+        var metricsFonts: [GlyphMetricsFont?] = [nil, nil, nil, nil]
+        prepared.glyphs.reserveCapacity(plain.codes.count)
+        for run in plain.runs {
+            let style = run.style
+            let face = style.fontIndex
+            guard let font = fonts[face] else {
+                preconditionFailure("plainTextFonts(for:) resolves every face a run uses")
+            }
+            let scaledFont: CTFont
+            if let resolved = scaledFonts[face] {
+                scaledFont = resolved
+            } else {
+                scaledFont = scaledFontFor(font: font.shapedFont, scale: scale)
+                scaledFonts[face] = scaledFont
+                // The shaped path fits a single-cell glyph to its cell when
+                // Core Text drew it from a font outside the frame's set. Every
+                // plain glyph is alone in its cell, so only the font decides.
+                fitsFallback[face] = !context.fonts.contains(font.shapedFont)
+                rasterTokens[face] = rasterFontToken(for: scaledFont)
+                fullTokens[face] = profileFullFontToken(rasterFont: scaledFont,
+                                                        fittingFont: font.shapedFont,
+                                                        renderingScale: scale,
+                                                        rasterFontToken: rasterTokens[face])
+            }
+            let rasterFontToken = rasterTokens[face]
+            let textColorSIMD = colorToSIMD(style.foreground)
+            for column in run.start..<run.end {
+                let glyph = font.glyph(for: UInt32(plain.codes[column]))
+                recordProfileGlyphIdentityAlias(fullFontToken: fullTokens[face],
+                                                rasterFontToken: rasterFontToken,
+                                                glyph: glyph)
+                guard let resolvedGlyph = glyphEntry(rasterFontToken: rasterFontToken,
+                                                     font: scaledFont,
+                                                     fittingFont: font.shapedFont,
+                                                     renderingScale: scale,
+                                                     metricsFont: &metricsFonts[face],
+                                                     glyph: glyph) else {
+                    continue
+                }
+                let entry = resolvedGlyph.entry
+                if entry.size.width <= 0 || entry.size.height <= 0 {
+                    continue
+                }
+                let fit = glyphSlotFit(resolvedGlyph: resolvedGlyph,
+                                       glyph: glyph,
+                                       columnWidth: 1,
+                                       cellDimension: context.cellDimension,
+                                       baselineFromBottom: yOffset,
+                                       font: scaledFont,
+                                       fittingFont: font.shapedFont,
+                                       renderingScale: scale,
+                                       metricsFont: &metricsFonts[face],
+                                       fitsFallbackToCell: fitsFallback[face])
+                // One glyph per cell, so no offset within a cluster.
+                let intraCluster: CGFloat = 0
+                let basePosX = lineOriginX + (cellWidth * CGFloat(column)) + intraCluster + fit.dx
+                let pxX = basePosX * scale + entry.bearing.x * fit.scaleX
+                let atlasSize = entry.atlasKind == .color ? colorAtlas.size : grayscaleAtlas.size
+                prepared.glyphs.append(PreparedGlyph(
+                    x0: pxX,
+                    x1: pxX + entry.size.width * fit.scaleX,
+                    coreTextY: 0,
+                    fitDY: fit.dy,
+                    bearingY: entry.bearing.y * fit.scaleY,
+                    height: entry.size.height * fit.scaleY,
+                    u0: Float(entry.region.x) / Float(atlasSize),
+                    v0: Float(entry.region.y) / Float(atlasSize),
+                    u1: Float(entry.region.x + entry.region.width) / Float(atlasSize),
+                    v1: Float(entry.region.y + entry.region.height) / Float(atlasSize),
+                    color: entry.isColor ? SIMD4<Float>(1, 1, 1, 1) : textColorSIMD,
+                    usesColorAtlas: entry.atlasKind == .color))
+            }
+
+            // The shaped path's decorations: one per source cell, one column
+            // wide, on the baseline of the run's first glyph, which is the
+            // baseline itself in a plain font.
+            func decorationSpans() -> [PreparedDecorationSpan] {
+                (run.start..<run.end).map { column in
+                    let basePosX = lineOriginX + (cellWidth * CGFloat(column))
+                    return PreparedDecorationSpan(x0: basePosX * scale,
+                                                  x1: (basePosX + decorationCellWidth) * scale,
+                                                  coreTextY: 0)
+                }
+            }
+            if let underline = style.underline {
+                prepared.decorations.append(PreparedDecoration(
+                    style: underline.style == .double ? .single : underline.style,
+                    isDouble: underline.style == .double,
+                    color: colorToSIMD(underline.color),
+                    thicknessPx: underlineThickness * scale,
+                    position: underlinePosition,
+                    doubleGap: underlineThickness,
+                    spans: decorationSpans()))
+            }
+            if let strikethrough = style.strikethrough {
+                let ctFont = SnapshotTextBuilder.font(face, context) as CTFont
+                let strikeThickness = max(round(scale * CTFontGetUnderlineThickness(ctFont)) / scale, 0.5)
+                let strikePosition = (CTFontGetXHeight(ctFont) + strikeThickness) * 0.5
+                prepared.decorations.append(PreparedDecoration(
+                    style: .single,
+                    isDouble: false,
+                    color: colorToSIMD(strikethrough),
+                    thicknessPx: strikeThickness * scale,
+                    position: strikePosition,
+                    doubleGap: strikeThickness,
+                    spans: decorationSpans()))
+            }
+        }
+        return prepared
+    }
+
+    /// Places a prepared row at `screenRow`. Cheap: no shaping, no cache
+    /// lookups, only the arithmetic that depends on the row's origin.
+    private func placeRow(_ prepared: PreparedRow,
+                          screenRow: Int,
+                          snapshot: TerminalSnapshot,
+                          context: SnapshotRenderContext,
+                          cellWidth: CGFloat,
+                          cellHeight: CGFloat,
+                          yOffset: CGFloat,
+                          viewWidthPx: CGFloat,
+                          scale: CGFloat) -> RowDrawData {
+        var backgroundCells: [ColorCell] = []
+        var powerlineJoinCells: [ColorCell] = []
+        var glyphCellsGray: [TextCell] = []
+        var glyphCellsColor: [TextCell] = []
+        var decorationCells: [ColorCell] = []
+        var belowBackgroundImageDraws: [ImageDraw] = []
+        var underImageDraws: [ImageDraw] = []
+        var placeholderImageDraws: [ImageDraw] = []
+        var overImageDraws: [ImageDraw] = []
+        var otherImageDraws: [ImageDraw] = []
+
+        let renderMode = prepared.renderMode
+        let lineOffset = cellHeight * CGFloat(screenRow + 1)
+        let lineOrigin = CGPoint(x: 0, y: context.viewBounds.height - lineOffset)
+        let rowBase = lineOrigin.y + cellHeight
+        let lineOriginPx = CGPoint(x: lineOrigin.x * scale, y: lineOrigin.y * scale)
+        let cellWidthPx = cellWidth * scale
+        let cellHeightPx = cellHeight * scale
+        let baseCellWidthPx = max(1, Int(round(cellWidthPx)))
+        let baseCellHeightPx = max(1, Int(round(cellHeightPx)))
+        let clipRect: ClipRect? = {
+            switch renderMode {
+            case .doubledDown, .doubledTop:
+                return ClipRect(minX: 0,
+                                minY: Float(lineOriginPx.y),
+                                maxX: Float(viewWidthPx),
+                                maxY: Float(lineOriginPx.y + cellHeightPx))
+            case .single, .doubleWidth:
+                return nil
+            }
+        }()
+        let pivotY: CGFloat = {
+            switch renderMode {
+            case .doubledDown:
+                return lineOrigin.y * scale
+            case .doubledTop:
+                return (lineOrigin.y + cellHeight) * scale
+            case .single, .doubleWidth:
+                return 0
+            }
+        }()
+
+        func transformPoint(_ point: CGPoint) -> CGPoint {
+            switch renderMode {
+            case .single:
+                return point
+            case .doubleWidth:
+                return CGPoint(x: point.x * 2, y: point.y)
+            case .doubledDown, .doubledTop:
+                return CGPoint(x: point.x * 2, y: pivotY + (point.y - pivotY) * 2)
+            }
+        }
+
+        func transformRect(x0: CGFloat, y0: CGFloat, x1: CGFloat, y1: CGFloat) -> (Float, Float, Float, Float) {
+            let p0 = transformPoint(CGPoint(x: x0, y: y0))
+            let p1 = transformPoint(CGPoint(x: x1, y: y1))
+            let minX = min(p0.x, p1.x)
+            let minY = min(p0.y, p1.y)
+            let maxX = max(p0.x, p1.x)
+            let maxY = max(p0.y, p1.y)
+            return (Float(minX), Float(minY), Float(maxX), Float(maxY))
+        }
+
+        if !prepared.boxDrawings.isEmpty || !prepared.blockElements.isEmpty || !prepared.powerlineGlyphs.isEmpty {
+            let antiAliasBlocks = context.antiAliasCustomBlockGlyphs
+
+            for item in prepared.boxDrawings {
+                let alignedOriginX = round(lineOriginPx.x)
+                let alignedOriginY = round(lineOriginPx.y)
+                let x0 = alignedOriginX + CGFloat(item.column * baseCellWidthPx)
+                let y0 = alignedOriginY
+                let x1 = x0 + CGFloat(item.itemWidthPx)
+                let placementHeightPx = antiAliasBlocks ? cellHeightPx : CGFloat(baseCellHeightPx)
+                let y1 = y0 + placementHeightPx
+                let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
+                if let clipped = self.clipRect(tx0, ty0, tx1, ty1, item.u0, item.v0, item.u1, item.v1, clipRect) {
+                    glyphCellsGray.append(makeTextCell(x0: clipped.x0,
+                                                       y0: clipped.y0,
+                                                       x1: clipped.x1,
+                                                       y1: clipped.y1,
+                                                       u0: clipped.u0,
+                                                       v0: clipped.v0,
+                                                       u1: clipped.u1,
+                                                       v1: clipped.v1,
+                                                       color: item.color))
+                }
+            }
+
+            for element in prepared.blockElements {
+                let originX: CGFloat
+                let originY: CGFloat
+                if antiAliasBlocks {
+                    originX = lineOriginPx.x + CGFloat(element.column) * cellWidthPx
+                    originY = lineOriginPx.y
+                } else {
+                    let alignedOriginX = round(lineOriginPx.x)
+                    let alignedOriginY = round(lineOriginPx.y)
+                    originX = alignedOriginX + CGFloat(element.column * baseCellWidthPx)
+                    originY = alignedOriginY
+                }
+                let x0 = originX
+                let y0 = originY
+                let placementWidthPx = antiAliasBlocks ? (cellWidthPx * CGFloat(element.columnWidth)) : CGFloat(element.itemWidthPx)
+                let x1 = x0 + placementWidthPx
+                let y1 = y0 + CGFloat(baseCellHeightPx)
+                let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
+                if let clipped = self.clipRect(tx0, ty0, tx1, ty1, element.u0, element.v0, element.u1, element.v1, clipRect) {
+                    glyphCellsGray.append(makeTextCell(x0: clipped.x0,
+                                                       y0: clipped.y0,
+                                                       x1: clipped.x1,
+                                                       y1: clipped.y1,
+                                                       u0: clipped.u0,
+                                                       v0: clipped.v0,
+                                                       u1: clipped.u1,
+                                                       v1: clipped.v1,
+                                                       color: element.color))
+                }
+            }
+
+            for item in prepared.powerlineGlyphs {
+                let alignedOriginX = round(lineOriginPx.x) + CGFloat(item.column * baseCellWidthPx)
+                let alignedOriginY = round(lineOriginPx.y)
+                let x0 = alignedOriginX
+                let y0 = alignedOriginY
+                let x1 = x0 + item.entrySize.width
+                let y1 = y0 + item.entrySize.height
+                let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
+                if let clipped = self.clipRect(tx0, ty0, tx1, ty1, item.u0, item.v0, item.u1, item.v1, clipRect) {
+                    glyphCellsGray.append(makeTextCell(x0: clipped.x0,
+                                                       y0: clipped.y0,
+                                                       x1: clipped.x1,
+                                                       y1: clipped.y1,
+                                                       u0: clipped.u0,
+                                                       v0: clipped.v0,
+                                                       u1: clipped.u1,
+                                                       v1: clipped.v1,
+                                                       color: item.color))
+                }
+                // Add the joining edge after the DEC line transform so it is
+                // exactly one final device pixel even for 2x line modes.
+                let transformedCellRect = CGRect(x: CGFloat(min(tx0, tx1)),
+                                                 y: CGFloat(min(ty0, ty1)),
+                                                 width: CGFloat(abs(tx1 - tx0)),
+                                                 height: CGFloat(abs(ty1 - ty0)))
+                if let joinRect = PowerlineRenderer.devicePixelJoinRect(codePoint: item.codePoint,
+                                                                        transformedCellRect: transformedCellRect),
+                   let clippedJoin = self.clipRect(Float(joinRect.minX),
+                                                   Float(joinRect.minY),
+                                                   Float(joinRect.maxX),
+                                                   Float(joinRect.maxY),
+                                                   clipRect) {
+                    powerlineJoinCells.append(makeColorCell(x0: clippedJoin.0,
+                                                            y0: clippedJoin.1,
+                                                            x1: clippedJoin.2,
+                                                            y1: clippedJoin.3,
+                                                            color: item.color))
+                }
+            }
+        }
+
+        for background in prepared.backgrounds {
+            let x0 = lineOriginPx.x + (CGFloat(background.startColumn) * cellWidthPx)
+            let y0 = lineOriginPx.y
+            let x1 = lineOriginPx.x + (CGFloat(background.startColumn + background.columnSpan) * cellWidthPx)
+            let y1 = lineOriginPx.y + cellHeightPx
+            let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
+            if let clipped = self.clipRect(tx0, ty0, tx1, ty1, clipRect) {
+                backgroundCells.append(makeColorCell(x0: clipped.0,
+                                                     y0: clipped.1,
+                                                     x1: clipped.2,
+                                                     y1: clipped.3,
+                                                     color: background.color))
+            }
+        }
+
+        for image in prepared.images {
+            let rect = CGRect(x: CGFloat(image.column) * cellWidth,
+                              y: rowBase - CGFloat(image.pixelHeight),
+                              width: CGFloat(image.pixelWidth),
+                              height: CGFloat(image.pixelHeight))
+            if let draw = imageDraw(texture: image.texture,
+                                    rect: rect,
+                                    uvRect: CGRect(x: 0, y: 0, width: 1, height: 1),
+                                    renderMode: renderMode,
+                                    clipRect: clipRect,
+                                    pivotY: pivotY,
+                                    scale: scale) {
+                otherImageDraws.append(draw)
+            }
+        }
+
+        // Skipped whole on a frame with no image, which is the common case:
+        // the clip rectangle and the loop below produce nothing then.
+        if !snapshot.kitty.renderSnapshot.placements.isEmpty {
+            let kittyLineClip = ClipRect(
+                minX: 0,
+                minY: Float(lineOriginPx.y),
+                maxX: Float(viewWidthPx),
+                maxY: Float(lineOriginPx.y + cellHeightPx))
+            for placement in snapshot.kitty.renderSnapshot.placements where !placement.isVirtual {
+                let geometry = placement.geometry
+                guard screenRow >= geometry.row,
+                      screenRow < geometry.row + geometry.rows,
+                      let image = snapshot.kitty.renderSnapshot.imagesById[placement.imageId],
+                      let texture = kittyTexture(
+                        imageId: placement.imageId,
+                        renderSnapshot: snapshot.kitty.renderSnapshot) else { continue }
+                let offsetX = CGFloat(placement.pixelOffsetX) / context.imageScale
+                let offsetY = CGFloat(placement.pixelOffsetY) / context.imageScale
+                let rowsBelow = geometry.row + geometry.rows - 1 - screenRow
+                let rect = CGRect(
+                    x: CGFloat(geometry.column) * cellWidth + offsetX,
+                    y: lineOrigin.y - CGFloat(rowsBelow) * cellHeight + offsetY,
+                    width: max(0, CGFloat(geometry.columns) * cellWidth - offsetX),
+                    height: max(0, CGFloat(geometry.rows) * cellHeight - offsetY))
+                let source = placement.visibleSource
+                let sourceBottom = image.height - source.y - source.height
+                let uvRect = CGRect(
+                    x: CGFloat(source.x) / CGFloat(image.width),
+                    y: CGFloat(sourceBottom) / CGFloat(image.height),
+                    width: CGFloat(source.width) / CGFloat(image.width),
+                    height: CGFloat(source.height) / CGFloat(image.height))
+                guard let draw = imageDraw(
+                    texture: texture,
+                    rect: rect,
+                    uvRect: uvRect,
+                    renderMode: renderMode,
+                    clipRect: kittyLineClip,
+                    pivotY: pivotY,
+                    scale: scale) else { continue }
+                switch KittyGraphicsRenderLayer(zIndex: placement.zIndex) {
+                case .belowBackground:
+                    belowBackgroundImageDraws.append(draw)
+                case .belowText:
+                    underImageDraws.append(draw)
+                case .aboveText:
+                    overImageDraws.append(draw)
+                }
+            }
+        }
+
+        for glyph in prepared.glyphs {
+            let basePosY = lineOrigin.y + yOffset + glyph.coreTextY + glyph.fitDY
+            let pxY = basePosY * scale + glyph.bearingY
+            let y0 = pxY
+            let y1 = pxY + glyph.height
+            let (tx0, ty0, tx1, ty1) = transformRect(x0: glyph.x0, y0: y0, x1: glyph.x1, y1: y1)
+            if let clipped = self.clipRect(tx0, ty0, tx1, ty1, glyph.u0, glyph.v0, glyph.u1, glyph.v1, clipRect) {
+                let cell = makeTextCell(x0: clipped.x0,
+                                        y0: clipped.y0,
+                                        x1: clipped.x1,
+                                        y1: clipped.y1,
+                                        u0: clipped.u0,
+                                        v0: clipped.v0,
+                                        u1: clipped.u1,
+                                        v1: clipped.v1,
+                                        color: glyph.color)
+                if glyph.usesColorAtlas {
+                    glyphCellsColor.append(cell)
+                } else {
+                    glyphCellsGray.append(cell)
+                }
+            }
+        }
+
+        for decoration in prepared.decorations {
+            for span in decoration.spans {
+                let basePosY = lineOrigin.y + yOffset + span.coreTextY
+                let yCenter = (basePosY + decoration.position) * scale
+                appendUnderlineSegments(x0: span.x0,
+                                        x1: span.x1,
+                                        yCenter: yCenter,
+                                        thickness: decoration.thicknessPx,
+                                        color: decoration.color,
+                                        style: decoration.style,
+                                        patternScale: scale,
+                                        renderMode: renderMode,
+                                        clipRect: clipRect,
+                                        pivotY: pivotY,
+                                        output: &decorationCells)
+                if decoration.isDouble {
+                    let yDouble = (basePosY + decoration.position - decoration.doubleGap - 1) * scale
+                    appendUnderlineSegments(x0: span.x0,
+                                            x1: span.x1,
+                                            yCenter: yDouble,
+                                            thickness: decoration.thicknessPx,
+                                            color: decoration.color,
+                                            style: decoration.style,
+                                            patternScale: scale,
+                                            renderMode: renderMode,
+                                            clipRect: clipRect,
+                                            pivotY: pivotY,
+                                            output: &decorationCells)
+                }
+            }
+        }
+
+        if !prepared.kittyPlaceholders.isEmpty {
+            for placeholder in prepared.kittyPlaceholders {
                 guard let record = snapshot.kitty.renderSnapshot.placements.first(where: { record in
                     guard record.isVirtual, record.imageId == placeholder.imageId else { return false }
                     if placeholder.placementId != 0 && record.placementId != placeholder.placementId {
@@ -3197,12 +3702,39 @@ final class MetalTerminalRenderer {
         return result
     }
 
-    private func makeRowBuffers(from data: RowDrawData) -> RowDrawBuffers {
-        let (backgroundBuffer, backgroundCount) = makeStaticBuffer(data.backgroundCells)
-        let (powerlineJoinBuffer, powerlineJoinCount) = makeStaticBuffer(data.powerlineJoinCells)
-        let (glyphGrayBuffer, glyphGrayCount) = makeStaticBuffer(data.glyphCellsGray)
-        let (glyphColorBuffer, glyphColorCount) = makeStaticBuffer(data.glyphCellsColor)
-        let (decorationBuffer, decorationCount) = makeStaticBuffer(data.decorationCells)
+    /// Copies `vertices` into `buffer` when it is large enough, or else into
+    /// a new buffer.
+    ///
+    /// Writing into a buffer an earlier frame drew from is safe only because
+    /// `render` holds the single frame permit while it builds: every frame
+    /// before this one has completed on the GPU.
+    private func makeStaticBuffer<T>(_ vertices: [T], reusing buffer: MTLBuffer?) -> (MTLBuffer?, Int) {
+        let count = vertices.count
+        let byteCount = count * MemoryLayout<T>.stride
+        guard count > 0, let buffer, buffer.length >= byteCount else {
+            return makeStaticBuffer(vertices)
+        }
+        _ = vertices.withUnsafeBytes { raw in
+            memcpy(buffer.contents(), raw.baseAddress!, byteCount)
+        }
+        return (buffer, count)
+    }
+
+    /// Makes a row's buffers, writing into `previous`'s buffers where they are
+    /// large enough: a row placed again after it moved has the same number of
+    /// cells, so scrolling allocates nothing, and a line rebuilt in place
+    /// usually fits the buffers it had.
+    private func makeRowBuffers(from data: RowDrawData, reusing previous: RowDrawBuffers?) -> RowDrawBuffers {
+        let (backgroundBuffer, backgroundCount) = makeStaticBuffer(data.backgroundCells,
+                                                                   reusing: previous?.backgroundBuffer)
+        let (powerlineJoinBuffer, powerlineJoinCount) = makeStaticBuffer(data.powerlineJoinCells,
+                                                                         reusing: previous?.powerlineJoinBuffer)
+        let (glyphGrayBuffer, glyphGrayCount) = makeStaticBuffer(data.glyphCellsGray,
+                                                                 reusing: previous?.glyphGrayBuffer)
+        let (glyphColorBuffer, glyphColorCount) = makeStaticBuffer(data.glyphCellsColor,
+                                                                   reusing: previous?.glyphColorBuffer)
+        let (decorationBuffer, decorationCount) = makeStaticBuffer(data.decorationCells,
+                                                                   reusing: previous?.decorationBuffer)
         return RowDrawBuffers(backgroundBuffer: backgroundBuffer,
                               backgroundCount: backgroundCount,
                               powerlineJoinBuffer: powerlineJoinBuffer,
