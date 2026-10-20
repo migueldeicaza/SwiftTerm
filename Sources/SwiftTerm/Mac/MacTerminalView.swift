@@ -1035,6 +1035,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 (FrameTerminalSize(cols: $0.cols, rows: $0.rows), self.scrollPositionLocked())
             }
             effects.scrollPosition = scrollPosition
+            // Use the blink rows from the latest frame. The captured rows can
+            // stop a timer that a newer frame started, or start an old timer.
+            effects.blinkRows = self.publishedBlinkRows()
             if let resized = effects.resizedTo, resized != current {
                 effects.resizedTo = nil
             }

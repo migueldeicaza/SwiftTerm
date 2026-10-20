@@ -91,6 +91,36 @@ struct UnhideRedrawTests {
         #expect(delegate.scrolledCount >= 1)
     }
 
+    @Test(arguments: [false, true])
+    func deferredEffectsUseTheLatestBlinkRows(latestFrameBlinks: Bool) async {
+        let (window, view) = makeWindowedView()
+        defer {
+            view.updateUiClosed()
+            window.close()
+        }
+        // Run frames manually to control their order relative to the task.
+        view.frameDriver.shutdown()
+        view.textBlinkApplicationActive = true
+        view.isHidden = true
+        view.terminal.feed(text: latestFrameBlinks ? "plain" : "\u{1b}[5mblink")
+        view.isHidden = false
+
+        // A newer frame runs before the unhide task can apply its effects.
+        view.terminal.feed(text: "\r\u{1b}[0m\u{1b}[2K")
+        view.terminal.feed(text: latestFrameBlinks ? "\u{1b}[5mblink" : "plain")
+        view.frameTick()
+        let shouldBlink = latestFrameBlinks
+            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        #expect((view.textBlinkTimer != nil) == shouldBlink)
+
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+
+        #expect(!view.publishedBlinkRows().isEmpty == latestFrameBlinks)
+        #expect((view.textBlinkTimer != nil) == shouldBlink)
+    }
+
     @Test func unhidingOutsideAWindowDoesNotDraw() {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 320))
         view.isHidden = true
