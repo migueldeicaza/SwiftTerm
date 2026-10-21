@@ -4735,18 +4735,20 @@ extension TerminalView {
     /// Cell coordinates are zero-based. Pixel coordinates default to the cell
     /// coordinates, matching Terminal.sendEvent. Buttons 0, 1, 2 and 4...7
     /// are supported; other buttons and negative or overflowing cell coordinates
-    /// are ignored. The host decides when to report an event;
+    /// are ignored. `motion` reports the pointer moving with `button` held, as
+    /// Terminal.sendMotion does (a drag); it is ignored on a release. The host
+    /// decides when to report an event;
     /// this method does not consult allowMouseReporting or suppress off-mode
     /// reports. Unlike keyboard input, mouse responses do not register an
     /// OSC 133 semantic submission. Delivery is synchronous on the main actor,
     /// after releasing the terminal lock.
     @MainActor
-    public func sendMouseEvent(button: Int, release: Bool,
+    public func sendMouseEvent(button: Int, release: Bool, motion: Bool = false,
                                shift: Bool = false, meta: Bool = false,
                                control: Bool = false, col: Int, row: Int,
                                pixelX: Int? = nil, pixelY: Int? = nil) {
         guard let bytes = renderOwner.mouseEventBytes(
-            button: button, release: release, shift: shift, meta: meta,
+            button: button, release: release, motion: motion, shift: shift, meta: meta,
             control: control, col: col, row: row, pixelX: pixelX, pixelY: pixelY)
         else { return }
         terminalDelegate?.send(source: self, data: bytes[...])

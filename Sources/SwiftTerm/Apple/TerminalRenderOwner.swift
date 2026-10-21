@@ -289,7 +289,7 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
-    func mouseEventBytes(button: Int, release: Bool, shift: Bool, meta: Bool,
+    func mouseEventBytes(button: Int, release: Bool, motion: Bool, shift: Bool, meta: Bool,
                          control: Bool, col: Int, row: Int,
                          pixelX: Int?, pixelY: Int?) -> [UInt8]? {
         switch button {
@@ -306,6 +306,7 @@ final class TerminalRenderOwner: Sendable {
         return terminal.terminalLock.withLock {
             let flags = terminal.encodeButton(button: button, release: release,
                                                shift: shift, meta: meta, control: control)
+                + (motion && !release ? 32 : 0)
             return terminal.mouseEventBytes(buttonFlags: flags, x: col, y: row,
                                             pixelX: pixelX ?? col, pixelY: pixelY ?? row)
         }
