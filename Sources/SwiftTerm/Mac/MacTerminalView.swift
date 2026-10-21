@@ -967,6 +967,84 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 #endif
 
+    /// Draws a frame as part of being unhidden.
+    ///
+    /// The frame driver runs on `NSView.displayLink(target:selector:)`, which
+    /// does not fire while the view is hidden, so a hidden terminal draws
+    /// nothing; output that arrives meanwhile only marks the driver dirty.
+    /// Without this, the first frame after unhiding waits for the next
+    /// display-link tick, and until then the layer shows the content from
+    /// before the view was hidden. A host that hides inactive terminals and
+    /// unhides one as part of a busy main-thread update (switching tabs) shows
+    /// that old screen for as long as the update keeps the main thread.
+    ///
+    /// AppKit also sends this when the view or an ancestor is removed from a
+    /// hidden ancestor, and a view can be unhidden while it is in no window or
+    /// in an occluded one; nothing is drawn in those cases.
+    open override func viewDidUnhide() {
+        super.viewDidUnhide()
+        guard uiShutdownState == .active,
+              window != nil,
+              !hasHiddenAncestor,
+              frameDriver?.isVisibilitySuspended != true
+        else { return }
+        drawFrameOnUnhide()
+    }
+
+    /// Walks `isHidden` up the hierarchy instead of trusting the cached
+    /// `isHiddenOrHasHiddenAncestor`: when a container of this view is removed
+    /// from a hidden ancestor, AppKit has already cleared the container's
+    /// cached flag by the time this view gets `viewDidUnhide`, while the
+    /// container's superview is still the hidden one.
+    private var hasHiddenAncestor: Bool {
+        var ancestor = superview
+        while let view = ancestor {
+            if view.isHidden { return true }
+            ancestor = view.superview
+        }
+        return false
+    }
+
+    /// `frameTick` for `viewDidUnhide`. The frame is prepared and submitted
+    /// now, but its side effects, which include delegate callbacks such as
+    /// `scrolled` and `rangeChanged`, are delivered on a later main-actor
+    /// turn, the same contract the render loop has. Delivering them inside
+    /// `isHidden = false` would run host code in the middle of whatever update
+    /// is changing visibility.
+    func drawFrameOnUnhide ()
+    {
+        guard let viewState = captureFrameViewState() else { return }
+#if canImport(MetalKit)
+        if usesRenderLoop {
+            publishFrameViewState(viewState)
+            renderLoop?.signal()
+            return
+        }
+#endif
+        guard let prepared = prepareFrame(viewState: viewState) else { return }
+        updateCursorPosition(from: prepared.cursor, rowCount: prepared.cursorRowCount)
+        submitFrameDraw(prepared)
+        let effects = prepared.mainEffects
+        Task { @MainActor [weak self] in
+            guard let self, self.uiShutdownState == .active else { return }
+            var effects = effects
+            // Output can arrive, and a display-link frame can run, before this
+            // Task: report the current scroll position, and drop a size that a
+            // newer frame has already reported.
+            let (current, scrollPosition) = self.withTerminal {
+                (FrameTerminalSize(cols: $0.cols, rows: $0.rows), self.scrollPositionLocked())
+            }
+            effects.scrollPosition = scrollPosition
+            // Use the blink rows from the latest frame. The captured rows can
+            // stop a timer that a newer frame started, or start an old timer.
+            effects.blinkRows = self.publishedBlinkRows()
+            if let resized = effects.resizedTo, resized != current {
+                effects.resizedTo = nil
+            }
+            self.applyFrameSideEffects(effects)
+        }
+    }
+
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard uiShutdownState == .active else { return }
