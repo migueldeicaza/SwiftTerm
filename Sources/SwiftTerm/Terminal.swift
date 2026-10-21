@@ -772,6 +772,66 @@ open class Terminal {
     /// Whether the current parse operation produced a scroll. Multiple
     /// scrolled lines need only one delegate notification.
     private var hasPendingScrollNotification = false
+
+    // MARK: Mirror support
+    //
+    // What `mirrorSnapshot` and the view's mirror tap read of state that is
+    // private to this file. Call with `terminalLock` held.
+
+    /// Called at the end of every `resize`, and when the host lays the
+    /// terminal out again with `setup(isReset: false)`: both change state that
+    /// the parsed bytes don't carry. Nil until a view starts a mirror.
+    var mirrorResized: ((Terminal) -> Void)?
+
+    /// True when the parser holds nothing partial: no escape sequence under
+    /// way and no part of a UTF-8 scalar waiting for the rest. Bytes that
+    /// reproduce this terminal can only be followed by the next batch then.
+    var mirrorParserIsGround: Bool {
+        parser.currentState == .ground && readingBuffer.putbackBuffer.isEmpty
+    }
+
+    /// True while a feed is being parsed, including from a callback it makes.
+    var mirrorIsParsing: Bool { parseDepth > 0 }
+
+    var mirrorMouseProtocol: MouseProtocolEncoding { mouseProtocol }
+
+    /// The kitty keyboard flags of one screen, and the stack under them.
+    func mirrorKeyboardMode(alternate: Bool) -> (flags: KittyKeyboardFlags, stack: [KittyKeyboardFlags]) {
+        let mode = alternate ? keyboardModeAlt : keyboardModeNormal
+        return (mode.flags, mode.stack)
+    }
+
+    /// The four designated character sets, and the one in use.
+    var mirrorCharsets: (designated: [[UInt8: String]?], active: [UInt8: String]?) {
+        (gCharsets, charset)
+    }
+
+    /// The OSC 8 link that printed text gets now, if any.
+    var mirrorActiveHyperlink: String? {
+        switch activeHyperlink {
+        case .pending(let payload):
+            return payload
+        case .resolved(let atom):
+#if SWIFTTERM_EMBEDDED
+            return atom.target
+#else
+            return atom.target as? String
+#endif
+        case .unavailable, nil:
+            return nil
+        }
+    }
+
+    /// Private modes saved with XTSAVE (`CSI ? Pm s`).
+    var mirrorSavedPrivateModes: [Int: Bool] { savedPrivateModes }
+
+    /// Lays the normal screen out at the current size, as leaving the
+    /// alternate screen would. A resize while the alternate screen shows
+    /// leaves the normal screen at its old size until then.
+    func mirrorLayOutNormalBuffer() {
+        resizeNormalBufferToCurrentGridIfNeeded()
+    }
+
     var kittyGraphicsState = KittyGraphicsState()
     /// True while either screen holds at least one placement.
     ///
@@ -1413,6 +1473,9 @@ open class Terminal {
         cursorBlink = false
         hostCurrentDirectory = nil
         lineFeedMode = options.convertEol
+        if !isReset {
+            mirrorResized?(self)
+        }
     }
 
     private func updateKeyboardModeState(_ update: (inout KeyboardModeState) -> Void) {
@@ -8305,6 +8368,7 @@ open class Terminal {
         if inBandSizeReportsEnabled {
             reportInBandSizeIfAvailable()
         }
+        mirrorResized?(self)
     }
 
     /// Commits a new cell size in device pixels for the current terminal grid.
