@@ -27,6 +27,16 @@ Run the workload-port tests:
 swift test
 ```
 
+## Kitty image snapshots
+
+The `kitty_snapshot_empty` and `kitty_snapshot_3mb` cases measure snapshot
+creation. Image upload and terminal setup run before measurement. Each sample
+contains 1,000 snapshot calls to reduce clock resolution error. Divide raw
+sample times by 1,000 to calculate time per call.
+
+Regenerate these two baselines after this batching change. Older baselines
+measure one call per sample, so their raw times cannot be compared directly.
+
 ## Headless Instruments profiling
 
 Build the direct profiling executable once, then launch the binary under
