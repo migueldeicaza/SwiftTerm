@@ -488,42 +488,9 @@ struct SnapshotSelectionResolver {
 
     func columns (forRow row: Int) -> Range<Int>? {
         guard style.selectionActive else { return nil }
-        let start = style.selectionStart
-        let end = style.selectionEnd
-        var lower = 0
-        var upper = 0
-
-        if start.row == end.row, row == start.row {
-            if start.col < end.col {
-                lower = start.col
-                upper = end.col + (end.col == cols - 1 ? 1 : 0)
-            } else if start.col > end.col {
-                lower = end.col
-                upper = start.col
-            }
-        } else if end.row > start.row {
-            if row == start.row {
-                lower = start.col
-                upper = cols
-            } else if row > start.row, row < end.row {
-                upper = cols
-            } else if row == end.row {
-                upper = end.col + (end.col == cols - 1 ? 1 : 0)
-            }
-        } else if start.row > end.row {
-            if row == end.row {
-                lower = end.col
-                upper = cols
-            } else if row > end.row, row < start.row {
-                upper = cols
-            } else if row == start.row {
-                upper = start.col + (start.col == cols - 1 ? 1 : 0)
-            }
-        }
-
-        lower = max(0, min(lower, cols))
-        upper = max(lower, min(upper, cols))
-        return lower < upper ? lower..<upper : nil
+        return SelectionService.selectedColumns(
+            row: row, cols: cols, start: style.selectionStart, end: style.selectionEnd,
+            block: style.selectionIsBlock, exclusiveEnd: false)
     }
 }
 
@@ -2826,6 +2793,7 @@ extension TerminalView {
             selectionActive: selection?.active == true,
             selectionStart: selection?.start ?? Position(col: 0, row: 0),
             selectionEnd: selection?.end ?? Position(col: 0, row: 0),
+            selectionIsBlock: selection?.isBlock == true,
             linkHighlightRange: linkHighlightRange,
             linkHighlightMode: linkHighlightMode,
             commandActive: commandActive,
@@ -4973,6 +4941,15 @@ extension TerminalView {
         }
     }
     
+    /// Which clicks at an OSC 133 shell prompt move the cursor to the click.
+    /// The default, `.enabled`, takes a click with no modifiers held.
+    /// `.requireModifier([.option])` takes only an Option-click, as
+    /// Terminal.app does, and leaves plain clicks to select and open links.
+    public var semanticPromptClickBehavior: SemanticPromptClickBehavior {
+        get { withTerminal { $0.semanticPromptClickBehavior } }
+        set { withTerminal { $0.semanticPromptClickBehavior = newValue } }
+    }
+
     /// Set to true if the selection is active, false otherwise
     public var selectionActive: Bool {
         get {

@@ -3874,10 +3874,59 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var pointerPressGrid: Position?
     // Keep the viewport cell so output scrolling cannot look like pointer movement.
     private var pointerPressScreenGrid: Position?
+    /// Whether this press is a single click holding Option, so a drag from
+    /// it selects a block, as in Terminal.app.
+    private var pressSelectsBlock = false
+    /// An Option press that mouse reporting would have sent. It waits for
+    /// the button to come up, and then the application gets the press and
+    /// the release, or for the pointer to move, and then it becomes a block
+    /// selection and the application gets nothing.
+    private var heldOptionPress: NSEvent?
+    /// Set when an Option press left mouse reporting to select a block. The
+    /// rest of the press, the release too, stays in the view.
+    private var optionDragIsLocal = false
+
+    /// Starts the selection a drag makes: a block when the press held
+    /// Option, else a stream. Callers hold the terminal lock.
+    private func beginDragSelectionLocked(to hit: Position) {
+        terminal.terminalLock.preconditionLocked()
+        let anchor = pointerPressGrid ?? hit
+        if pressSelectsBlock {
+            selection.startBlockSelection(bufferPosition: anchor)
+        } else {
+            selection.setSoftStart(bufferPosition: anchor)
+            selection.startSelection()
+        }
+        selection.dragExtend(bufferPosition: hit)
+    }
+
+    /// Lets go of a held Option press once the pointer has moved past the
+    /// drag threshold: the application never hears of it, and the press
+    /// becomes a block selection. True when that happened.
+    private func releaseHeldOptionPressForDragLocked(to point: CGPoint, hit: Position) -> Bool {
+        terminal.terminalLock.preconditionLocked()
+        guard heldOptionPress != nil,
+              isSelectionDrag(to: point, hit: hit, yDisp: terminal.displayBuffer.yDisp) else {
+            return false
+        }
+        heldOptionPress = nil
+        optionDragIsLocal = true
+        return true
+    }
+
+    /// Whether mouse reports for this event go to the application.
+    private func reportsMouseLocked(for event: NSEvent) -> Bool {
+        terminal.terminalLock.preconditionLocked()
+        return allowMouseReporting && !optionDragIsLocal && !shiftBypassesMouseReportingLocked(for: event)
+    }
+
     open override func mouseDown(with event: NSEvent) {
         didSelectionDrag = false
         previousPressureStage = 0
         forceClickHandledForCurrentPress = false
+        heldOptionPress = nil
+        optionDragIsLocal = false
+        pressSelectsBlock = event.modifierFlags.contains(.option) && event.clickCount == 1
         let shouldSendButtonPress = withTerminal { terminal in
             pointerPressSnapshot = SemanticPromptPointerSnapshot(
                 selectionWasActive: selection.active,
@@ -3892,7 +3941,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 col: pressLocation.col,
                 row: pressLocation.row - terminal.displayBuffer.yDisp)
             terminal.beginPrimaryPointerPress(at: pressLocation)
-            if allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event) && terminal.mouseMode.sendButtonPress() {
+            if reportsMouseLocked(for: event) && terminal.mouseMode.sendButtonPress() {
+                if pressSelectsBlock {
+                    // Hold it: a drag selects a block without the application,
+                    // a click still reaches it.
+                    heldOptionPress = event
+                    return false
+                }
                 return true
             }
             pointerPressSnapshot.pressWasSemanticEligible = true
@@ -4043,6 +4098,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             pointerPressGrid = nil
             pointerPressScreenGrid = nil
             forceClickHandledForCurrentPress = false
+            heldOptionPress = nil
+            optionDragIsLocal = false
+            pressSelectsBlock = false
             withTerminal { terminal in
                 terminal.endPrimaryPointerPress()
             }
@@ -4053,20 +4111,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let releasePoint = convert(event.locationInWindow, from: nil)
         let (hit, startedDrag) = withTerminal { terminal -> (Position, Bool) in
             let hit = calculateMouseHitLocked(at: releasePoint).grid
+            let leftReporting = releaseHeldOptionPressForDragLocked(to: releasePoint, hit: hit)
             guard !didSelectionDrag, !forceClickHandledForCurrentPress,
-                  !(allowMouseReporting &&
-                    !shiftBypassesMouseReportingLocked(for: event) &&
-                    terminal.mouseMode != .off),
+                  heldOptionPress == nil,
+                  !(reportsMouseLocked(for: event) && terminal.mouseMode != .off),
                   isSelectionDrag(to: releasePoint, hit: hit,
                                   yDisp: terminal.displayBuffer.yDisp) else {
                 return (hit, false)
             }
-            if selection.active {
+            if selection.active && !leftReporting {
                 selection.dragExtend(bufferPosition: hit)
-            } else if let pressGrid = pointerPressGrid {
-                selection.setSoftStart(bufferPosition: pressGrid)
-                selection.startSelection()
-                selection.dragExtend(bufferPosition: hit)
+            } else if pointerPressGrid != nil {
+                beginDragSelectionLocked(to: hit)
             }
             return (hit, true)
         }
@@ -4074,26 +4130,50 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             didSelectionDrag = true
             setNeedsDisplay(bounds)
         }
+        // An Option click that never moved reaches the application as the
+        // press and release it would have had.
+        if let press = heldOptionPress {
+            heldOptionPress = nil
+            sharedMouseEvent(with: press)
+        }
         updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
+        // A click holding the modifiers the prompt policy asks for, such as
+        // Option, goes to the prompt before a link can take it.
+        let modifiers = semanticPromptModifiers(for: event)
+        if !modifiers.isEmpty, routeSemanticPromptClick(at: hit, modifiers: modifiers) {
+            return
+        }
         if !forceClickHandledForCurrentPress,
            !didSelectionDrag,
            let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
             terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
             return
         }
-        if withTerminal({ terminal in allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event) && terminal.mouseMode.sendButtonRelease() }) {
+        if withTerminal({ terminal in reportsMouseLocked(for: event) && terminal.mouseMode.sendButtonRelease() }) {
             sharedMouseEvent(with: event)
             return
         }
+        if modifiers.isEmpty {
+            routeSemanticPromptClick(at: hit, modifiers: modifiers)
+        }
 
-        guard !forceClickHandledForCurrentPress else { return }
+        #if DEBUG
+        // let hit = calculateMouseHit(with: event)
+        //print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
+        #endif
 
-        // Route a single click on release. Later presses still select words
-        // or rows according to their click count.
+    }
+
+    /// Routes a finished single click to the OSC 133 prompt, when the press
+    /// was the view's own and the terminal's policy takes these modifiers.
+    /// Later presses still select words or rows by their click count. True
+    /// when the click moved the cursor.
+    @discardableResult
+    private func routeSemanticPromptClick(at hit: Position, modifiers: SemanticPromptClickModifiers) -> Bool {
+        guard !forceClickHandledForCurrentPress else { return false }
         var snapshot = pointerPressSnapshot
         snapshot.didDrag = didSelectionDrag
-        guard snapshot.clickCount == 1 else { return }
-        let modifiers = semanticPromptModifiers(for: event)
+        guard snapshot.clickCount == 1 else { return false }
         let handled = withTerminal { terminal -> Bool in
             snapshot.selectionIsActiveAtRelease = selection.active
             guard terminal.mightRouteSemanticPromptClick(modifiers: modifiers,
@@ -4104,12 +4184,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 at: hit, modifiers: modifiers, snapshot: snapshot)
         }
         if handled { setNeedsDisplay(bounds) }
-
-        #if DEBUG
-        // let hit = calculateMouseHit(with: event)
-        //print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
-        #endif
-
+        return handled
     }
     
     open override func mouseDragged(with event: NSEvent) {
@@ -4118,7 +4193,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             let displayBuffer = terminal.displayBuffer
             let mouseHit = calculateMouseHitLocked(at: point)
             let hit = mouseHit.grid
-            if allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event) {
+            // A held Option press sends nothing while it may still be a click.
+            let leftReporting = releaseHeldOptionPressForDragLocked(to: point, hit: hit)
+            if heldOptionPress != nil {
+                return (hit, displayBuffer.yDisp, displayBuffer.rows, true)
+            }
+            if reportsMouseLocked(for: event) {
                 if terminal.mouseMode.sendButtonTracking() {
                     let flags = encodeMouseEventLocked(with: event)
                     let screenRow = max (0, min (displayBuffer.rows - 1, hit.row - displayBuffer.yDisp))
@@ -4135,12 +4215,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 return (hit, displayBuffer.yDisp, displayBuffer.rows, true)
             }
 
-            if selection.active {
+            if selection.active && !leftReporting {
                 selection.dragExtend(bufferPosition: Position(col: hit.col, row: hit.row))
             } else {
-                selection.setSoftStart(bufferPosition: pointerPressGrid ?? hit)
-                selection.startSelection()
-                selection.dragExtend(bufferPosition: hit)
+                beginDragSelectionLocked(to: hit)
             }
             return (hit, displayBuffer.yDisp, displayBuffer.rows, false)
         }
