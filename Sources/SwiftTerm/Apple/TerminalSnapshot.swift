@@ -34,6 +34,7 @@ struct SnapshotStyle {
     var selectionActive: Bool
     var selectionStart: Position
     var selectionEnd: Position
+    var selectionIsBlock: Bool = false
     var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
     var linkHighlightMode: LinkHighlightMode
     var commandActive: Bool
@@ -50,6 +51,7 @@ struct SnapshotStyle {
     func hasSameValue (as other: SnapshotStyle) -> Bool {
         selectionActive == other.selectionActive &&
             selectionStart == other.selectionStart && selectionEnd == other.selectionEnd &&
+            selectionIsBlock == other.selectionIsBlock &&
             linkHighlightRange == other.linkHighlightRange &&
             linkHighlightMode.tag == other.linkHighlightMode.tag &&
             commandActive == other.commandActive && textBlinkVisible == other.textBlinkVisible
@@ -66,23 +68,27 @@ struct SnapshotSelectionState: Sendable {
     let active: Bool
     let start: Position
     let end: Position
+    let isBlock: Bool
 
     static let empty = SnapshotSelectionState(
         active: false,
         start: Position(col: 0, row: 0),
-        end: Position(col: 0, row: 0))
+        end: Position(col: 0, row: 0),
+        isBlock: false)
 
     init (selection: SelectionService?) {
         selection?.terminal.terminalLock.preconditionLocked()
         active = selection?.active == true
         start = selection?.start ?? Position(col: 0, row: 0)
         end = selection?.end ?? Position(col: 0, row: 0)
+        isBlock = selection?.isBlock == true
     }
 
-    private init (active: Bool, start: Position, end: Position) {
+    private init (active: Bool, start: Position, end: Position, isBlock: Bool) {
         self.active = active
         self.start = start
         self.end = end
+        self.isBlock = isBlock
     }
 }
 
@@ -365,6 +371,7 @@ final class TerminalSnapshot {
             selectionActive: selection.active,
             selectionStart: selection.start,
             selectionEnd: selection.end,
+            selectionIsBlock: selection.isBlock,
             linkHighlightRange: viewState.linkHighlightRange,
             linkHighlightMode: viewState.linkHighlightMode,
             commandActive: viewState.commandActive,
