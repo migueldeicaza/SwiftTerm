@@ -243,6 +243,18 @@ extension TerminalMetalLayerView: MetalRenderTarget {
     func requestDisplay() {
         onNeedsDisplay?()
     }
+
+    /// The layer frees the drawables of its old size once nothing holds them,
+    /// so shrinking it to a pixel gives the pool back. The frame on show stays:
+    /// setting a CAMetalLayer's `contents` stops it showing drawables at all.
+    func releaseDrawables() {
+        metalLayer.drawableSize = CGSize(width: 1, height: 1)
+        publishGeometry()
+    }
+
+    func restoreDrawables() {
+        updateDrawableSize()
+    }
 }
 #endif
 

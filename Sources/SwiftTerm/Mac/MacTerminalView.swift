@@ -365,6 +365,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// last frame. When `viewDidMoveToWindow` fires with a different window,
     /// we rebuild the MTKView so a fresh CAMetalLayer binds to it.
     private weak var metalBoundWindow: NSWindow?
+    /// The surface gave its drawables back when the view left its window
+    /// (see `MetalRenderTarget.releaseDrawables`).
+    private var metalDrawablesReleased = false
     /// Controls how the Metal renderer builds GPU buffers each frame.
     ///
     /// The default is ``MetalBufferingMode/perRowPersistent``, which caches
@@ -1063,6 +1066,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if window == nil {
 #if canImport(MetalKit)
             stopRenderLoop()
+            // Nothing draws until the view is back in a window, and a host
+            // that keeps many terminals around would otherwise hold a pool of
+            // window-sized drawables for each one it isn't showing.
+            if useMetalRenderer, let metalView {
+                metalView.releaseDrawables()
+                metalDrawablesReleased = true
+            }
 #endif
             stopWindowMouseMovedFallback()
             stopSelectionAutoScrollTimer()
@@ -1077,9 +1087,19 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 #if canImport(MetalKit)
         guard useMetalRenderer, let currentWindow = window else { return }
         if currentWindow !== metalBoundWindow {
+            // A fresh surface, with drawables of its own.
+            metalDrawablesReleased = false
             rebindMetalRendererToWindow(currentWindow)
         }
         startRenderLoopIfNeeded()
+        if metalDrawablesReleased {
+            metalDrawablesReleased = false
+            metalView?.restoreDrawables()
+            // The layer still shows the frame from before it left, and output
+            // may have arrived since: draw the current one now rather than
+            // show the old one for a display-link tick.
+            drawMetalFrameNow()
+        }
 #endif
     }
 
