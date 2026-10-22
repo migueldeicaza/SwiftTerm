@@ -899,6 +899,76 @@ final class EscapeSequenceParser {
         terminal.printStateReset()
     }
 
+    /// The length of the CSI sequence at `start` (ESC included) when it is one
+    /// the parse loop may take in a single pass, else 0: ESC [, an optional
+    /// private prefix (< = > ?), digits with ; or : separators (no : first,
+    /// fewer separators than the parameter limit), intermediates (0x20-0x2f),
+    /// and a final byte (0x40-0x7e), all within `data`.
+    @inline(__always)
+    static func simpleCsiLength(_ data: Span<UInt8>, at start: Int) -> Int {
+        var j = start + 1
+        guard j < data.count, data[j] == 0x5b else { return 0 }
+        j += 1
+        guard j < data.count else { return 0 }
+        if data[j] >= 0x3c && data[j] <= 0x3f {
+            j += 1
+        } else if data[j] == 0x3a {
+            return 0
+        }
+        var separators = 0
+        while j < data.count {
+            let byte = data[j]
+            if byte >= 0x30 && byte <= 0x3b {
+                if byte >= 0x3a {
+                    separators += 1
+                    if separators >= maximumParameterCount { return 0 }
+                }
+                j += 1
+            } else {
+                break
+            }
+        }
+        while j < data.count && data[j] >= 0x20 && data[j] <= 0x2f {
+            j += 1
+        }
+        guard j < data.count, data[j] >= 0x40 && data[j] <= 0x7e else { return 0 }
+        return j - start + 1
+    }
+
+    /// Collects and dispatches the CSI sequence at `start`, `length` bytes that
+    /// ``simpleCsiLength(_:at:)`` measured, into the buffers the table's clear
+    /// has just emptied, as the table's collect and parameter actions would.
+    /// Out of line, so the parse loop compiles as it did before for every byte
+    /// that doesn't get here.
+    @inline(never)
+    func dispatchWholeCsi(_ data: Span<UInt8>, at start: Int, length: Int,
+                          pars: inout CsiParameterStorage, parsColonMask: inout UInt64,
+                          collect: inout cstring, _ terminal: Terminal)
+    {
+        let final = start + length - 1
+        var j = start + 2
+        while j < final {
+            let byte = data[j]
+            if byte >= 0x30 && byte <= 0x39 {
+                pars.accumulateDigit(byte)
+            } else if byte == 0x3b || byte == 0x3a {
+                if byte == 0x3a {
+                    parsColonMask |= UInt64(1) << UInt64(pars.count - 1)
+                }
+                pars.append(0)
+            } else {
+                collect.append(byte)
+            }
+            j += 1
+        }
+        let code = data[final]
+        // cmdCharAttributes is the only reader of separator type.
+        if code == 0x6d { _parsColonMask = parsColonMask }
+        pars.withView { view in
+            dispatchCsi(code: code, pars: view, collect: collect, terminal)
+        }
+    }
+
     /// True when the tail of the accumulated OSC payload is an incomplete
     /// UTF-8 scalar, so the next byte is a continuation byte rather than a
     /// C1 string terminator.
@@ -1335,6 +1405,24 @@ final class EscapeSequenceParser {
                 parameterLimitExceeded = false
                 dcs = -1
                 terminal.printStateReset()
+                // An ESC that starts a whole CSI sequence, as most SGR, cursor
+                // and erase commands are, gets the rest of the table's actions
+                // in one pass: the clear for the [ is the one just done, then
+                // collect, parameter and dispatch, back to ground. In every
+                // state whose ESC clears, it goes to escape, and escape's [
+                // clears again into CSI entry, so the state before it doesn't
+                // matter. Anything the table treats otherwise (controls inside,
+                // a prefix after parameters, too many parameters, the end of
+                // this chunk) goes on byte by byte from the escape state.
+                if code == 0x1b {
+                    let length = EscapeSequenceParser.simpleCsiLength(data, at: i)
+                    if length > 0 {
+                        dispatchWholeCsi(data, at: i, length: length, pars: &pars,
+                                         parsColonMask: &parsColonMask, collect: &collect, terminal)
+                        transition = (transition & 0xf0) | ParserState.ground.rawValue
+                        consumed = length
+                    }
+                }
             case .dcsHook:
                 // A handler from an earlier, unterminated DCS must not survive
                 // into this one, or it answers a sequence that is not its own.
