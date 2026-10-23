@@ -57,12 +57,22 @@ extension CaretView {
         if let powerlineCodePoint,
            PowerlineRenderer.shouldRender(codePoint: powerlineCodePoint,
                                           customGlyphsEnabled: renderCustomBlockGlyphs) {
-            PowerlineRenderer.draw(codePoint: powerlineCodePoint,
-                                   in: context,
-                                   cellRect: bounds,
-                                   scaleX: terminal.backingScaleFactor(),
-                                   scaleY: terminal.backingScaleFactor(),
-                                   color: caretFG.cgColor)
+            let caretScale = terminal.backingScaleFactor()
+#if os(macOS)
+            let underlineThickness = normalFont.underlineThickness
+#else
+            let underlineThickness: CGFloat = 0.63
+#endif
+            let minThicknessPx = max(1, Int(round(caretScale)))
+            let lineWidthPx = max(minThicknessPx,
+                                  Int(round(caretScale * underlineThickness * 1.35)))
+            PowerlineRenderer.drawCaret(codePoint: powerlineCodePoint,
+                                        in: context,
+                                        bounds: bounds,
+                                        renderMode: powerlineRenderMode,
+                                        scale: caretScale,
+                                        color: caretFG.cgColor,
+                                        lineWidthPx: lineWidthPx)
             context.restoreGState()
             return
         }

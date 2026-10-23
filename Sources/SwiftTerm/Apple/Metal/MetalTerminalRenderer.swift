@@ -2005,7 +2005,7 @@ final class MetalTerminalRenderer {
                                                    cellWidthPx: itemWidthPx,
                                                    cellHeightPx: baseCellHeightPx,
                                                    scale: scale,
-                                                   baseThicknessPx: 0,
+                                                   baseThicknessPx: baseThicknessPx,
                                                    antiAlias: true) else {
                     continue
                 }
@@ -2586,10 +2586,11 @@ final class MetalTerminalRenderer {
             }
 
             for item in prepared.powerlineGlyphs {
-                let alignedOriginX = round(lineOriginPx.x) + CGFloat(item.column * baseCellWidthPx)
-                let alignedOriginY = round(lineOriginPx.y)
-                let x0 = alignedOriginX
-                let y0 = alignedOriginY
+                // Use the same origin as the background quads. Rounding
+                // just the separator leaves a half-pixel step at the joint
+                // when the view's height is fractional.
+                let x0 = lineOriginPx.x + CGFloat(item.column) * cellWidthPx
+                let y0 = lineOriginPx.y
                 let x1 = x0 + item.entrySize.width
                 let y1 = y0 + item.entrySize.height
                 let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
@@ -3306,6 +3307,7 @@ final class MetalTerminalRenderer {
                                        scaleX: scale,
                                        scaleY: scale,
                                        color: TTColor.white.cgColor,
+                                       lineWidthPx: baseThicknessPx,
                                        includeJoinOverdraw: false)
                 return true
             case UInt32(BoxDrawingRenderer.lowerBoundary)...UInt32(BoxDrawingRenderer.upperBoundary):
@@ -4001,13 +4003,16 @@ final class MetalTerminalRenderer {
         }
         if PowerlineRenderer.shouldRender(codePoint: UInt32(renderData.code),
                                           customGlyphsEnabled: renderData.customBlockGlyphs) {
-            let cursorCellWidthPx = max(1, Int(round(cellWidthPx * doublePosition * cursorColumnWidth)))
+            let cursorCellWidthPx = max(1, Int(round(cellWidthPx * cursorColumnWidth)))
             let cursorCellHeightPx = max(1, Int(round(cellHeightPx)))
+            let minThicknessPx = max(1, Int(round(scale)))
+            let baseThicknessPx = max(minThicknessPx,
+                                      Int(round(scale * context.fonts.underlineThickness() * 1.35)))
             if let entry = customGlyphEntry(codePoint: UInt32(renderData.code),
                                             cellWidthPx: cursorCellWidthPx,
                                             cellHeightPx: cursorCellHeightPx,
                                             scale: scale,
-                                            baseThicknessPx: 0,
+                                            baseThicknessPx: baseThicknessPx,
                                             antiAlias: true) {
                 let atlasSize = Float(grayscaleAtlas.size)
                 let u0 = Float(entry.region.x) / atlasSize
@@ -4015,9 +4020,25 @@ final class MetalTerminalRenderer {
                 let u1 = Float(entry.region.x + entry.region.width) / atlasSize
                 let v1 = Float(entry.region.y + entry.region.height) / atlasSize
                 let glyphX0 = Float(x0)
-                let glyphY0 = Float(y0)
-                let glyphX1 = glyphX0 + Float(entry.size.width)
-                let glyphY1 = glyphY0 + Float(entry.size.height)
+                // Reuse the row's base-size mask and apply its DEC line
+                // transform, rather than rasterizing a wider/narrower stroke
+                // under the cursor. The cursor clip selects the visible half
+                // of a double-height line.
+                let glyphX1 = glyphX0 + Float(entry.size.width * doublePosition)
+                let glyphY0: Float
+                let glyphHeight: Float
+                switch cursor.renderMode {
+                case .doubledTop:
+                    glyphY0 = Float(y0 - cellHeightPx)
+                    glyphHeight = Float(entry.size.height * 2)
+                case .doubledDown:
+                    glyphY0 = Float(y0)
+                    glyphHeight = Float(entry.size.height * 2)
+                case .single, .doubleWidth:
+                    glyphY0 = Float(y0)
+                    glyphHeight = Float(entry.size.height)
+                }
+                let glyphY1 = glyphY0 + glyphHeight
                 if let clipped = self.clipRect(glyphX0, glyphY0, glyphX1, glyphY1,
                                                u0, v0, u1, v1, cursorClip) {
                     glyphVerticesGray.append(contentsOf: glyphQuadVertices(x0: clipped.x0,
