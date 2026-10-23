@@ -313,7 +313,7 @@ final class SnapshotTextBuilder {
 
         let brightNeedsBold: Bool
         if case .ansi256(let code) = foreground {
-            brightNeedsBold = code > 7 && !context.useBrightColors
+            brightNeedsBold = code > 7 && !context.useBrightColors && context.collapseBrightColorsToBase
         } else {
             brightNeedsBold = false
         }
@@ -826,7 +826,7 @@ final class SnapshotTextBuilder {
         }
         let brightNeedsBold: Bool
         if case .ansi256(let code) = foreground {
-            brightNeedsBold = code > 7 && !context.useBrightColors
+            brightNeedsBold = code > 7 && !context.useBrightColors && context.collapseBrightColorsToBase
         } else {
             brightNeedsBold = false
         }
@@ -1079,7 +1079,7 @@ func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool,
         if context.useBrightColors {
             index = ansi < 7 ? Int(ansi) + (isBold ? 8 : 0) : Int(ansi)
         } else {
-            index = ansi > 7 ? Int(ansi) - 8 : Int(ansi)
+            index = context.collapseBrightColorsToBase && ansi > 7 ? Int(ansi) - 8 : Int(ansi)
         }
         guard index >= 0, index < context.ansiColors.count else {
             return isFg ? context.effectiveForegroundColor : context.effectiveBackgroundColor
