@@ -376,7 +376,7 @@ final class SnapshotTextBuilder {
         }
         if withUrl {
             result[.underlineStyle] = NSUnderlineStyle.single.rawValue
-            result[.underlineColor] = foregroundColor
+            result[.underlineColor] = context.linkUnderlineColor ?? foregroundColor
             result[SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
         }
         return SnapshotTextAttributes(result)
@@ -863,7 +863,7 @@ final class SnapshotTextBuilder {
             style.strikethrough = foregroundColor
         }
         if withUrl {
-            style.underline = PlainUnderline(color: foregroundColor,
+            style.underline = PlainUnderline(color: context.linkUnderlineColor.map(PlainColor.color) ?? foregroundColor,
                                              nsStyle: NSUnderlineStyle.single.rawValue,
                                              style: .dashed)
         }

@@ -159,6 +159,18 @@ instead; set it back to `nil` to restore the default:
 terminalView.linkColor = NSColor.systemBlue
 ```
 
+To color only the underline while keeping the text and strikethrough colors,
+set `linkUnderlineColor` (`NSColor?` on macOS, `UIColor?` on iOS):
+
+```swift
+terminalView.linkUnderlineColor = NSColor.systemCyan
+```
+
+`linkUnderlineColor` takes precedence over `linkColor` for highlighted link
+underlines, including OSC 8 and implicit links. Its default, `nil`, preserves
+`linkColor` behavior (or the cell foreground when both are `nil`). It leaves
+non-link decorations unchanged. Selection colors take precedence over both.
+
 ### What happens when the user activates a link
 
 When a click/tap lands on an active link, ``TerminalView`` calls
