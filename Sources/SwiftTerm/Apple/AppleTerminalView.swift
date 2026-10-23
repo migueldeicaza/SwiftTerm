@@ -562,6 +562,7 @@ struct FrameViewState: Sendable {
     let appearance: FrameAppearance
     let customBlockGlyphs: Bool
     let useBrightColors: Bool
+    let collapseBrightColorsToBase: Bool
     let minimumContrastRatio: CGFloat
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
@@ -604,6 +605,7 @@ struct FrameViewState: Sendable {
         appearance = view.frameCaptureCache.appearance(for: view)
         customBlockGlyphs = view.customBlockGlyphs
         useBrightColors = view.useBrightColors
+        collapseBrightColorsToBase = view.collapseBrightColorsToBase
         minimumContrastRatio = view.minimumContrastRatio
         bidiHostPolicy = view.bidiHostPolicy
         glyphFallbackProvider = view.glyphFallbackProvider
@@ -674,6 +676,7 @@ struct SnapshotRenderContext {
     let commandActive: Bool
     let customBlockGlyphs: Bool
     let useBrightColors: Bool
+    let collapseBrightColorsToBase: Bool
     let minimumContrastRatio: CGFloat
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
@@ -735,6 +738,7 @@ struct SnapshotRenderContext {
         commandActive = style.commandActive
         customBlockGlyphs = viewState.customBlockGlyphs
         useBrightColors = viewState.useBrightColors
+        collapseBrightColorsToBase = viewState.collapseBrightColorsToBase
         minimumContrastRatio = viewState.minimumContrastRatio
         bidiHostPolicy = viewState.bidiHostPolicy
         glyphFallbackProvider = viewState.glyphFallbackProvider
@@ -757,6 +761,7 @@ struct SnapshotRenderContext {
             identityHasher.combine(color.hash)
         }
         identityHasher.combine(useBrightColors)
+        identityHasher.combine(collapseBrightColorsToBase)
         identityHasher.combine(minimumContrastRatio)
         identity = UInt64(bitPattern: Int64(identityHasher.finalize()))
     }
@@ -2211,7 +2216,7 @@ extension TerminalView {
             if useBrightColors {
                 midx = ansi < 7 ? (Int (ansi) + (isBold ? 8 : 0)) : Int (ansi)
             } else {
-                midx = ansi > 7 ? (Int (ansi) - 8) : Int(ansi)
+                midx = collapseBrightColorsToBase && ansi > 7 ? (Int (ansi) - 8) : Int(ansi)
             }
             if let c = colors [midx] {
                 return c
@@ -2638,7 +2643,7 @@ extension TerminalView {
         
         var useBoldForBrightColor: Bool = false
         // if high - bright colors are disabled in settings we will use bold font instead
-        if case .ansi256(let code) = fg, code > 7, !useBrightColors {
+        if case .ansi256(let code) = fg, code > 7, !useBrightColors, collapseBrightColorsToBase {
             useBoldForBrightColor = true
         }
         var tf: TTFont

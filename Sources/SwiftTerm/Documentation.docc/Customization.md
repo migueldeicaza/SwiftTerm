@@ -262,6 +262,11 @@ terminalView.antiAliasCustomBlockGlyphs = true
 // Use bright colors for bold text (traditional terminal behavior)
 terminalView.useBrightColors = true
 
+// Keep explicit bright/256-color foreground indexes without promoting bold
+// text to a bright color. Both properties default to true for compatibility.
+terminalView.useBrightColors = false
+terminalView.collapseBrightColorsToBase = false
+
 // Darken or lighten text that falls below a WCAG contrast ratio against
 // its background, such as colors a program picked for a dark theme shown
 // on a light one. 1, the default, keeps every color as it is.
