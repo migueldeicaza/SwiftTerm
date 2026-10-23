@@ -7,11 +7,13 @@ import Testing
 @MainActor
 @Suite(.serialized)
 struct PowerlineMetalGeometryTests {
-    @Test func fractionalRowOriginMatchesBackground() throws {
-        guard MetalTerminalRenderer.shaderLibraryIsAvailable,
-              let device = MTLCreateSystemDefaultDevice() else {
-            return
-        }
+    nonisolated static var metalIsUsable: Bool {
+        MetalTerminalRenderer.shaderLibraryIsAvailable
+    }
+
+    @Test(.enabled(if: metalIsUsable))
+    func fractionalRowOriginMatchesBackground() throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let frame = CGRect(x: 0, y: 0, width: 320, height: 120.25)
         let view = TerminalView(frame: frame)
         view.frameDriver.invalidate()
@@ -42,10 +44,9 @@ struct PowerlineMetalGeometryTests {
         #expect(separator.position.y == background.position.y)
         #expect(separator.position.y + separator.size.y == background.position.y + background.size.y)
     }
-    @Test(arguments: ["5", "6", "3", "4"])
+    @Test(.enabled(if: metalIsUsable), arguments: ["5", "6", "3", "4"])
     func thinSeparatorCursorUsesRowMask(decLineMode: String) throws {
-        guard MetalTerminalRenderer.shaderLibraryIsAvailable,
-              let device = MTLCreateSystemDefaultDevice() else { return }
+        let device = try #require(MTLCreateSystemDefaultDevice())
         let frame = CGRect(x: 0, y: 0, width: 320, height: 120.25)
         let view = TerminalView(frame: frame)
         view.frameDriver.invalidate()
