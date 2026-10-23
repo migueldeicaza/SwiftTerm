@@ -779,6 +779,13 @@ struct SnapshotRenderContext {
 /// the snapshot renderers do this arithmetic on their own threads, from the
 /// fonts and cell dimensions captured for the frame.
 enum CellGeometry {
+    /// Snap after the full drawing transform: a caret's local origin and a
+    /// double-height row can both carry a fractional device-pixel translation.
+    static func pixelAlignedGlyphOrigin(_ point: CGPoint, in context: CGContext) -> CGPoint {
+        let device = context.convertToDeviceSpace(point)
+        return context.convertToUserSpace(CGPoint(x: device.x.rounded(), y: device.y.rounded()))
+    }
+
     /// Distance from the bottom of a cell to the glyph baseline.
     ///
     /// ``TerminalView/lineSpacing`` makes the cell taller than the font's
@@ -3688,6 +3695,13 @@ extension TerminalView {
                             if fit.scaleX != 1 || fit.scaleY != 1 { anyScaled = true }
                         }
                         if anyScaled { scaledFits = computed }
+                    }
+
+                    // Slot fitting and fractional view heights can place an
+                    // otherwise cell-aligned glyph between device pixels.
+                    // Rasterize at an integral origin, matching the Metal atlas.
+                    for i in glyphPositions.indices {
+                        glyphPositions[i] = CellGeometry.pixelAlignedGlyphOrigin(glyphPositions[i], in: context)
                     }
 
                     if let scaledFits {

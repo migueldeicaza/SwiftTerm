@@ -98,7 +98,9 @@ extension CaretView {
                 }
                 return terminal.glyphSlotFit(font: ctRunFont, glyph: glyph, columnWidth: glyphColumnWidth)
             }
-            var positions = fits.map { CGPoint(x: $0.dx, y: yOffset + $0.dy) }
+            var positions = fits.map {
+                CellGeometry.pixelAlignedGlyphOrigin(CGPoint(x: $0.dx, y: yOffset + $0.dy), in: context)
+            }
             if fits.contains(where: { $0.scaleX != 1 || $0.scaleY != 1 }) {
                 for i in 0..<runGlyphsCount {
                     let fit = fits[i]
