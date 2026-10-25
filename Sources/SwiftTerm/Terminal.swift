@@ -4423,9 +4423,10 @@ open class Terminal {
         if buffer.y < buffer.scrollTop || buffer.y > buffer.scrollBottom {
             return
         }
-        // to prevent a Denial of Service
-        let maxLines = buffer.lines.maxLength * 2
-        var p = min (maxLines, max (pars.count == 0 ? 1 : pars [0], 1))
+        // Past the rows from the cursor to the region's bottom, each line
+        // inserted only blanks the region again, so a huge count would loop
+        // under the terminal lock for nothing.
+        var p = min (buffer.scrollBottom - buffer.y + 1, max (pars.count == 0 ? 1 : pars [0], 1))
         let row = buffer.y + buffer.yBase
         
         let scrollBottomRowsOffset = rows - 1 - buffer.scrollBottom
