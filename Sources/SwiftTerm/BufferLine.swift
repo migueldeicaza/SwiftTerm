@@ -182,9 +182,10 @@ public final class BufferLine: CustomDebugStringConvertible {
     public var generation: UInt64 { _generation }
     private(set) var _generation: UInt64 = 0
     /// Changes with what a selection of this line holds: the cells,
-    /// `isWrapped` and `bidiState`, and not the prompt marks, images or
-    /// render mode. A feed compares it to keep a selection whose rows it
-    /// didn't touch without copying their cells.
+    /// `isWrapped` and `bidiState`, and not the prompt marks, images,
+    /// render mode or blank cells a resize adds or drops at the end. A feed
+    /// compares it to keep a selection whose rows it didn't touch without
+    /// copying their cells.
     private(set) var contentGeneration: UInt64 = 0
 
     @inline(__always)
@@ -757,7 +758,14 @@ public final class BufferLine: CustomDebugStringConvertible {
         if len == cols {
             return
         }
-        defer { bump() }
+        // The selection check compares a row's columns, which stop at the
+        // line's end, so a resize matters to a selection only through a cell
+        // it drops and a later resize adds back. That cell keeps its value
+        // when both are blank.
+        let changesContent = cols < len
+            ? (cols..<len).contains { storage.rawCell(at: $0) != PackedCell() }
+            : fill != PackedCell()
+        defer { changesContent ? bump() : bumpRenderOnly() }
 
         storage = storage.resized(to: cols, fill: fill)
         if cols < len {

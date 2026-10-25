@@ -182,6 +182,55 @@ struct TerminalSnapshotTests {
         }
     }
 
+    /// DECCOLM resizes every line, but a selection above the screen holds the
+    /// same cells after it, wider or narrower.
+    @Test func aColumnModeChangeKeepsASelectionAboveTheScreen() {
+        let view = makeView()
+        view.feed(text: "hello\r\n1\r\n2\r\n3\r\n4")
+        view.withTerminal { terminal in
+            #expect(terminal.buffer.yBase == 1)
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 5, row: 0))
+        }
+
+        view.feed(text: "\u{1b}[?40h\u{1b}[?3h")
+
+        view.withTerminal { terminal in
+            #expect(terminal.cols == 132)
+            #expect(view.selection.active)
+            #expect(view.selection.getSelectedText() == "hello")
+        }
+
+        view.feed(text: "\u{1b}[?3l")
+
+        view.withTerminal { terminal in
+            #expect(terminal.cols == 80)
+            #expect(view.selection.active)
+            #expect(view.selection.getSelectedText() == "hello")
+        }
+    }
+
+    /// Blank cells a resize adds or drops leave a line's content as it was,
+    /// but dropping text changes it, so a selection over the blanks that
+    /// widening adds again is cleared.
+    @Test func aResizeChangesTheLineContentOnlyWhenItDropsOrAddsText() {
+        let line = BufferLine(cols: 6)
+        line[4] = CharData(attribute: CharData.defaultAttr, code: 65, size: 1)
+        let generation = line.contentGeneration
+
+        line.resize(cols: 8, fillData: CharData.Null)
+        line.resize(cols: 6, fillData: CharData.Null)
+        #expect(line.contentGeneration == generation)
+
+        line.resize(cols: 4, fillData: CharData.Null)
+        #expect(line.contentGeneration != generation)
+
+        let narrowed = line.contentGeneration
+        line.resize(cols: 6, fillData: CharData(attribute: CharData.defaultAttr, code: 66, size: 1))
+        #expect(line.contentGeneration != narrowed)
+    }
+
     /// Output checks a selection's rows above the screen by their content
     /// generation, not by copying their cells: copying a selection of
     /// thousands of rows twice a batch took 220 ms a batch in a debug build.
