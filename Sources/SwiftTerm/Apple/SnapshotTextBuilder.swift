@@ -313,7 +313,7 @@ final class SnapshotTextBuilder {
 
         let brightNeedsBold: Bool
         if case .ansi256(let code) = foreground {
-            brightNeedsBold = code > 7 && !context.useBrightColors
+            brightNeedsBold = code > 7 && !context.useBrightColors && context.collapseBrightColorsToBase
         } else {
             brightNeedsBold = false
         }
@@ -377,7 +377,7 @@ final class SnapshotTextBuilder {
         }
         if withUrl {
             result[.underlineStyle] = NSUnderlineStyle.single.rawValue
-            result[.underlineColor] = foregroundColor
+            result[.underlineColor] = context.linkUnderlineColor ?? foregroundColor
             result[SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
         }
         return SnapshotTextAttributes(result)
@@ -850,7 +850,7 @@ final class SnapshotTextBuilder {
         }
         let brightNeedsBold: Bool
         if case .ansi256(let code) = foreground {
-            brightNeedsBold = code > 7 && !context.useBrightColors
+            brightNeedsBold = code > 7 && !context.useBrightColors && context.collapseBrightColorsToBase
         } else {
             brightNeedsBold = false
         }
@@ -891,7 +891,7 @@ final class SnapshotTextBuilder {
             style.strikethrough = foregroundColor
         }
         if withUrl {
-            style.underline = PlainUnderline(color: foregroundColor,
+            style.underline = PlainUnderline(color: context.linkUnderlineColor.map(PlainColor.color) ?? foregroundColor,
                                              nsStyle: NSUnderlineStyle.single.rawValue,
                                              style: .dashed)
         }
@@ -1134,7 +1134,7 @@ func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool,
         if context.useBrightColors {
             index = ansi < 7 ? Int(ansi) + (isBold ? 8 : 0) : Int(ansi)
         } else {
-            index = ansi > 7 ? Int(ansi) - 8 : Int(ansi)
+            index = context.collapseBrightColorsToBase && ansi > 7 ? Int(ansi) - 8 : Int(ansi)
         }
         guard index >= 0, index < context.ansiColors.count else {
             return isFg ? context.effectiveForegroundColor : context.effectiveBackgroundColor
