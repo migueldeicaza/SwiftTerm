@@ -80,12 +80,12 @@ final class OptionMetaFunctionalKeysTests {
         return (view, delegate)
     }
 
-    /// Legacy keyboard: Option+Left is Alt+Left, the xterm `CSI 1;3D` that
-    /// iTerm2 sends for the same key with its Option key set to "Normal".
-    @Test func testOptionLeftReportsAltLeftWithoutKittyProtocol() {
+    /// Legacy keyboard: Option+Left moves back a word, `ESC b`, the macOS
+    /// Option-arrow binding, which comes before the functional keys' Meta.
+    @Test func testOptionLeftMovesBackAWordWithoutKittyProtocol() {
         let (view, delegate) = makeView(kitty: false)
         view.keyDown(with: optionLeft())
-        #expect(delegate.sent == Array("\u{1b}[1;3D".utf8))
+        #expect(delegate.sent == EscapeSequences.emacsBack)
     }
 
     /// Kitty keyboard protocol: the same key reports Alt+Left.
@@ -185,13 +185,13 @@ final class OptionMetaFunctionalKeysTests {
         #expect(delegate.sent == Array("\u{1b}\u{1b}[Z".utf8))
     }
 
-    /// A host that only turned `optionAsMetaKey` off sees no change: Option+Left
-    /// still goes to the OS and nothing reaches the PTY from keyDown.
-    @Test func testFlagOffLeavesOptionLeftToTheOS() {
+    /// The Option-arrow binding holds whatever the Option-as-Meta settings
+    /// say: with the functional-keys flag off too, Option+Left moves back a word.
+    @Test func testOptionLeftMovesBackAWordWithTheFlagOff() {
         let (view, delegate) = makeView(kitty: false)
         view.optionAsMetaKeyForFunctionalKeys = false
         view.keyDown(with: optionLeft())
-        #expect(delegate.sent.isEmpty)
+        #expect(delegate.sent == EscapeSequences.emacsBack)
     }
 }
 #endif

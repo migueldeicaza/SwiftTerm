@@ -967,6 +967,84 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 #endif
 
+    /// Draws a frame as part of being unhidden.
+    ///
+    /// The frame driver runs on `NSView.displayLink(target:selector:)`, which
+    /// does not fire while the view is hidden, so a hidden terminal draws
+    /// nothing; output that arrives meanwhile only marks the driver dirty.
+    /// Without this, the first frame after unhiding waits for the next
+    /// display-link tick, and until then the layer shows the content from
+    /// before the view was hidden. A host that hides inactive terminals and
+    /// unhides one as part of a busy main-thread update (switching tabs) shows
+    /// that old screen for as long as the update keeps the main thread.
+    ///
+    /// AppKit also sends this when the view or an ancestor is removed from a
+    /// hidden ancestor, and a view can be unhidden while it is in no window or
+    /// in an occluded one; nothing is drawn in those cases.
+    open override func viewDidUnhide() {
+        super.viewDidUnhide()
+        guard uiShutdownState == .active,
+              window != nil,
+              !hasHiddenAncestor,
+              frameDriver?.isVisibilitySuspended != true
+        else { return }
+        drawFrameOnUnhide()
+    }
+
+    /// Walks `isHidden` up the hierarchy instead of trusting the cached
+    /// `isHiddenOrHasHiddenAncestor`: when a container of this view is removed
+    /// from a hidden ancestor, AppKit has already cleared the container's
+    /// cached flag by the time this view gets `viewDidUnhide`, while the
+    /// container's superview is still the hidden one.
+    private var hasHiddenAncestor: Bool {
+        var ancestor = superview
+        while let view = ancestor {
+            if view.isHidden { return true }
+            ancestor = view.superview
+        }
+        return false
+    }
+
+    /// `frameTick` for `viewDidUnhide`. The frame is prepared and submitted
+    /// now, but its side effects, which include delegate callbacks such as
+    /// `scrolled` and `rangeChanged`, are delivered on a later main-actor
+    /// turn, the same contract the render loop has. Delivering them inside
+    /// `isHidden = false` would run host code in the middle of whatever update
+    /// is changing visibility.
+    func drawFrameOnUnhide ()
+    {
+        guard let viewState = captureFrameViewState() else { return }
+#if canImport(MetalKit)
+        if usesRenderLoop {
+            publishFrameViewState(viewState)
+            renderLoop?.signal()
+            return
+        }
+#endif
+        guard let prepared = prepareFrame(viewState: viewState) else { return }
+        updateCursorPosition(from: prepared.cursor, rowCount: prepared.cursorRowCount)
+        submitFrameDraw(prepared)
+        let effects = prepared.mainEffects
+        Task { @MainActor [weak self] in
+            guard let self, self.uiShutdownState == .active else { return }
+            var effects = effects
+            // Output can arrive, and a display-link frame can run, before this
+            // Task: report the current scroll position, and drop a size that a
+            // newer frame has already reported.
+            let (current, scrollPosition) = self.withTerminal {
+                (FrameTerminalSize(cols: $0.cols, rows: $0.rows), self.scrollPositionLocked())
+            }
+            effects.scrollPosition = scrollPosition
+            // Use the blink rows from the latest frame. The captured rows can
+            // stop a timer that a newer frame started, or start an old timer.
+            effects.blinkRows = self.publishedBlinkRows()
+            if let resized = effects.resizedTo, resized != current {
+                effects.resizedTo = nil
+            }
+            self.applyFrameSideEffects(effects)
+        }
+    }
+
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard uiShutdownState == .active else { return }
@@ -1104,10 +1182,34 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         progressBarView.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
     }
 
+    /// The silence that clears a bar the application started and never
+    /// removed, when ``progressReportTimeout`` is left alone.
+    public static let defaultProgressReportTimeout: TimeInterval = 15
+
+    /// How long the view waits for the next OSC 9;4 report before it clears a
+    /// bar the application started and never removed. `nil` turns that clear
+    /// off and leaves the bar up until the application removes it.
+    ///
+    /// The wait is a safety net for a program that dies mid-report, and it
+    /// assumes reports keep arriving while the work runs. A program that
+    /// reports only at the start and the end of a long task looks silent in
+    /// between and loses its bar halfway through, so a host that trusts its
+    /// program to close every bar it opens can turn the net off. Setting this
+    /// while a bar is on screen restarts the wait from now, and `nil` cancels
+    /// a wait that is already running.
+    public var progressReportTimeout: TimeInterval? = TerminalView.defaultProgressReportTimeout {
+        didSet {
+            guard progressBarView?.isHidden == false else { return }
+            resetProgressReportTimer()
+        }
+    }
+
     @MainActor
     private func resetProgressReportTimer() {
         progressReportTimer?.invalidate()
-        progressReportTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
+        progressReportTimer = nil
+        guard let progressReportTimeout else { return }
+        progressReportTimer = Timer.scheduledTimer(withTimeInterval: progressReportTimeout, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.clearProgressReport()
             }
@@ -1393,6 +1495,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    /// Controls the color of the OSC 9;4 progress bar while it is running, if not set
+    /// the bar will render with the system accent color.
+    ///
+    /// The error and paused states keep their system colors (red and orange) either
+    /// way, so a host that themes the terminal can tint the bar without losing the
+    /// meaning those two states carry. Setting this recolors a bar that is already
+    /// on screen.
+    public var progressBarColor: NSColor? {
+        get { progressBarView?.tint }
+        set { progressBarView?.tint = newValue }
+    }
+
     var _selectedTextBackgroundColor = NSColor(srgbRed: 0, green: 166.0 / 255.0, blue: 178.0 / 255.0, alpha: 1.0)
     /// The background color used to render the selection.
     public var selectedTextBackgroundColor: NSColor {
@@ -1605,6 +1719,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         didSet {
             linkHighlightRange = nil
             updateLinkHighlightTracking()
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
+    }
+
+    /// The color used to draw link text and its underline, or `nil` (the
+    /// default) to draw each link in its cell's own foreground color.
+    ///
+    /// It applies to every cell drawn as a link, explicit (OSC 8) or implicit,
+    /// whenever ``linkHighlightMode`` highlights it.
+    public var linkColor: NSColor? {
+        didSet {
             withTerminal { $0.updateFullScreen() }
             frameDriver.markDirty()
         }
@@ -2187,8 +2313,36 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if keyboardEnhancementFlags.isEmpty,
            eventFlags.contains(.command),
            !(eventFlags.contains(.option) && event.charactersIgnoringModifiers == "o") {
+            // The menu has had its turn. Command-arrow sends no terminal input.
+            if Self.regularArrowKeyCodes.contains(event.keyCode) {
+                return
+            }
             interpretKeyEvents([event])
             return
+        }
+
+        // Apply the macOS Option-arrow bindings before the legacy encoder.
+        // These bindings do not depend on the Option-as-Meta text setting.
+        // An application that enables the Kitty protocol gets the full key.
+        if keyboardEnhancementFlags.isEmpty,
+           !kittyIsComposing,
+           eventFlags.intersection([.shift, .control, .option, .command]) == .option {
+            switch event.keyCode {
+            case UInt16(kVK_LeftArrow):
+                send(EscapeSequences.emacsBack)
+                return
+            case UInt16(kVK_RightArrow):
+                send(EscapeSequences.emacsForward)
+                return
+            case UInt16(kVK_UpArrow):
+                sendKeyUp()
+                return
+            case UInt16(kVK_DownArrow):
+                sendKeyDown()
+                return
+            default:
+                break
+            }
         }
 
         if keyboardEnhancementFlags.isEmpty,

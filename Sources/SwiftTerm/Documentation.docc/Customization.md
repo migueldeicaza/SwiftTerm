@@ -57,6 +57,16 @@ terminalView.caretColor = NSColor.systemGreen
 terminalView.caretTextColor = NSColor.black  // optional: text color under cursor
 ```
 
+### Progress Bar Color
+
+The OSC 9;4 progress bar follows the system accent color unless the host picks
+one, which keeps it in step with a themed terminal. The error and paused states
+keep their system red and orange either way:
+
+```swift
+terminalView.progressBarColor = NSColor.systemPurple  // nil restores the accent color
+```
+
 ## Cursor Style
 
 The cursor style is typically controlled by the remote application via escape
@@ -138,6 +148,16 @@ Important: `.implicit` means "explicit + implicit fallback", not "implicit only.
 Link activation is also gated by `linkHighlightMode`. The reporting mode chooses
 how links are discovered during tracking, while highlight mode decides whether a
 click/tap is allowed to open the link.
+
+### Link Color
+
+By default a highlighted link is underlined in its own text color. Set
+`linkColor` to draw every highlighted link, explicit or implicit, in one color
+instead; set it back to `nil` to restore the default:
+
+```swift
+terminalView.linkColor = NSColor.systemBlue
+```
 
 ### What happens when the user activates a link
 
@@ -293,3 +313,23 @@ custom overlay), set `notifyUpdateChanges` to `true` and implement
 ```swift
 terminalView.notifyUpdateChanges = true
 ```
+
+## Progress Bar Timeout
+
+The OSC 9;4 progress bar clears itself after 15 seconds without a report, so a
+program that dies mid-task does not leave a bar behind. That safety net assumes
+reports keep arriving while the work runs: a program that reports once at the
+start and once at the end of a long task looks silent in between and loses its
+bar halfway through.
+
+``TerminalView/progressReportTimeout`` sets that wait, and `nil` turns it off
+for a host that trusts its program to close every bar it opens:
+
+```swift
+terminalView.progressReportTimeout = 60   // wait a minute instead
+terminalView.progressReportTimeout = nil  // keep the bar until the program removes it
+```
+
+Changing it while a bar is on screen restarts the wait from that moment, and
+`nil` cancels a wait already running. The default is
+``TerminalView/defaultProgressReportTimeout``.

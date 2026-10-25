@@ -324,8 +324,9 @@ final class TerminalRenderOwner: Sendable {
         currentSession()?.terminal.inputStateSnapshot()
     }
 
-    func contentSnapshot(region: TerminalContentRegion) -> TerminalContentSnapshot? {
-        currentSession()?.terminal.contentSnapshot(region: region)
+    func contentSnapshot(region: TerminalContentRegion,
+                         buffer: Terminal.BufferKind = .active) -> TerminalContentSnapshot? {
+        currentSession()?.terminal.contentSnapshot(region: region, buffer: buffer)
     }
 
     func keyboardEnhancementFlags() -> KittyKeyboardFlags {

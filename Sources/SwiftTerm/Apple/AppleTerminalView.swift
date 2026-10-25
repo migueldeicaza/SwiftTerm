@@ -216,6 +216,8 @@ struct FrameAppearance: Sendable, Equatable {
     let selectedTextForegroundColor: FrameColor
     let caretColor: FrameColor
     let caretTextColor: FrameColor
+    /// The host's link color, or `nil` when links keep their own colors.
+    let linkColor: FrameColor?
 }
 
 /// Caches main-actor font copies and dynamic-color resolution for frame input.
@@ -228,6 +230,7 @@ final class FrameCaptureCache {
     private var sourceFonts: [TTFont] = []
     private var cachedFonts: FrameFontSet?
     private var sourceColors: [TTColor] = []
+    private var sourceLinkColor: TTColor?
     private var appearanceSignature = 0
     private var cachedAppearance: FrameAppearance?
 
@@ -263,6 +266,7 @@ final class FrameCaptureCache {
             view.effectiveCaretColor,
             view.effectiveCaretTextColor
         ]
+        let linkColor = view.linkColor
 #if os(macOS)
         let signature = view.effectiveAppearance.name.rawValue.hashValue
 #else
@@ -271,7 +275,8 @@ final class FrameCaptureCache {
         if let cachedAppearance,
            appearanceSignature == signature,
            sourceColors.count == current.count,
-           zip(sourceColors, current).allSatisfy({ $0.0.isEqual($0.1) }) {
+           zip(sourceColors, current).allSatisfy({ $0.0.isEqual($0.1) }),
+           sourceLinkColor?.isEqual(linkColor) ?? (linkColor == nil) {
             return cachedAppearance
         }
 
@@ -281,8 +286,10 @@ final class FrameCaptureCache {
             selectedTextBackgroundColor: FrameColor(current[2], view: view),
             selectedTextForegroundColor: FrameColor(current[3], view: view),
             caretColor: FrameColor(current[4], view: view),
-            caretTextColor: FrameColor(current[5], view: view))
+            caretTextColor: FrameColor(current[5], view: view),
+            linkColor: linkColor.map { FrameColor($0, view: view) })
         sourceColors = current
+        sourceLinkColor = linkColor
         appearanceSignature = signature
         cachedAppearance = result
 #if DEBUG
@@ -566,6 +573,7 @@ struct FrameViewState: Sendable {
     var selectedTextForegroundColor: FrameColor { appearance.selectedTextForegroundColor }
     var caretColor: FrameColor { appearance.caretColor }
     var caretTextColor: FrameColor { appearance.caretTextColor }
+    var linkColor: FrameColor? { appearance.linkColor }
 
     @MainActor
     init (view: TerminalView) {
@@ -641,6 +649,7 @@ struct SnapshotNativeColors {
     let selectedTextForegroundColor: TTColor
     let caretColor: TTColor
     let caretTextColor: TTColor
+    let linkColor: TTColor?
     let ansiColors: [TTColor]
 }
 
@@ -660,6 +669,9 @@ struct SnapshotRenderContext {
     let selectedTextForegroundColor: TTColor
     let caretColor: TTColor
     let caretTextColor: TTColor
+    /// Replaces the foreground and underline color of highlighted link cells;
+    /// `nil` keeps the cell's own colors.
+    let linkColor: TTColor?
     let ansiColors: [TTColor]
     let selection: SnapshotSelectionResolver
     let textBlinkVisible: Bool
@@ -713,6 +725,7 @@ struct SnapshotRenderContext {
                 selectedTextForegroundColor: appearance.selectedTextForegroundColor.nativeColor,
                 caretColor: appearance.caretColor.nativeColor,
                 caretTextColor: appearance.caretTextColor.nativeColor,
+                linkColor: appearance.linkColor?.nativeColor,
                 ansiColors: ansiColors.map(TTColor.make(color:))),
             cols: cols)
     }
@@ -734,6 +747,7 @@ struct SnapshotRenderContext {
         selectedTextForegroundColor = nativeColors.selectedTextForegroundColor
         caretColor = nativeColors.caretColor
         caretTextColor = nativeColors.caretTextColor
+        linkColor = nativeColors.linkColor
         ansiColors = nativeColors.ansiColors
         selection = SnapshotSelectionResolver(style: style, cols: cols)
         textBlinkVisible = style.textBlinkVisible
@@ -768,6 +782,7 @@ struct SnapshotRenderContext {
         identityHasher.combine(selectedTextForegroundColor.hash)
         identityHasher.combine(caretColor.hash)
         identityHasher.combine(caretTextColor.hash)
+        identityHasher.combine(linkColor?.hash)
         for color in self.ansiColors {
             identityHasher.combine(color.hash)
         }
@@ -1767,9 +1782,10 @@ extension TerminalView {
     /// Returns nil when no terminal session is attached. The returned values
     /// remain valid after later feeds, resizes, scrolls, and history trimming.
     public nonisolated func terminalContentSnapshot(
-        region: TerminalContentRegion
+        region: TerminalContentRegion,
+        buffer: Terminal.BufferKind = .active
     ) -> TerminalContentSnapshot? {
-        renderOwner.contentSnapshot(region: region)
+        renderOwner.contentSnapshot(region: region, buffer: buffer)
     }
 
     /// Copies terminal buffer contents without exposing the mutable terminal.
@@ -4396,7 +4412,10 @@ extension TerminalView {
     
     ///
     /// This takes a string returned by events (NSEvent or UIKey) as the 'charactersIngoringModifiers'
-    /// and returns the control-version of that, and only applies to a handful of characters
+    /// and returns the control-version of that, and only applies to a handful of characters.
+    ///
+    /// As in kitty and Ghostty, Control-/ also sends Control-_, the digits 2 to 8 send NUL, ESC,
+    /// FS, GS, RS, US and DEL, and Control-? sends DEL.
     ///
     func applyControlToEventCharacters (_ ch: String) -> [UInt8]
     {
@@ -4409,18 +4428,20 @@ extension TerminalView {
                 value = (ch.asciiValue! - 0x40 /* - 'A' + 1 */)
             case "a"..."z":
                 value = (ch.asciiValue! - 0x60 /* - 'a' + 1 */)
-            case "\\":
+            case "\\", "4":
                 value = 0x1c
-            case "_":
+            case "_", "/", "7":
                 value = 0x1f
-            case "]":
+            case "]", "5":
                 value = 0x1d
-            case "[":
+            case "[", "3":
                 value = 0x1b
             case "^", "6":
                 value = 0x1e
-            case " ":
+            case " ", "@", "2":
                 value = 0
+            case "?", "8":
+                value = 0x7f
             default:
                 return []
             }

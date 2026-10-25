@@ -126,14 +126,15 @@ let benchmarks: @Sendable () -> Void = {
 
     Benchmark(
         "kitty_snapshot_empty",
-        configuration: .init(metrics: [.wallClock], maxDuration: .seconds(10))
+        // Batch short snapshot calls to reduce timer quantization error.
+        configuration: .init(metrics: [.wallClock], scalingFactor: .kilo, maxDuration: .seconds(10))
     ) { benchmark in
         snapshot(benchmark, imageSize: nil)
     }
 
     Benchmark(
         "kitty_snapshot_3mb",
-        configuration: .init(metrics: [.wallClock], maxDuration: .seconds(10))
+        configuration: .init(metrics: [.wallClock], scalingFactor: .kilo, maxDuration: .seconds(10))
     ) { benchmark in
         snapshot(benchmark, imageSize: (width: 1024, height: 768))
     }
