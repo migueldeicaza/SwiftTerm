@@ -553,6 +553,7 @@ final class TerminalRenderOwner: Sendable {
                 frozen.resizedTo = (cols: resizedTo.cols, rows: resizedTo.rows)
 #if os(macOS)
                 frozen.scroller = scrollerState
+                frozen.mainEffects.selection = selectionState
 #endif
                 return frozen
             }
@@ -652,6 +653,7 @@ final class TerminalRenderOwner: Sendable {
             result.resizedTo = resizedTo.map { (cols: $0.cols, rows: $0.rows) }
 #if os(macOS)
             result.scroller = scrollerState
+            result.mainEffects.selection = selectionState
 #endif
             return result
         }

@@ -80,5 +80,31 @@ struct SelectionRedrawTests {
 
         #expect(!view.renderOwner.inspection().selectionActive)
     }
+
+    /// VoiceOver hears that the selected text changed when the selection
+    /// does, not on every frame of output: it reads the whole selection each
+    /// time it hears.
+    @Test func voiceOverHearsOfASelectionOnlyWhenItChanges() async throws {
+        let (view, source, driver) = makeView()
+        defer { driver.invalidate() }
+
+        view.feed(text: "hello world\r\n")
+        await drain(); source.tick(); await drain()
+        view.selection.startSelection(row: 0, col: 0)
+        view.selection.dragExtend(bufferPosition: Position(col: 5, row: 0))
+        await drain(); source.tick(); await drain()
+        let selected = view.accessibilitySelection
+        #expect(selected.active)
+
+        let frame = try #require(view.prepareFrame(viewState: FrameViewState(view: view)))
+        #expect(frame.mainEffects.selection == selected)
+        view.feed(text: "more output\r\n")
+        await drain(); source.tick(); await drain()
+        #expect(view.accessibilitySelection == selected)
+
+        view.selection.selectNone()
+        await drain(); source.tick(); await drain()
+        #expect(!view.accessibilitySelection.active)
+    }
 }
 #endif

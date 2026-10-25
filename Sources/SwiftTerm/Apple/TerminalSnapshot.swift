@@ -62,7 +62,7 @@ struct SnapshotStyle {
 /// main actor captures view geometry because the parser can adjust it at the
 /// same time. The render owner creates this value inside its terminal-lock
 /// transaction and gives only the value to the snapshot.
-struct SnapshotSelectionState: Sendable {
+struct SnapshotSelectionState: Equatable, Sendable {
     let active: Bool
     let start: Position
     let end: Position
