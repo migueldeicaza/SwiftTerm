@@ -145,6 +145,71 @@ struct TerminalSnapshotTests {
         }
     }
 
+    @Test func outputPreservesSelectionWhenItWritesTheSameText() {
+        let view = makeView()
+        view.feed(text: "selected\r\none")
+        view.withTerminal { _ in
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 8, row: 0))
+        }
+
+        view.feed(text: "\u{1b}[1;1Hselected")
+
+        view.withTerminal { _ in
+            #expect(view.selection.active)
+            #expect(view.selection.getSelectedText() == "selected")
+        }
+    }
+
+    /// A shell's prompt mark arriving on a selected row leaves the selected
+    /// text as it was.
+    @Test func outputPreservesSelectionWhenAPromptMarkOnItChanges() {
+        let view = makeView()
+        view.feed(text: "$ make\r\none")
+        view.withTerminal { _ in
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 6, row: 0))
+        }
+
+        view.feed(text: "\u{1b}[1;1H\u{1b}]133;A\u{7}")
+
+        view.withTerminal { terminal in
+            #expect(terminal.buffer.lines[0].semanticMarks.contains { $0.kind == .initial })
+            #expect(view.selection.active)
+            #expect(view.selection.getSelectedText() == "$ make")
+        }
+    }
+
+    /// Output checks a selection's rows above the screen by their content
+    /// generation, not by copying their cells: copying a selection of
+    /// thousands of rows twice a batch took 220 ms a batch in a debug build.
+    @Test func outputUnderALargeSelectionCopiesOnlyTheScreen() {
+        let view = TerminalView(frame: .zero, font: nil,
+                                options: TerminalOptions(cols: 200, rows: 50, scrollback: 10_000))
+        let line = String(repeating: "y", count: 199)
+        view.feed(text: (1...6_000).map { _ in line }.joined(separator: "\r\n"))
+        view.withTerminal { _ in
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 199, row: 4_999))
+        }
+
+        let batch = (1...10).map { "out \($0)" }.joined(separator: "\r\n") + "\r\n"
+        let clock = ContinuousClock()
+        let elapsed = clock.measure {
+            for _ in 0..<20 {
+                view.feed(text: batch)
+            }
+        }
+
+        view.withTerminal { _ in
+            #expect(view.selection.active)
+        }
+        #expect(elapsed < .milliseconds(500), "took \(elapsed)")
+    }
+
     @Test func frameColorPreservesSRGBAlpha() {
         let view = makeView()
         let captured = FrameColor(

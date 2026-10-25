@@ -57,7 +57,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         set {
             guard newValue != renderModeValue else { return }
             renderModeValue = newValue
-            bump()
+            bumpRenderOnly()
         }
     }
 #if DEBUG
@@ -72,7 +72,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         set {
             guard newValue != semanticMarksValue else { return }
             semanticMarksValue = newValue
-            bump()
+            bumpRenderOnly()
         }
     }
     /// The prompt-group epoch of a line created by a hard line feed inside a
@@ -91,7 +91,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         set {
             guard newValue != semanticHardContinuationGroupValue else { return }
             semanticHardContinuationGroupValue = newValue
-            bump()
+            bumpRenderOnly()
         }
     }
     /// Link to the owning buffer, used only so `copyFrom` can ask which of two
@@ -171,7 +171,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             // The common recycle and snapshot path writes nil to an empty row.
             guard newValue != nil || imagesValue != nil else { return }
             imagesValue = newValue
-            bump()
+            bumpRenderOnly()
         }
     }
 
@@ -181,9 +181,20 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// changes without diffing individual cells.
     public var generation: UInt64 { _generation }
     private(set) var _generation: UInt64 = 0
+    /// Changes with what a selection of this line holds: the cells,
+    /// `isWrapped` and `bidiState`, and not the prompt marks, images or
+    /// render mode. A feed compares it to keep a selection whose rows it
+    /// didn't touch without copying their cells.
+    private(set) var contentGeneration: UInt64 = 0
 
     @inline(__always)
-    private func bump() { _generation &+= 1 }
+    private func bump() {
+        _generation &+= 1
+        contentGeneration &+= 1
+    }
+
+    @inline(__always)
+    private func bumpRenderOnly() { _generation &+= 1 }
 
     public convenience init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false,
                              bidiState: BidiPresentationState = .default)
@@ -591,7 +602,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             semanticMarksValue.removeAll(keepingCapacity: true)
         }
         semanticHardContinuationGroupValue = nil
-        bump()
+        bumpRenderOnly()
     }
     /// Test whether contains any chars.
     public func hasContent (index: Int) -> Bool {
