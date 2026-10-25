@@ -9140,6 +9140,25 @@ open class Terminal {
             return nil
         }
 
+        // Only a match over the target's characters can be its link. Find
+        // where they sit once and pass over every other match before
+        // measuring it: measuring each match from the line's start made a
+        // long line full of links quadratic.
+        let isTarget = { (cell: GhosttyImplicitCellRef) in
+            cell.row == lineMap.targetRow && lineMap.targetCol >= cell.col
+                && lineMap.targetCol < cell.col + max(1, cell.width)
+        }
+        // A combining mark can join the character before it, leaving the text
+        // shorter than its cells; a target past the text's end has no match.
+        guard let firstTarget = lineMap.cells.firstIndex(where: isTarget),
+              let lastTarget = lineMap.cells.lastIndex(where: isTarget),
+              let firstTargetIndex = lineMap.text.index(lineMap.text.startIndex, offsetBy: firstTarget,
+                                                        limitedBy: lineMap.text.endIndex),
+              let lastTargetIndex = lineMap.text.index(firstTargetIndex, offsetBy: lastTarget - firstTarget,
+                                                       limitedBy: lineMap.text.endIndex) else {
+            return nil
+        }
+
         let searchRange = NSRange(lineMap.text.startIndex..<lineMap.text.endIndex, in: lineMap.text)
         let matches = regex.matches(in: lineMap.text, options: [], range: searchRange)
         for match in matches {
@@ -9148,7 +9167,10 @@ open class Terminal {
             else {
                 continue
             }
-            if suppressGhosttyLikeMatch(textRange, in: lineMap.text) {
+            if textRange.lowerBound > lastTargetIndex {
+                break
+            }
+            if textRange.upperBound <= firstTargetIndex || suppressGhosttyLikeMatch(textRange, in: lineMap.text) {
                 continue
             }
 
