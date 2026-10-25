@@ -218,6 +218,8 @@ struct FrameAppearance: Sendable, Equatable {
     let caretTextColor: FrameColor
     /// The host's link color, or `nil` when links keep their own colors.
     let linkColor: FrameColor?
+    /// Overrides only the underline of highlighted links.
+    let linkUnderlineColor: FrameColor?
 }
 
 /// Caches main-actor font copies and dynamic-color resolution for frame input.
@@ -231,6 +233,7 @@ final class FrameCaptureCache {
     private var cachedFonts: FrameFontSet?
     private var sourceColors: [TTColor] = []
     private var sourceLinkColor: TTColor?
+    private var sourceLinkUnderlineColor: TTColor?
     private var appearanceSignature = 0
     private var cachedAppearance: FrameAppearance?
 
@@ -267,6 +270,7 @@ final class FrameCaptureCache {
             view.effectiveCaretTextColor
         ]
         let linkColor = view.linkColor
+        let linkUnderlineColor = view.linkUnderlineColor
 #if os(macOS)
         let signature = view.effectiveAppearance.name.rawValue.hashValue
 #else
@@ -276,7 +280,8 @@ final class FrameCaptureCache {
            appearanceSignature == signature,
            sourceColors.count == current.count,
            zip(sourceColors, current).allSatisfy({ $0.0.isEqual($0.1) }),
-           sourceLinkColor?.isEqual(linkColor) ?? (linkColor == nil) {
+           sourceLinkColor?.isEqual(linkColor) ?? (linkColor == nil),
+           sourceLinkUnderlineColor?.isEqual(linkUnderlineColor) ?? (linkUnderlineColor == nil) {
             return cachedAppearance
         }
 
@@ -287,9 +292,11 @@ final class FrameCaptureCache {
             selectedTextForegroundColor: FrameColor(current[3], view: view),
             caretColor: FrameColor(current[4], view: view),
             caretTextColor: FrameColor(current[5], view: view),
-            linkColor: linkColor.map { FrameColor($0, view: view) })
+            linkColor: linkColor.map { FrameColor($0, view: view) },
+            linkUnderlineColor: linkUnderlineColor.map { FrameColor($0, view: view) })
         sourceColors = current
         sourceLinkColor = linkColor
+        sourceLinkUnderlineColor = linkUnderlineColor
         appearanceSignature = signature
         cachedAppearance = result
 #if DEBUG
@@ -573,6 +580,7 @@ struct FrameViewState: Sendable {
     var caretColor: FrameColor { appearance.caretColor }
     var caretTextColor: FrameColor { appearance.caretTextColor }
     var linkColor: FrameColor? { appearance.linkColor }
+    var linkUnderlineColor: FrameColor? { appearance.linkUnderlineColor }
 
     @MainActor
     init (view: TerminalView) {
@@ -644,6 +652,7 @@ struct SnapshotNativeColors {
     let caretColor: TTColor
     let caretTextColor: TTColor
     let linkColor: TTColor?
+    let linkUnderlineColor: TTColor?
     let ansiColors: [TTColor]
 }
 
@@ -666,6 +675,7 @@ struct SnapshotRenderContext {
     /// Replaces the foreground and underline color of highlighted link cells;
     /// `nil` keeps the cell's own colors.
     let linkColor: TTColor?
+    let linkUnderlineColor: TTColor?
     let ansiColors: [TTColor]
     let selection: SnapshotSelectionResolver
     let textBlinkVisible: Bool
@@ -705,6 +715,7 @@ struct SnapshotRenderContext {
                 caretColor: appearance.caretColor.nativeColor,
                 caretTextColor: appearance.caretTextColor.nativeColor,
                 linkColor: appearance.linkColor?.nativeColor,
+                linkUnderlineColor: appearance.linkUnderlineColor?.nativeColor,
                 ansiColors: ansiColors.map(TTColor.make(color:))),
             cols: cols)
     }
@@ -727,6 +738,7 @@ struct SnapshotRenderContext {
         caretColor = nativeColors.caretColor
         caretTextColor = nativeColors.caretTextColor
         linkColor = nativeColors.linkColor
+        linkUnderlineColor = nativeColors.linkUnderlineColor
         ansiColors = nativeColors.ansiColors
         selection = SnapshotSelectionResolver(style: style, cols: cols)
         textBlinkVisible = style.textBlinkVisible
@@ -753,6 +765,7 @@ struct SnapshotRenderContext {
         identityHasher.combine(caretColor.hash)
         identityHasher.combine(caretTextColor.hash)
         identityHasher.combine(linkColor?.hash)
+        identityHasher.combine(linkUnderlineColor?.hash)
         for color in self.ansiColors {
             identityHasher.combine(color.hash)
         }
@@ -2684,7 +2697,7 @@ extension TerminalView {
 
         if withUrl {
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
-            nsattr [.underlineColor] = fgColor
+            nsattr [.underlineColor] = linkUnderlineColor ?? fgColor
             nsattr [SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
 
             // Add to cache; truecolor attributes are unbounded, so cap it
