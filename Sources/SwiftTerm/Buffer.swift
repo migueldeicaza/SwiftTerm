@@ -553,6 +553,10 @@ public final class Buffer {
     /// hard-continuation lines whose epoch matches the origin mark's group ID;
     /// nil otherwise. The group-ID match is what keeps an old group's stranded
     /// continuation rows from joining a new prompt.
+    ///
+    /// A non-origin row's answer walks back up its chain, so a scan for
+    /// prompts asks `semanticRowOpensPrompt` instead: asking this of every
+    /// row over a long wrapped output is quadratic.
     func semanticRowKind(at row: Int) -> SemanticPromptKind? {
         guard row >= 0, row < lines.count else { return nil }
         let activeOrigin = semanticPromptStartRow
@@ -598,6 +602,12 @@ public final class Buffer {
             }
         }
         return nil
+    }
+
+    /// Whether `semanticRowKind(at: row)` is `initial`, read from the row's
+    /// own marks.
+    func semanticRowOpensPrompt(_ row: Int) -> Bool {
+        row >= 0 && row < lines.count && originMarkGroup(at: row, activeOrigin: semanticPromptStartRow) != nil
     }
 
     /// The group ID of a row's group-opening mark, or nil if the row is not an
@@ -1135,6 +1145,10 @@ public final class Buffer {
                   semanticRowKind(at: row) == .initial else {
                 return false
             }
+        }
+        // The one-pass prompt scan agrees with the row-by-row derivation.
+        for row in 0..<lines.count where semanticRowOpensPrompt(row) != (semanticRowKind(at: row) == .initial) {
+            return false
         }
         return true
     }

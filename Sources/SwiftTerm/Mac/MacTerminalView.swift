@@ -291,6 +291,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     var accessibility: AccessibilityService = AccessibilityService()
+    /// The selection VoiceOver last heard of.
+    var accessibilitySelection: SnapshotSelectionState = .empty
     var search: SearchService!
     private var findBar: TerminalFindBarView?
     private var findBarTerm: String = ""

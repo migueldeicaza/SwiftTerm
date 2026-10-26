@@ -445,13 +445,13 @@ final class TerminalRenderOwner: Sendable {
             if searchingUpward {
                 guard start > 0 else { return nil }
                 for row in stride(from: start - 1, through: 0, by: -1) {
-                    if terminal.semanticRowKind(at: row) == .initial {
+                    if buffer.semanticRowOpensPrompt(row) {
                         return row
                     }
                 }
             } else if start + 1 < buffer.lines.count {
                 for row in (start + 1)..<buffer.lines.count {
-                    if terminal.semanticRowKind(at: row) == .initial {
+                    if buffer.semanticRowOpensPrompt(row) {
                         return row
                     }
                 }
@@ -553,6 +553,7 @@ final class TerminalRenderOwner: Sendable {
                 frozen.resizedTo = (cols: resizedTo.cols, rows: resizedTo.rows)
 #if os(macOS)
                 frozen.scroller = scrollerState
+                frozen.mainEffects.selection = selectionState
 #endif
                 return frozen
             }
@@ -652,6 +653,7 @@ final class TerminalRenderOwner: Sendable {
             result.resizedTo = resizedTo.map { (cols: $0.cols, rows: $0.rows) }
 #if os(macOS)
             result.scroller = scrollerState
+            result.mainEffects.selection = selectionState
 #endif
             return result
         }

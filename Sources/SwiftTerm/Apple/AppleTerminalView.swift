@@ -648,6 +648,9 @@ struct MainFrameEffects: Sendable {
     var resizedTo: FrameTerminalSize? = nil
 #if os(macOS)
     var scroller: TerminalView.ScrollerState? = nil
+    /// The selection the frame shows, so VoiceOver hears of a change to it
+    /// rather than of every frame.
+    var selection: SnapshotSelectionState = .empty
 #endif
 }
 
@@ -4088,9 +4091,16 @@ extension TerminalView {
 #endif
 #if os(macOS)
             NSAccessibility.post(element: self, notification: .valueChanged)
-            NSAccessibility.post(element: self, notification: .selectedTextChanged)
 #endif
         }
+#if os(macOS)
+        // On a change to the selection, not on each frame of output:
+        // VoiceOver reads the whole selection each time it hears this.
+        if effects.selection != accessibilitySelection {
+            accessibilitySelection = effects.selection
+            NSAccessibility.post(element: self, notification: .selectedTextChanged)
+        }
+#endif
 
         if consumeScrolledDirty() {
             updateScroller()

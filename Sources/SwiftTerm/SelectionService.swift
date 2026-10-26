@@ -21,8 +21,13 @@ public class SelectionService: CustomDebugStringConvertible {
     var terminal: Terminal
 
     struct SelectedContentSnapshot {
-        struct Row: Equatable {
-            let cells: [PackedCell]
+        struct Row {
+            let line: BufferLine
+            let contentGeneration: UInt64
+            let columns: Range<Int>
+            /// Keep cells for screen rows and partial history rows. A change
+            /// outside a partial selection must not clear that selection.
+            let cells: [PackedCell]?
             let isWrapped: Bool
             let bidiState: BidiPresentationState
         }
@@ -178,8 +183,27 @@ public class SelectionService: CustomDebugStringConvertible {
             return nil
         }
         let buffer = terminal.displayBuffer
-        guard let rows = selectedContentRows (in: buffer) else {
+        let firstRow = min (start.row, end.row)
+        let lastRow = max (start.row, end.row)
+        guard firstRow >= 0, lastRow < buffer.lines.count else {
             return nil
+        }
+
+        var rows: [SelectedContentSnapshot.Row] = []
+        rows.reserveCapacity (lastRow - firstRow + 1)
+        for row in firstRow...lastRow {
+            let line = buffer.lines [row]
+            guard let columns = selectedColumnsRange (row: row, cols: line.count) else {
+                continue
+            }
+            rows.append (SelectedContentSnapshot.Row (
+                line: line,
+                contentGeneration: line.contentGeneration,
+                columns: columns,
+                cells: row >= buffer.yBase || columns != 0..<line.count
+                    ? columns.map { line.packedCell (at: $0) } : nil,
+                isWrapped: line.isWrapped,
+                bidiState: line.bidiState))
         }
         return SelectedContentSnapshot (buffer: buffer, rows: rows)
     }
@@ -191,35 +215,44 @@ public class SelectionService: CustomDebugStringConvertible {
             return
         }
         let buffer = terminal.displayBuffer
-        guard buffer === snapshot.buffer,
-              selectedContentRows (in: buffer) == snapshot.rows else {
+        guard buffer === snapshot.buffer, selectedContentIsUnchanged (since: snapshot.rows, in: buffer) else {
             selectNone ()
             return
         }
     }
 
-    private func selectedContentRows (in buffer: Buffer) -> [SelectedContentSnapshot.Row]?
+    /// Whether the selected rows hold what they held at the snapshot. A row
+    /// whose line and content generation are the same is unchanged; any
+    /// other compares its cells, kept for screen rows and partial history rows.
+    private func selectedContentIsUnchanged (since rows: [SelectedContentSnapshot.Row], in buffer: Buffer) -> Bool
     {
         let firstRow = min (start.row, end.row)
         let lastRow = max (start.row, end.row)
         guard firstRow >= 0, lastRow < buffer.lines.count else {
-            return nil
+            return false
         }
 
-        var result: [SelectedContentSnapshot.Row] = []
-        result.reserveCapacity (lastRow - firstRow + 1)
+        var index = 0
         for row in firstRow...lastRow {
             let line = buffer.lines [row]
             guard let columns = selectedColumnsRange (row: row, cols: line.count) else {
                 continue
             }
-            let cells = columns.map { line.packedCell (at: $0) }
-            result.append (SelectedContentSnapshot.Row (
-                cells: cells,
-                isWrapped: line.isWrapped,
-                bidiState: line.bidiState))
+            guard index < rows.count, rows [index].columns == columns else {
+                return false
+            }
+            let before = rows [index]
+            index += 1
+            if line === before.line && line.contentGeneration == before.contentGeneration {
+                continue
+            }
+            guard let cells = before.cells, line.isWrapped == before.isWrapped,
+                  line.bidiState == before.bidiState,
+                  zip (columns, cells).allSatisfy ({ line.packedCell (at: $0) == $1 }) else {
+                return false
+            }
         }
-        return result
+        return index == rows.count
     }
 
     func selectedColumnsRange (row: Int, cols: Int) -> Range<Int>?
