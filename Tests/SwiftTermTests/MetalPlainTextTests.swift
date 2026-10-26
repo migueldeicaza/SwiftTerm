@@ -429,6 +429,37 @@ struct MetalPlainTextTests {
         #expect(frame.plainRows == harness.screenRows)
     }
 
+    /// Both text paths use the same translucent fills, including selection.
+    @Test(.enabled(if: MetalPlainTextTests.metalIsUsable)) func translucentBackgroundsDrawAsTheShapedPathDraws() async throws {
+        for mode in [MetalBufferingMode.perRowPersistent, .perFrameAggregated] {
+            let harness = try #require(Harness(font: .monospacedSystemFont(ofSize: 13, weight: .regular)))
+            harness.view.metalBufferingMode = mode
+            harness.view.nativeBackgroundColor = .black
+            harness.view.backgroundOpacity = 0.4
+            harness.view.translucentCellBackgrounds = true
+            harness.view.minimumContrastRatio = 4.5
+            harness.view.feed(text: "\u{1b}[41m    ANSI\u{1b}[0m\r\n"
+                + "\u{1b}[48;5;33m    palette\u{1b}[0m\r\n"
+                + "\u{1b}[48;2;10;120;130m    truecolor\u{1b}[0m\r\n"
+                + "\u{1b}[2;31;48;2;10;120;130mdim\u{1b}[0m\r\n"
+                + "\u{1b}[7mreverse default\u{1b}[0m \u{1b}[7;32mreverse color\u{1b}[0m")
+            let frame = try #require(await expectParity(harness))
+            #expect(frame.plainRows == harness.screenRows)
+            #expect(abs(Int(frame.pixels[3]) - 102) <= 1)
+
+            harness.view.selectedTextBackgroundColor = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.5)
+            harness.view.selection.setSelection(start: Position(col: 0, row: 1),
+                                                end: Position(col: 12, row: 2))
+            await expectParity(harness)
+            harness.view.backgroundOpacity = 0.6
+            await expectParity(harness)
+            harness.view.translucentCellBackgrounds = false
+            await expectParity(harness)
+            harness.view.translucentCellBackgrounds = true
+            await expectParity(harness)
+        }
+    }
+
     /// Links, underlined always rather than on hover.
     @Test(.enabled(if: MetalPlainTextTests.metalIsUsable)) func linksDrawAsTheShapedPathDraws() async throws {
         let harness = try #require(Harness())

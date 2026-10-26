@@ -376,6 +376,35 @@ struct MetalRowCacheTests {
         #expect(!Self.sameBytes(aggregated.pixels, before.pixels))
     }
 
+    /// Translucent rows keep their colors after a scroll or an option change.
+    @Test(.enabled(if: MetalRowCacheTests.metalIsUsable)) func translucentBackgroundsKeepCacheParity() async throws {
+        let harness = try #require(Harness())
+        let rows = harness.screenRows
+        harness.view.backgroundOpacity = 0.4
+        fill(harness, lines: Self.corpus, count: rows * 2)
+        _ = try #require(await harness.frame())
+
+        harness.view.translucentCellBackgrounds = true
+        let enabled = try #require(await harness.frame())
+        #expect(enabled.rebuilt == rows)
+        await expectParity(harness, with: enabled)
+
+        harness.view.scrollUp(lines: 2)
+        let scrolled = try #require(await harness.frame())
+        #expect(scrolled.moved == rows - 2)
+        await expectParity(harness, with: scrolled)
+
+        harness.view.backgroundOpacity = 0.6
+        let opacity = try #require(await harness.frame())
+        #expect(opacity.rebuilt == rows)
+        await expectParity(harness, with: opacity)
+
+        harness.view.translucentCellBackgrounds = false
+        let disabled = try #require(await harness.frame())
+        #expect(disabled.rebuilt == rows)
+        await expectParity(harness, with: disabled)
+    }
+
     // MARK: Invalidation
 
     /// A cell rewritten in place rebuilds that row only, whether its text or

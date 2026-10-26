@@ -1057,6 +1057,9 @@ final class MetalTerminalRenderer {
     private let cellTextPipeline: MTLRenderPipelineState
     private let cellTextGrayPipeline: MTLRenderPipelineState
     private let cellColorPipeline: MTLRenderPipelineState
+    /// Cell backgrounds that replace the pass clear instead of blending over
+    /// it; see `SnapshotRenderContext.translucentCellBackgroundAlpha`.
+    private let cellBackgroundReplacePipeline: MTLRenderPipelineState
     private let sampler: MTLSamplerState
     private let textureLoader: MTKTextureLoader
     private let bufferPool: BufferPool
@@ -1274,7 +1277,13 @@ final class MetalTerminalRenderer {
                                                                               library: library,
                                                                               pixelFormat: pixelFormat,
                                                                               vertexName: "terminal_cell_color_vertex",
-                                                                              fragmentName: "terminal_color_fragment") else {
+                                                                              fragmentName: "terminal_color_fragment"),
+              let cellBackgroundReplacePipeline = MetalTerminalRenderer.makeColorPipeline(device: device,
+                                                                                          library: library,
+                                                                                          pixelFormat: pixelFormat,
+                                                                                          vertexName: "terminal_cell_color_vertex",
+                                                                                          fragmentName: "terminal_color_fragment",
+                                                                                          blending: false) else {
             throw MetalError.pipelineCreationFailed("text/color/cell")
         }
         self.textPipeline = textPipeline
@@ -1283,6 +1292,7 @@ final class MetalTerminalRenderer {
         self.cellTextPipeline = cellTextPipeline
         self.cellTextGrayPipeline = cellTextGrayPipeline
         self.cellColorPipeline = cellColorPipeline
+        self.cellBackgroundReplacePipeline = cellBackgroundReplacePipeline
         let samplerDesc = MTLSamplerDescriptor()
         samplerDesc.minFilter = .linear
         samplerDesc.magFilter = .linear
@@ -1430,10 +1440,13 @@ final class MetalTerminalRenderer {
 #endif
         let encodeInterval = Profiling.begin(.metalEncode)
         defer { encodeInterval.end() }
+        // The drawable holds premultiplied values (the blend states assume so
+        // and Core Animation composites it that way), so a translucent default
+        // background is premultiplied here like every other color.
         let bgColor = colorToSIMD(renderContext.effectiveBackgroundColor)
-        passDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(Double(bgColor.x),
-                                                                         Double(bgColor.y),
-                                                                         Double(bgColor.z),
+        passDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(Double(bgColor.x * bgColor.w),
+                                                                         Double(bgColor.y * bgColor.w),
+                                                                         Double(bgColor.z * bgColor.w),
                                                                          Double(bgColor.w))
         passDescriptor.colorAttachments[0].loadAction = .clear
 
@@ -1468,8 +1481,11 @@ final class MetalTerminalRenderer {
         bufferPool.beginFrame()
         let viewport = SIMD2<Float>(Float(drawableSize.width), Float(drawableSize.height))
 
+        let backgroundPipeline = renderContext.translucentCellBackgroundAlpha == nil
+            ? cellColorPipeline : cellBackgroundReplacePipeline
         if let frame = drawData.frame {
-            drawFrameData(frame, encoder: encoder, viewport: viewport)
+            drawFrameData(frame, backgroundPipeline: backgroundPipeline,
+                          encoder: encoder, viewport: viewport)
         } else {
             let rows = drawData.rows
             drawImageRows(rows: rows,
@@ -1480,7 +1496,7 @@ final class MetalTerminalRenderer {
             drawVertexBuffers(rows: rows,
                               bufferKey: \.backgroundBuffer,
                               countKey: \.backgroundCount,
-                              pipeline: cellColorPipeline,
+                              pipeline: backgroundPipeline,
                               texture: nil,
                               encoder: encoder,
                               viewport: viewport)
@@ -2634,11 +2650,18 @@ final class MetalTerminalRenderer {
             let y1 = lineOriginPx.y + cellHeightPx
             let (tx0, ty0, tx1, ty1) = transformRect(x0: x0, y0: y0, x1: x1, y1: y1)
             if let clipped = self.clipRect(tx0, ty0, tx1, ty1, clipRect) {
+                var color = background.color
+                if context.translucentCellBackgroundAlpha != nil {
+                    // Both text paths use this step. The replace pipeline
+                    // writes premultiplied colors to the drawable.
+                    color = SIMD4<Float>(color.x * color.w, color.y * color.w,
+                                         color.z * color.w, color.w)
+                }
                 backgroundCells.append(makeColorCell(x0: clipped.0,
                                                      y0: clipped.1,
                                                      x1: clipped.2,
                                                      y1: clipped.3,
-                                                     color: background.color))
+                                                     color: color))
             }
         }
 
@@ -3774,11 +3797,12 @@ final class MetalTerminalRenderer {
         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: cells.count * 6)
     }
 
-    private func drawFrameData(_ frame: FrameDrawData, encoder: MTLRenderCommandEncoder, viewport: SIMD2<Float>) {
+    private func drawFrameData(_ frame: FrameDrawData, backgroundPipeline: MTLRenderPipelineState,
+                               encoder: MTLRenderCommandEncoder, viewport: SIMD2<Float>) {
         drawImageBatches(frame.belowBackgroundImageDraws, encoder: encoder, viewport: viewport)
 
         drawCellBuffer(frame.backgroundCells,
-                       pipeline: cellColorPipeline,
+                       pipeline: backgroundPipeline,
                        texture: nil,
                        encoder: encoder,
                        viewport: viewport)
@@ -4604,7 +4628,8 @@ final class MetalTerminalRenderer {
                                           library: MTLLibrary,
                                           pixelFormat: MTLPixelFormat,
                                           vertexName: String,
-                                          fragmentName: String) -> MTLRenderPipelineState? {
+                                          fragmentName: String,
+                                          blending: Bool = true) -> MTLRenderPipelineState? {
         guard let vertex = library.makeFunction(name: vertexName),
               let fragment = library.makeFunction(name: fragmentName) else {
             return nil
@@ -4614,7 +4639,9 @@ final class MetalTerminalRenderer {
         descriptor.fragmentFunction = fragment
         let attachment = descriptor.colorAttachments[0]!
         attachment.pixelFormat = pixelFormat
-        attachment.isBlendingEnabled = true
+        // Without blending the fragment color is written as is, so callers
+        // pass premultiplied colors.
+        attachment.isBlendingEnabled = blending
         attachment.rgbBlendOperation = .add
         attachment.alphaBlendOperation = .add
         attachment.sourceRGBBlendFactor = .sourceAlpha

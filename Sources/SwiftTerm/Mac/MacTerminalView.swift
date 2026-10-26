@@ -1305,12 +1305,19 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// not show through before that surface obtains its first drawable. A
     /// translucent Metal background still needs a clear host layer; otherwise
     /// Core Animation would composite the same color and alpha twice.
+    ///
+    /// The Core Graphics path normally lets this layer paint the default
+    /// background. With `translucentCellBackgrounds` over a translucent
+    /// background the draw paints it instead, because explicit cell
+    /// backgrounds must replace it rather than composite over it; the layer
+    /// stays clear so the color is not painted twice.
     func updateBackingLayerBackground()
     {
         let background = effectiveNativeBackgroundColor
         let isOpaque = background.cgColor.alpha >= 1.0
         metalView?.layer?.isOpaque = isOpaque
-        layer?.backgroundColor = metalView == nil || isOpaque
+        let layerPaintsBackground = isOpaque || (metalView == nil && !translucentCellBackgrounds)
+        layer?.backgroundColor = layerPaintsBackground
             ? background.cgColor : NSColor.clear.cgColor
     }
 
@@ -1377,7 +1384,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
      * Values below 1 render the default background translucently, in the style of
      * Terminal.app's background opacity: only the default background is affected;
      * text, the caret, selections and cells with explicit background colors stay
-     * fully opaque. The opacity is carried in the alpha channel of
+     * fully opaque (see `translucentCellBackgrounds` to make explicit cell
+     * backgrounds translucent as well). The opacity is carried in the alpha channel of
      * `nativeBackgroundColor`, so assigning that property with an alpha-bearing
      * color is equivalent.
      *
@@ -1392,6 +1400,29 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         set {
             let clamped = max (0.0, min (1.0, newValue))
             nativeBackgroundColor = _nativeBg.withAlphaComponent (clamped)
+            colorsChanged ()
+        }
+    }
+
+    /**
+     * Whether cells with an explicit background color (ANSI, 256-color, truecolor)
+     * share the default background's `backgroundOpacity`.
+     *
+     * `false` (the default) keeps them fully opaque, the way Terminal.app draws
+     * them. `true` gives every cell background the default background's alpha, the
+     * way iTerm2 does by default, so colored rows (diffs, prompts, TUI chrome) read
+     * as part of one translucent surface instead of solid blocks over it. An
+     * explicit background replaces the default background beneath it rather than
+     * compositing over it, so it ends at exactly `backgroundOpacity`.
+     *
+     * Text keeps its opacity, and so does the same color used as a foreground.
+     * Reverse-video highlights stay opaque either way, and this has no effect
+     * while `backgroundOpacity` is 1. Kitty images placed below cell backgrounds
+     * are not visible through a translucent explicit background.
+     */
+    public var translucentCellBackgrounds: Bool = false {
+        didSet {
+            guard translucentCellBackgrounds != oldValue else { return }
             colorsChanged ()
         }
     }
