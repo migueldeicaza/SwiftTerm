@@ -3241,6 +3241,9 @@ extension TerminalView {
         case .doubledDown, .doubledTop: scaleY = scale * 2
         case .single, .doubleWidth: scaleY = scale
         }
+        let minThicknessPx = max(1, Int(round(scale)))
+        let lineWidthPx = max(minThicknessPx,
+                              Int(round(scale * fontSet.underlineThickness() * 1.35)))
         for item in items {
             let cellRect = CGRect(x: lineOrigin.x + CGFloat(item.column) * cellDimension.width,
                                   y: lineOrigin.y,
@@ -3251,7 +3254,8 @@ extension TerminalView {
                                    cellRect: cellRect,
                                    scaleX: scaleX,
                                    scaleY: scaleY,
-                                   color: item.foregroundColor.cgColor)
+                                   color: item.foregroundColor.cgColor,
+                                   lineWidthPx: lineWidthPx * (renderMode == .doubledDown || renderMode == .doubledTop ? 2 : 1))
         }
     }
 
@@ -4136,6 +4140,7 @@ extension TerminalView {
             y: lineOrigin.y)
         caretView.frame.size.width = cellDimension.width * doublePosition *
             CGFloat(cursor.columnWidth)
+        caretView.powerlineRenderMode = cursor.renderMode
         caretView.setText(cursor.renderData)
     }
     
