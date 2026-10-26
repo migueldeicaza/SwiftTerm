@@ -19,6 +19,7 @@ extension CaretView {
             return
         }
         context.saveGState()
+        defer { context.restoreGState() }
         context.clip(to: [bounds])
         context.setFillColor(TTColor.clear.cgColor)
         context.fill ([bounds])
@@ -73,7 +74,6 @@ extension CaretView {
                                         scale: caretScale,
                                         color: caretFG.cgColor,
                                         lineWidthPx: lineWidthPx)
-            context.restoreGState()
             return
         }
         for run in CTLineGetGlyphRuns(ctline) as? [CTRun] ?? [] {
@@ -133,7 +133,6 @@ extension CaretView {
                 CTFontDrawGlyphs(runFont, runGlyphs, &positions, positions.count, context)
             }
         }
-        context.restoreGState()
     }
 }
 
