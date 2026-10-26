@@ -4721,6 +4721,15 @@ extension TerminalView {
     /// reports. Unlike keyboard input, mouse responses do not register an
     /// OSC 133 semantic submission. Delivery is synchronous on the main actor,
     /// after releasing the terminal lock.
+    ///
+    /// Use one handler to report each gesture. If both the host and the view
+    /// report the same gesture, the program receives duplicate mouse events.
+    /// Disable the view's matching gesture handler when the host reports it.
+    ///
+    /// For a drag, send a press before motion. If the mouse mode requires a
+    /// release, send it when the gesture ends or is cancelled. A host that
+    /// stops a reported drag must still send that release. Without it, the
+    /// program can keep the button in the pressed state.
     @MainActor
     public func sendMouseEvent(button: Int, release: Bool, motion: Bool = false,
                                shift: Bool = false, meta: Bool = false,
