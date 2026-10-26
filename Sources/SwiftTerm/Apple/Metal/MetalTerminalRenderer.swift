@@ -4116,10 +4116,8 @@ final class MetalTerminalRenderer {
                 let basePos = CGPoint(x: lineOrigin.x + cellWidth * doublePosition * CGFloat(cursor.visualCol) + fit.dx * doublePosition,
                                       y: lineOrigin.y + yOffset + ctPos.y + fit.dy)
                 // The block cursor uses the same pixel grid as the row glyphs.
-                let pxX = (basePos.x * scale + entry.bearing.x * fit.scaleX).rounded()
-                let pxY = (basePos.y * scale + entry.bearing.y * fit.scaleY).rounded()
-                let x0 = Float(pxX)
-                let y0 = Float(pxY)
+                let x0 = Float(basePos.x * scale + entry.bearing.x * fit.scaleX).rounded()
+                let y0 = Float(basePos.y * scale + entry.bearing.y * fit.scaleY).rounded()
                 let x1 = x0 + Float(entry.size.width * fit.scaleX)
                 let y1 = y0 + Float(entry.size.height * fit.scaleY)
 
