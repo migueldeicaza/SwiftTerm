@@ -211,6 +211,26 @@ struct TerminalSnapshotTests {
         }
     }
 
+    @Test func aColumnModeChangeKeepsAPartialSelectionWhenOtherTextReflows() {
+        let view = makeView(cols: 132)
+        view.feed(text: "hello" + String(repeating: " ", count: 95) + "tail\r\n1\r\n2\r\n3\r\n4")
+        view.withTerminal { terminal in
+            #expect(terminal.buffer.yBase == 1)
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 5, row: 0))
+        }
+
+        view.feed(text: "\u{1b}[?40h\u{1b}[?3l")
+
+        view.withTerminal { terminal in
+            #expect(terminal.cols == 80)
+            #expect(terminal.buffer.lines[1].isWrapped)
+            #expect(view.selection.active)
+            #expect(view.selection.getSelectedText() == "hello")
+        }
+    }
+
     /// Blank cells a resize adds or drops leave a line's content as it was,
     /// but dropping text changes it, so a selection over the blanks that
     /// widening adds again is cleared.
@@ -231,32 +251,36 @@ struct TerminalSnapshotTests {
         #expect(line.contentGeneration != narrowed)
     }
 
-    /// Output checks a selection's rows above the screen by their content
-    /// generation, not by copying their cells: copying a selection of
-    /// thousands of rows twice a batch took 220 ms a batch in a debug build.
-    @Test func outputUnderALargeSelectionCopiesOnlyTheScreen() {
+    /// Complete history rows use their content generation. Only screen rows
+    /// and the partial rows at a selection's boundaries need copied cells.
+    @Test func outputUnderALargeSelectionCopiesOnlyScreenAndPartialRows() throws {
         let view = TerminalView(frame: .zero, font: nil,
                                 options: TerminalOptions(cols: 200, rows: 50, scrollback: 10_000))
         let line = String(repeating: "y", count: 199)
         view.feed(text: (1...6_000).map { _ in line }.joined(separator: "\r\n"))
         view.withTerminal { _ in
             view.selection.setSelection(
-                start: Position(col: 0, row: 0),
-                end: Position(col: 199, row: 4_999))
+                start: Position(col: 1, row: 0),
+                end: Position(col: 198, row: 4_999))
+        }
+
+        try view.withTerminal { terminal in
+            #expect(terminal.buffer.yBase > 4_999)
+            let snapshot = try #require(view.selection.captureSelectedContent())
+            #expect(snapshot.rows.count == 5_000)
+            #expect(snapshot.rows.dropFirst().dropLast().allSatisfy { $0.cells == nil })
+            #expect(snapshot.rows.first?.cells?.count == 199)
+            #expect(snapshot.rows.last?.cells?.count == 198)
         }
 
         let batch = (1...10).map { "out \($0)" }.joined(separator: "\r\n") + "\r\n"
-        let clock = ContinuousClock()
-        let elapsed = clock.measure {
-            for _ in 0..<20 {
-                view.feed(text: batch)
-            }
+        for _ in 0..<20 {
+            view.feed(text: batch)
         }
 
         view.withTerminal { _ in
             #expect(view.selection.active)
         }
-        #expect(elapsed < .milliseconds(500), "took \(elapsed)")
     }
 
     @Test func frameColorPreservesSRGBAlpha() {

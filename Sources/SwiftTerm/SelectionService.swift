@@ -25,9 +25,8 @@ public class SelectionService: CustomDebugStringConvertible {
             let line: BufferLine
             let contentGeneration: UInt64
             let columns: Range<Int>
-            /// The selected cells of a row on the screen, where output can
-            /// write the same text again; rows above it are told apart by
-            /// `contentGeneration` alone.
+            /// Keep cells for screen rows and partial history rows. A change
+            /// outside a partial selection must not clear that selection.
             let cells: [PackedCell]?
             let isWrapped: Bool
             let bidiState: BidiPresentationState
@@ -201,7 +200,8 @@ public class SelectionService: CustomDebugStringConvertible {
                 line: line,
                 contentGeneration: line.contentGeneration,
                 columns: columns,
-                cells: row >= buffer.yBase ? columns.map { line.packedCell (at: $0) } : nil,
+                cells: row >= buffer.yBase || columns != 0..<line.count
+                    ? columns.map { line.packedCell (at: $0) } : nil,
                 isWrapped: line.isWrapped,
                 bidiState: line.bidiState))
         }
@@ -223,7 +223,7 @@ public class SelectionService: CustomDebugStringConvertible {
 
     /// Whether the selected rows hold what they held at the snapshot. A row
     /// whose line and content generation are the same is unchanged; any
-    /// other compares its cells, which only a row on the screen kept.
+    /// other compares its cells, kept for screen rows and partial history rows.
     private func selectedContentIsUnchanged (since rows: [SelectedContentSnapshot.Row], in buffer: Buffer) -> Bool
     {
         let firstRow = min (start.row, end.row)
