@@ -1016,19 +1016,19 @@ open class Terminal {
         // - declocator, rarely used
         
         /// Returns true if you should send a button press event (separate from release)
-        func sendButtonPress () -> Bool
+        public func sendButtonPress () -> Bool
         {
             self != .off
         }
         
         /// Returns true if you should send the button release event
-        func sendButtonRelease () -> Bool
+        public func sendButtonRelease () -> Bool
         {
             self == .vt200 || self == .buttonEventTracking || self == .anyEvent
         }
         
         /// Returns true if you should send a motion event when a button is pressed
-        func sendButtonTracking () -> Bool
+        public func sendButtonTracking () -> Bool
         {
             self == .buttonEventTracking || self == .anyEvent
         }
