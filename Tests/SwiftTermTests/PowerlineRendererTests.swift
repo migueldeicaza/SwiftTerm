@@ -264,6 +264,20 @@ final class PowerlineRendererTests: XCTestCase {
         }
     }
 
+    func testThinFlamesLeaveFlatEdgeEmpty() throws {
+        for scale in [2, 3] {
+            for (codePoint, direction) in [(UInt32(0xE0C1), Direction.right),
+                                           (UInt32(0xE0C3), Direction.left)] {
+                let bitmap = try bitmap(codePoint: codePoint, scale: scale)
+                let flatEdgeX = direction == .right ? bitmap.cellMinX : bitmap.cellMaxX - 1
+                for y in 3..<(bitmap.height - 3) {
+                    XCTAssertEqual(bitmap[flatEdgeX, y], 0,
+                                   "U+\(String(codePoint, radix: 16)) must not stroke a flat edge at (\(flatEdgeX), \(y))")
+                }
+            }
+        }
+    }
+
     func testInverseDividersFillTheCellAndCutOutTheArrow() throws {
         for scale in [2, 3] {
             // E0D6: full cell minus the left-pointing arrow (flat edge right).

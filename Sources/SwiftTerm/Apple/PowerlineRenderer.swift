@@ -192,13 +192,13 @@ enum PowerlineRenderer {
             path.move(to: CGPoint(x: minX, y: minY))
             path.addLine(to: CGPoint(x: maxX, y: maxY))
         case .flame, .flameOutline:
-            // Overshoot vertically by one device pixel: the flame's flat edge
-            // curls into the tips right at its ends, and mapping it exactly
-            // onto the cell would leave the top/bottom corner pixels half
-            // covered. The overshoot clips away.
+            // Overshoot vertically by one device pixel: the flame tips would
+            // otherwise leave the top/bottom corner pixels half covered. The
+            // overshoot clips away.
             addFlame(to: path, direction: glyph.direction,
                      minX: minX, maxX: maxX,
-                     minY: minY - 1 / scaleY, maxY: maxY + 1 / scaleY)
+                     minY: minY - 1 / scaleY, maxY: maxY + 1 / scaleY,
+                     includeFlatEdge: glyph.shape == .flame)
         case .triangleInverse:
             path.addRect(CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY))
             path.move(to: CGPoint(x: joinX, y: minY))
@@ -323,11 +323,11 @@ enum PowerlineRenderer {
 
     /// The Nerd Font `ple-flame` silhouette, transcribed from the
     /// powerline-extra-symbols source (`src/uniE0C0_flame-thick.eps`) and
-    /// normalized into the cell at draw time.  The thin variant strokes the
-    /// same outline.
+    /// normalized into the cell at draw time. The solid path includes the flat
+    /// joining edge; the thin path follows only the organic outline and stays open.
     /// Source: https://github.com/ryanoasis/powerline-extra-symbols
     /// Copyright (c) 2016 Ryan L McIntyre; MIT license (see LICENSE).
-    private static let flameOutlinePath: [FlameSegment] = [
+    private static let flameLowerPath: [FlameSegment] = [
         .move(x: 2157.17, y: 445.633),
         .curve(c1x: 1962.06, c1y: 357.672, c2x: 1714.88, c2y: 239.342, x: 1616.59, y: 239.101),
         .curve(c1x: 1569.17, c1y: 238.987, c2x: 1486.07, c2y: 221.028, x: 1392.25, y: 253.274),
@@ -344,8 +344,14 @@ enum PowerlineRenderer {
         .curve(c1x: 527.24, c1y: -209.336, c2x: 617.42, c2y: -210.514, x: 702.477, y: -230.545),
         .curve(c1x: 556.852, c1y: -255.031, c2x: 423.041, c2y: -327.984, x: 281.979, y: -294.123),
         .curve(c1x: 125.055, c1y: -256.453, c2x: -49.3613, c2y: -525.24, x: -200.971, y: -496.67),
+    ]
+
+    private static let flameFlatEdgePath: [FlameSegment] = [
         .curve(c1x: -196.96, c1y: -279.114, c2x: -194.395, c2y: 1058.37, x: -194.519, y: 1348.09),
         .curve(c1x: -194.58, c1y: 1490.43, c2x: -204.668, c2y: 1676.29, x: -201.389, y: 1845.66),
+    ]
+
+    private static let flameUpperPath: [FlameSegment] = [
         .curve(c1x: -144.492, c1y: 1843.4, c2x: -150.387, c2y: 1833.88, x: -99.2002, y: 1775.53),
         .curve(c1x: 10.9062, c1y: 1660.2, c2x: 148.43, c2y: 1731.66, x: 260.156, y: 1801.83),
         .curve(c1x: 367.912, c1y: 1869.49, c2x: 476.387, c2y: 1879.91, x: 579.878, y: 1828.5),
@@ -375,10 +381,15 @@ enum PowerlineRenderer {
         .curve(c1x: 1727.55, c1y: 356.962, c2x: 1966.83, c2y: 400.936, x: 2157.17, y: 445.633),
     ]
 
+    private static let solidFlamePath = flameLowerPath + flameFlatEdgePath + flameUpperPath
+    private static let thinFlamePath = [FlameSegment.move(x: -201.389, y: 1845.66)]
+        + flameUpperPath + flameLowerPath.dropFirst()
+
     private static func addFlame(to path: CGMutablePath,
                                  direction: Direction,
                                  minX: CGFloat, maxX: CGFloat,
-                                 minY: CGFloat, maxY: CGFloat) {
+                                 minY: CGFloat, maxY: CGFloat,
+                                 includeFlatEdge: Bool) {
         let srcWidth = flameBounds.maxX - flameBounds.minX
         let srcHeight = flameBounds.maxY - flameBounds.minY
         func map(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
@@ -389,7 +400,7 @@ enum PowerlineRenderer {
                            : maxX - fx * (maxX - minX),
                            y: minY + (y - flameBounds.minY) / srcHeight * (maxY - minY))
         }
-        for segment in flameOutlinePath {
+        for segment in includeFlatEdge ? solidFlamePath : thinFlamePath {
             switch segment {
             case let .move(x, y):
                 path.move(to: map(x, y))
@@ -399,7 +410,9 @@ enum PowerlineRenderer {
                 path.addCurve(to: map(x, y), control1: map(c1x, c1y), control2: map(c2x, c2y))
             }
         }
-        path.closeSubpath()
+        if includeFlatEdge {
+            path.closeSubpath()
+        }
     }
 }
 
