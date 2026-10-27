@@ -39,6 +39,9 @@ final class SmartWordSelectionTests: TerminalDelegate {
         ("ssh://git@github.com:22/org/repo.git;", "ssh://git@github.com:22/org/repo.git"),
         ("it said \"https://example.com/q\" twice", "https://example.com/q"),
         ("file:///Users/sam/notes.txt:", "file:///Users/sam/notes.txt"),
+        ("https://example.com/redirect?next=https://other.example/path",
+         "https://example.com/redirect?next=https://other.example/path"),
+        ("https://a.test/?next=www.example.com.", "https://a.test/?next=www.example.com"),
     ])
     func doubleClickSelectsAWholeURL(text: String, url: String) {
         for offset in [0, 4, url.count / 2, url.count - 1] {
@@ -120,6 +123,24 @@ final class SmartWordSelectionTests: TerminalDelegate {
         #expect(doubleClick(text, at: column(of: "\"a", in: text)) == #""a \"b\" c""#)
         // An apostrophe inside a word is not a quote.
         #expect(doubleClick(text, at: column(of: "'", in: text)) == "")
+    }
+
+    @Test(arguments: ["\"", "'", "`"])
+    func evenBackslashesDoNotEscapeClosingQuotes(quote: String) {
+        let quoted = quote + "a" + String(repeating: "\\", count: 2) + quote
+        let text = "echo " + quoted + " next"
+        for col in [5, 5 + quoted.count - 1] {
+            #expect(doubleClick(text, at: col) == quoted)
+        }
+    }
+
+    @Test(arguments: [1, 3])
+    func oddBackslashesEscapeQuotes(backslashCount: Int) {
+        let quoted = "\"a" + String(repeating: "\\", count: backslashCount) + "\"b\""
+        let text = "echo " + quoted + " next"
+        for col in [5, 5 + quoted.count - 1] {
+            #expect(doubleClick(text, at: col) == quoted)
+        }
     }
 
     @Test func aQuoteWithNoPartnerSelectsNothing() {

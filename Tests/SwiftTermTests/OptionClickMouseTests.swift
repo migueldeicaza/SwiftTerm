@@ -184,6 +184,74 @@ struct OptionClickMouseTests {
         #expect(h.delegate.sentText == "\(esc)[<0;4;2M\(esc)[<0;4;2m")
     }
 
+    @Test func heldOptionClickIsDiscardedWhenReportingStops() async {
+        let h = Harness()
+        h.view.feed(text: claudeCodeMouseModes)
+        let at = h.point(col: 3, row: 1)
+
+        h.view.mouseDown(with: h.event(.leftMouseDown, at: at, .option))
+        h.view.feed(text: "\(esc)[?1000l\(esc)[?1002l\(esc)[?1003l")
+        #expect(h.view.withTerminal { $0.mouseMode } == .off)
+        h.view.mouseUp(with: h.event(.leftMouseUp, at: at, .option))
+        await h.settle()
+
+        #expect(h.delegate.sentData.isEmpty)
+        #expect(!h.selectionActive)
+    }
+
+    @Test func heldOptionClickIsDiscardedWhenTheHostDisablesReporting() async {
+        let h = Harness()
+        h.view.feed(text: claudeCodeMouseModes)
+        let at = h.point(col: 3, row: 1)
+
+        h.view.mouseDown(with: h.event(.leftMouseDown, at: at, .option))
+        h.view.allowMouseReporting = false
+        h.view.mouseUp(with: h.event(.leftMouseUp, at: at, .option))
+        await h.settle()
+
+        #expect(h.delegate.sentData.isEmpty)
+        #expect(!h.selectionActive)
+    }
+
+    @Test func shiftAtReleaseDiscardsAHeldOptionClick() async {
+        let h = Harness()
+        h.view.feed(text: claudeCodeMouseModes)
+        let at = h.point(col: 3, row: 1)
+
+        h.view.mouseDown(with: h.event(.leftMouseDown, at: at, .option))
+        h.view.mouseUp(with: h.event(.leftMouseUp, at: at, [.option, .shift]))
+        await h.settle()
+
+        #expect(h.delegate.sentData.isEmpty)
+        #expect(!h.selectionActive)
+    }
+
+    @Test func shiftAtReleaseReportsWhenTheApplicationCapturesShift() async {
+        let h = Harness()
+        h.view.feed(text: claudeCodeMouseModes + "\(esc)[>1s")
+        let at = h.point(col: 3, row: 1)
+
+        h.view.mouseDown(with: h.event(.leftMouseDown, at: at, .option))
+        h.view.mouseUp(with: h.event(.leftMouseUp, at: at, [.option, .shift]))
+        await h.settle()
+
+        #expect(h.delegate.sentText == "\(esc)[<8;4;2M\(esc)[<12;4;2m")
+        #expect(!h.selectionActive)
+    }
+
+    @Test func releasingOptionBeforeTheButtonStillReportsTheClick() async {
+        let h = Harness()
+        h.view.feed(text: claudeCodeMouseModes)
+        let at = h.point(col: 3, row: 1)
+
+        h.view.mouseDown(with: h.event(.leftMouseDown, at: at, .option))
+        h.view.mouseUp(with: h.event(.leftMouseUp, at: at, []))
+        await h.settle()
+
+        #expect(h.delegate.sentText == "\(esc)[<8;4;2M\(esc)[<0;4;2m")
+        #expect(!h.selectionActive)
+    }
+
     @Test func optionDragWithReportingSelectsABlockAndSendsNothing() async {
         let h = Harness()
         h.view.feed(text: table + claudeCodeMouseModes)
