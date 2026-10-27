@@ -2736,7 +2736,13 @@ final class MetalTerminalRenderer {
             let pxY = basePosY * scale + glyph.bearingY
             let y0 = pxY
             let y1 = pxY + glyph.height
-            let (tx0, ty0, tx1, ty1) = transformRect(x0: glyph.x0, y0: y0, x1: glyph.x1, y1: y1)
+            let (rawX0, rawY0, rawX1, rawY1) = transformRect(x0: glyph.x0, y0: y0, x1: glyph.x1, y1: y1)
+            // Snap in final device space, after DEC double-height transforms.
+            // Translate the quad as a whole so fitted glyph sizes stay intact.
+            let tx0 = rawX0.rounded()
+            let ty0 = rawY0.rounded()
+            let tx1 = tx0 + (rawX1 - rawX0)
+            let ty1 = ty0 + (rawY1 - rawY0)
             if let clipped = self.clipRect(tx0, ty0, tx1, ty1, glyph.u0, glyph.v0, glyph.u1, glyph.v1, clipRect) {
                 let cell = makeTextCell(x0: clipped.x0,
                                         y0: clipped.y0,
@@ -4154,10 +4160,9 @@ final class MetalTerminalRenderer {
                                            ? CTFontGetAscent(context.fonts.normal as CTFont) * scale : 0)
                 let basePos = CGPoint(x: lineOrigin.x + cellWidth * doublePosition * CGFloat(cursor.visualCol) + fit.dx * doublePosition,
                                       y: lineOrigin.y + yOffset + ctPos.y + fit.dy)
-                let pxX = basePos.x * scale + entry.bearing.x * fit.scaleX
-                let pxY = basePos.y * scale + entry.bearing.y * fit.scaleY
-                let x0 = Float(pxX)
-                let y0 = Float(pxY)
+                // The block cursor uses the same pixel grid as the row glyphs.
+                let x0 = Float(basePos.x * scale + entry.bearing.x * fit.scaleX).rounded()
+                let y0 = Float(basePos.y * scale + entry.bearing.y * fit.scaleY).rounded()
                 let x1 = x0 + Float(entry.size.width * fit.scaleX)
                 let y1 = y0 + Float(entry.size.height * fit.scaleY)
 
