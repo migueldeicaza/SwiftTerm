@@ -189,6 +189,8 @@ public final class Buffer {
     /// Saved state for the wrap around mode
     /// Saved state for the reverse wrap around mode
     var savedReverseWraparound: Bool = false
+    /// The DECSCA or SPA protection saved by DECSC.
+    var savedCharacterProtection: Bool = false
 
     /**
      * The left margin, 0-indexed, used when marginMode is turned on
@@ -319,6 +321,8 @@ public final class Buffer {
     }
     
     private var insertMode: Bool = false
+    /// Whether new cells are protected (DECSCA 1 or SPA).
+    private var characterProtection: Bool = false
     private var marginMode: Bool = false
     private var wraparound: Bool = false
 
@@ -716,6 +720,10 @@ public final class Buffer {
         self.insertMode = value
     }
 
+    func setCharacterProtection(_ value: Bool) {
+        self.characterProtection = value
+    }
+
     func setMarginMode(_ value: Bool) {
         self.marginMode = value
     }
@@ -906,6 +914,7 @@ public final class Buffer {
         savedOriginMode = false
         savedMarginMode = false
         savedReverseWraparound = false
+        savedCharacterProtection = false
     }
     
     public var isCursorInViewPort : Bool {
@@ -1757,13 +1766,14 @@ public final class Buffer {
 #endif
     
     @inline(__always)
-    var allowsBulkInsert: Bool { !insertMode }
+    var allowsBulkInsert: Bool { !insertMode && !characterProtection }
 
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
-    /// Returns number of bytes consumed. Returns 0 if insert mode is active.
+    /// Returns number of bytes consumed. Returns 0 if insert mode or
+    /// character protection is active.
     func insertAsciiRun(_ bytes: ArraySlice<UInt8>, styleID: UInt16,
                         payloadCode: UInt16) -> Int {
-        guard !insertMode else { return 0 }
+        guard allowsBulkInsert else { return 0 }
         let semanticCode = CellArena.semanticContentCode(for: semanticContent)
         let right = marginMode ? _marginRight : _cols - 1
         var consumed = 0
@@ -1796,10 +1806,11 @@ public final class Buffer {
     }
 
     /// Bulk-inserts borrowed ASCII characters (all width-1, non-combining).
-    /// Returns the number of bytes consumed. Returns 0 if insert mode is active.
+    /// Returns the number of bytes consumed. Returns 0 if insert mode or
+    /// character protection is active.
     func insertAsciiRun(_ bytes: Span<UInt8>, styleID: UInt16,
                         payloadCode: UInt16) -> Int {
-        guard !insertMode else { return 0 }
+        guard allowsBulkInsert else { return 0 }
         let semanticCode = CellArena.semanticContentCode(for: semanticContent)
         let right = marginMode ? _marginRight : _cols - 1
         var consumed = 0
@@ -1834,7 +1845,7 @@ public final class Buffer {
     /// Returns the number of scalars consumed.
     func insertScalarRun(_ scalars: UnsafeBufferPointer<UInt32>, width: Int,
                          styleID: UInt16, payloadCode: UInt16) -> Int {
-        guard !insertMode else { return 0 }
+        guard allowsBulkInsert else { return 0 }
         precondition(width == 1 || width == 2)
         let semanticCode = CellArena.semanticContentCode(for: semanticContent)
         let widthState: PackedCell.WidthState = width == 2 ? .wide : .narrow
@@ -1879,6 +1890,7 @@ public final class Buffer {
         // during ordinary output `semanticContent` is `.none` (a no-op).
         let cell = inputCell.replacingSemanticContentCode(
             CellArena.semanticContentCode(for: semanticContent))
+            .replacingProtection(characterProtection)
         var chWidth = Int(cellArena.width(for: cell))
         
         let right = marginMode ? _marginRight : _cols - 1
@@ -1942,7 +1954,8 @@ public final class Buffer {
             let packedWideEmpty = cellArena.pack(
                 styleID: cell.styleID, scalar: 0, widthState: .spacerTail,
                 payloadCode: cell.payloadCode,
-                semanticContentCode: cell.semanticContentCode)!
+                semanticContentCode: cell.semanticContentCode,
+                isProtected: characterProtection)!
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
                 bufferRow.setPackedCell(packedWideEmpty, at: _x)

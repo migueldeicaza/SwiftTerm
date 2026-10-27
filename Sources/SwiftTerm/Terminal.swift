@@ -697,6 +697,17 @@ open class Terminal {
     /// it, the backspace key sends BS (^H) instead of DEL.
     public private(set) var backarrowKeyMode: Bool = false
     
+    /// The kind of protection that was selected last, as xterm's `protected_mode`.
+    /// DECSCA selects `.dec` and SPA selects `.iso`.
+    enum CharacterProtectionMode {
+        case off, dec, iso
+    }
+
+    var characterProtectionMode: CharacterProtectionMode = .off
+
+    /// Whether new characters are protected (DECSCA 1, or SPA up to EPA).
+    var characterProtection: Bool = false
+
     var wraparound: Bool = false
 
     func setMarginMode(_ value: Bool) {
@@ -715,6 +726,12 @@ open class Terminal {
         wraparound = value
         normalBuffer.setWraparound(value)
         altBuffer.setWraparound(value)
+    }
+
+    func setCharacterProtection(_ value: Bool) {
+        characterProtection = value
+        normalBuffer.setCharacterProtection(value)
+        altBuffer.setCharacterProtection(value)
     }
 
     /// Indicates that the application has toggled bracketed paste mode, which means that when content is pasted into
@@ -1404,6 +1421,8 @@ open class Terminal {
         
         setMarginMode(false)
         setInsertMode(false)
+        characterProtectionMode = .off
+        setCharacterProtection(false)
         setWraparound(true)
         _ = applyDECPrivateMode(SpecialDECPrivateMode.bracketedPaste.rawValue, value: false)
         alternateScrollMode = true
@@ -1714,8 +1733,8 @@ open class Terminal {
             var ok = 1 // 0 means the request is valid according to docs, but tests expect 0?
             var result: String
             switch (newData) {
-            case "\"q": // DECCSA - Set Character Attribute
-                result = "\"q"
+            case "\"q": // DECSCA - Select Character Protection Attribute
+                result = "\(terminal.characterProtection ? 1 : 0)\"q"
             case "\"p": // DECSCL - conformance level
                 result = "65;1\"p"
             case "r": // DECSTBM - the top and bottom margins
@@ -1908,8 +1927,8 @@ open class Terminal {
                     previousScalar = UnicodeUtil.graphemeNeutralScalar
                 }
                 updateRange(borrowing: buffer, buffer.y)
-                // A short consume means insertMode is active; the per-character
-                // path picks up the rest.
+                // A short consume means insertMode or character protection is
+                // active; the per-character path picks up the rest.
                 pending = pending[(pending.startIndex + consumed)...]
                 if pending.isEmpty {
                     return
@@ -4346,7 +4365,22 @@ open class Terminal {
     func cmdEraseInLine (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = pars.count == 0 ? 0 : pars [0]
-        
+
+        // DECSEL always keeps protected cells. EL keeps them only for ISO protection.
+        if collect == [UInt8 (ascii: "?")] || characterProtectionMode == .iso {
+            switch p {
+            case 0:
+                eraseUnprotectedInBufferLine (y: buffer.y, start: buffer.x, end: cols)
+            case 1:
+                eraseUnprotectedInBufferLine (y: buffer.y, start: 0, end: buffer.x + 1)
+            case 2:
+                eraseUnprotectedInBufferLine (y: buffer.y, start: 0, end: cols)
+            default:
+                break
+            }
+            return
+        }
+
         switch p {
         case 0:
             eraseInBufferLine (y: buffer.y, start: buffer.x, end: cols)
@@ -4376,6 +4410,29 @@ open class Terminal {
     {
         let p = pars.count == 0 ? 0 : pars [0]
         var j: Int
+
+        // DECSED always keeps protected cells. ED keeps them only for ISO protection.
+        if p <= 2 && (collect == [UInt8 (ascii: "?")] || characterProtectionMode == .iso) {
+            let y = buffer.y
+            switch p {
+            case 0:
+                eraseUnprotectedInBufferLine (y: y, start: buffer.x, end: cols)
+                for row in (y + 1)..<max (rows, y + 1) {
+                    eraseUnprotectedInBufferLine (y: row, start: 0, end: cols)
+                }
+            case 1:
+                for row in 0..<y {
+                    eraseUnprotectedInBufferLine (y: row, start: 0, end: cols)
+                }
+                eraseUnprotectedInBufferLine (y: y, start: 0, end: buffer.x + 1)
+            default:
+                for row in 0..<rows {
+                    eraseUnprotectedInBufferLine (y: row, start: 0, end: cols)
+                }
+            }
+            return
+        }
+
         switch p {
         case 0:
             j = buffer.y
@@ -4455,6 +4512,33 @@ open class Terminal {
         if clearRenderMode {
             line.renderMode = .single
         }
+    }
+
+    //
+    // Erases the cells in a terminal row that are not protected, for the
+    // erase commands that respect DECSCA or SPA protection.
+    // - Parameter y: row index
+    // - Parameter start: first cell index to be erased
+    // - Parameter end:   end - 1 is last erased cell
+    //
+    func eraseUnprotectedInBufferLine (y: Int, start: Int, end: Int)
+    {
+        let line = buffer.lines [buffer.yBase + y]
+        let end = min (end, cols)
+        var col = max (start, 0)
+        while col < end {
+            if line.packedCell(at: col).isProtected {
+                col += 1
+                continue
+            }
+            var runEnd = col + 1
+            while runEnd < end && !line.packedCell(at: runEnd).isProtected {
+                runEnd += 1
+            }
+            eraseInBufferLine (y: y, start: col, end: runEnd)
+            col = runEnd
+        }
+        updateRange (y)
     }
 
     //
@@ -4664,6 +4748,7 @@ open class Terminal {
         originMode = buffer.savedOriginMode
         setMarginMode(buffer.savedMarginMode)
         reverseWraparound = buffer.savedReverseWraparound
+        setCharacterProtection(buffer.savedCharacterProtection)
     }
 
     //
@@ -4923,7 +5008,8 @@ open class Terminal {
                 let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
                     let cell = line.packedCell(at: col)
-                    guard !cell.isProtected,
+                    // DECSERA keeps DECSCA protection, but not ISO protection.
+                    guard !cell.isProtected || characterProtectionMode == .iso,
                           let erased = cellArena.replacingContent(
                             of: cell, with: " ", widthState: .narrow) else {
                         continue
@@ -5218,6 +5304,7 @@ open class Terminal {
         buffer.savedOriginMode = originMode
         buffer.savedMarginMode = marginMode
         buffer.savedReverseWraparound = reverseWraparound
+        buffer.savedCharacterProtection = characterProtection
     }
 
     //
@@ -5269,6 +5356,29 @@ open class Terminal {
     //   Ps = 5  -> blinking bar (xterm).
     //   Ps = 6  -> steady bar (xterm).
     //
+    //
+    // CSI Ps " q
+    //   Select character protection attribute (DECSCA).
+    //     Ps = 0, 2 -> DECSED and DECSEL can erase (default).
+    //     Ps = 1 -> DECSED and DECSEL cannot erase.
+    //
+    func cmdSelectCharacterProtection (_ pars: CsiParameters)
+    {
+        let p = pars.count == 0 ? 0 : pars [0]
+        guard p <= 2 else { return }
+        characterProtectionMode = .dec
+        setCharacterProtection(p == 1)
+    }
+
+    //
+    // ESC V (SPA) starts an ISO protected area, ESC W (EPA) ends it.
+    //
+    func cmdProtectedArea (start: Bool)
+    {
+        characterProtectionMode = .iso
+        setCharacterProtection(start)
+    }
+
     func cmdSetCursorStyle (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect.count == 0 || collect != [32] { /* space */
@@ -5842,6 +5952,8 @@ open class Terminal {
         buffer.scrollTop = 0
         buffer.scrollBottom = rows - 1
         setCurrentAttribute(CharData.defaultAttr)
+        characterProtectionMode = .off
+        setCharacterProtection(false)
         buffer.softReset ()
         resetSemanticPromptState(clearingScreenMarks: true)
 
@@ -7043,6 +7155,12 @@ open class Terminal {
     func cmdEraseChars (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
+
+        // ECH keeps protected cells only for ISO protection.
+        if characterProtectionMode == .iso {
+            eraseUnprotectedInBufferLine (y: buffer.y, start: buffer.x, end: buffer.x + min (p, cols))
+            return
+        }
 
         let line = buffer.lines[buffer.y + buffer.yBase]
         line.repairWideSeam(at: buffer.x)
