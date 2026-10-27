@@ -1166,6 +1166,7 @@ open class Terminal {
         activeHyperlink = nil
         TinyAtom.release(codes: payloadCodes)
         payloadCodes.removeAll()
+        hyperlinkAtoms.removeAll()
     }
 #endif
 
@@ -3564,6 +3565,10 @@ open class Terminal {
 
     private var activeHyperlink: ActiveHyperlink? = nil
     private var payloadCodes = Set<UInt16>()
+    /// The atom already made for each hyperlink payload this terminal still holds. A
+    /// program that redraws a link, or a multiplexer such as tmux that re-sends it on
+    /// every redraw, then reuses one atom instead of spending a new one each time.
+    private var hyperlinkAtoms: [String: TinyAtom] = [:]
 
     private func resolveActiveHyperlink() -> TinyAtom? {
         guard let activeHyperlink else {
@@ -3572,10 +3577,16 @@ open class Terminal {
 
         switch activeHyperlink {
         case .pending(let payload):
-            guard let atom = makePayload(value: payload) else {
+            if let atom = hyperlinkAtoms[payload] {
+                self.activeHyperlink = .resolved(atom)
+                return atom
+            }
+            // When the codes run out, release what this terminal no longer shows and try once more.
+            guard let atom = makePayload(value: payload) ?? collectAndMakePayload(value: payload) else {
                 self.activeHyperlink = .unavailable
                 return nil
             }
+            hyperlinkAtoms[payload] = atom
             self.activeHyperlink = .resolved(atom)
             return atom
         case .resolved(let atom):
@@ -3583,6 +3594,11 @@ open class Terminal {
         case .unavailable:
             return nil
         }
+    }
+
+    private func collectAndMakePayload(value: String) -> TinyAtom? {
+        garbageCollectPayload()
+        return makePayload(value: value)
     }
 
     @inline(__always)
@@ -7741,6 +7757,7 @@ open class Terminal {
         if !released.isEmpty {
             TinyAtom.release(codes: released)
             payloadCodes.subtract(released)
+            hyperlinkAtoms = hyperlinkAtoms.filter { !released.contains($0.value.code) }
         }
     }
     

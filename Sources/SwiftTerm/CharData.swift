@@ -194,10 +194,14 @@ public struct TinyAtom: Sendable {
 #if SWIFTTERM_EMBEDDED
     nonisolated(unsafe) private static var map: [UInt16: String] = [:]
     nonisolated(unsafe) private static var lastUsed: UInt16 = 0
+    nonisolated(unsafe) private static var free: [UInt16] = []
 #else
     private struct State {
         var map: [UInt16: any Sendable] = [:]
         var lastUsed: UInt16 = 0
+        /// Released codes, handed out again before a new one is taken: without them the
+        /// 16-bit space is spent once and every later lookup fails for the life of the process.
+        var free: [UInt16] = []
     }
     private static let state = Locked(State())
 #endif
@@ -222,6 +226,10 @@ public struct TinyAtom: Sendable {
     /// ``Terminal/makePayload(value:)`` for an atom whose lifetime is managed by a terminal.
 #if SWIFTTERM_EMBEDDED
     public static func lookup(value: String) -> TinyAtom? {
+        if let code = free.popLast() {
+            map[code] = value
+            return TinyAtom(code: code)
+        }
         guard lastUsed < UInt16.max - 1 else { return nil }
         lastUsed += 1
         map[lastUsed] = value
@@ -230,6 +238,10 @@ public struct TinyAtom: Sendable {
 #else
     public static func lookup<Value: Sendable>(value: Value) -> TinyAtom? {
         state.withLock { state in
+            if let code = state.free.popLast() {
+                state.map [code] = value
+                return TinyAtom (code: code)
+            }
             guard state.lastUsed < UInt16.max - 1 else {
                 return nil
             }
@@ -248,18 +260,19 @@ public struct TinyAtom: Sendable {
 
     /// Releases a caller-owned atom.
     ///
-    /// After this call, ``target`` returns nil for this atom and for all copies of it.
+    /// After this call, ``target`` returns nil for this atom and for all copies of it, until
+    /// ``lookup(value:)`` hands its code out again: release a code only once nothing still holds it.
     public func release() {
         TinyAtom.release(code: code)
     }
 
     static func release<S: Sequence>(codes: S) where S.Element == UInt16 {
 #if SWIFTTERM_EMBEDDED
-        for code in codes where code != 0 { map.removeValue(forKey: code) }
+        for code in codes where code != 0 && map.removeValue(forKey: code) != nil { free.append(code) }
 #else
         state.withLock { state in
-            for code in codes where code != 0 {
-                state.map.removeValue(forKey: code)
+            for code in codes where code != 0 && state.map.removeValue(forKey: code) != nil {
+                state.free.append(code)
             }
         }
 #endif
