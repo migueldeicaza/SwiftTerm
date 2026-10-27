@@ -1737,6 +1737,12 @@ extension TerminalView {
         #endif
     }
 
+    /// Whether the backspace key sends BS (^H) instead of DEL: the host set
+    /// `backspaceSendsControlH`, or the application set DECBKM.
+    var backspaceKeySendsControlH: Bool {
+        backspaceSendsControlH || withTerminal { $0.backarrowKeyMode }
+    }
+
     /// Runs `body` while holding the terminal lock.
     ///
     /// The closure must not call another API that synchronously acquires the

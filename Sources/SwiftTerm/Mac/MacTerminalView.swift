@@ -1276,6 +1276,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     /// This controls whether the backspace should send ^? or ^H, the default is ^?
+    /// The backspace key also sends ^H while the application sets DECBKM (`CSI ? 67 h`).
     public var backspaceSendsControlH: Bool = false
     
     var _nativeFg, _nativeBg: TTColor!
@@ -2526,7 +2527,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                    let scalar = singleControlScalar(in: characters) {
                     if scalar.value == 0x7f {
                         // Control-Backspace follows the same setting as Backspace.
-                        controlBytes = [backspaceSendsControlH ? 8 : 0x7f]
+                        controlBytes = [backspaceKeySendsControlH ? 8 : 0x7f]
                     } else {
                         controlBytes = [UInt8(scalar.value)]
                     }
@@ -2697,7 +2698,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         case #selector(cancelOperation(_:)):
             send (EscapeSequences.cmdEsc)
         case #selector(deleteBackward(_:)):
-            send ([backspaceSendsControlH ? 8 : 0x7f])
+            send ([backspaceKeySendsControlH ? 8 : 0x7f])
         case #selector(moveUp(_:)):
             sendKeyUp()
         case #selector(moveDown(_:)):
@@ -2972,12 +2973,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     private func kittyEncoder() -> KittyKeyboardEncoder {
         let terminalState = withTerminal { terminal in
-            (terminal.keyboardEnhancementFlags, terminal.applicationCursor, terminal.applicationKeypad)
+            (terminal.keyboardEnhancementFlags, terminal.applicationCursor, terminal.applicationKeypad,
+             terminal.backarrowKeyMode)
         }
         return KittyKeyboardEncoder(flags: terminalState.0,
                                     applicationCursor: terminalState.1,
                                     applicationKeypad: terminalState.2,
-                                    backspaceSendsControlH: backspaceSendsControlH)
+                                    backspaceSendsControlH: backspaceSendsControlH || terminalState.3)
     }
 
     private func kittyModifiers(from event: NSEvent, includeOption: Bool) -> KittyKeyboardModifiers {

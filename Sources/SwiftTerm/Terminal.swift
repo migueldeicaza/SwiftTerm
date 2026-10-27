@@ -683,6 +683,19 @@ open class Terminal {
     var marginMode: Bool = false
     
     var insertMode: Bool = false
+
+    /// KAM (ANSI mode 2). SwiftTerm keeps and reports the mode, but does not
+    /// lock the keyboard: an application must not be able to take the
+    /// keyboard away from the user.
+    var keyboardActionMode: Bool = false
+
+    /// SRM (ANSI mode 12). When it is reset, the terminal echoes typed text
+    /// locally. SwiftTerm keeps and reports the mode, but never echoes.
+    var sendReceiveMode: Bool = true
+
+    /// Backarrow Key Mode (DECBKM, private mode 67). When the application sets
+    /// it, the backspace key sends BS (^H) instead of DEL.
+    public private(set) var backarrowKeyMode: Bool = false
     
     var wraparound: Bool = false
 
@@ -1369,6 +1382,10 @@ open class Terminal {
             clearProgramStatus()
             resetNormalBuffer()
             activateNormalBuffer(clearAlt: false)
+            // A full reset also clears the alternate screen, even when it is not
+            // active, so that a later switch to it shows a blank page.
+            clearKittyImages(in: altBuffer, isAlternateBuffer: true)
+            altBuffer.clear ()
             resetSemanticPromptState(clearingScreenMarks: true)
         } else {
             normalBuffer.resize(newCols: cols, newRows: rows)
@@ -1379,6 +1396,9 @@ open class Terminal {
         // modes
         applicationKeypad = false
         applicationCursor = false
+        keyboardActionMode = false
+        sendReceiveMode = true
+        backarrowKeyMode = false
         setReverseColors(false)
         originMode = false
         
@@ -5449,6 +5469,8 @@ open class Terminal {
         switch mode {
         case 7:
             return wraparound
+        case 67:
+            return backarrowKeyMode
         case SpecialDECPrivateMode.bracketedPaste.rawValue:
             return bracketedPasteMode
         case SpecialDECPrivateMode.synchronizedOutput.rawValue:
@@ -5476,6 +5498,8 @@ open class Terminal {
         switch mode {
         case 7:
             return true
+        case 67:
+            return false
         case SpecialDECPrivateMode.bracketedPaste.rawValue,
              SpecialDECPrivateMode.synchronizedOutput.rawValue,
              SpecialDECPrivateMode.colorSchemeReports.rawValue,
@@ -5499,6 +5523,8 @@ open class Terminal {
         switch mode {
         case 7: // DECAWM - Wraparound Mode
             setWraparound(value)
+        case 67: // DECBKM
+            backarrowKeyMode = value
         case 117:
             break
         case SpecialDECPrivateMode.bracketedPaste.rawValue:
@@ -5640,8 +5666,8 @@ open class Terminal {
                 res = isCurrentBufferAlternate ? modeSet : modeReset
             case 66: // DECNKCM
                 res = applicationKeypad ? modeSet : modeReset
-            case 67: // backspace sends delete
-                res = modeAlwaysReset
+            case 67: // DECBKM - backarrow key sends backspace
+                res = backarrowKeyMode ? modeSet : modeReset
             case 69: // DECLRMM - mmargins
                 res = marginMode ? modeSet : modeReset
             case 80: // DECSDM - Sixel scrolling
@@ -5682,9 +5708,8 @@ open class Terminal {
             switch mode {
             case 1: // GATM - guarded area transfer
                 res = modeAlwaysReset
-            case 2: // Disable keyboard input KAM
-                // If implemented elsewhere, this can be added here, but I have reservations about this
-                res = modeCouldBeImplementedButReset
+            case 2: // KAM - reported, but the keyboard is never locked
+                res = keyboardActionMode ? modeSet : modeReset
             case 3: // CRM - Display control characters
                 res = modeCouldBeImplementedButReset
             case 4: // IRM Insert mode
@@ -5699,8 +5724,8 @@ open class Terminal {
                 res = modeAlwaysReset
             case 11: // PUM positioning unit
                 res = modeAlwaysReset
-            case 12: // SRM send-receive mode, update when we implement
-                res = modeCouldBeImplementedButSet
+            case 12: // SRM send-receive mode, reported, but SwiftTerm never echoes
+                res = sendReceiveMode ? modeSet : modeReset
             case 13: // FEAM Format effector action
                 res = modeAlwaysReset
             case 14: // FETM Format effector transfer
@@ -5803,6 +5828,9 @@ open class Terminal {
         }
         cursorHidden = false
         insertMode = false
+        keyboardActionMode = false
+        sendReceiveMode = true
+        backarrowKeyMode = false
         originMode = false
 
         reverseWraparound = false
@@ -6418,14 +6446,17 @@ open class Terminal {
         if collect == [] {
             switch (par) {
             case 2:
-                // KAM mode - unlocks the keyboard, not supported
-                break
+                // KAM mode - unlocks the keyboard
+                keyboardActionMode = false
             case 4:
                 // IRM Insert/Replace Mode
                 setInsertMode(false)
             case 8:
                 // BDSM explicit mode: present logical order, app does BiDi
                 updateCurrentBidiState(property: .supportMode) { $0.supportMode = .explicit }
+            case 12:
+                // SRM—Local Echo: Send/Receive Mode
+                sendReceiveMode = false
             case 20:
                 // LNM—Line Feed/New Line Mode
                 lineFeedMode = false
@@ -6630,8 +6661,8 @@ open class Terminal {
         if (collect == []) {
             switch par {
             case 2:
-                // KAM mode - unlocks the keyboard, I do not want to support it
-                break
+                // KAM mode - locks the keyboard. Only reported, see keyboardActionMode.
+                keyboardActionMode = true
             case 4:
                 // IRM Insert/Replace Mode
                 // https://vt100.net/docs/vt510-rm/IRM.html
@@ -6639,10 +6670,9 @@ open class Terminal {
             case 8:
                 // BDSM implicit mode: the terminal performs BiDi reordering
                 updateCurrentBidiState(property: .supportMode) { $0.supportMode = .implicit }
-//            case 12:
-//                 SRM—Local Echo: Send/Receive Mode
-//                 When implemented, hook up cmdDecRqm
-//                break
+            case 12:
+                // SRM—Local Echo: Send/Receive Mode
+                sendReceiveMode = true
             case 20:
                 // Automatic New Line (LNM)
                 lineFeedMode = true
