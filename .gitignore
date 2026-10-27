@@ -16,3 +16,4 @@ esctest/
 Web/node_modules/
 Web/dist/
 Web/test-results/
+esctest.log
