@@ -434,6 +434,11 @@ public class SelectionService: CustomDebugStringConvertible {
         
         self.start = sclamped
         self.end = eclamped
+        pivot = nil
+        selectingRows = false
+        selectionMode = .character
+        wordSelectionAnchor = nil
+        rowSelectionAnchor = nil
         isBlock = false
 
         setActiveAndNotify()
@@ -1290,9 +1295,10 @@ extension SelectionService {
             k += 1
         }
 
-        for (n, url) in starts.enumerated () {
-            let limit = n + 1 < starts.count ? starts [n + 1].start : hi
-            let end = trimURLEnd (chars, from: url.start, to: limit)
+        // Another scheme or www. can be part of the URL's path or query.
+        // Keep the complete run when it contains the clicked character.
+        for url in starts {
+            let end = trimURLEnd (chars, from: url.start, to: hi)
             guard end > url.body else {
                 continue
             }
@@ -1392,7 +1398,11 @@ extension SelectionService {
         guard chars [index] == quote else {
             return false
         }
-        if index > 0, chars [index - 1] == "\\" {
+        var beforeBackslashes = index
+        while beforeBackslashes > 0, chars [beforeBackslashes - 1] == "\\" {
+            beforeBackslashes -= 1
+        }
+        if (index - beforeBackslashes) % 2 != 0 {
             return false
         }
         if quote == "'", index > 0, index + 1 < chars.count,

@@ -3777,13 +3777,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     
     private func sharedMouseEvent (with event: NSEvent)
     {
-        withTerminal { terminal in
-            let displayBuffer = terminal.displayBuffer
-            let hit = calculateMouseHitLocked(at: convert(event.locationInWindow, from: nil))
-            let buttonFlags = encodeMouseEventLocked(with: event)
-            let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
-            terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+        withTerminal { _ in
+            sharedMouseEventLocked(with: event)
         }
+    }
+
+    private func sharedMouseEventLocked(with event: NSEvent) {
+        terminal.terminalLock.preconditionLocked()
+        let displayBuffer = terminal.displayBuffer
+        let hit = calculateMouseHitLocked(at: convert(event.locationInWindow, from: nil))
+        let buttonFlags = encodeMouseEventLocked(with: event)
+        let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
+        terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
     }
     
     private var autoScrollDelta = 0
@@ -4130,11 +4135,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             didSelectionDrag = true
             setNeedsDisplay(bounds)
         }
-        // An Option click that never moved reaches the application as the
-        // press and release it would have had.
-        if let press = heldOptionPress {
+        // Send the held press only if the current mode and release policy
+        // still permit mouse reports.
+        withTerminal { terminal in
+            guard let press = heldOptionPress else { return }
             heldOptionPress = nil
-            sharedMouseEvent(with: press)
+            guard reportsMouseLocked(for: event), terminal.mouseMode.sendButtonPress() else { return }
+            sharedMouseEventLocked(with: press)
         }
         updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
         // A click holding the modifiers the prompt policy asks for, such as
