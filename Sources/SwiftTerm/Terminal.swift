@@ -4613,7 +4613,6 @@ open class Terminal {
         charset = buffer.savedCharset
         originMode = buffer.savedOriginMode
         setMarginMode(buffer.savedMarginMode)
-        setWraparound(buffer.savedWraparound)
         reverseWraparound = buffer.savedReverseWraparound
     }
 
@@ -5166,7 +5165,6 @@ open class Terminal {
         buffer.savedY = buffer.y
         buffer.savedAttr = curAttr
         buffer.savedCharset = charset
-        buffer.savedWraparound = wraparound
         buffer.savedOriginMode = originMode
         buffer.savedMarginMode = marginMode
         buffer.savedReverseWraparound = reverseWraparound
@@ -5419,6 +5417,8 @@ open class Terminal {
 
     private func readDECPrivateMode(_ mode: Int) -> Bool? {
         switch mode {
+        case 7:
+            return wraparound
         case SpecialDECPrivateMode.bracketedPaste.rawValue:
             return bracketedPasteMode
         case SpecialDECPrivateMode.synchronizedOutput.rawValue:
@@ -5444,6 +5444,8 @@ open class Terminal {
 
     private func defaultDECPrivateModeValue(_ mode: Int) -> Bool? {
         switch mode {
+        case 7:
+            return true
         case SpecialDECPrivateMode.bracketedPaste.rawValue,
              SpecialDECPrivateMode.synchronizedOutput.rawValue,
              SpecialDECPrivateMode.colorSchemeReports.rawValue,
@@ -5465,6 +5467,8 @@ open class Terminal {
     @discardableResult
     private func applyDECPrivateMode(_ mode: Int, value: Bool) -> Bool {
         switch mode {
+        case 7: // DECAWM - Wraparound Mode
+            setWraparound(value)
         case 117:
             break
         case SpecialDECPrivateMode.bracketedPaste.rawValue:
@@ -5836,8 +5840,10 @@ open class Terminal {
                 // cursor position
                 let y = max (1, buffer.y + 1 - (originMode ? buffer.scrollTop : 0))
                 
-                // Need the max, because the cursor could be before the leftMargin
-                let x = max (1, buffer.x + 1 - (originMode ? buffer.marginLeft : 0))
+                // Need the max, because the cursor could be before the leftMargin.
+                // After a write to the last column the cursor waits one cell past
+                // it, but the report gives the last column.
+                let x = max (1, min (buffer.x, cols - 1) + 1 - (originMode ? buffer.marginLeft : 0))
                 sendResponse (cc.CSI, "\(y);\(x)R")
             default:
                 break;
@@ -5849,8 +5855,9 @@ open class Terminal {
             case 6:
                 // cursor position
                 let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
-                // Need the max, because the cursor could be before the leftMargin
-                let x = max (1, buffer.x + 1  - (usingMargins () ? buffer.marginLeft : 0))
+                // Need the max, because the cursor could be before the leftMargin,
+                // and the min for a write to the last column, as in CPR.
+                let x = max (1, min (buffer.x, cols - 1) + 1  - (usingMargins () ? buffer.marginLeft : 0))
                 sendResponse (cc.CSI, "?\(y);\(x);1R")
             case 15:
                 // Request printer status report, we respond "We are ready"
@@ -6413,8 +6420,6 @@ open class Terminal {
             case 6:
                 // DECOM Reset
                 originMode = false
-            case 7:
-                setWraparound(false)
             case 12:
                 cursorBlink = false
             case 40:
@@ -6640,8 +6645,6 @@ open class Terminal {
             case 6:
                 // DECOM Set
                 originMode = true
-            case 7:
-                setWraparound(true)
             case 12:
                 cursorBlink = true
                 break;
