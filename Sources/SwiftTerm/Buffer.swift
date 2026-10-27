@@ -186,9 +186,6 @@ public final class Buffer {
     var savedOriginMode: Bool = false
     /// Saved state for the origin mode
     var savedMarginMode: Bool = false
-    /// Saved state for the wrap around mode
-    /// Saved state for the reverse wrap around mode
-    var savedReverseWraparound: Bool = false
     /// The DECSCA or SPA protection saved by DECSC.
     var savedCharacterProtection: Bool = false
 
@@ -918,7 +915,6 @@ public final class Buffer {
         marginLeft = 0
         savedOriginMode = false
         savedMarginMode = false
-        savedReverseWraparound = false
         savedCharacterProtection = false
     }
     

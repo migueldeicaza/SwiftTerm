@@ -758,7 +758,12 @@ open class Terminal {
     private var charset: [UInt8:String]? = nil
     private var gCharsets: [[UInt8:String]?] = [CharSets.defaultCharset, nil, nil, nil]
     var gcharset: Int = 0
+    /// Private mode 45. Since xterm 383, backspace and CUB wrap back only
+    /// across rows that wrapped.
     var reverseWraparound: Bool = false
+    /// Private mode 1045, which keeps the original mode 45: backspace and CUB
+    /// wrap across any row, and from the top margin to the bottom margin.
+    var reverseWraparoundExtended: Bool = false
 #if SWIFTTERM_EMBEDDED
     var tdel: TerminalDelegate?
 #else
@@ -2793,31 +2798,16 @@ open class Terminal {
     func cmdBackspace ()
     {
         let buffer = self.buffer
-        restrictCursor(!reverseWraparound)
-        
+        if reverseWrapActive {
+            reverseWrapBackward (count: 1)
+            return
+        }
+        restrictCursor()
+
         let left = marginMode ? buffer.marginLeft : 0
-        let right = marginMode ? buffer.marginRight : buffer.cols-1
 
         if buffer.x > left {
             buffer.x -= 1
-        } else if reverseWraparound {
-            if buffer.x <= left {
-                if buffer.y > buffer.scrollTop && buffer.y <= buffer.scrollBottom && (buffer.lines [buffer.y + buffer.yBase].isWrapped || marginMode) {
-                    if !marginMode {
-                        buffer.lines [buffer.y + buffer.yBase].isWrapped = false
-                    }
-                    
-                    buffer.y -= 1
-                    buffer.x = right
-                // TODO: find actual last cell based on width used
-                } else if buffer.y == buffer.scrollTop {
-                    buffer.x = right
-                    buffer.y = buffer.scrollBottom
-                } else if buffer.y > 0 {
-                    buffer.x = right
-                    buffer.y -= 1
-                }
-            }
         } else {
             if buffer.x < left && buffer.x > 0 {
                 // This compensates for the scenario where backspace is supposed to move one step
@@ -4209,7 +4199,71 @@ open class Terminal {
     //
     func cmdCursorBackward (_ pars: CsiParameters, _ collect: cstring)
     {
-        cursorBackward(count: pars.count > 0 ? pars [0] : 1)
+        let count = pars.count > 0 ? pars [0] : 1
+        if reverseWrapActive {
+            reverseWrapBackward (count: max (1, count))
+        } else {
+            cursorBackward(count: count)
+        }
+    }
+
+    /// Whether backspace and CUB wrap back to the previous row. As xterm,
+    /// this needs DECAWM when the cursor moves, not when the mode is set.
+    var reverseWrapActive: Bool {
+        wraparound && (reverseWraparound || reverseWraparoundExtended)
+    }
+
+    /// Moves the cursor back `count` cells with reverse wraparound, as
+    /// xterm's CursorBack. From the left margin the cursor goes to the right
+    /// margin of the previous row. Mode 1045 goes to any previous row, and from
+    /// the top margin to the bottom margin. Mode 45 goes only to the row that
+    /// the current row wrapped from.
+    func reverseWrapBackward (count: Int)
+    {
+        let buffer = self.buffer
+        restrictCursor(false)
+        var left = marginMode ? buffer.marginLeft : 0
+        let right = marginMode ? buffer.marginRight : cols - 1
+        var n = count
+
+        // After a write to the last column the cursor waits past it. The first
+        // step only cancels the wait.
+        if buffer.x > right {
+            buffer.x = right
+            n -= 1
+        }
+        // If the cursor is already left of the left margin, let it go to the edge.
+        if buffer.x < left {
+            left = 0
+        }
+        while n > 0 {
+            if buffer.x - n >= left {
+                buffer.x -= n
+                break
+            }
+            // Go to the left margin, and use one more step to wrap.
+            n -= buffer.x - left + 1
+            let y = buffer.y
+            if reverseWraparoundExtended {
+                if y == buffer.scrollTop {
+                    buffer.y = buffer.scrollBottom
+                } else if y > 0 {
+                    buffer.y = y - 1
+                } else {
+                    buffer.x = left
+                    break
+                }
+            } else {
+                guard y > 0, y != buffer.scrollTop,
+                      buffer.lines [y + buffer.yBase].isWrapped else {
+                    buffer.x = left
+                    break
+                }
+                buffer.y = y - 1
+            }
+            buffer.x = right
+        }
+        updateRange (buffer.y)
     }
     
     func cursorBackward (count: Int)
@@ -4753,7 +4807,6 @@ open class Terminal {
         charset = buffer.savedCharset
         originMode = buffer.savedOriginMode
         setMarginMode(buffer.savedMarginMode)
-        reverseWraparound = buffer.savedReverseWraparound
         setCharacterProtection(buffer.savedCharacterProtection)
     }
 
@@ -5309,7 +5362,6 @@ open class Terminal {
         buffer.savedCharset = charset
         buffer.savedOriginMode = originMode
         buffer.savedMarginMode = marginMode
-        buffer.savedReverseWraparound = reverseWraparound
         buffer.savedCharacterProtection = characterProtection
     }
 
@@ -5776,6 +5828,8 @@ open class Terminal {
                 res = modeAlwaysReset
             case 45: // REVERSEWRAP
                 res = reverseWraparound ? modeSet : modeReset
+            case 1045: // REVERSEWRAP2
+                res = reverseWraparoundExtended ? modeSet : modeReset
             case 46: // allow logging
                 res = modeAlwaysReset
             case 47: // ALTBUF - alternate screen buffer
@@ -5950,6 +6004,7 @@ open class Terminal {
         originMode = false
 
         reverseWraparound = false
+        reverseWraparoundExtended = false
         // DEC STD 070: DECSTR resets DECLRMM.
         setMarginMode(false)
 
@@ -6611,6 +6666,8 @@ open class Terminal {
                 break
             case 45:
                 reverseWraparound = false
+            case 1045:
+                reverseWraparoundExtended = false
             case 66:
                 //log ("Switching back to normal keypad.");
                 applicationKeypad = false
@@ -6840,11 +6897,10 @@ open class Terminal {
             case 9:
                 // X10 Mouse
                 mouseMode = .x10
-            case 45: // Xterm Reverse Wrap-around
-                // reverse wraparound can only be enabled if Auto-wrap is enabled (DECAWM)
-                if wraparound {
-                    reverseWraparound = true
-                }
+            case 45: // Xterm Reverse Wrap-around, which also needs DECAWM to work
+                reverseWraparound = true
+            case 1045: // Xterm Extended Reverse Wrap-around
+                reverseWraparoundExtended = true
             case 69:
                 // Enable left and right margin mode (DECLRMM),
                 setMarginMode(true)
