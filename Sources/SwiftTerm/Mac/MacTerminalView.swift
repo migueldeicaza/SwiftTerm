@@ -4431,65 +4431,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         self.window?.backingScaleFactor ?? 1
     }
     
-    nonisolated func scale (image: NSImage, size: CGSize) -> NSImage {
-        guard let source = bitmapCGImage(from: image),
-              let context = bitmapContext(size: size) else {
-            return image
-        }
-        let srcRatio = image.size.height/image.size.width
-        let scaledRatio = size.width/size.height
-        let dstRect: CGRect
-        
-        if srcRatio < scaledRatio {
-            let nw = (size.height * image.size.width) / image.size.height
-            dstRect = CGRect (x: (size.width-nw)/2, y: 0, width: nw, height: size.height)
-        } else {
-            let nh = (size.width * image.size.height) / image.size.width
-            dstRect = CGRect (x: 0, y: (size.height-nh)/2, width: size.width, height: nh)
-        }
-        context.interpolationQuality = .high
-        context.draw(source, in: dstRect)
-        guard let scaled = context.makeImage() else { return image }
-        return NSImage(cgImage: scaled, size: size)
-    }
-    
-    nonisolated func drawImageInStripe (image: TTImage, srcY: CGFloat, width: CGFloat, srcHeight: CGFloat, dstHeight: CGFloat, size: CGSize) -> TTImage? {
-        guard image.size.width > 0, image.size.height > 0,
-              let source = bitmapCGImage(from: image),
-              let context = bitmapContext(size: size) else { return nil }
-        let scaleX = CGFloat(source.width) / image.size.width
-        let scaleY = CGFloat(source.height) / image.size.height
-        let cropRect = CGRect(x: 0,
-                              y: (image.size.height - srcY - srcHeight) * scaleY,
-                              width: image.size.width * scaleX,
-                              height: srcHeight * scaleY).integral
-        guard let cropped = source.cropping(to: cropRect) else { return nil }
-        context.interpolationQuality = .high
-        context.draw(cropped, in: CGRect(x: 0, y: 0, width: width, height: dstHeight))
-        guard let stripe = context.makeImage() else { return nil }
-        return NSImage(cgImage: stripe, size: size)
-    }
-
-    nonisolated private func bitmapCGImage(from image: NSImage) -> CGImage? {
-        for representation in image.representations {
-            if let bitmap = representation as? NSBitmapImageRep,
-               let cgImage = bitmap.cgImage {
-                return cgImage
-            }
-        }
-        var proposedRect = CGRect(origin: .zero, size: image.size)
-        return image.cgImage(forProposedRect: &proposedRect, context: nil, hints: nil)
-    }
-
-    nonisolated private func bitmapContext(size: CGSize) -> CGContext? {
-        let width = max(1, Int(ceil(size.width)))
-        let height = max(1, Int(ceil(size.height)))
-        return CGContext(data: nil, width: width, height: height,
-                         bitsPerComponent: 8, bytesPerRow: width * 4,
-                         space: CGColorSpaceCreateDeviceRGB(),
-                         bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-    }
-    
     nonisolated open func showCursor(source: Terminal) {
         frameSignal.markDirty()
     }

@@ -237,8 +237,6 @@ final class KittyGraphicsState {
 }
 
 extension Terminal {
-    private static let kittyMaxImageBytes = 400 * 1024 * 1024
-    private static let kittyMaxImageDimension = 10000
     static let kittyMaxApcBytes = 65 * 1024 * 1024
 
     private var kittyGraphicsStore: KittyGraphicsScreenState {
@@ -985,7 +983,7 @@ extension Terminal {
     ) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
         guard !base64Payload.isEmpty,
               let decoded = decodeKittyBase64Payload(base64Payload),
-              decoded.count <= Terminal.kittyMaxImageBytes else {
+              decoded.count <= ImageLimits.maxBitmapBytes else {
             return (nil, "EINVAL: invalid data")
         }
         if control.format != 0 && control.format != 24 &&
@@ -996,8 +994,8 @@ extension Terminal {
             guard control.width > 0, control.height > 0 else {
                 return (nil, "EINVAL: dimensions required")
             }
-            guard control.width <= Terminal.kittyMaxImageDimension,
-                  control.height <= Terminal.kittyMaxImageDimension else {
+            guard control.width <= ImageLimits.kittyMaxDimension,
+                  control.height <= ImageLimits.kittyMaxDimension else {
                 return (nil, "EINVAL: dimensions too large")
             }
         }
@@ -1005,7 +1003,7 @@ extension Terminal {
         if let compression = control.compression {
             guard compression == "z" else { return (nil, "EINVAL: unsupported format") }
             guard let inflated = decompressZlib(decoded, limit: kittyInflateLimit(control: control)),
-                  inflated.count <= Terminal.kittyMaxImageBytes else {
+                  inflated.count <= ImageLimits.maxBitmapBytes else {
                 return (nil, "EINVAL: decompression failed")
             }
             rawData = inflated
@@ -1056,52 +1054,53 @@ extension Terminal {
         return (cropped, cropWidth, cropHeight)
     }
 
-    /// Decode image bytes with the core decoder. WASI supports PNG.
-    public func decodeTerminalImage(_ data: TerminalData) -> (bytes: [UInt8], width: Int, height: Int)? {
-        decodePngToRgba(data)
+    /// Decodes an inline image file (OSC 1337 File=) to straight-alpha RGBA.
+    /// WASI supports PNG.
+    ///
+    /// The decoder also checks the format and the frame count of the file.
+    /// On Apple platforms, the result has the EXIF orientation of the file
+    /// applied, as in the bundled views.
+    ///
+    /// - Parameters:
+    ///   - data: the image file.
+    ///   - maxDimension: the largest width or height of the result that the
+    ///     host accepts, in pixels. The default is 16,384, the largest texture
+    ///     of most GPUs. For tall images, give a larger value. The largest
+    ///     value is 65,535, the limit of the bundled views.
+    ///   - maxBytes: the largest RGBA result that the host accepts, in bytes
+    ///     (4 bytes for each pixel). The default is 64 MiB. The largest value
+    ///     is 400 MiB, the limit of the bundled views.
+    public func decodeTerminalImage(_ data: TerminalData, maxDimension: Int? = nil,
+                                    maxBytes: Int? = nil) -> (bytes: [UInt8], width: Int, height: Int)? {
+        let limits = ImageLimits.portable(maxDimension: maxDimension, maxBytes: maxBytes)
+        return decodeToRgba(data, maxDimension: limits.maxDimension, maxOutputBytes: limits.maxBytes,
+                            applyOrientation: true)
     }
 
-    /// Read IHDR before invoking a decoder that can allocate from its dimensions.
-    func validateKittyPNGHeader(_ data: Data) -> Bool {
-        let signature: [UInt8] = [137, 80, 78, 71, 13, 10, 26, 10]
-        guard data.count >= 33, data.starts(with: signature) else { return false }
-        let header = Array(data.prefix(33))
-        guard header[8..<16].elementsEqual([0, 0, 0, 13, 73, 72, 68, 82]) else { return false }
-        func word(_ offset: Int) -> UInt32 {
-            (UInt32(header[offset]) << 24) | (UInt32(header[offset + 1]) << 16)
-                | (UInt32(header[offset + 2]) << 8) | UInt32(header[offset + 3])
-        }
-        guard let width = Int(exactly: word(16)), let height = Int(exactly: word(20)) else { return false }
-        let depth = Int(header[24])
-        let channels: Int
-        switch (header[25], depth) {
-        case (0, 1), (0, 2), (0, 4), (0, 8), (0, 16): channels = 1
-        case (2, 8), (2, 16): channels = 3
-        case (3, 1), (3, 2), (3, 4), (3, 8): channels = 1
-        case (4, 8), (4, 16): channels = 2
-        case (6, 8), (6, 16): channels = 4
-        default: return false
-        }
-        // Apply the existing per-buffer limit to samples and RGBA8 output.
-        // This checks the larger buffer, not total peak decoder memory.
-        let bytesPerPixel = max(4, (channels * depth + 7) / 8)
-        return validateKittyRawDimensions(width: width, height: height, bytesPerPixel: bytesPerPixel)
-    }
-
-    private func decodePngToRgba(_ data: Data) -> (bytes: [UInt8], width: Int, height: Int)? {
+    /// Decodes an image file to straight-alpha RGBA.
+    ///
+    /// - Parameters:
+    ///   - maxDimension: the largest width or height, in pixels.
+    ///   - maxOutputBytes: the largest RGBA result, in bytes. The decoded
+    ///     bitmap of the file always has the limit ``ImageLimits/maxBitmapBytes``.
+    ///   - applyOrientation: apply the EXIF orientation. Kitty graphics do not
+    ///     use it, as in kitty.
+    private func decodeToRgba(_ data: Data, maxDimension: Int, maxOutputBytes: Int,
+                              applyOrientation: Bool) -> (bytes: [UInt8], width: Int, height: Int)? {
         #if canImport(ImageIO) && canImport(CoreGraphics)
-        if data.starts(with: [137, 80, 78, 71, 13, 10, 26, 10]), !validateKittyPNGHeader(data) {
+        // The decoder checks the container, the frame count and the size.
+        guard let frame = ImageDecoder.open(data, maxDimension: maxDimension) else {
             return nil
         }
-        let imageOptions = [kCGImageSourceShouldCache: false] as CFDictionary
-        guard let source = CGImageSourceCreateWithData(data as CFData, imageOptions),
-              let dimensions = validatedKittyImageDimensions(source),
-              let image = CGImageSourceCreateImageAtIndex(source, 0, imageOptions) else {
-            return nil
-        }
-        let width = image.width
-        let height = image.height
-        guard width == dimensions.width, height == dimensions.height else {
+        let orientation = applyOrientation ? frame.orientation : 1
+        let (width, height) = applyOrientation ? frame.orientedSize : (frame.width, frame.height)
+        // The decoded image keeps its pixels until this function returns.
+        // This does not increase the peak memory: without the cache, the draw
+        // below decodes into a temporary bitmap of the same size. (An 8000 ×
+        // 8000 PNG has a peak of 734 MB both ways.)
+        guard ImageLimits.bitmapFits(width: width, height: height, bytesPerPixel: 4,
+                                     maxDimension: maxDimension, maxBytes: maxOutputBytes),
+              let image = frame.decode() else {
             return nil
         }
         let bytesPerPixel = 4
@@ -1109,16 +1108,29 @@ extension Terminal {
         var output = [UInt8](repeating: 0, count: height * bytesPerRow)
         let bitmapInfo = CGBitmapInfo.byteOrder32Big.rawValue |
             CGImageAlphaInfo.premultipliedLast.rawValue
-        guard let context = CGContext(data: &output,
-                                      width: width,
-                                      height: height,
-                                      bitsPerComponent: 8,
-                                      bytesPerRow: bytesPerRow,
-                                      space: CGColorSpaceCreateDeviceRGB(),
-                                      bitmapInfo: bitmapInfo) else {
+        // The context writes to `output` during the draw, so the pointer must
+        // be valid until the draw ends.
+        let drawn = output.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress,
+                                          width: width,
+                                          height: height,
+                                          bitsPerComponent: 8,
+                                          bytesPerRow: bytesPerRow,
+                                          space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: bitmapInfo) else {
+                return false
+            }
+            // Use a y axis down from the top, as the orientation transform needs.
+            context.translateBy(x: 0, y: CGFloat(height))
+            context.scaleBy(x: 1, y: -1)
+            context.concatenate(ImageDecoder.orientationTransform(
+                orientation, in: CGRect(x: 0, y: 0, width: width, height: height)))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            return true
+        }
+        guard drawn else {
             return nil
         }
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         // Core Graphics renders into premultiplied RGBA. The terminal core and
         // both renderers use canonical straight-alpha RGBA.
         for index in stride(from: 0, to: output.count, by: 4) {
@@ -1135,10 +1147,14 @@ extension Terminal {
         }
         return (output, width, height)
         #elseif canImport(PNG)
-        guard validateKittyPNGHeader(data) else { return nil }
+        guard let size = data.withUnsafeBytes({
+            ImageLimits.pngSize($0, maxDimension: maxDimension, maxOutputBytes: maxOutputBytes)
+        }) else {
+            return nil
+        }
         var source = KittyPngDataSource(bytes: Array(data))
         guard let image = try? PNG.Image.decompress(stream: &source),
-              validateKittyDimensions(width: image.size.x, height: image.size.y) else {
+              image.size.x == size.width, image.size.y == size.height else {
             return nil
         }
         let pixels = image.unpack(as: PNG.RGBA<UInt8>.self)
@@ -1183,13 +1199,15 @@ extension Terminal {
     }
 
     private func decodeKittyPayloadData(control: KittyGraphicsControl, rawData: Data) -> KittyGraphicsPayload? {
-        guard rawData.count <= Terminal.kittyMaxImageBytes else {
+        guard rawData.count <= ImageLimits.maxBitmapBytes else {
             return nil
         }
 
         switch control.format {
         case 100:
-            guard let decoded = decodePngToRgba(rawData) else { return nil }
+            guard let decoded = decodeToRgba(rawData, maxDimension: ImageLimits.kittyMaxDimension,
+                                             maxOutputBytes: ImageLimits.maxBitmapBytes,
+                                             applyOrientation: false) else { return nil }
             return .rgba(bytes: decoded.bytes, width: decoded.width, height: decoded.height)
         case 24:
             guard validateKittyRawDimensions(width: control.width, height: control.height, bytesPerPixel: 3) else {
@@ -1253,41 +1271,16 @@ extension Terminal {
             return nil
         }
         guard let inflated = decompressZlib(data, limit: kittyInflateLimit(control: control)),
-              inflated.count <= Terminal.kittyMaxImageBytes else {
+              inflated.count <= ImageLimits.maxBitmapBytes else {
             return nil
         }
         return inflated
     }
 
-    private func validateKittyDimensions(width: Int, height: Int) -> Bool {
-        guard width > 0, height > 0 else {
-            return false
-        }
-        return width <= Terminal.kittyMaxImageDimension && height <= Terminal.kittyMaxImageDimension
-    }
-
     private func validateKittyRawDimensions(width: Int, height: Int, bytesPerPixel: Int) -> Bool {
-        guard validateKittyDimensions(width: width, height: height) else {
-            return false
-        }
-        let pixelCount = Int64(width) * Int64(height)
-        let limit = Int64(Terminal.kittyMaxImageBytes) / Int64(bytesPerPixel)
-        return pixelCount <= limit
+        ImageLimits.bitmapFits(width: width, height: height, bytesPerPixel: bytesPerPixel,
+                               maxDimension: ImageLimits.kittyMaxDimension)
     }
-
-    #if canImport(ImageIO)
-    /// Check metadata for every ImageIO container before creating its bitmap.
-    func validatedKittyImageDimensions(_ source: CGImageSource) -> (width: Int, height: Int)? {
-        let metadataOptions = [kCGImageSourceShouldCache: false] as CFDictionary
-        guard let props = CGImageSourceCopyPropertiesAtIndex(source, 0, metadataOptions) as? [CFString: Any],
-              let width = props[kCGImagePropertyPixelWidth] as? Int,
-              let height = props[kCGImagePropertyPixelHeight] as? Int,
-              validateKittyRawDimensions(width: width, height: height, bytesPerPixel: 4) else {
-            return nil
-        }
-        return (width, height)
-    }
-    #endif
 
     private func loadKittyFilePayload(control: KittyGraphicsControl, base64Payload: [UInt8], temporary: Bool) -> (payload: KittyGraphicsPayload?, errorMessage: String?) {
         #if os(Windows) || os(WASI)
@@ -1321,7 +1314,7 @@ extension Terminal {
         }
 
         guard let rawData = decompressKittyData(data, control: control),
-              rawData.count <= Terminal.kittyMaxImageBytes else {
+              rawData.count <= ImageLimits.maxBitmapBytes else {
             return (nil, "EINVAL: bad payload")
         }
         guard let payload = decodeKittyPayloadData(control: control, rawData: rawData) else {
@@ -1359,7 +1352,7 @@ extension Terminal {
             return (nil, "EINVAL: bad payload")
         }
         guard let rawData = decompressKittyData(data, control: control),
-              rawData.count <= Terminal.kittyMaxImageBytes else {
+              rawData.count <= ImageLimits.maxBitmapBytes else {
             return (nil, "EINVAL: bad payload")
         }
         guard let payload = decodeKittyPayloadData(control: control, rawData: rawData) else {
@@ -1445,7 +1438,7 @@ extension Terminal {
         guard fstat(fd, &st) == 0, (st.st_mode & S_IFMT) == S_IFREG else { return nil }
         let fileSize = Int64(st.st_size)
         guard fileSize >= 0,
-              fileSize <= Int64(Terminal.kittyMaxImageBytes),
+              fileSize <= Int64(ImageLimits.maxBitmapBytes),
               Int64(offset) <= fileSize else { return nil }
         if size > 0, Int64(size) > fileSize - Int64(offset) { return nil }
 
@@ -1456,7 +1449,7 @@ extension Terminal {
             }
         }
 
-        let maxRead = size > 0 ? min(size, Terminal.kittyMaxImageBytes) : Terminal.kittyMaxImageBytes
+        let maxRead = size > 0 ? min(size, ImageLimits.maxBitmapBytes) : ImageLimits.maxBitmapBytes
         let remaining = min(Int64(maxRead), fileSize - Int64(offset))
         if remaining <= 0 {
             return Data()
@@ -1529,7 +1522,7 @@ extension Terminal {
         guard statSize > 0 else {
             return nil
         }
-        if statSize > Terminal.kittyMaxImageBytes {
+        if statSize > ImageLimits.maxBitmapBytes {
             return nil
         }
         if let expectedSize, statSize < expectedSize {
@@ -2684,7 +2677,7 @@ extension Terminal {
     /// raw formats, or by the per-screen storage budget - so decompressing it
     /// first only lets a small compressed payload force a large allocation.
     private func kittyInflateLimit(control: KittyGraphicsControl) -> Int {
-        let storageLimit = min(Terminal.kittyMaxImageBytes,
+        let storageLimit = min(ImageLimits.maxBitmapBytes,
                                max(0, clampedKittyImageCacheLimitBytes()))
         guard let expected = kittyExpectedDataSize(control: control) else {
             // PNG. The compressed file is smaller than the pixels it decodes
@@ -2716,7 +2709,7 @@ extension Terminal {
         let deflate = data[deflateStart..<checksumStart]
         guard !deflate.isEmpty else { return nil }
 
-        let maximumCapacity = min(Terminal.kittyMaxImageBytes, max(0, limit))
+        let maximumCapacity = min(ImageLimits.maxBitmapBytes, max(0, limit))
         guard maximumCapacity > 0 else { return nil }
         var capacity = min(maximumCapacity, max(64 * 1024, deflate.count * 2))
         while capacity > 0 {
@@ -2748,7 +2741,7 @@ extension Terminal {
         do {
             guard try inflator.push(Array(data)[...]) == nil else { return nil }
             let output = inflator.pull()
-            guard output.count <= min(Terminal.kittyMaxImageBytes, max(0, limit)) else {
+            guard output.count <= min(ImageLimits.maxBitmapBytes, max(0, limit)) else {
                 return nil
             }
             return Data(output)

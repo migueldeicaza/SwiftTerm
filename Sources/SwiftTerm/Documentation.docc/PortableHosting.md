@@ -82,6 +82,16 @@ on ``TerminalDelegate`` for a direct native host. The Full WASM build instead
 exports copied graphics snapshots; see the repository's
 [WebAssembly guide](https://github.com/migueldeicaza/SwiftTerm/blob/main/Docs/wasm.md).
 
+A portable host can decode an iTerm2 image file with
+``Terminal/decodeTerminalImage(_:maxDimension:maxBytes:)``. It can show the
+result with ``TerminalRasterImage`` and
+``Terminal/insertRasterImage(_:cellWidth:cellHeight:width:height:preserveAspectRatio:)``.
+By default, the decoder and ``TerminalRasterImage`` accept a width and a height
+of up to 16,384 pixels, and up to 64 MiB of pixels. For tall images, give
+larger values in `maxDimension` and `maxBytes`. The largest values are the
+limits of the bundled views. On Apple platforms, the decoder applies the EXIF
+orientation of the file.
+
 ## Keyboard, paste, and pointer input
 
 Use ``Terminal/sendHostKey(key:code:modifiers:eventType:text:shiftedKey:baseLayoutKey:)``

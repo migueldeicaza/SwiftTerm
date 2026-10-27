@@ -28,20 +28,30 @@ final class WasmGraphicsState {
     var inlineImages: [TerminalRasterImage] = []
     var inlineBytes = 0
     var nextInlineID: UInt32 = 0
+    /// The pixels of all the inline images, in bytes. The oldest images are
+    /// removed first. One image cannot be larger than this budget.
+    static let inlineByteBudget = 64 * 1024 * 1024
+    /// The largest width or height of an inline image, in pixels. Browsers
+    /// limit a canvas side to 32,767 pixels, and many GPUs limit a WebGL
+    /// texture to 16,384.
+    static let inlineMaxDimension = 16_384
 
     func insert(_ source: Terminal, bytes: [UInt8], width: Int, height: Int, cellWidth: Int, cellHeight: Int,
                 widthRequest: ImageSizeRequest, heightRequest: ImageSizeRequest, preserveAspectRatio: Bool) {
-        guard nextInlineID < UInt32.max else { return }
+        guard nextInlineID < UInt32.max, bytes.count <= Self.inlineByteBudget,
+              width <= Self.inlineMaxDimension, height <= Self.inlineMaxDimension else { return }
         nextInlineID += 1
-        guard let image = TerminalRasterImage(id: nextInlineID, width: width, height: height, rgba: bytes) else { return }
-        while (inlineBytes + bytes.count > 64 * 1024 * 1024 || inlineImages.count >= 4096), !inlineImages.isEmpty {
+        guard let image = TerminalRasterImage(id: nextInlineID, width: width, height: height, rgba: bytes),
+              source.insertRasterImage(image, cellWidth: cellWidth, cellHeight: cellHeight,
+                                       width: widthRequest, height: heightRequest,
+                                       preserveAspectRatio: preserveAspectRatio) else { return }
+        // Remove the oldest images only after the terminal accepted this one.
+        while (inlineBytes + bytes.count > Self.inlineByteBudget || inlineImages.count >= 4096), !inlineImages.isEmpty {
             let old = inlineImages.removeFirst()
             inlineBytes -= old.rgba.count
             old.discardPixels()
         }
         inlineImages.append(image); inlineBytes += bytes.count
-        source.insertRasterImage(image, cellWidth: cellWidth, cellHeight: cellHeight,
-                                 width: widthRequest, height: heightRequest, preserveAspectRatio: preserveAspectRatio)
     }
 
     func update(_ entry: TerminalEntry) -> Int32 {
@@ -255,7 +265,8 @@ extension WasmTerminalHost {
     }
     func createImage(source: Terminal, data: TerminalData, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool) {
         #if !SWIFTTERM_EMBEDDED
-        guard let decoded = source.decodeTerminalImage(data) else { return }
+        guard let decoded = source.decodeTerminalImage(data, maxDimension: WasmGraphicsState.inlineMaxDimension,
+                                                       maxBytes: WasmGraphicsState.inlineByteBudget) else { return }
         graphics.insert(source, bytes: decoded.bytes, width: decoded.width, height: decoded.height,
                         cellWidth: cellWidth, cellHeight: cellHeight,
                         widthRequest: width, heightRequest: height, preserveAspectRatio: preserveAspectRatio)

@@ -293,7 +293,9 @@ Hard limits are 1024 columns, 1024 visible rows, 100000 scrollback lines,
 16 MiB per write, 8 MiB per output queue, 8 MiB per event queue, 1 MiB per OSC
 payload, and 256 MiB per snapshot. The default scrollback is 10000 lines.
 Full reserves up to 64 MiB per screen for decoded Kitty images and a separate
-64 MiB pool for inline image pixels. The snapshot encoder accepts up to 1 MiB
+64 MiB pool for inline image pixels. An inline image can have a width and a
+height of up to 16,384 pixels. Browsers and GPUs limit the size of a canvas
+and of a texture. The snapshot encoder accepts up to 1 MiB
 of UTF-8 text per cell.
 Queue pressure returns an error and keeps already queued data. Input from a
 failed write can have been applied. Do not retry that write. Drain the queues

@@ -1949,9 +1949,9 @@ final class MetalTerminalRenderer {
                     continue
                 }
                 let rect = CGRect(x: CGFloat(image.col) * cellWidth,
-                                  y: rowBase - CGFloat(image.pixelHeight),
-                                  width: CGFloat(image.pixelWidth),
-                                  height: CGFloat(image.pixelHeight))
+                                  y: rowBase - image.size.height,
+                                  width: image.size.width,
+                                  height: image.size.height)
                 if let draw = imageDraw(texture: texture,
                                         rect: rect,
                                         uvRect: CGRect(x: 0, y: 0, width: 1, height: 1),
@@ -3590,19 +3590,7 @@ final class MetalTerminalRenderer {
         if let cached = imageTextureCache.object(forKey: image) {
             return cached
         }
-        var texture: MTLTexture?
-        if let cgImage = cgImage(from: image.image) {
-            texture = try? textureLoader.newTexture(cgImage: cgImage, options: textureOptions())
-        }
-        #if os(macOS)
-        if texture == nil, let data = image.image.tiffRepresentation {
-            texture = try? textureLoader.newTexture(data: data, options: textureOptions())
-        }
-        #else
-        if texture == nil, let data = image.image.pngData() {
-            texture = try? textureLoader.newTexture(data: data, options: textureOptions())
-        }
-        #endif
+        let texture = try? textureLoader.newTexture(cgImage: image.image, options: textureOptions())
         if let texture {
             imageTextureCache.setObject(texture, forKey: image)
         } else {
@@ -3610,7 +3598,7 @@ final class MetalTerminalRenderer {
             let key = ObjectIdentifier(image)
             if !imageTextureFailures.contains(key) {
                 imageTextureFailures.insert(key)
-                print("Metal: failed to create texture for image size=\(image.image.size)")
+                print("Metal: failed to create texture for image size=\(image.image.width)x\(image.image.height)")
             }
 #endif
         }
@@ -3717,22 +3705,6 @@ final class MetalTerminalRenderer {
             index += 4
         }
         return result
-    }
-
-    private func cgImage(from image: TTImage) -> CGImage? {
-        #if os(macOS)
-        var rect = CGRect(origin: .zero, size: image.size)
-        if let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) {
-            return cgImage
-        }
-        guard let data = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: data) else {
-            return nil
-        }
-        return bitmap.cgImage
-        #else
-        return image.cgImage
-        #endif
     }
 
     private func textureOptions() -> [MTKTextureLoader.Option: Any] {

@@ -11,22 +11,21 @@ import Foundation
 import CoreGraphics
 
 final class SnapshotImage: TerminalImage {
-    let image: TTImage
-    let pixelWidth: Int
-    let pixelHeight: Int
+    let image: CGImage
+    /// The size on the screen, in points.
+    let size: CGSize
     var col: Int
+    var pixelWidth: Int { image.width }
+    var pixelHeight: Int { image.height }
 
     init (_ source: TerminalView.AppleImage) {
         image = source.image
-        pixelWidth = source.pixelWidth
-        pixelHeight = source.pixelHeight
+        size = source.size
         col = source.col
     }
 
     func hasSameValue (as other: SnapshotImage) -> Bool {
-        image === other.image &&
-            pixelWidth == other.pixelWidth && pixelHeight == other.pixelHeight &&
-            col == other.col
+        image === other.image && size == other.size && col == other.col
     }
 }
 

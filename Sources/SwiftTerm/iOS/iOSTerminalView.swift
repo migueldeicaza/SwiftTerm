@@ -1952,8 +1952,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return CGRect (x: 0, y: 0, width: cellDimension.width * CGFloat(size.cols), height: cellDimension.height * CGFloat(size.rows))
     }
     
+    // Image stripes are allocated at this scale, and the image limits use it.
     func getImageScale () -> CGFloat {
-        self.window?.contentScaleFactor ?? 1
+        self.window?.contentScaleFactor ?? max (1, traitCollection.displayScale)
     }
     
     func getEffectiveWidth (size: CGSize) -> CGFloat
@@ -1965,51 +1966,6 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     {
     }
     
-    nonisolated func scale (image: UIImage, size: CGSize) -> UIImage {
-        UIGraphicsBeginImageContext(size)
-        
-        let srcRatio = image.size.height/image.size.width
-        let scaledRatio = size.width/size.height
-        
-        let dstRect: CGRect
-        
-        if srcRatio < scaledRatio {
-            let nw = (size.height * image.size.width) / image.size.height
-            dstRect = CGRect (x: (size.width-nw)/2, y: 0, width: nw, height: size.height)
-        } else {
-            let nh = (size.width * image.size.height) / image.size.width
-            dstRect = CGRect (x: 0, y: (size.height-nh)/2, width: size.width, height: nh)
-        }
-        image.draw (in: dstRect)
-        
-        let ret = UIGraphicsGetImageFromCurrentImageContext() ?? image
-        UIGraphicsEndImageContext()
-        return ret
-    }
-    
-    nonisolated func drawImageInStripe (image: TTImage, srcY: CGFloat, width: CGFloat, srcHeight: CGFloat, dstHeight: CGFloat, size: CGSize) -> TTImage? {
-        let srcRect = CGRect(x: 0, y: CGFloat(srcY), width: image.size.width, height: srcHeight)
-        guard let cropCG = image.cgImage?.cropping(to: srcRect) else {
-            return nil
-        }
-        let uicrop = UIImage (cgImage: cropCG)
-        
-        let destRect = CGRect(x: 0, y: 0, width: width, height: dstHeight)
-        
-        UIGraphicsBeginImageContextWithOptions(size, false, 0.0)
-        guard let ctx = UIGraphicsGetCurrentContext() else {
-            return nil
-        }
-        ctx.translateBy(x: 0, y: dstHeight)
-        ctx.scaleBy(x: 1, y: -1)
-
-        uicrop.draw(in: destRect)
-        
-        let stripe = UIGraphicsGetImageFromCurrentImageContext()
-        UIGraphicsEndImageContext()
-        return stripe
-    }
-
     func updateScroller ()
     {
         // May be queued from a callback fired during Terminal.init, before

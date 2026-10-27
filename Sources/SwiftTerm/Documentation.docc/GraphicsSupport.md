@@ -43,6 +43,23 @@ SwiftTerm handles this via the ``TerminalDelegate/createImage(source:data:width:
 delegate callback. The image data (PNG, JPEG, GIF, etc.) is delivered as `Data`
 along with size requests.
 
+The bundled AppKit and UIKit views decode PNG, JPEG, GIF, TIFF, WebP, BMP and
+HEIC files. They also decode AVIF files on macOS 13 and later, and on iOS 16
+and later. The views show the first or the primary frame of an animation.
+
+The views reject an image that is larger than one of these limits:
+
+- 10,000 frames in a file, or 2,048 items in a HEIF file
+- 65,535 pixels in width or in height
+- 400 MiB for the decoded bitmap
+- 8,192 rows on the screen
+
+The views draw each row of an image into its own bitmap, at the scale of the
+screen. All the bitmaps of one image have a limit of 400 MiB. For example, on
+a 2x screen, an image of 10,000 × 10,000 points is too large. Each bitmap has a
+width of 8,192 pixels or less. The views do not show the part of an image to
+the right of this width. The views do not show SVG or PDF files.
+
 ### Testing iTerm2 Images
 
 Use the `imgcat` script available from iTerm2:

@@ -2590,25 +2590,30 @@ extension TerminalView {
 
 
 
-    nonisolated private func kittyImageFromRgba(bytes: [UInt8], width: Int, height: Int) -> TTImage? {
-        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGBitmapInfo(rawValue:
-            CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.last.rawValue)
-        let data = Data(bytes)
-        guard let providerRef = CGDataProvider(data: data as CFData) else {
+    /// Makes an image from 8-bit RGBA pixels, from the top-left corner.
+    /// `bitmapInfo` gives the alpha layout.
+    nonisolated static func cgImage(fromRgba bytes: [UInt8], width: Int, height: Int,
+                                    bitmapInfo: CGBitmapInfo) -> CGImage? {
+        guard let providerRef = CGDataProvider(data: Data(bytes) as CFData) else {
             return nil
         }
-        guard let cgimage = CGImage(width: width,
-                                    height: height,
-                                    bitsPerComponent: 8,
-                                    bitsPerPixel: 32,
-                                    bytesPerRow: width * 4,
-                                    space: rgbColorSpace,
-                                    bitmapInfo: bitmapInfo,
-                                    provider: providerRef,
-                                    decode: nil,
-                                    shouldInterpolate: true,
-                                    intent: .defaultIntent) else {
+        return CGImage(width: width,
+                       height: height,
+                       bitsPerComponent: 8,
+                       bitsPerPixel: 32,
+                       bytesPerRow: width * 4,
+                       space: CGColorSpaceCreateDeviceRGB(),
+                       bitmapInfo: bitmapInfo,
+                       provider: providerRef,
+                       decode: nil,
+                       shouldInterpolate: true,
+                       intent: .defaultIntent)
+    }
+
+    nonisolated private func kittyImageFromRgba(bytes: [UInt8], width: Int, height: Int) -> TTImage? {
+        let bitmapInfo = CGBitmapInfo(rawValue:
+            CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.last.rawValue)
+        guard let cgimage = Self.cgImage(fromRgba: bytes, width: width, height: height, bitmapInfo: bitmapInfo) else {
             return nil
         }
         return TTImage(cgImage: cgimage, size: CGSize(width: width, height: height))
@@ -2618,13 +2623,9 @@ extension TerminalView {
         guard imageSize.width > 0, imageSize.height > 0, rect.width > 0, rect.height > 0 else {
             return rect
         }
-        let scale = min(rect.width / imageSize.width, rect.height / imageSize.height)
-        let width = imageSize.width * scale
-        let height = imageSize.height * scale
-        return CGRect(x: rect.origin.x + (rect.width - width) / 2,
-                      y: rect.origin.y + (rect.height - height) / 2,
-                      width: width,
-                      height: height)
+        let fit = ImageLimits.aspectFit(width: imageSize.width, height: imageSize.height,
+                                        inWidth: rect.width, height: rect.height)
+        return CGRect(x: rect.origin.x + fit.x, y: rect.origin.y + fit.y, width: fit.width, height: fit.height)
     }
     
     //
@@ -3683,10 +3684,11 @@ extension TerminalView {
                 for image in otherImages {
                     let col = image.col
                     let rect = CGRect(x: CGFloat (col)*cellDimension.width,
-                                      y: rowBase - CGFloat (image.pixelHeight),
-                                      width: CGFloat (image.pixelWidth),
-                                      height: CGFloat (image.pixelHeight))
-                    image.image.draw (in: rect)
+                                      y: rowBase - image.size.height,
+                                      width: image.size.width,
+                                      height: image.size.height)
+                    // The stripes are upright, and this context has the y axis up.
+                    context.draw (image.image, in: rect)
                 }
             }
             switch renderMode {
@@ -4691,16 +4693,18 @@ extension TerminalView {
         sendHorizontalKey(left: false)
     }
     
+    // One row of an inline image or a Sixel image. `image` is upright.
+    // `size` is the size of the row on the screen, in points.
     class AppleImage: TerminalImage {
-        var image: TTImage
-        var pixelWidth: Int
-        var pixelHeight: Int
+        var image: CGImage
+        var size: CGSize
         var col: Int
+        var pixelWidth: Int { image.width }
+        var pixelHeight: Int { image.height }
         
-        init (image: TTImage, width: Int, height: Int, onCol: Int) {
+        init (image: CGImage, size: CGSize, onCol: Int) {
             self.image = image
-            self.pixelWidth = width
-            self.pixelHeight = height
+            self.size = size
             self.col = onCol
         }
     }
@@ -4715,132 +4719,96 @@ extension TerminalView {
     }
     
     public nonisolated func createImageFromBitmap(source: Terminal, bytes: inout [UInt8], width: Int, height: Int) {
-        let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo: CGBitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
-        let pixelData = NSData(bytes: bytes, length: bytes.count)
-        guard let providerRef: CGDataProvider = CGDataProvider(data: pixelData) else {
-            return
-        }
-        guard let cgimage: CGImage = CGImage(
-                width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
-                bytesPerRow: width * 4, space: rgbColorSpace, bitmapInfo: bitmapInfo,
-                provider: providerRef, decode: nil, shouldInterpolate: true,
-                intent: .defaultIntent) else {
-            return
-        }
-        
-        let image = TTImage (cgImage: cgimage, size: CGSize (width: width, height: height))
         guard let metrics = cachedImageMetricsValue() else {
             return
         }
+        // With `.auto`, the image uses width / scale points.
         let terminalWidth = CGFloat(source.cols) * metrics.cellSize.width
-        insertImage(image, terminal: source,
-                    width: CGFloat(width) > terminalWidth ? .percent(100) : .auto,
+        insertImage(size: CGSize (width: width, height: height), orientation: 1, terminal: source,
+                    metrics: metrics,
+                    width: CGFloat(width) / metrics.imageScale > terminalWidth ? .percent(100) : .auto,
                     height: .auto,
-                    preserveAspectRatio: true)
+                    preserveAspectRatio: true) { [bytes] in
+            Self.cgImage(fromRgba: bytes, width: width, height: height,
+                         bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue))
+        }
     }
    
     public nonisolated func createImage (source: Terminal, data: Data, width widthRequest: ImageSizeRequest, height heightRequest: ImageSizeRequest, preserveAspectRatio: Bool)
     {
-        guard let img = TTImage(data: data) else {
+        // NSImage and UIImage decode every frame, and accept any size that
+        // the file declares. Read the header of one frame, and decode it only
+        // after the checks.
+        guard let metrics = cachedImageMetricsValue(),
+              let frame = ImageDecoder.open(data, maxDimension: ImageLimits.maxDimension) else {
             return
         }
-        insertImage(img, terminal: source,
+        #if os(macOS)
+        // NSImage uses the resolution of the file. Keep the same size.
+        let size = frame.pointSize
+        #else
+        let size = frame.pixelSize
+        #endif
+        insertImage(size: size, orientation: frame.orientation, terminal: source,
+                    metrics: metrics,
                     width: widthRequest,
                     height: heightRequest,
-                    preserveAspectRatio: preserveAspectRatio)
+                    preserveAspectRatio: preserveAspectRatio) {
+            frame.decode()
+        }
     }
     
     // Inserts the specified image at the current buffer position (x, y) using the specified size requests
     // and aspect ratio request.   The insertion is done by adding slices of the image, one per line
     // to the buffer.
-    nonisolated func insertImage (_ image: TTImage,
+    //
+    // `size` is the size of the image after the orientation is applied.
+    // `metrics` is the value of cachedImageMetricsValue() that the caller
+    // used to make its size requests.
+    // `decode` gives the pixels, in the orientation of the file. It is called
+    // only if the drawn area is in the limits.
+    nonisolated func insertImage (size: CGSize,
+                                  orientation: Int,
                                   terminal: Terminal,
+                                  metrics: (cellSize: CGSize, imageScale: CGFloat),
                                   width widthRequest: ImageSizeRequest,
                                   height heightRequest: ImageSizeRequest,
-                                  preserveAspectRatio: Bool)
+                                  preserveAspectRatio: Bool,
+                                  decode: () -> CGImage?)
     {
-        guard let metrics = cachedImageMetricsValue() else {
-            return
-        }
         let cellSize = metrics.cellSize
         let buffer = terminal.buffer
-        var img = image
-        let displayScale = metrics.imageScale
-        
-        // Converts a size request in a single dimension into an absolute pixel value, where
-        // the `dim` is the request, `regionSize` is the available view space, and `imageSize` is
-        // the size of the image along the dimension being requested
-        func getPixels (fromDim dim: ImageSizeRequest, regionSize: CGFloat, imageSize: CGFloat, cellSize: CGFloat) -> CGFloat {
-            switch dim {
-            case .auto:
-                return imageSize/displayScale
-            case .cells(let n):
-                return cellSize * CGFloat (n)
-            case .pixels(let n):
-                return CGFloat (n)
-            case .percent(let pct):
-                return CGFloat (pct) * 0.01 * regionSize
-            }
+        // The stripes use the same scale as the check below.
+        let scale = metrics.imageScale
+
+        // With `.auto`, the image uses one pixel of the screen for each unit
+        // of `size`. For a Sixel image or a file at 72 dots per inch, this is
+        // one pixel of the screen for each pixel of the image. On macOS, a
+        // file at 144 dots per inch shows at half that size, as with NSImage.
+        //
+        // Check the drawn area before the decode and the stripes: a small file
+        // can declare a large image, and a small image can request a large
+        // area, for example with a narrow aspect ratio.
+        guard let area = ImageLimits.area (width: widthRequest, height: heightRequest,
+                                           preserveAspectRatio: preserveAspectRatio,
+                                           naturalWidth: size.width / scale, naturalHeight: size.height / scale,
+                                           cellWidth: cellSize.width, cellHeight: cellSize.height,
+                                           columns: terminal.cols, rows: terminal.rows,
+                                           letterbox: true),
+              ImageLimits.stripesFit (area, cellHeight: cellSize.height, scale: scale),
+              let image = decode () else {
+            return
         }
 
-        let widthImageSize: CGFloat
-        let heightImageSize: CGFloat
-        switch widthRequest {
-        case .auto:
-            widthImageSize = img.size.width
-        default:
-            widthImageSize = img.size.width
-        }
-        switch heightRequest {
-        case .auto:
-            heightImageSize = img.size.height
-        default:
-            heightImageSize = img.size.height
-        }
-
-        let terminalRegion = CGSize(width: CGFloat(terminal.cols) * cellSize.width,
-                                    height: CGFloat(terminal.rows) * cellSize.height)
-        var width = getPixels (fromDim: widthRequest, regionSize: terminalRegion.width, imageSize: widthImageSize, cellSize: cellSize.width)
-        var height = getPixels (fromDim: heightRequest, regionSize: terminalRegion.height, imageSize: heightImageSize, cellSize: cellSize.height)
-        
-        if preserveAspectRatio {
-            switch (widthRequest, heightRequest) {
-            case (.auto, .auto):
-                break
-            case (_, .auto):
-                height = (width * img.size.height) / img.size.width
-            case (.auto, _):
-                width = (height * img.size.width) / img.size.height
-            case (_, _):
-                img = scale (image: img, size: CGSize (width: width, height: height))
-            }
-        }
-        
-        let rows = Int (ceil (height/cellSize.height))
-        
-        let stripeSize = CGSize (width: width, height: cellSize.height)
         var didScroll = false
-        #if os(iOS) || os(visionOS)
-        var srcY: CGFloat = 0
-        #else
-        var srcY: CGFloat = img.size.height
-        #endif
-        
-        let heightRatio = img.size.height/height
-        for _ in 0..<rows {
-            #if os(macOS)
-            srcY -= cellSize.height * heightRatio
-            #endif
-            guard let stripe = drawImageInStripe (image: img, srcY: srcY, width: width, srcHeight: cellSize.height * heightRatio, dstHeight: cellSize.height, size: stripeSize) else {
-                continue
+        for row in 0..<area.rows {
+            if let stripe = ImageStripes.draw (image, orientation: orientation, area: area, row: row,
+                                               cellHeight: cellSize.height, scale: scale) {
+                // Show each pixel of the stripe as one pixel of the screen.
+                let stripeSize = CGSize (width: CGFloat (stripe.width) / scale, height: CGFloat (stripe.height) / scale)
+                let attachedImage = AppleImage (image: stripe, size: stripeSize, onCol: buffer.x)
+                buffer.attachImage(attachedImage, toLineAt: buffer.y+buffer.yBase)
             }
-            #if os(iOS) || os(visionOS)
-            srcY += cellSize.height * heightRatio
-            #endif
-            
-            let attachedImage = AppleImage (image: stripe, width: Int (stripeSize.width), height: Int (cellSize.height), onCol: terminal.buffer.x)
-            buffer.attachImage(attachedImage, toLineAt: buffer.y+buffer.yBase)
 
             terminal.updateRange (buffer.y)
 
