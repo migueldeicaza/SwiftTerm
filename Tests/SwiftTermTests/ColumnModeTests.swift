@@ -125,4 +125,19 @@ struct ColumnModeTests {
         terminal.feed(text: "\(esc)[?95h\(esc)c")
         #expect(!terminal.noClearOnColumnChange)
     }
+
+    @Test func noClearModeNeedsConformanceLevelFive() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(rows: 5)
+        terminal.feed(text: "\(esc)[64;1\"p\(esc)[?40;95h1\(esc)[?3h")
+        #expect(TerminalTestHarness.visibleLinesText(buffer: terminal.buffer, terminal: terminal).allSatisfy { $0.isEmpty })
+
+        terminal.feed(text: "\(esc)[65;1\"p\(esc)[?95h2\(esc)[?3l")
+        #expect(TerminalTestHarness.lineText(buffer: terminal.buffer, terminal: terminal, row: 0) == "2")
+    }
+
+    @Test func softResetTurnsOffLeftRightMarginMode() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(rows: 5)
+        terminal.feed(text: "\(esc)[?69h\(esc)[!p")
+        #expect(!terminal.marginMode)
+    }
 }
