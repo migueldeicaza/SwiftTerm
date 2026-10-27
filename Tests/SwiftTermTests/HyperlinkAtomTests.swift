@@ -2,8 +2,8 @@
 //  HyperlinkAtomTests.swift
 //
 //  A hyperlink redrawn many times, as a full-screen program under tmux redraws it,
-//  must not spend the 16-bit atom space; and codes the collector releases must be
-//  handed out again.
+//  must not spend the 16-bit atom space; codes the collector releases must be
+//  handed out again; and a terminal must collect on its own as links accumulate.
 //
 
 import Foundation
@@ -17,6 +17,10 @@ final class HyperlinkAtomTests: TerminalDelegate {
 
     private func link(_ url: String, _ text: String) -> String {
         "\u{1b}]8;id=x;\(url)\u{1b}\\\(text)\u{1b}]8;;\u{1b}\\"
+    }
+
+    private func cursorCode(_ terminal: Terminal) -> UInt16 {
+        terminal.displayBuffer.lines[terminal.buffer.y + terminal.buffer.yBase][0].payload.code
     }
 
     @Test func testRedrawnHyperlinkReusesOneAtom() {
@@ -41,7 +45,7 @@ final class HyperlinkAtomTests: TerminalDelegate {
         var codes = Set<UInt16>()
         for n in 0..<200 {
             terminal.feed(text: link("https://example.com/\(n)", "link \(n)"))
-            codes.insert(terminal.displayBuffer.lines[terminal.buffer.y + terminal.buffer.yBase][0].payload.code)
+            codes.insert(cursorCode(terminal))
             terminal.feed(text: "\r\n")
         }
         codes.remove(0)
@@ -51,8 +55,52 @@ final class HyperlinkAtomTests: TerminalDelegate {
         terminal.feed(text: "\r\n\r\n\r\n")
         terminal.garbageCollectPayload()
 
-        let again = try #require(TinyAtom.lookup(value: "probe"))
-        defer { again.release() }
-        #expect(codes.contains(again.code))
+        // Other suites share the process-wide table and may release codes meanwhile, so look
+        // for one of ours among the next lookups rather than requiring the very next one.
+        var probes: [TinyAtom] = []
+        defer { probes.forEach { $0.release() } }
+        var reused = false
+        for _ in 0..<(codes.count + 64) {
+            let probe = try #require(TinyAtom.lookup(value: "probe"))
+            probes.append(probe)
+            if codes.contains(probe.code) {
+                reused = true
+                break
+            }
+        }
+        #expect(reused)
+    }
+
+    @Test func testCollectedLinkRedrawnResolvesToItsOwnURL() throws {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 30, rows: 2, scrollback: 0))
+        let drawn = link("https://example.com/a", "link a")
+        terminal.feed(text: drawn)
+        terminal.feed(text: "\r\n\r\n\r\n")
+        terminal.garbageCollectPayload()
+
+        // Whatever now holds link a's old code, drawing link a again must not reuse a stale entry.
+        let probe = try #require(TinyAtom.lookup(value: "probe"))
+        defer { probe.release() }
+        terminal.feed(text: drawn)
+        let row = terminal.buffer.y
+        #expect(terminal.link(at: .screen(Position(col: 1, row: row)), mode: .explicitOnly) == "https://example.com/a")
+        #expect(probe.target as? String == "probe")
+    }
+
+    @Test func testTerminalCollectsOnItsOwnAsLinksAccumulate() throws {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 30, rows: 2, scrollback: 0))
+        let firstPayload = "id=x;https://example.com/first"
+        terminal.feed(text: link("https://example.com/first", "first"))
+        let first = cursorCode(terminal)
+        #expect(first != 0)
+        terminal.feed(text: "\r\n")
+
+        // Far more distinct links than the first collection threshold, each scrolled away.
+        for n in 0..<3_000 {
+            terminal.feed(text: link("https://example.com/\(n)", "link \(n)") + "\r\n")
+        }
+
+        // The first link's code was released along the way: it no longer names that link.
+        #expect(TinyAtom.stored(code: first).target as? String != firstPayload)
     }
 }

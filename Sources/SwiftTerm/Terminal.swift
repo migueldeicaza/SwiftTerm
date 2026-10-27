@@ -3569,6 +3569,12 @@ open class Terminal {
     /// program that redraws a link, or a multiplexer such as tmux that re-sends it on
     /// every redraw, then reuses one atom instead of spending a new one each time.
     private var hyperlinkAtoms: [String: TinyAtom] = [:]
+    /// Once this terminal holds this many payloads it collects on its own: twice what it
+    /// held after the last collection, so the scan's cost is spread over the links it frees.
+    private var collectAtPayloadCount = 1024
+    /// After a collection on exhaustion freed nothing, the distinct new links to pass before
+    /// trying again, rather than scanning both buffers for every one.
+    private var linksUntilCollectRetry = 0
 
     private func resolveActiveHyperlink() -> TinyAtom? {
         guard let activeHyperlink else {
@@ -3581,8 +3587,24 @@ open class Terminal {
                 self.activeHyperlink = .resolved(atom)
                 return atom
             }
-            // When the codes run out, release what this terminal no longer shows and try once more.
-            guard let atom = makePayload(value: payload) ?? collectAndMakePayload(value: payload) else {
+            if payloadCodes.count >= collectAtPayloadCount {
+                garbageCollectPayload()
+            }
+            var made = makePayload(value: payload)
+            if made == nil {
+                // The codes ran out: release what this terminal no longer holds in either
+                // buffer, scrollback included, and try once more.
+                if linksUntilCollectRetry == 0 {
+                    garbageCollectPayload()
+                    made = makePayload(value: payload)
+                    if made == nil {
+                        linksUntilCollectRetry = 256
+                    }
+                } else {
+                    linksUntilCollectRetry -= 1
+                }
+            }
+            guard let atom = made else {
                 self.activeHyperlink = .unavailable
                 return nil
             }
@@ -3596,11 +3618,6 @@ open class Terminal {
         }
     }
 
-    private func collectAndMakePayload(value: String) -> TinyAtom? {
-        garbageCollectPayload()
-        return makePayload(value: value)
-    }
-
     @inline(__always)
     private func resolveActiveHyperlinkPayloadCode() -> UInt16 {
         resolveActiveHyperlink()?.code ?? 0
@@ -3610,7 +3627,9 @@ open class Terminal {
     ///
     /// ``garbageCollectPayload()`` releases the atom after it is no longer present in
     /// either terminal buffer. The terminal also releases its remaining atoms when it
-    /// is deinitialized.
+    /// is deinitialized. The terminal collects on its own while it processes input, so
+    /// write the atom into a buffer cell before feeding more data, or it may be released
+    /// and its code reissued.
 #if SWIFTTERM_EMBEDDED
     public func makePayload(value: String) -> TinyAtom? {
         guard let atom = TinyAtom.lookup(value: value) else { return nil }
@@ -7726,8 +7745,9 @@ open class Terminal {
 
     /**
      * Check for payload identifiers that are not in use and stop retaining their payload,
-     * to avoid accumulting memory for images and URLs that are no longer visible or
-     * available by scrolling.
+     * to avoid accumulating memory for images and URLs that are no longer visible or
+     * available by scrolling. The terminal also runs this on its own as hyperlink payloads
+     * accumulate, and when atom codes run out; released codes are handed out again.
      */
     public func garbageCollectPayload() {
         if payloadCodes.isEmpty {
@@ -7759,6 +7779,7 @@ open class Terminal {
             payloadCodes.subtract(released)
             hyperlinkAtoms = hyperlinkAtoms.filter { !released.contains($0.value.code) }
         }
+        collectAtPayloadCount = max(1024, payloadCodes.count * 2)
     }
     
     /**

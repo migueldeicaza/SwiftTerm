@@ -44,7 +44,8 @@ public struct RenderSnapshotCell: Sendable {
     public let attribute: Attribute
     public let isProtected: Bool
     public let semanticContent: SemanticContent
-    /// An optional identity only. This value does not retain the payload.
+    /// An optional identity only. This value does not retain the payload, and is unique
+    /// only while some cell holds it: a released code is handed out again.
     public let payloadID: UInt16?
 }
 
