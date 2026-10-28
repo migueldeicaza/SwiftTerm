@@ -173,6 +173,11 @@ non-link decorations unchanged. Selection colors take precedence over both.
 
 ### What happens when the user activates a link
 
+Set `TerminalOptions.enableOsc8Hyperlinks` to `false` to disable OSC 8 hyperlinks
+at startup. Set `terminalView.enableOsc8Hyperlinks` to change this while the
+terminal runs. The setting also hides links already in the buffer. Implicit URL
+and path detection remain available.
+
 When a click/tap lands on an active link, ``TerminalView`` calls
 ``TerminalViewDelegate/requestOpenLink(source:link:params:)``.
 
@@ -180,8 +185,13 @@ When a click/tap lands on an active link, ``TerminalView`` calls
   contains parsed key/value pairs from the OSC 8 payload (when present).
 - For implicit URL detection, `link` is the detected URL text and `params` is
   empty.
-- On macOS, the default delegate implementation opens the link with
-  `NSWorkspace.shared.open`.
+- On macOS, the view checks the target before it calls the delegate. HTTP and
+  HTTPS links need a host. Mail links need an address. Custom URL schemes require
+  confirmation, with Cancel as the default. Local files must exist and must not
+  be executable files, scripts, applications, or other active content. The check
+  resolves symbolic links and rejects remote file hosts. These checks apply to
+  OSC 8 links and detected links. The delegate receives an absolute URL with a
+  canonical path for local files. The default delegate opens the checked URL.
 - On iOS/visionOS, implement `requestOpenLink` in your delegate to decide how
   to handle navigation (for example, with `UIApplication.open`).
 
@@ -192,6 +202,8 @@ When a click/tap lands on an active link, ``TerminalView`` calls
   hovering enables link preview/highlighting and Command-click opens links.
 - If you switch to `.hover`, link activation does not require Command.
 - `.always` and `.alwaysWithModifier` only activate explicit OSC 8 links.
+- Link previews escape invisible characters, directional controls, and line
+  breaks. File previews show the canonical path.
 
 ### iOS and visionOS behavior
 

@@ -435,6 +435,20 @@ open class Terminal {
     }
     private var _options: TerminalOptions
     private let defaultCursorStyle: CursorStyle
+
+    /// Accept OSC 8 hyperlinks. Changes take effect without a terminal reset.
+    /// Implicit URL and path detection remain available when this is false.
+    public var enableOsc8Hyperlinks: Bool {
+        get { _options.enableOsc8Hyperlinks }
+        set {
+            guard _options.enableOsc8Hyperlinks != newValue else { return }
+            _options.enableOsc8Hyperlinks = newValue
+            if !newValue {
+                activeHyperlink = nil
+            }
+            updateFullScreen()
+        }
+    }
     
     // Selection services attached to this terminal.  The views own them; a
     // `SelectionService` owns its terminal, so this side must not retain, or the
@@ -3619,10 +3633,14 @@ open class Terminal {
 
     func oscHyperlink (_ data: ArraySlice<UInt8>)
     {
+        guard enableOsc8Hyperlinks else {
+            activeHyperlink = nil
+            return
+        }
         if data.count == 1 && data [data.startIndex] == UInt8 (ascii: ";") {
             activeHyperlink = nil
         } else {
-            let payload = terminalStringASCII(data) ?? ""
+            let payload = terminalStringUTF8(data) ?? terminalStringASCII(data) ?? ""
             activeHyperlink = .pending(payload)
         }
     }
@@ -9081,6 +9099,7 @@ open class Terminal {
 
     private func explicitLink(at position: Position, in buffer: Buffer) -> String?
     {
+        guard enableOsc8Hyperlinks else { return nil }
         let line = buffer.lines[position.row]
         guard let payload = stringPayload(from: line.packedView(at: position.col)) else {
             return nil
@@ -9107,6 +9126,7 @@ open class Terminal {
 
     private func explicitLinkMatch(at position: Position, in buffer: Buffer) -> LinkMatch?
     {
+        guard enableOsc8Hyperlinks else { return nil }
         guard let payloadToken = payloadCode(at: position, in: buffer) else {
             return nil
         }

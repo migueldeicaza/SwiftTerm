@@ -2162,11 +2162,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             if let hit = currentMouseHit() {
                 if let payload = payloadString(at: hit) {
                     previewUrl(payload: payload)
+                } else {
+                    removePreviewUrl()
                 }
                 reportLink(at: hit)
                 updateHoverLink(at: hit)
             } else if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
+            } else {
+                removePreviewUrl()
             }
             if linkHighlightMode == .alwaysWithModifier {
                 withTerminal { $0.updateFullScreen() }
@@ -4086,6 +4090,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     {
         let hit = calculateMouseHit(with: event).grid
         return withTerminal { terminal in
+            guard terminal.enableOsc8Hyperlinks else { return nil }
             let displayBuffer = terminal.displayBuffer
             return displayBuffer.lines[hit.row].packedView(at: hit.col).getPayload()
         }
@@ -4147,7 +4152,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if !forceClickHandledForCurrentPress,
            !didSelectionDrag,
            let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
-            terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
+            activateLink(result.link, params: result.params, isExplicit: result.isExplicit)
             return
         }
         if withTerminal({ terminal in allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event) && terminal.mouseMode.sendButtonRelease() }) {
@@ -4304,7 +4309,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var lastReportedLink: String?
     func previewUrl (payload: String)
     {
-        if let (url, _) = urlAndParamsFrom(payload: payload) {
+        guard enableOsc8Hyperlinks else {
+            removePreviewUrl()
+            return
+        }
+        if let (target, _) = urlAndParamsFrom(payload: payload) {
+            let url = UntrustedTerminalLink(target).displayString
             if let up = urlPreview {
                 up.stringValue = url
                 up.sizeToFit()
@@ -4405,6 +4415,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if commandActive {
             if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
+            } else {
+                removePreviewUrl()
             }
             reportLink(at: hit.grid)
         }
@@ -5063,19 +5075,22 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     private var kittyKeysWithReportedPress: Set<UInt16> = []
     private var kittyKeyDownCode: UInt16?
+
+    // Set only while a checked link is sent to the delegate.
+    var approvedLinkForDelegate: URL?
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}
 
 
 extension TerminalView {
-    /// Opens an explicit URL or an implicit filesystem path with its default handler.
+    /// Checks a terminal link before opening it with its default handler.
+    /// Custom URL schemes require confirmation. Unsafe local files are blocked.
     public static func openDefaultLink (_ link: String)
     {
-        guard let url = defaultLinkURL(link) else {
-            return
+        TerminalLinkOpening.request(defaultLinkTarget(link, isExplicit: false), window: nil) {
+            NSWorkspace.shared.open($0)
         }
-        NSWorkspace.shared.open(url)
     }
 
     /// Converts a link to the URL that the default handler must open.
@@ -5121,7 +5136,7 @@ extension TerminalViewDelegate {
 
     public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
     {
-        openLink (link)
+        source.openLinkFromDelegate(link)
     }
 
     public func bell (source: TerminalView)

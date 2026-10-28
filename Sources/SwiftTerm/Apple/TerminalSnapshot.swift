@@ -38,6 +38,7 @@ struct SnapshotStyle {
     var linkHighlightMode: LinkHighlightMode
     var commandActive: Bool
     var textBlinkVisible: Bool
+    var enableOsc8Hyperlinks: Bool = true
 
     static let empty = SnapshotStyle(selectionActive: false,
                                      selectionStart: Position(col: 0, row: 0),
@@ -52,7 +53,8 @@ struct SnapshotStyle {
             selectionStart == other.selectionStart && selectionEnd == other.selectionEnd &&
             linkHighlightRange == other.linkHighlightRange &&
             linkHighlightMode.tag == other.linkHighlightMode.tag &&
-            commandActive == other.commandActive && textBlinkVisible == other.textBlinkVisible
+            commandActive == other.commandActive && textBlinkVisible == other.textBlinkVisible &&
+            enableOsc8Hyperlinks == other.enableOsc8Hyperlinks
     }
 }
 
@@ -362,14 +364,31 @@ final class TerminalSnapshot {
             cellArenaSnapshot = sourceArena.snapshotCopy()
         }
         let snapshotArena = cellArenaSnapshot!
+        let linkHighlightRange: [Terminal.LinkMatch.RowRange]?
+        if terminal.enableOsc8Hyperlinks {
+            linkHighlightRange = viewState.linkHighlightRange
+        } else if let first = viewState.linkHighlightRange?.first,
+                  !first.range.isEmpty,
+                  first.row >= 0, first.row < buffer.lines.count,
+                  first.range.lowerBound >= 0,
+                  first.range.lowerBound < min(terminal.cols, buffer.lines[first.row].count) {
+            // A host can change the terminal option without the view setter.
+            // Check the old range again to keep only an implicit link.
+            linkHighlightRange = terminal.linkMatch(
+                at: .buffer(Position(col: first.range.lowerBound, row: first.row)),
+                mode: .explicitAndImplicit)?.rowRanges
+        } else {
+            linkHighlightRange = nil
+        }
         let newStyle = SnapshotStyle(
             selectionActive: selection.active,
             selectionStart: selection.start,
             selectionEnd: selection.end,
-            linkHighlightRange: viewState.linkHighlightRange,
+            linkHighlightRange: linkHighlightRange,
             linkHighlightMode: viewState.linkHighlightMode,
             commandActive: viewState.commandActive,
-            textBlinkVisible: viewState.textBlinkVisible)
+            textBlinkVisible: viewState.textBlinkVisible,
+            enableOsc8Hyperlinks: terminal.enableOsc8Hyperlinks)
         let styleChanged = previousStyle?.hasSameValue(as: newStyle) != true ||
             previousAnsiColors != terminal.ansiColors
         appearanceChanged = styleChanged

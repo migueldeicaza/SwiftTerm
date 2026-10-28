@@ -694,6 +694,7 @@ struct SnapshotRenderContext {
     let linkHighlightMode: LinkHighlightMode
     let commandActive: Bool
     let customBlockGlyphs: Bool
+    let enableOsc8Hyperlinks: Bool
     let useBrightColors: Bool
     let collapseBrightColorsToBase: Bool
     let minimumContrastRatio: CGFloat
@@ -772,6 +773,7 @@ struct SnapshotRenderContext {
         linkHighlightRange = style.linkHighlightRange
         linkHighlightMode = style.linkHighlightMode
         commandActive = style.commandActive
+        enableOsc8Hyperlinks = style.enableOsc8Hyperlinks
         customBlockGlyphs = viewState.customBlockGlyphs
         useBrightColors = viewState.useBrightColors
         collapseBrightColorsToBase = viewState.collapseBrightColorsToBase
@@ -1753,6 +1755,21 @@ extension TerminalView {
     /// Returns the current terminal grid size as a copied value.
     public nonisolated var terminalDimensions: TerminalDimensions {
         renderOwner.dimensions()
+    }
+
+    /// Accept OSC 8 hyperlinks. The default is true.
+    /// Changes also apply to links already in the terminal buffer.
+    /// Implicit URL and path detection remain available when this is false.
+    public var enableOsc8Hyperlinks: Bool {
+        get { withTerminal { $0.enableOsc8Hyperlinks } }
+        set {
+            withTerminal { $0.enableOsc8Hyperlinks = newValue }
+            linkHighlightRange = nil
+#if os(macOS)
+            removePreviewUrl()
+#endif
+            frameDriver.markDirty()
+        }
     }
 
     /// The kitty keyboard protocol flags the running application has enabled, as a copied value.
@@ -2926,6 +2943,7 @@ extension TerminalView {
     func payloadStringLocked(at position: Position) -> String?
     {
         terminal.terminalLock.preconditionLocked()
+        guard terminal.enableOsc8Hyperlinks else { return nil }
         let buffer = terminal.displayBuffer
         guard position.row >= 0 && position.row < buffer.lines.count else {
             return nil
@@ -3005,14 +3023,14 @@ extension TerminalView {
         }
     }
 
-    func linkForClick(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String])?
+    func linkForClick(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String], isExplicit: Bool)?
     {
         withTerminal { _ in
             linkForClickLocked(at: position, hasCommandModifier: hasCommandModifier)
         }
     }
 
-    func linkForClickLocked(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String])?
+    func linkForClickLocked(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String], isExplicit: Bool)?
     {
         terminal.terminalLock.preconditionLocked()
         let mode: Terminal.LinkLookupMode = implicitLinkCouldBeVisible(hasCommandModifier: hasCommandModifier)
@@ -3027,9 +3045,9 @@ extension TerminalView {
         if match.isExplicit,
            let payload = payloadStringLocked(at: position),
            let (url, params) = urlAndParamsFrom(payload: payload) {
-            return (url, params)
+            return (url, params, true)
         }
-        return (match.text, [:])
+        return (match.text, [:], match.isExplicit)
     }
     
     /// Returns the selection range for the specified row, if any.
@@ -4049,6 +4067,11 @@ extension TerminalView {
     func captureFrameViewState () -> FrameViewState?
     {
         guard terminal != nil else { return nil }
+#if os(macOS)
+        if urlPreview != nil && !enableOsc8Hyperlinks {
+            removePreviewUrl()
+        }
+#endif
         return FrameViewState(view: self)
     }
 

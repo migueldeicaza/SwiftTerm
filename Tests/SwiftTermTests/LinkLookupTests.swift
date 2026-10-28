@@ -27,6 +27,36 @@ final class LinkLookupTests: TerminalDelegate {
         }
     }
 
+    @Test func osc8CanBeDisabledAtStartupWithoutDisablingDetectedLinks() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(
+            cols: 80, rows: 2, enableOsc8Hyperlinks: false))
+        terminal.feed(text: "\u{1b}]8;;https://hidden.example\u{07}https://visible.example\u{1b}]8;;\u{07}")
+        let location = Terminal.LinkLookupLocation.screen(Position(col: 2, row: 0))
+        #expect(terminal.link(at: location, mode: .explicitOnly) == nil)
+        #expect(terminal.link(at: location, mode: .explicitAndImplicit) == "https://visible.example")
+        #expect(terminal.getCharData(col: 2, row: 0)?.hasPayload == false)
+    }
+
+    @Test func disablingOsc8HidesExistingLinksAndClearsTheActiveTarget() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 2))
+        terminal.feed(text: "\u{1b}]8;;https://target.example\u{07}link")
+        let location = Terminal.LinkLookupLocation.screen(Position(col: 1, row: 0))
+        #expect(terminal.link(at: location, mode: .explicitOnly) == "https://target.example")
+        terminal.enableOsc8Hyperlinks = false
+        #expect(terminal.link(at: location, mode: .explicitOnly) == nil)
+        terminal.enableOsc8Hyperlinks = true
+        #expect(terminal.link(at: location, mode: .explicitOnly) == "https://target.example")
+        terminal.feed(text: "plain")
+        #expect(terminal.link(at: .screen(Position(col: 4, row: 0)), mode: .explicitOnly) == nil)
+    }
+
+    @Test func osc8TargetsKeepUTF8ForValidationAndPreview() {
+        let terminal = Terminal(delegate: self)
+        let target = "https://example.com/日本\u{202E}file"
+        terminal.feed(text: "\u{1b}]8;;\(target)\u{07}link\u{1b}]8;;\u{07}")
+        #expect(terminal.link(at: .screen(Position(col: 1, row: 0)), mode: .explicitOnly) == target)
+    }
+
     @Test func testExplicitLinkLookup() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 10, rows: 1))
         terminal.feed(text: "abc")

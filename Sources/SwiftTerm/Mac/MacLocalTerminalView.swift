@@ -424,7 +424,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
      */
     open func requestOpenLink (source: TerminalView, link: String, params: [String:String])
     {
-        openLink (link)
+        source.openLinkFromDelegate(link)
     }
 
     /**

@@ -652,6 +652,7 @@ struct CacheSignature: Hashable {
     let glyphFallbackIdentity: UInt64
     let textBlinkVisible: Bool
     let linkHighlightMode: LinkHighlightMode
+    let enableOsc8Hyperlinks: Bool
     /// The modifier, in the highlight modes that read it.
     let linkModifierActive: Bool
     let customBlockGlyphs: Bool
@@ -1730,6 +1731,7 @@ final class MetalTerminalRenderer {
                                        glyphFallbackIdentity: context.glyphFallbackProvider?.cacheIdentity ?? 0,
                                        textBlinkVisible: context.textBlinkVisible,
                                        linkHighlightMode: context.linkHighlightMode,
+                                       enableOsc8Hyperlinks: context.enableOsc8Hyperlinks,
                                        linkModifierActive: linkModifierActive,
                                        customBlockGlyphs: context.customBlockGlyphs,
                                        antiAliasCustomBlockGlyphs: context.antiAliasCustomBlockGlyphs,

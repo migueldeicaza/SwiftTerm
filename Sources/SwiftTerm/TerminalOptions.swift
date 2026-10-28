@@ -180,6 +180,9 @@ public struct TerminalOptions: Sendable {
     /// Maximum bytes accepted for one OSC sequence.
     /// Lower this limit to reduce memory exposure to untrusted OSC 1337 or OSC 52 payloads.
     public var maximumOscBytes: Int
+    /// Accept OSC 8 hyperlinks. The default is true.
+    /// Set this to false to keep implicit URL and path detection only.
+    public var enableOsc8Hyperlinks: Bool
     /// Host policy for the Kitty clipboard protocol. Capabilities are still explicit.
     ///
     /// The default is empty, so a host must opt in. Mode 5522 is reported as
@@ -231,7 +234,8 @@ public struct TerminalOptions: Sendable {
                                                        kittyClipboardPolicy: [],
                                                        kittyClipboardWriteLimitBytes: TerminalOptions.minimumKittyClipboardWriteLimitBytes,
                                                        kittyClipboardMaximumRepresentations: 256,
-                                                       kittyClipboardMaximumAliases: 256)
+                                                       kittyClipboardMaximumAliases: 256,
+                                                       enableOsc8Hyperlinks: true)
 
     /// The smallest decoded write-transaction limit that the protocol permits.
     public static let minimumKittyClipboardWriteLimitBytes = 64 * 1024 * 1024
@@ -247,7 +251,8 @@ public struct TerminalOptions: Sendable {
               kittyClipboardPolicy: KittyClipboardPolicy = Self.default.kittyClipboardPolicy,
               kittyClipboardWriteLimitBytes: Int = Self.default.kittyClipboardWriteLimitBytes,
               kittyClipboardMaximumRepresentations: Int = Self.default.kittyClipboardMaximumRepresentations,
-              kittyClipboardMaximumAliases: Int = Self.default.kittyClipboardMaximumAliases) {
+              kittyClipboardMaximumAliases: Int = Self.default.kittyClipboardMaximumAliases,
+              enableOsc8Hyperlinks: Bool = Self.default.enableOsc8Hyperlinks) {
         self.cols = cols
         self.rows = rows
         self.convertEol = convertEol
@@ -265,6 +270,7 @@ public struct TerminalOptions: Sendable {
         self.initialBidiArrowKeySwap = initialBidiArrowKeySwap
         self.featureReport = featureReport
         self.maximumOscBytes = maximumOscBytes
+        self.enableOsc8Hyperlinks = enableOsc8Hyperlinks
         self.kittyClipboardPolicy = kittyClipboardPolicy
         // The accessors apply the floors, so one rule covers init and assignment.
         self.storedKittyClipboardWriteLimitBytes = kittyClipboardWriteLimitBytes
