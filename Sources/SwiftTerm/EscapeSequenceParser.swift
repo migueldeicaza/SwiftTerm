@@ -648,7 +648,7 @@ final class EscapeSequenceParser {
         case 0x71:                                              // q
             if collect == [UInt8(ascii: ">")] {
                 terminal.cmdXTVERSION(pars, collect)
-            } else if collect == [UInt8(ascii: "\"")] {
+            } else if collect.count == 1 && collect[0] == UInt8(ascii: "\"") {
                 terminal.cmdSelectCharacterProtection(pars)
             } else {
                 terminal.cmdSetCursorStyle(pars, collect)

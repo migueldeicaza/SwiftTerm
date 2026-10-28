@@ -4367,7 +4367,7 @@ open class Terminal {
         let p = pars.count == 0 ? 0 : pars [0]
 
         // DECSEL always keeps protected cells. EL keeps them only for ISO protection.
-        if collect == [UInt8 (ascii: "?")] || characterProtectionMode == .iso {
+        if characterProtectionMode == .iso || (collect.count == 1 && collect [0] == UInt8 (ascii: "?")) {
             switch p {
             case 0:
                 eraseUnprotectedInBufferLine (y: buffer.y, start: buffer.x, end: cols)
@@ -4412,7 +4412,7 @@ open class Terminal {
         var j: Int
 
         // DECSED always keeps protected cells. ED keeps them only for ISO protection.
-        if p <= 2 && (collect == [UInt8 (ascii: "?")] || characterProtectionMode == .iso) {
+        if p <= 2 && (characterProtectionMode == .iso || (collect.count == 1 && collect [0] == UInt8 (ascii: "?"))) {
             let y = buffer.y
             switch p {
             case 0:

@@ -323,6 +323,9 @@ public final class Buffer {
     private var insertMode: Bool = false
     /// Whether new cells are protected (DECSCA 1 or SPA).
     private var characterProtection: Bool = false
+    /// `insertMode || characterProtection`, kept by the setters so that the
+    /// bulk-insert guard reads one field.
+    private var bulkInsertBlocked: Bool = false
     private var marginMode: Bool = false
     private var wraparound: Bool = false
 
@@ -718,10 +721,12 @@ public final class Buffer {
 
     func setInsertMode(_ value: Bool) {
         self.insertMode = value
+        bulkInsertBlocked = insertMode || characterProtection
     }
 
     func setCharacterProtection(_ value: Bool) {
         self.characterProtection = value
+        bulkInsertBlocked = insertMode || characterProtection
     }
 
     func setMarginMode(_ value: Bool) {
@@ -1766,7 +1771,7 @@ public final class Buffer {
 #endif
     
     @inline(__always)
-    var allowsBulkInsert: Bool { !insertMode && !characterProtection }
+    var allowsBulkInsert: Bool { !bulkInsertBlocked }
 
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
     /// Returns number of bytes consumed. Returns 0 if insert mode or
@@ -1888,9 +1893,11 @@ public final class Buffer {
         // D.1: stamp the OSC 133 role once, here at the insertion funnel, from
         // the buffer's own classification. No caller can forget to stamp, and
         // during ordinary output `semanticContent` is `.none` (a no-op).
-        let cell = inputCell.replacingSemanticContentCode(
+        var cell = inputCell.replacingSemanticContentCode(
             CellArena.semanticContentCode(for: semanticContent))
-            .replacingProtection(characterProtection)
+        if characterProtection {
+            cell = cell.replacingProtection(true)
+        }
         var chWidth = Int(cellArena.width(for: cell))
         
         let right = marginMode ? _marginRight : _cols - 1
