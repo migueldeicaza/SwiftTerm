@@ -7,15 +7,20 @@ on:
     branches: [ main ]
 
 env:
-  DEVELOPER_DIR: /Applications/Xcode_26.0.app/Contents/Developer
+  DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
 
 jobs:
   build:
 
-    runs-on: macos-15
+    runs-on: xcode-27
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Show toolchain versions
+      run: |
+        xcodebuild -version
+        swift --version
 
 #    - name: Checkout esctest for testing
 #      uses: actions/checkout@v4
@@ -51,7 +56,7 @@ jobs:
 
   thread-sanitizer:
 
-    runs-on: macos-15
+    runs-on: xcode-27
 
     steps:
     - uses: actions/checkout@v4
@@ -61,7 +66,7 @@ jobs:
 
   swiftpm-strict-concurrency:
 
-    runs-on: macos-15
+    runs-on: xcode-27
 
     steps:
     - uses: actions/checkout@v4
@@ -73,7 +78,7 @@ jobs:
 
   swift6-tools:
 
-    runs-on: macos-15
+    runs-on: xcode-27
 
     steps:
     - uses: actions/checkout@v4
