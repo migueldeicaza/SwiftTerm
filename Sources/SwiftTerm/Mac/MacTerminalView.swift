@@ -2904,11 +2904,14 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             overlay = tv
         }
 
-        // Match the terminal's effective background so the overlay blends in
-        // with whatever the rest of the view is rendering. `nativeBackgroundColor`
-        // is typically `NSColor.windowBackgroundColor` (dynamic: adapts to
-        // light/dark) when the host has called `configureNativeColors()`.
-        overlay.overlayBackgroundColor = effectiveNativeBackgroundColor
+        // Match the background of the cell under the caret so the overlay blends
+        // in with the row it covers. TUIs such as Codex paint their input line
+        // with an explicit background; the terminal's default background would
+        // show up there as a dark band. Falls back to `effectiveNativeBackgroundColor`
+        // (typically `NSColor.windowBackgroundColor` when the host has called
+        // `configureNativeColors()`) when the cell carries no color of its own.
+        let caretColors = markedTextColorsAtCaret()
+        overlay.overlayBackgroundColor = caretColors.background
 
         // Match terminal line metrics so wrapped lines line up with terminal rows.
         let lineHeight = cellDimension.height
@@ -2931,7 +2934,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let fullRange = NSRange(location: 0, length: display.length)
         display.addAttributes([
             .font: font,
-            .foregroundColor: effectiveNativeForegroundColor,
+            .foregroundColor: caretColors.foreground,
             .paragraphStyle: para,
             .kern: kern,
         ], range: fullRange)
@@ -2964,6 +2967,33 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             width: overlayWidth,
             height: overlayHeight
         )
+    }
+
+    /// Colors for the marked-text overlay, taken from the cell under the caret.
+    ///
+    /// Only the cell's background is adopted. Its foreground usually belongs to
+    /// whatever the overlay is hiding — an empty prompt's dimmed placeholder,
+    /// say — so the text keeps the terminal's default foreground, except under
+    /// reverse video, where the default pair is swapped and the default
+    /// foreground would vanish into the background.
+    private func markedTextColorsAtCaret() -> (foreground: NSColor, background: NSColor) {
+        withTerminal { terminal in
+            let buffer = terminal.displayBuffer
+            let row = buffer.yBase + buffer.y
+            guard row >= 0, row < buffer.lines.count, buffer.x >= 0, buffer.x < buffer.cols else {
+                return (effectiveNativeForegroundColor, effectiveNativeBackgroundColor)
+            }
+            let attribute = buffer.lines[row][buffer.x].attribute
+            let isBold = attribute.style.contains(.bold)
+            guard attribute.style.contains(.inverse) else {
+                return (effectiveNativeForegroundColor,
+                        mapColor(color: attribute.bg, isFg: false, isBold: isBold, useBrightColors: useBrightColors))
+            }
+            let fg = attribute.bg == .defaultColor ? .defaultInvertedColor : attribute.bg
+            let bg = attribute.fg == .defaultColor ? .defaultInvertedColor : attribute.fg
+            return (mapColor(color: fg, isFg: true, isBold: isBold, useBrightColors: useBrightColors),
+                    mapColor(color: bg, isFg: false, isBold: isBold, useBrightColors: useBrightColors))
+        }
     }
 
     private func kittyEncoder() -> KittyKeyboardEncoder {
