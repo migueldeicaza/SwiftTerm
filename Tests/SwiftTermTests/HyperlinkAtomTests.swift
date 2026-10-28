@@ -23,6 +23,18 @@ final class HyperlinkAtomTests: TerminalDelegate {
         terminal.displayBuffer.lines[terminal.buffer.y + terminal.buffer.yBase][0].payload.code
     }
 
+    private func leaveFreeCodes(_ count: Int) throws {
+        var atoms: [TinyAtom] = []
+        defer {
+            for atom in atoms {
+                atom.release()
+            }
+        }
+        for _ in 0..<count {
+            atoms.append(try #require(TinyAtom.lookup(value: "earlier test")))
+        }
+    }
+
     @Test func testRedrawnHyperlinkReusesOneAtom() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 2))
         let drawn = link("https://example.com/a", "PR #1")
@@ -41,6 +53,9 @@ final class HyperlinkAtomTests: TerminalDelegate {
     }
 
     @Test func testCollectedAtomsAreHandedOutAgain() throws {
+        // An earlier test can leave more free codes than this test allocates.
+        try leaveFreeCodes(1024)
+
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 30, rows: 2, scrollback: 0))
         var codes = Set<UInt16>()
         for n in 0..<200 {
@@ -55,16 +70,14 @@ final class HyperlinkAtomTests: TerminalDelegate {
         terminal.feed(text: "\r\n\r\n\r\n")
         terminal.garbageCollectPayload()
 
-        // Other suites share the process-wide table and may release codes meanwhile, so look
-        // for one of ours among the next lookups rather than requiring the very next one.
-        var probes: [TinyAtom] = []
-        defer { probes.forEach { $0.release() } }
+        // Older free codes can precede ours anywhere in the 16-bit code space.
+        // Release each probe so this test does not drain the shared table.
         var reused = false
-        for _ in 0..<(codes.count + 64) {
+        for _ in 0..<(Int(UInt16.max) - 1) {
             let probe = try #require(TinyAtom.lookup(value: "probe"))
-            probes.append(probe)
-            if codes.contains(probe.code) {
-                reused = true
+            reused = codes.contains(probe.code)
+            probe.release()
+            if reused {
                 break
             }
         }
