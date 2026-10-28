@@ -4092,8 +4092,9 @@ open class Terminal {
     //
     func cmdNextLine ()
     {
-        buffer.x = usingMargins () ? buffer.marginLeft : 0
+        // As xterm, index first: the column decides whether the region scrolls.
         cmdIndex ()
+        cmdCarriageReturn ()
     }
 
     /**
@@ -4723,6 +4724,11 @@ open class Terminal {
         let cell = makePackedCell(attribute: curAttr.justColor(),
                                   character: "E", width: 1)
 
+        // As xterm, DECALN also resets the margins.
+        buffer.scrollTop = 0
+        buffer.scrollBottom = rows - 1
+        buffer.marginLeft = 0
+        buffer.marginRight = cols - 1
         setCursor (col: 0, row: 0)
         for yOffset in 0..<rows {
             let rowN = buffer.y + buffer.yBase + yOffset
@@ -6607,8 +6613,10 @@ open class Terminal {
                 applicationKeypad = false
                 syncScrollArea ()
             case 69:
-                // DECSLRM
+                // DECLRMM: as xterm, the left and right margins go back to the screen edges.
                 setMarginMode(false)
+                buffer.marginLeft = 0
+                buffer.marginRight = cols - 1
             case 9: // X10 Mouse
                 mouseMode = .off
             case 1000: // vt200 mouse
@@ -6982,10 +6990,12 @@ open class Terminal {
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
-        if (p - 1 >= rows) {
-            buffer.y = rows - 1
+        // As xterm, in origin mode the row is relative to the top margin, and
+        // stops at the bottom margin.
+        if originMode {
+            buffer.y = min (buffer.scrollTop + p - 1, buffer.scrollBottom)
         } else {
-            buffer.y = p - 1
+            buffer.y = min (p - 1, rows - 1)
         }
     }
 
@@ -7127,10 +7137,11 @@ open class Terminal {
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
-        buffer.x = p - 1
-        if buffer.x >= cols {
-            buffer.x = cols - 1
-        }
+        // As xterm, in origin mode the column is relative to the left margin,
+        // and stops at the right margin.
+        let left = usingMargins () ? buffer.marginLeft : 0
+        let right = usingMargins () ? buffer.marginRight : cols - 1
+        buffer.x = min (left + p - 1, right)
     }
 
     //
@@ -8056,7 +8067,13 @@ open class Terminal {
         let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
 
         var movedToNextLine = false
-        if newY > buffer.scrollBottom {
+        if buffer.y > buffer.scrollBottom {
+            // Below the scroll region, move down to the last row, but do not scroll.
+            if newY < rows {
+                buffer.y = newY
+                movedToNextLine = true
+            }
+        } else if newY > buffer.scrollBottom {
             if canScroll {
                 scroll ()
                 movedToNextLine = true
