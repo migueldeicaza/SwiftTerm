@@ -525,6 +525,12 @@ open class Terminal {
     /// from tracking in-place scrolls.
     var testingActiveSelectionCount: Int { activeSelectionCount }
 
+#if DEBUG
+    /// Actual loop work for regression tests. Access under the terminal lock.
+    private(set) var testingInsertLineIterations = 0
+    private(set) var testingImplicitLinkCandidates = 0
+#endif
+
     /// Notifies attached selections that `lines` rows were shifted up in place
     /// within the absolute row range `top...bottom`.
     func selectionsAdjustForInPlaceScroll (top: Int, bottom: Int, lines: Int)
@@ -4445,6 +4451,9 @@ open class Terminal {
                     repairWideCellsForColumnRestrictedShift(row: row + i)
                 }
                 for _ in 0..<p {
+#if DEBUG
+                    testingInsertLineIterations &+= 1
+#endif
                     for i in (0..<rowCount).reversed() {
                         let src = buffer.lines [row+i]
                         let dst = buffer.lines [row+i+1]
@@ -4462,6 +4471,9 @@ open class Terminal {
         } else {
             let inserted = p
             for _ in 0..<p {
+#if DEBUG
+                testingInsertLineIterations &+= 1
+#endif
                 p -= 1
                 // test: echo -e '\e[44m\e[1L\e[0m'
                 // blankLine(true) - xterm/linux behavior
@@ -9174,6 +9186,9 @@ open class Terminal {
                 continue
             }
 
+#if DEBUG
+            testingImplicitLinkCandidates &+= 1
+#endif
             let startOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.lowerBound)
             let endOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.upperBound)
             guard startOffset < lineMap.cells.count else {

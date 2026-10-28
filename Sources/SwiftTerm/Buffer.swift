@@ -341,6 +341,11 @@ public final class Buffer {
     private var semanticPromptStartLine: BufferLine?
     private var semanticPromptStartRowCache = 0
     private(set) var semanticPromptRowScanCount = 0
+#if DEBUG
+    /// Row visits during prompt checks, including backward chain traversal.
+    /// Access under the terminal lock, as with the buffer state.
+    private(set) var testingSemanticPromptRowVisits = 0
+#endif
 
     // A monotonic prompt-group counter. `beginSemanticPromptGroup` advances it;
     // the group-opening mark and every hard-continuation line of the group are
@@ -558,6 +563,9 @@ public final class Buffer {
     /// prompts asks `semanticRowOpensPrompt` instead: asking this of every
     /// row over a long wrapped output is quadratic.
     func semanticRowKind(at row: Int) -> SemanticPromptKind? {
+#if DEBUG
+        testingSemanticPromptRowVisits &+= 1
+#endif
         guard row >= 0, row < lines.count else { return nil }
         let activeOrigin = semanticPromptStartRow
         if originMarkGroup(at: row, activeOrigin: activeOrigin) != nil {
@@ -574,6 +582,9 @@ public final class Buffer {
         var current = row
         var epoch: UInt64? = nil
         while current > 0 {
+#if DEBUG
+            testingSemanticPromptRowVisits &+= 1
+#endif
             let line = lines[current]
             if line.isWrapped {
                 // soft wrap: same physical write, same group inherently
@@ -607,7 +618,10 @@ public final class Buffer {
     /// Whether `semanticRowKind(at: row)` is `initial`, read from the row's
     /// own marks.
     func semanticRowOpensPrompt(_ row: Int) -> Bool {
-        row >= 0 && row < lines.count && originMarkGroup(at: row, activeOrigin: semanticPromptStartRow) != nil
+#if DEBUG
+        testingSemanticPromptRowVisits &+= 1
+#endif
+        return row >= 0 && row < lines.count && originMarkGroup(at: row, activeOrigin: semanticPromptStartRow) != nil
     }
 
     /// The group ID of a row's group-opening mark, or nil if the row is not an

@@ -25,6 +25,10 @@ final class SearchEngine {
     private let lineCache: SearchLineCache
     private let nonWordCharacters: Set<Character> = Set(" ~!@#$%^&*()+`-=[]{}|\\;:\"',./<>?")
     private var compiledRegex: (pattern: String, caseSensitive: Bool, regex: NSRegularExpression?)?
+#if DEBUG
+    /// Search entry and wrapped-parent row visits. Access under the terminal lock.
+    private(set) var testingRowVisits = 0
+#endif
 
     init (terminal: Terminal, lineCache: SearchLineCache) {
         self.terminal = terminal
@@ -232,6 +236,9 @@ final class SearchEngine {
     }
 
     private func findInLine (term: String, searchPosition: inout SearchPosition, searchOptions: SearchOptions? = nil, isReverseSearch: Bool = false) -> SearchResult? {
+#if DEBUG
+        testingRowVisits &+= 1
+#endif
         let buffer = terminal.displayBuffer
 
         guard searchPosition.startRow >= 0 && searchPosition.startRow < buffer.lines.count else {
@@ -246,6 +253,9 @@ final class SearchEngine {
             // Search the logical line from this row's place in it. A loop,
             // so a line wrapped over thousands of rows can't overflow the stack.
             repeat {
+#if DEBUG
+                testingRowVisits &+= 1
+#endif
                 searchPosition.startRow -= 1
                 searchPosition.startCol += terminal.cols
             } while searchPosition.startRow >= 0 && buffer.lines[searchPosition.startRow].isWrapped
