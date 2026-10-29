@@ -1216,7 +1216,7 @@ extension SelectionService {
         }) else {
             return nil
         }
-        let characters = cells.map (\.character)
+        let characters = cells.map { $0.character }
         guard let range = SelectionService.urlRange (in: characters, containing: index)
                 ?? SelectionService.pathRange (in: characters, containing: index)
                 ?? SelectionService.quotedRange (in: characters, at: index) else {
