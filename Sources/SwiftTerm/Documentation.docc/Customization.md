@@ -373,8 +373,9 @@ or surface a notification the application posted.
 view handles an OSC 9;4 progress report, with the report it just applied to the
 progress bar. `set` and `indeterminate` mean the application is working;
 `remove` means it is done. A `set` or `indeterminate` is followed by a
-`remove`: from the application, from the 15 second silence timer that clears a
-bar the application never removed, or from the view closing
+`remove`: from the application, from the silence timer that clears a bar the
+application never removed (``TerminalView/progressReportTimeout``), or from
+the view closing
 (``TerminalView/updateUiClosed()``); the last two arrive as a synthetic report.
 That holds as long as the same delegate stays attached; a delegate attached
 while a report is live is not caught up on it, and one detached before the
