@@ -33,6 +33,23 @@ final class MarkedTextOverlayColorTests {
         overlay.textStorage?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
     }
 
+    /// The background the renderer fills the caret's cell with.
+    private func renderedBackgroundAtCaret(in view: TerminalView) -> NSColor? {
+        view.withTerminal { terminal in
+            let buffer = terminal.displayBuffer
+            let row = buffer.yBase + buffer.y
+            let info = view.buildAttributedStringLocked(row: row, line: buffer.lines[row], cols: buffer.cols)
+            guard let segment = info.segments.first(where: {
+                $0.column <= buffer.x && buffer.x < $0.column + $0.columnWidth
+            }) else { return nil }
+            return segment.attributedString.attribute(.backgroundColor, at: 0, effectiveRange: nil) as? NSColor
+        }
+    }
+
+    private func ansiColor(_ index: Int, in view: TerminalView) -> NSColor {
+        view.withTerminal { NSColor.make(color: $0.ansiColors[index]) }
+    }
+
     private func rgb(_ color: NSColor) -> [Int] {
         let c = color.usingColorSpace(.sRGB)!
         return [c.redComponent, c.greenComponent, c.blueComponent].map { Int(($0 * 255).rounded()) }
@@ -75,6 +92,38 @@ final class MarkedTextOverlayColorTests {
         let overlay = try #require(overlay(in: view))
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(view.effectiveNativeForegroundColor))
         #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeBackgroundColor))
+    }
+
+    /// Bold brightens a cell's foreground but never its background.
+    @Test func testOverlayIgnoresBoldOnAnAnsiBackground() throws {
+        let view = makeView()
+        view.feed(text: "\u{1b}[1;41m          \u{1b}[0m\r")
+        mark(view, "ce shi")
+        let overlay = try #require(overlay(in: view))
+        #expect(rgb(overlay.overlayBackgroundColor) == rgb(try #require(renderedBackgroundAtCaret(in: view))))
+        #expect(rgb(overlay.overlayBackgroundColor) == rgb(ansiColor(1, in: view)))
+    }
+
+    /// Under reverse video the background comes from the cell's foreground
+    /// color, which bold still must not brighten.
+    @Test func testOverlayIgnoresBoldUnderReverseVideo() throws {
+        let view = makeView()
+        view.feed(text: "\u{1b}[1;7;31m          \u{1b}[0m\r")
+        mark(view, "ce shi")
+        let overlay = try #require(overlay(in: view))
+        #expect(rgb(overlay.overlayBackgroundColor) == rgb(try #require(renderedBackgroundAtCaret(in: view))))
+        #expect(rgb(overlay.overlayBackgroundColor) == rgb(ansiColor(1, in: view)))
+    }
+
+    /// With bright colors disabled the renderer collapses a bright background
+    /// to its base color; the overlay has to follow it.
+    @Test func testOverlayFollowsTheRendererWithBrightColorsDisabled() throws {
+        let view = makeView()
+        view.useBrightColors = false
+        view.feed(text: "\u{1b}[101m          \u{1b}[0m\r")
+        mark(view, "ce shi")
+        let overlay = try #require(overlay(in: view))
+        #expect(rgb(overlay.overlayBackgroundColor) == rgb(try #require(renderedBackgroundAtCaret(in: view))))
     }
 }
 #endif

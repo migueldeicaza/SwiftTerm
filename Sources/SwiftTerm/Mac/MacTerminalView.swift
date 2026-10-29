@@ -2976,6 +2976,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// say — so the text keeps the terminal's default foreground, except under
     /// reverse video, where the default pair is swapped and the default
     /// foreground would vanish into the background.
+    ///
+    /// The background is mapped the way the renderer fills cells: bold never
+    /// brightens it, only the foreground.
     private func markedTextColorsAtCaret() -> (foreground: NSColor, background: NSColor) {
         withTerminal { terminal in
             let buffer = terminal.displayBuffer
@@ -2987,12 +2990,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             let isBold = attribute.style.contains(.bold)
             guard attribute.style.contains(.inverse) else {
                 return (effectiveNativeForegroundColor,
-                        mapColor(color: attribute.bg, isFg: false, isBold: isBold, useBrightColors: useBrightColors))
+                        mapColor(color: attribute.bg, isFg: false, isBold: false, useBrightColors: useBrightColors))
             }
             let fg = attribute.bg == .defaultColor ? .defaultInvertedColor : attribute.bg
             let bg = attribute.fg == .defaultColor ? .defaultInvertedColor : attribute.fg
             return (mapColor(color: fg, isFg: true, isBold: isBold, useBrightColors: useBrightColors),
-                    mapColor(color: bg, isFg: false, isBold: isBold, useBrightColors: useBrightColors))
+                    mapColor(color: bg, isFg: false, isBold: false, useBrightColors: useBrightColors))
         }
     }
 
