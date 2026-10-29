@@ -520,6 +520,11 @@ public final class BufferLine: CustomDebugStringConvertible {
         (0..<storage.count).map { storage.cell(at: $0) }
     }
 
+    /// Calls `body` with the payload code of each cell that holds one, without unpacking cells.
+    func forEachPayloadCode(_ body: (UInt16) -> Void) {
+        storage.forEachPayloadCode(body)
+    }
+
     /// Accesses the CharIndex at the specified position
     public subscript (index : Int /*, callingMethod: String = #function */) -> CharData {
         get {

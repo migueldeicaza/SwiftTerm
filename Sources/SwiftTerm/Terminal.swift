@@ -1205,7 +1205,7 @@ open class Terminal {
 #if !SWIFTTERM_EMBEDDED
         kittyClipboardProtocol?.terminalDestroyed()
 #endif
-        TinyAtom.release(codes: payloadCodes)
+        TinyAtom.release(codes: payloads.releaseAll())
     }
 
 #if SWIFTTERM_EMBEDDED
@@ -1219,8 +1219,7 @@ open class Terminal {
         selections.removeAll()
         tdel = nil
         activeHyperlink = nil
-        TinyAtom.release(codes: payloadCodes)
-        payloadCodes.removeAll()
+        TinyAtom.release(codes: payloads.releaseAll())
     }
 #endif
 
@@ -3624,7 +3623,94 @@ open class Terminal {
     }
 
     private var activeHyperlink: ActiveHyperlink? = nil
-    private var payloadCodes = Set<UInt16>()
+    /// The payload codes this terminal holds, and the hyperlink atoms it can reuse. This is
+    /// one reference, the same size as the `Set` it replaced, so the hot fields declared after
+    /// it keep their offsets.
+    private final class PayloadState {
+        /// One bit for each 16-bit atom code this terminal holds.
+        private var held = [UInt64](repeating: 0, count: 1 << 10)
+        private(set) var count = 0
+        /// The atom already made for a hyperlink payload this terminal still holds, so that a
+        /// program that redraws a link, or a multiplexer such as tmux that re-sends it on
+        /// every redraw, reuses one atom instead of spending a new one each time. Each payload
+        /// has one slot: a collision costs one more atom, which the collector then frees.
+        private var linkPayloads: [String?] = []
+        private var linkCodes: [UInt16] = []
+        private static let linkSlots = 1024
+        /// Once this terminal holds this many payloads it collects on its own: twice what it
+        /// held after the last collection, so the scan's cost is spread over the links it frees.
+        var collectAtCount = 1024
+        /// After a collection on exhaustion freed nothing, the distinct new links to pass before
+        /// trying again, rather than scanning both buffers for every one.
+        var linksUntilCollectRetry = 0
+
+        func insert(_ code: UInt16) {
+            let word = Int(code &>> 6), bit = UInt64(1) &<< UInt64(code & 63)
+            if held[word] & bit == 0 {
+                held[word] |= bit
+                count += 1
+            }
+        }
+
+        /// The held codes that `used` does not mark, removed from this state.
+        func release(unused used: [UInt64]) -> [UInt16] {
+            var released: [UInt16] = []
+            for word in 0..<held.count {
+                var free = held[word] & ~used[word]
+                if free == 0 { continue }
+                held[word] &= ~free
+                while free != 0 {
+                    released.append(UInt16(word &<< 6 | free.trailingZeroBitCount))
+                    free &= free &- 1
+                }
+            }
+            count -= released.count
+            if !released.isEmpty {
+                for slot in 0..<linkCodes.count where linkCodes[slot] != 0 {
+                    let code = linkCodes[slot]
+                    if used[Int(code &>> 6)] & (1 &<< UInt64(code & 63)) == 0 {
+                        linkCodes[slot] = 0
+                        linkPayloads[slot] = nil
+                    }
+                }
+            }
+            return released
+        }
+
+        /// Removes and returns every held code.
+        func releaseAll() -> [UInt16] {
+            release(unused: [UInt64](repeating: 0, count: 1 << 10))
+        }
+
+        /// The cache slot for `payload`: an FNV-1a hash of its UTF-8 bytes.
+        static func slot(for payload: String) -> Int {
+            var payload = payload
+            let hash = payload.withUTF8 { bytes in
+                var hash: UInt32 = 2_166_136_261
+                for byte in bytes {
+                    hash = (hash ^ UInt32(byte)) &* 16_777_619
+                }
+                return hash
+            }
+            return Int((hash ^ (hash &>> 16)) & UInt32(linkSlots - 1))
+        }
+
+        func linkCode(for payload: String, slot: Int) -> UInt16? {
+            if linkCodes.isEmpty { return nil }
+            let code = linkCodes[slot]
+            return code != 0 && linkPayloads[slot] == payload ? code : nil
+        }
+
+        func setLinkCode(_ code: UInt16, for payload: String, slot: Int) {
+            if linkCodes.isEmpty {
+                linkCodes = [UInt16](repeating: 0, count: Self.linkSlots)
+                linkPayloads = [String?](repeating: nil, count: Self.linkSlots)
+            }
+            linkCodes[slot] = code
+            linkPayloads[slot] = payload
+        }
+    }
+    private let payloads = PayloadState()
 
     /// State that SwiftTerm keeps only so that DECRQM and DECRQSS can report it.
     private final class ReportedOnlyState {
@@ -3644,6 +3730,7 @@ open class Terminal {
     // not move their offsets. Only cold fields come after it.
     private let reportedOnly = ReportedOnlyState()
 
+    @inline(never)
     private func resolveActiveHyperlink() -> TinyAtom? {
         guard let activeHyperlink else {
             return nil
@@ -3651,10 +3738,34 @@ open class Terminal {
 
         switch activeHyperlink {
         case .pending(let payload):
-            guard let atom = makePayload(value: payload) else {
+            let slot = PayloadState.slot(for: payload)
+            if let code = payloads.linkCode(for: payload, slot: slot) {
+                let atom = TinyAtom.stored(code: code)
+                self.activeHyperlink = .resolved(atom)
+                return atom
+            }
+            if payloads.count >= payloads.collectAtCount {
+                garbageCollectPayload()
+            }
+            var made = makePayload(value: payload)
+            if made == nil {
+                // The codes ran out: release what this terminal no longer holds in either
+                // buffer, scrollback included, and try once more.
+                if payloads.linksUntilCollectRetry == 0 {
+                    garbageCollectPayload()
+                    made = makePayload(value: payload)
+                    if made == nil {
+                        payloads.linksUntilCollectRetry = 256
+                    }
+                } else {
+                    payloads.linksUntilCollectRetry -= 1
+                }
+            }
+            guard let atom = made else {
                 self.activeHyperlink = .unavailable
                 return nil
             }
+            payloads.setLinkCode(atom.code, for: payload, slot: slot)
             self.activeHyperlink = .resolved(atom)
             return atom
         case .resolved(let atom):
@@ -3664,20 +3775,26 @@ open class Terminal {
         }
     }
 
+    /// The print path calls this for each run: keep the no-link case inline and the rest out of line.
     @inline(__always)
     private func resolveActiveHyperlinkPayloadCode() -> UInt16 {
-        resolveActiveHyperlink()?.code ?? 0
+        guard activeHyperlink != nil else {
+            return 0
+        }
+        return resolveActiveHyperlink()?.code ?? 0
     }
 
     /// Creates a payload atom whose lifetime is managed by this terminal.
     ///
     /// ``garbageCollectPayload()`` releases the atom after it is no longer present in
     /// either terminal buffer. The terminal also releases its remaining atoms when it
-    /// is deinitialized.
+    /// is deinitialized. The terminal collects on its own while it processes input, so
+    /// write the atom into a buffer cell before feeding more data, or it may be released
+    /// and its code reissued.
 #if SWIFTTERM_EMBEDDED
     public func makePayload(value: String) -> TinyAtom? {
         guard let atom = TinyAtom.lookup(value: value) else { return nil }
-        payloadCodes.insert(atom.code)
+        payloads.insert(atom.code)
         return atom
     }
 #else
@@ -3685,7 +3802,7 @@ open class Terminal {
         guard let atom = TinyAtom.lookup(value: value) else {
             return nil
         }
-        payloadCodes.insert(atom.code)
+        payloads.insert(atom.code)
         return atom
     }
 #endif
@@ -8021,38 +8138,35 @@ open class Terminal {
 
     /**
      * Check for payload identifiers that are not in use and stop retaining their payload,
-     * to avoid accumulting memory for images and URLs that are no longer visible or
-     * available by scrolling.
+     * to avoid accumulating memory for images and URLs that are no longer visible or
+     * available by scrolling. The terminal also runs this on its own as hyperlink payloads
+     * accumulate, and when atom codes run out; released codes are handed out again.
      */
     public func garbageCollectPayload() {
-        if payloadCodes.isEmpty {
+        if payloads.count == 0 {
             return
         }
         
-        // check all atoms used in both buffers
-        var used = Set<UInt16>()
-        if let activeHyperlink, case .resolved(let atom) = activeHyperlink {
-            used.insert(atom.code)
-        }
-        for buffer in [normalBuffer, altBuffer] {
-            // TODO use a better system than this ugly nest
-            for line in buffer.lines.getArray() {
-                if let array = line?.getData() {
-                    for data in array {
-                        let code = data.payload.code
-                        if code > 0 {
-                            used.insert(code)
-                        }
+        // Mark all atoms used in both buffers: one bit for each 16-bit code, read from the
+        // packed cells without unpacking them.
+        var used = [UInt64](repeating: 0, count: 1 << 10)
+        used.withUnsafeMutableBufferPointer { bits in
+            if let activeHyperlink, case .resolved(let atom) = activeHyperlink {
+                bits[Int(atom.code &>> 6)] |= 1 &<< UInt64(atom.code & 63)
+            }
+            for buffer in [normalBuffer, altBuffer] {
+                for line in buffer.lines.getArray() {
+                    line?.forEachPayloadCode { code in
+                        bits[Int(code &>> 6)] |= 1 &<< UInt64(code & 63)
                     }
                 }
             }
         }
-        
-        let released = payloadCodes.subtracting(used)
+        let released = payloads.release(unused: used)
         if !released.isEmpty {
             TinyAtom.release(codes: released)
-            payloadCodes.subtract(released)
         }
+        payloads.collectAtCount = max(1024, payloads.count * 2)
     }
     
     /**

@@ -182,6 +182,29 @@ public struct Attribute: Equatable, Hashable, Sendable {
     }
 }
 
+/// Released atom codes, handed out oldest first so a code is reissued as late as possible.
+struct FreeAtomCodes {
+    private var codes: [UInt16] = []
+    private var head = 0
+
+    mutating func put(_ code: UInt16) {
+        codes.append(code)
+    }
+
+    mutating func take() -> UInt16? {
+        guard head < codes.count else {
+            return nil
+        }
+        let code = codes[head]
+        head += 1
+        if head > 64 && head * 2 > codes.count {
+            codes.removeFirst(head)
+            head = 0
+        }
+        return code
+    }
+}
+
 /// TinyAtoms are 16-bit values that can be used to represent a value as a number.
 /// You create them by calling `TinyAtom.lookup(value:)` with a `Sendable` value.
 /// Retrieve the value with the `target` property. They store URLs and other
@@ -192,12 +215,19 @@ public struct Attribute: Equatable, Hashable, Sendable {
 public struct TinyAtom: Sendable {
     var code: UInt16
 #if SWIFTTERM_EMBEDDED
-    nonisolated(unsafe) private static var map: [UInt16: String] = [:]
+    /// Indexed by code; code 0 is never handed out.
+    nonisolated(unsafe) private static var map: [String?] = [nil]
     nonisolated(unsafe) private static var lastUsed: UInt16 = 0
+    /// Released codes, handed out again before a new one is taken (see `State.free`).
+    nonisolated(unsafe) private static var free = FreeAtomCodes()
 #else
     private struct State {
-        var map: [UInt16: any Sendable] = [:]
+        /// Indexed by code, so a lookup or a release costs no hashing; code 0 is never handed out.
+        var map: [(any Sendable)?] = [nil]
         var lastUsed: UInt16 = 0
+        /// Released codes, handed out again before a new one is taken: without them the
+        /// 16-bit space is spent once and every later lookup fails for the life of the process.
+        var free = FreeAtomCodes()
     }
     private static let state = Locked(State())
 #endif
@@ -222,21 +252,29 @@ public struct TinyAtom: Sendable {
     /// ``Terminal/makePayload(value:)`` for an atom whose lifetime is managed by a terminal.
 #if SWIFTTERM_EMBEDDED
     public static func lookup(value: String) -> TinyAtom? {
+        if let code = free.take() {
+            map[Int(code)] = value
+            return TinyAtom(code: code)
+        }
         guard lastUsed < UInt16.max - 1 else { return nil }
         lastUsed += 1
-        map[lastUsed] = value
+        map.append(value)
         return TinyAtom(code: lastUsed)
     }
 #else
     public static func lookup<Value: Sendable>(value: Value) -> TinyAtom? {
         state.withLock { state in
+            if let code = state.free.take() {
+                state.map [Int(code)] = value
+                return TinyAtom (code: code)
+            }
             guard state.lastUsed < UInt16.max - 1 else {
                 return nil
             }
             state.lastUsed += 1
             let code = state.lastUsed
 
-            state.map [code] = value
+            state.map.append(value)
             return TinyAtom (code: code)
         }
     }
@@ -248,18 +286,23 @@ public struct TinyAtom: Sendable {
 
     /// Releases a caller-owned atom.
     ///
-    /// After this call, ``target`` returns nil for this atom and for all copies of it.
+    /// After this call, ``target`` returns nil for this atom and for all copies of it, until
+    /// ``lookup(value:)`` hands its code out again: release a code only once nothing still holds it.
     public func release() {
         TinyAtom.release(code: code)
     }
 
     static func release<S: Sequence>(codes: S) where S.Element == UInt16 {
 #if SWIFTTERM_EMBEDDED
-        for code in codes where code != 0 { map.removeValue(forKey: code) }
+        for code in codes where Int(code) < map.count && map[Int(code)] != nil {
+            map[Int(code)] = nil
+            free.put(code)
+        }
 #else
         state.withLock { state in
-            for code in codes where code != 0 {
-                state.map.removeValue(forKey: code)
+            for code in codes where Int(code) < state.map.count && state.map[Int(code)] != nil {
+                state.map[Int(code)] = nil
+                state.free.put(code)
             }
         }
 #endif
@@ -268,7 +311,7 @@ public struct TinyAtom: Sendable {
     /// Returns the target for the TinyAtom
 #if SWIFTTERM_EMBEDDED
     public var target: String? {
-        code == 0 ? nil : TinyAtom.map[code]
+        Int(code) < TinyAtom.map.count ? TinyAtom.map[Int(code)] : nil
     }
 #else
     public var target: (any Sendable)? {
@@ -277,7 +320,7 @@ public struct TinyAtom: Sendable {
                 return nil
             }
             return TinyAtom.state.withLock { state in
-                state.map [code]
+                Int(code) < state.map.count ? state.map [Int(code)] : nil
             }
         }
     }
