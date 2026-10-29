@@ -51,12 +51,17 @@ jobs:
     - name: Coverage
       run: |
         swift test --no-parallel --enable-code-coverage
+        # Ask SwiftPM for the paths: the bundle name and the profile directory
+        # depend on the build system.
         BINDIR=$(swift build --show-bin-path)
-        xcrun llvm-cov report "$BINDIR/SwiftTermPackageTests.xctest/Contents/MacOS/SwiftTermPackageTests" --instr-profile=.build/debug/codecov/default.profdata -use-color
+        PROFDATA="$(dirname "$(swift test --show-codecov-path)")/default.profdata"
+        XCTEST=$(find "$BINDIR" -maxdepth 1 -name '*.xctest' | head -n 1)
+        xcrun llvm-cov report "$XCTEST/Contents/MacOS/$(basename "$XCTEST" .xctest)" --instr-profile="$PROFDATA" -use-color
 
   esctest:
 
-    runs-on: macos-15
+    # DEVELOPER_DIR above names Xcode 27.1, which only the xcode-27 runners have.
+    runs-on: xcode-27
 
     steps:
     - uses: actions/checkout@v4
