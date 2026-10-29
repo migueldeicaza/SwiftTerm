@@ -5950,7 +5950,9 @@ open class Terminal {
         originMode = false
 
         reverseWraparound = false
-        
+        // DEC STD 070: DECSTR resets DECLRMM.
+        setMarginMode(false)
+
         setWraparound(true)  // defaults: xterm - true, vt100 - false
         applicationKeypad = false
         syncScrollArea ()
@@ -6547,7 +6549,8 @@ open class Terminal {
         }
         buffer.x = 0
         buffer.y = 0
-        if !noClearOnColumnChange {
+        // DECNCSM is a VT510 feature, so a lower DECSCL level always clears.
+        if !noClearOnColumnChange || conformance != .vt500 {
             // Buffers without reflow keep cells past a narrower width. The cleared page must not keep them.
             for row in 0..<rows {
                 buffer.lines[buffer.yBase + row].resize(cols: cols, fill: PackedCell())
