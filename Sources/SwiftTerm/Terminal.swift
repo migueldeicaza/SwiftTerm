@@ -1436,6 +1436,8 @@ open class Terminal {
         _ = applyDECPrivateMode(SpecialDECPrivateMode.visibilityReports.rawValue, value: false)
         _ = applyDECPrivateMode(SpecialDECPrivateMode.inBandSizeReports.rawValue, value: false)
         _ = applyDECPrivateMode(SpecialDECPrivateMode.kittyPasteEvents.rawValue, value: false)
+        reportedOnly.decModes.removeAll()
+        reportedOnly.attributeChangeExtent = 0
         if isReset {
             savedPrivateModes.removeAll()
 #if !SWIFTTERM_EMBEDDED
@@ -1751,6 +1753,16 @@ open class Terminal {
                 result = "\(terminal.buffer.marginLeft+1);\(terminal.buffer.marginRight+1)s"
             case " q": // DECSCUSR - the set cursor style
                 result = "\(terminal.options.cursorStyle.decscusrParameter) q"
+            case "*x": // DECSACE - attribute change extent
+                result = "\(terminal.reportedOnly.attributeChangeExtent)*x"
+            case "t": // DECSLPP - lines per page
+                result = "\(terminal.rows)t"
+            case "*|": // DECSNLS - lines per screen
+                result = "\(terminal.rows)*|"
+            case "$~": // DECSSDT - SwiftTerm has no status line
+                result = "0$~"
+            case "$}": // DECSASD - output always goes to the main display
+                result = "0$}"
             default:
                 ok = 0 // this means the request is not valid, report that to the host.
                 // invalid: DCS 0 $ r Pt ST (xterm)
@@ -3614,6 +3626,24 @@ open class Terminal {
     private var activeHyperlink: ActiveHyperlink? = nil
     private var payloadCodes = Set<UInt16>()
 
+    /// State that SwiftTerm keeps only so that DECRQM and DECRQSS can report it.
+    private final class ReportedOnlyState {
+        /// The set DEC private modes in `reportedOnlyDECModes`.
+        var decModes: Set<Int> = []
+        /// DECSACE: 0 or 1 is stream, 2 is rectangle. SwiftTerm has no DECCARA or
+        /// DECRARA, so the value changes nothing.
+        var attributeChangeExtent = 0
+    }
+
+    /// DECPFF (18), DECPEX (19), DECHEBM (35) and DECNRCM (42). SwiftTerm has no
+    /// printer, Hebrew keyboard or national replacement sets, so these modes
+    /// only keep their state.
+    static let reportedOnlyDECModes: Set<Int> = [18, 19, 35, 42]
+
+    // This is a single reference after the hot fields, so that cold state does
+    // not move their offsets. Only cold fields come after it.
+    private let reportedOnly = ReportedOnlyState()
+
     private func resolveActiveHyperlink() -> TinyAtom? {
         guard let activeHyperlink else {
             return nil
@@ -4931,6 +4961,12 @@ open class Terminal {
                     }
                 }
             }
+        } else if collect == [UInt8 (ascii: "*")] {
+            // DECSACE
+            let extent = pars.count > 0 ? pars [0] : 0
+            if extent >= 0 && extent <= 2 {
+                reportedOnly.attributeChangeExtent = extent
+            }
         } else {
             log ("Not implemented CSI x with collect: collect=\(collect) and pars=\(pars)")
         }
@@ -5201,6 +5237,16 @@ open class Terminal {
         }
     }
 
+    // CSI Ps * | Set Number of Lines per Screen (DECSNLS), VT420 and up.
+    // As DECSLPP, the host decides whether to resize.
+    func cmdSetLinesPerScreen (_ pars: CsiParameters)
+    {
+        guard let tdel = self.tdel, pars.count > 0, pars [0] > 0 else {
+            return
+        }
+        tdel.windowCommand(source: self, command: .resizeTerminal(cols: cols, rows: pars [0]))
+    }
+
     //
     // CSI Ps ; Ps ; Ps t - Various window manipulations and reports (xterm)
     // See https://invisible-island.net/xterm/ctlseqs/ctlseqs.html for a full
@@ -5225,6 +5271,9 @@ open class Terminal {
             tdel.windowCommand(source: self, command: .sendToBack)
         case [7]:
             tdel.windowCommand(source: self, command: .refreshWindow)
+        case _ where pars.count == 1 && pars [0] >= 24:
+            // DECSLPP: as CSI 8 t, the host decides whether to resize.
+            tdel.windowCommand(source: self, command: .resizeTerminal(cols: cols, rows: pars [0]))
         case _ where pars.count == 3 && pars.first == 8:
             tdel.windowCommand(source: self, command: .resizeTerminal(cols: pars [2], rows: pars [1]))
         case [9, 0]:
@@ -5639,6 +5688,8 @@ open class Terminal {
             return wraparound
         case 67:
             return backarrowKeyMode
+        case _ where Terminal.reportedOnlyDECModes.contains(mode):
+            return reportedOnly.decModes.contains(mode)
         case SpecialDECPrivateMode.bracketedPaste.rawValue:
             return bracketedPasteMode
         case SpecialDECPrivateMode.synchronizedOutput.rawValue:
@@ -5668,6 +5719,8 @@ open class Terminal {
             return true
         case 67:
             return false
+        case _ where Terminal.reportedOnlyDECModes.contains(mode):
+            return false
         case SpecialDECPrivateMode.bracketedPaste.rawValue,
              SpecialDECPrivateMode.synchronizedOutput.rawValue,
              SpecialDECPrivateMode.colorSchemeReports.rawValue,
@@ -5693,7 +5746,13 @@ open class Terminal {
             setWraparound(value)
         case 67: // DECBKM
             backarrowKeyMode = value
-        case 117:
+        case _ where Terminal.reportedOnlyDECModes.contains(mode):
+            if value {
+                reportedOnly.decModes.insert(mode)
+            } else {
+                reportedOnly.decModes.remove(mode)
+            }
+        case 117, 60:
             break
         case SpecialDECPrivateMode.bracketedPaste.rawValue:
             bracketedPasteMode = value
@@ -5745,7 +5804,8 @@ open class Terminal {
     }
 
     private func decPrivateModeReportState(_ mode: Int) -> DECModeReportState? {
-        if mode == 117 {
+        // DECHCCM (60) needs horizontal scrolling, which SwiftTerm does not have.
+        if mode == 117 || mode == 60 {
             return .permanentlyReset
         }
         if mode == SpecialDECPrivateMode.graphemeClustering.rawValue {
@@ -5767,6 +5827,10 @@ open class Terminal {
     }
 
     func cmdDecRqm (_ pars: CsiParameters, decMode: Bool) {
+        // DECRQM is a VT320 feature.
+        if conformance == .vt100 || conformance == .vt200 {
+            return
+        }
         let modeUnknown = 0
         let modeSet = 1
         let modeReset = 2
@@ -5810,10 +5874,6 @@ open class Terminal {
                 res = modeCouldBeImplementedButReset
             case 14: // cursor blink xor
                 res = modeCouldBeImplementedButReset
-            case 18: // DECPFF - Print screen with form feed
-                res = modeCouldBeImplementedButSet
-            case 19: // DECPEX - print region limitation
-                res = modeCouldBeImplementedButSet
             case 25: // DECTCEM cursor visbiolity
                 res = cursorHidden ? modeReset : modeSet
             case 30: // RXVT show scrollbar
@@ -5822,8 +5882,6 @@ open class Terminal {
                 res = allow80To132 ? modeSet : modeReset
             case 41: // xterm tab workaround in "more(1)" command
                 res = modeReset
-            case 42: // DECNRCM - national character set
-                res = modeAlwaysReset
             case 44: // MARGIN_BELL
                 res = modeAlwaysReset
             case 45: // REVERSEWRAP
@@ -6902,8 +6960,10 @@ open class Terminal {
             case 1045: // Xterm Extended Reverse Wrap-around
                 reverseWraparoundExtended = true
             case 69:
-                // Enable left and right margin mode (DECLRMM),
-                setMarginMode(true)
+                // Enable left and right margin mode (DECLRMM), a VT420 feature.
+                if conformance == .vt400 || conformance == .vt500 {
+                    setMarginMode(true)
+                }
             case 95: // DECNCSM
                 noClearOnColumnChange = true
             case 1000:
@@ -8472,6 +8532,10 @@ open class Terminal {
     func cmdReset ()
     {
             parser.reset (self)
+            // As xterm, RIS leaves 132-column mode when DECCOLM can change it.
+            if allow80To132 && cols == 132 {
+                resize (cols: 80, rows: rows)
+            }
             resetToInitialState ()
     }
             

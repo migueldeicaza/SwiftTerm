@@ -681,8 +681,17 @@ final class EscapeSequenceParser {
         case 0x79: terminal.cmdDECRQCRA(pars, collect)          // y
         case 0x7a: terminal.csiZ(pars, collect)                 // z (DECERA)
         case 0x7b: terminal.csiOpenBrace(pars, collect)         // {
+        case 0x7c:                                              // |
+            if collect == [UInt8(ascii: "*")] {
+                terminal.cmdSetLinesPerScreen(pars)             // DECSNLS
+            }
         case 0x7d: terminal.csiCloseBrace(pars, collect)        // }
-        case 0x7e: terminal.cmdDeleteColumns(pars, collect)     // ~
+        case 0x7e:                                              // ~
+            // DECDC is CSI Pn ' ~. Other intermediates, such as DECSSDT
+            // (CSI Ps $ ~), must not delete columns.
+            if collect == [UInt8(ascii: "'")] {
+                terminal.cmdDeleteColumns(pars, collect)
+            }
         default:
             let ch = Character(UnicodeScalar(code))
             terminal.log ("SwiftTerm: Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars))")
