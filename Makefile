@@ -27,13 +27,18 @@ run-fuzzer-ghostty:
 run-fuzzer-ghostty2:
 	swift test --filter GhosttyFuzz
 
+# The esctest2 commit that the tests and Fixtures/esctest-known-good.txt use.
+ESCTEST_REPO = https://github.com/ThomasDickey/esctest2.git
+ESCTEST_COMMIT = 2798f12149a19c3295e9b4853ab2da4b2eff1b2b
+
 clone-esctest:
-	@if [ -d esctest ]; then \
-		echo "esctest directory already exists, updating..."; \
-		cd esctest && git fetch && git checkout python3 && git pull; \
-	else \
-		git clone --branch python3 https://github.com/migueldeicaza/esctest.git esctest; \
-	fi
+	@if [ ! -d esctest ]; then git clone $(ESCTEST_REPO) esctest; fi
+	cd esctest && git remote set-url origin $(ESCTEST_REPO) && \
+		git fetch origin && git checkout --detach $(ESCTEST_COMMIT)
+
+esctest-report:
+	ESCTEST_REPORT_LOG=$(CURDIR)/esctest.log swift test --filter testFullSuiteReport
+	@grep 'tests passed' esctest.log
 
 run-bench:
 	(cd Tools/SwiftTermBenchmarks; swift package benchmark     --target SwiftTermBenchmarks     --benchmark-build-configuration release)
