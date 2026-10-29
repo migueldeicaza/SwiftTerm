@@ -159,6 +159,18 @@ struct TerminalContentSnapshotExportTests {
         #expect(partlyGone.rows.map(\.text) == kept.rows.prefix(2).map(\.text))
     }
 
+    @Test func extremeRowRangesClampAfterHistoryTrim() {
+        let fixture = Fixture(scrollback: 2)
+        fixture.feed(lines(1...20))
+        let retained = fixture.snapshot()
+        #expect(retained.capturedRange.lowerBound > 0)
+        #expect(fixture.snapshot(.rows(Int.min..<Int.max)) == retained)
+        #expect(fixture.snapshot(.rows(Int.min..<0)).rows.isEmpty)
+        #expect(fixture.snapshot(.rows(Int.max..<Int.max)).rows.isEmpty)
+        let top = retained.capturedRange.lowerBound
+        #expect(fixture.snapshot(.rows(Int.min..<(top + 1))).rows == Array(retained.rows.prefix(1)))
+    }
+
     @Test func kindSelectsTheNormalOrAlternateBuffer() {
         let fixture = Fixture()
         fixture.feed("normal text")
@@ -547,6 +559,26 @@ struct TerminalContentSnapshotExportTests {
         let copy = replay(snapshot)
         #expect(copy.rows.map(\.text) == ["abcdefghijkl", "", "", ""])
         expectSameContents(snapshot, copy)
+    }
+
+    @Test(arguments: [Ansi256PaletteStrategy.xterm, .base16Lab, .base16LabHarmonious])
+    func installedPaletteTravelsWithTheExport(strategy: Ansi256PaletteStrategy) {
+        let delegate = TerminalTestDelegate()
+        let source = Terminal(delegate: delegate, options: TerminalOptions(
+            cols: 6, rows: 3, ansi256PaletteStrategy: strategy))
+        source.terminalLock.withLock {
+            var colors = Color.terminalAppColors
+            colors[1] = Color(red: 65535, green: 0, blue: 65535)
+            source.installPalette(colors: colors)
+            source.feed(text: "\u{1b}]10;rgb:0a/0b/0c\u{7}\u{1b}]11;rgb:10/20/30\u{7}\u{1b}]4;2;rgb:00/ff/ff\u{7}\u{1b}[31mx\u{1b}[38;5;100my")
+        }
+        let original = source.contentSnapshot()
+        #expect(original.palette[1] == original.defaultPalette[1])
+        let copy = replay(original)
+        #expect(copy.palette == original.palette)
+        #expect(copy.foregroundColor == original.foregroundColor)
+        #expect(copy.backgroundColor == original.backgroundColor)
+        expectSameContents(original, copy)
     }
 
     @Test func changedPaletteAndDefaultColorsTravelWithTheExport() throws {

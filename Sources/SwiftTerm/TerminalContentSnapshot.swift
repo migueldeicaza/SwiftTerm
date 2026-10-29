@@ -170,8 +170,8 @@ extension TerminalContentSnapshot {
     /// terminal of the same width.
     ///
     /// The output starts with the default colors, when they are not
-    /// SwiftTerm's stock ones, and the palette entries the application
-    /// changed, as `OSC 10`, `OSC 11` and `OSC 4`, so indexed cells and the
+    /// SwiftTerm's stock ones, and palette entries that differ from a fresh
+    /// SwiftTerm terminal, as `OSC 10`, `OSC 11` and `OSC 4`, so indexed cells and the
     /// default colors keep their appearance in the receiving terminal.
     /// Every attribute is re-encoded with ``Attribute/sgrParameters()``,
     /// including dim, italic, strikethrough, underline styles and underline
@@ -321,8 +321,9 @@ extension TerminalContentSnapshot {
     }
 
     /// `OSC 10` and `OSC 11` when the default colors are not SwiftTerm's
-    /// stock ones, then `OSC 4` for the palette entries the application
-    /// changed. The default colors go first because a terminal that derives
+    /// stock ones, then `OSC 4` for entries that differ from a fresh SwiftTerm
+    /// terminal. This includes host-installed colors and generated colors.
+    /// The default colors go first because a terminal that derives
     /// its palette from them rebuilds it when they change. A stock terminal
     /// produces nothing, so its export starts with the SGR reset.
     func colorSequences() -> String {
@@ -333,8 +334,15 @@ extension TerminalContentSnapshot {
         if backgroundColor != Color.defaultBackground {
             result += "\u{1b}]11;\(backgroundColor.formatAsXcolor())\u{7}"
         }
-        if palette.count == 256, defaultPalette.count == 256 {
-            for (index, color) in palette.enumerated() where color != defaultPalette[index] {
+        if palette.count == 256 {
+            // Replay starts with the stock installed colors and palette strategy.
+            // OSC 10/11 above rebuild that palette before OSC 4 sets its entries.
+            let replayPalette = Color.setupDefaultAnsiColors(
+                initialColors: Color.terminalAppColors,
+                strategy: TerminalOptions.default.ansi256PaletteStrategy,
+                backgroundColor: backgroundColor,
+                foregroundColor: foregroundColor)
+            for (index, color) in palette.enumerated() where color != replayPalette[index] {
                 result += "\u{1b}]4;\(index);\(color.formatAsXcolor())\u{7}"
             }
         }
@@ -477,8 +485,9 @@ extension Terminal {
             start = liveStart - min(max(0, maximumScrollbackRows), liveStart)
             end = count
         case .rows(let range):
-            start = min(max(0, range.lowerBound - source.linesTop), count)
-            end = min(max(start, range.upperBound - source.linesTop), count)
+            // Limit absolute bounds before subtraction to avoid integer overflow.
+            start = min(max(range.lowerBound, source.linesTop) - source.linesTop, count)
+            end = max(start, min(max(range.upperBound, source.linesTop) - source.linesTop, count))
         }
         let copiedRows = (start..<end).map { index in
             let line = source.lines[index]
