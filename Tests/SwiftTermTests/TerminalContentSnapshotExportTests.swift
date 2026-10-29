@@ -180,6 +180,19 @@ struct TerminalContentSnapshotExportTests {
         #expect(fixture.snapshot(kind: .alt).bufferKind == .alt)
     }
 
+    @Test func bufferAndKindLabelsKeepCursorAndPaletteData() {
+        let fixture = Fixture()
+        fixture.feed("\u{1b}]4;1;rgb:ff/00/ff\u{7}normal")
+        fixture.feed("\u{1b}[?1049halt")
+        let normal = fixture.terminal.contentSnapshot(region: .all, buffer: .normal)
+        #expect(normal == fixture.terminal.contentSnapshot(region: .all, kind: .normal))
+        #expect(normal.cursorRow == normal.liveTopRow)
+        #expect(normal.cursorColumn == 6)
+        #expect(normal.palette[1] == Color(red: 65535, green: 0, blue: 65535))
+        #expect(normal.bufferKind == .normal)
+        #expect(normal.inputState.isAlternateBuffer)
+    }
+
     @Test func paletteAndDefaultColorsAreCopiedAndStayPut() throws {
         let fixture = Fixture()
         fixture.feed("\u{1b}[31mred")

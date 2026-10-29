@@ -24,6 +24,11 @@ final class SearchEngine {
     private let terminal: Terminal
     private let lineCache: SearchLineCache
     private let nonWordCharacters: Set<Character> = Set(" ~!@#$%^&*()+`-=[]{}|\\;:\"',./<>?")
+    private var compiledRegex: (pattern: String, caseSensitive: Bool, regex: NSRegularExpression?)?
+#if DEBUG
+    /// Search entry and wrapped-parent row visits. Access under the terminal lock.
+    private(set) var testingRowVisits = 0
+#endif
 
     init (terminal: Terminal, lineCache: SearchLineCache) {
         self.terminal = terminal
@@ -44,9 +49,12 @@ final class SearchEngine {
 
         var result = findInLine(term: term, searchPosition: &searchPosition, searchOptions: searchOptions, isReverseSearch: false)
         if result == nil {
-            let maxRow = terminal.displayBuffer.lines.count
+            let buffer = terminal.displayBuffer
+            let maxRow = buffer.lines.count
             if startRow + 1 < maxRow {
-                for y in (startRow + 1)..<maxRow {
+                // A wrapped row's matches were searched for with the row its
+                // line starts on.
+                for y in (startRow + 1)..<maxRow where !buffer.lines[y].isWrapped {
                     searchPosition.startRow = y
                     searchPosition.startCol = 0
                     result = findInLine(term: term, searchPosition: &searchPosition, searchOptions: searchOptions, isReverseSearch: false)
@@ -57,6 +65,38 @@ final class SearchEngine {
             }
         }
         return result
+    }
+
+    /// The first `limit` matches, top to bottom, each starting past the end
+    /// of the one before. One pass over each logical line: searching again
+    /// from each match's end walked the line from its start every time.
+    func findAll (term: String, searchOptions: SearchOptions? = nil, limit: Int) -> [SearchResult] {
+        guard !term.isEmpty, limit > 0 else {
+            return []
+        }
+
+        lineCache.initLinesCache()
+
+        let buffer = terminal.displayBuffer
+        let options = searchOptions ?? SearchOptions()
+        var results: [SearchResult] = []
+        for row in 0..<buffer.lines.count where !buffer.lines[row].isWrapped {
+            let entry = logicalLine(at: row)
+            let line = entry.lineAsString
+            var lower = line.startIndex
+            var lowerOffset = 0
+            while let found = match(of: term, in: line, from: lower, options: options, isReverseSearch: false) {
+                let foundIndex = lowerOffset + line.distance(from: lower, to: found.lowerBound)
+                results.append(result(term: options.regex ? String(line[found]) : term, at: foundIndex, row: row,
+                                      offsets: entry.lineOffsets))
+                if results.count == limit {
+                    return results
+                }
+                lowerOffset = foundIndex + line.distance(from: found.lowerBound, to: found.upperBound)
+                lower = found.upperBound
+            }
+        }
+        return results
     }
 
     func findNextWithSelection (term: String, searchOptions: SearchOptions? = nil, cachedSearchTerm: String?, previousSelection: SearchSelection?) -> SearchResult? {
@@ -81,10 +121,11 @@ final class SearchEngine {
         var searchPosition = SearchPosition(startCol: startCol, startRow: startRow)
         var result = findInLine(term: term, searchPosition: &searchPosition, searchOptions: searchOptions, isReverseSearch: false)
 
+        let buffer = terminal.displayBuffer
         if result == nil {
-            let maxRow = terminal.displayBuffer.lines.count
+            let maxRow = buffer.lines.count
             if startRow + 1 < maxRow {
-                for y in (startRow + 1)..<maxRow {
+                for y in (startRow + 1)..<maxRow where !buffer.lines[y].isWrapped {
                     searchPosition.startRow = y
                     searchPosition.startCol = 0
                     result = findInLine(term: term, searchPosition: &searchPosition, searchOptions: searchOptions, isReverseSearch: false)
@@ -96,7 +137,7 @@ final class SearchEngine {
         }
 
         if result == nil && startRow != 0 {
-            for y in 0..<startRow {
+            for y in 0..<startRow where !buffer.lines[y].isWrapped {
                 searchPosition.startRow = y
                 searchPosition.startCol = 0
                 result = findInLine(term: term, searchPosition: &searchPosition, searchOptions: searchOptions, isReverseSearch: false)
@@ -176,125 +217,138 @@ final class SearchEngine {
         return result
     }
 
-    private func isWholeWord (searchIndex: Int, line: String, term: String) -> Bool {
-        let beforeIndex = searchIndex - 1
-        let afterIndex = searchIndex + term.count
-
-        let beforeIsBoundary: Bool
-        if beforeIndex < 0 {
-            beforeIsBoundary = true
-        } else {
-            beforeIsBoundary = nonWordCharacters.contains(character(at: beforeIndex, in: line) ?? " ")
-        }
-
-        let afterIsBoundary: Bool
-        if afterIndex >= line.count {
-            afterIsBoundary = true
-        } else {
-            afterIsBoundary = nonWordCharacters.contains(character(at: afterIndex, in: line) ?? " ")
-        }
-
-        return beforeIsBoundary && afterIsBoundary
+    /// Whether the match at `range` stands alone: the characters beside it,
+    /// if any, are non-word characters.
+    private func isWholeWord (_ range: Range<String.Index>, in line: String) -> Bool {
+        let before = range.lowerBound > line.startIndex ? line[line.index(before: range.lowerBound)] : " "
+        let after = range.upperBound < line.endIndex ? line[range.upperBound] : " "
+        return nonWordCharacters.contains(before) && nonWordCharacters.contains(after)
     }
 
-    private func character (at offset: Int, in line: String) -> Character? {
-        guard offset >= 0 && offset < line.count else {
-            return nil
+    /// The compiled pattern, kept for the next row and the next search.
+    private func regex (for pattern: String, caseSensitive: Bool) -> NSRegularExpression? {
+        if let compiledRegex, compiledRegex.pattern == pattern, compiledRegex.caseSensitive == caseSensitive {
+            return compiledRegex.regex
         }
-        let idx = line.index(line.startIndex, offsetBy: offset)
-        return line[idx]
+        let regex = try? NSRegularExpression(pattern: pattern, options: caseSensitive ? [] : [.caseInsensitive])
+        compiledRegex = (pattern, caseSensitive, regex)
+        return regex
     }
 
     private func findInLine (term: String, searchPosition: inout SearchPosition, searchOptions: SearchOptions? = nil, isReverseSearch: Bool = false) -> SearchResult? {
-        let row = searchPosition.startRow
-        let col = searchPosition.startCol
+#if DEBUG
+        testingRowVisits &+= 1
+#endif
         let buffer = terminal.displayBuffer
 
-        guard row >= 0 && row < buffer.lines.count else {
+        guard searchPosition.startRow >= 0 && searchPosition.startRow < buffer.lines.count else {
             return nil
         }
 
-        let firstLine = buffer.lines[row]
-        if firstLine.isWrapped {
+        if buffer.lines[searchPosition.startRow].isWrapped {
             if isReverseSearch {
                 searchPosition.startCol += terminal.cols
                 return nil
             }
-            searchPosition.startRow -= 1
-            searchPosition.startCol += terminal.cols
-            return findInLine(term: term, searchPosition: &searchPosition, searchOptions: searchOptions, isReverseSearch: isReverseSearch)
+            // Search the logical line from this row's place in it. A loop,
+            // so a line wrapped over thousands of rows can't overflow the stack.
+            repeat {
+#if DEBUG
+                testingRowVisits &+= 1
+#endif
+                searchPosition.startRow -= 1
+                searchPosition.startCol += terminal.cols
+            } while searchPosition.startRow >= 0 && buffer.lines[searchPosition.startRow].isWrapped
+            guard searchPosition.startRow >= 0 else {
+                return nil
+            }
         }
+        let row = searchPosition.startRow
+        let col = searchPosition.startCol
 
-        var cache = lineCache.getLineFromCache(row: row)
-        if cache == nil {
-            let translated = lineCache.translateBufferLineToStringWithWrap(lineIndex: row, trimRight: true)
-            lineCache.setLineInCache(row: row, entry: translated)
-            cache = translated
-        }
-
-        guard let cacheEntry = cache else {
-            return nil
-        }
-
+        let cacheEntry = logicalLine(at: row)
         let stringLine = cacheEntry.lineAsString
         let offsets = cacheEntry.lineOffsets
         let offset = bufferColsToStringOffset(startRow: row, cols: col)
         let options = searchOptions ?? SearchOptions()
+        let clampedOffset = min(offset, stringLine.count)
+        let offsetIndex = stringLine.index(stringLine.startIndex, offsetBy: clampedOffset)
 
-        var resultIndex: Int?
-        var matchTerm = term
+        if isReverseSearch && !options.regex && clampedOffset - term.count < 0 {
+            return nil
+        }
+        guard let found = match(of: term, in: stringLine, from: offsetIndex, options: options,
+                                isReverseSearch: isReverseSearch) else {
+            return nil
+        }
+        let foundIndex = stringLine.distance(from: stringLine.startIndex, to: found.lowerBound)
+        return result(term: options.regex ? String(stringLine[found]) : term, at: foundIndex, row: row, offsets: offsets)
+    }
 
+    /// The text of the logical line that starts at `row`, from the cache.
+    private func logicalLine (at row: Int) -> LineCacheEntry {
+        if let cached = lineCache.getLineFromCache(row: row) {
+            return cached
+        }
+        let translated = lineCache.translateBufferLineToStringWithWrap(lineIndex: row, trimRight: true)
+        lineCache.setLineInCache(row: row, entry: translated)
+        return translated
+    }
+
+    /// The nearest match the options accept in `line`, from `index` in the
+    /// search's direction. A rejected match doesn't end the search, so one
+    /// search of a logical line finds what its later rows would.
+    private func match (of term: String, in line: String, from index: String.Index, options: SearchOptions,
+                        isReverseSearch: Bool) -> Range<String.Index>? {
         if options.regex {
-            let regexOptions: NSRegularExpression.Options = options.caseSensitive ? [] : [.caseInsensitive]
-            guard let regex = try? NSRegularExpression(pattern: term, options: regexOptions) else {
+            guard let regex = regex(for: term, caseSensitive: options.caseSensitive) else {
                 return nil
             }
-            let clampedOffset = min(offset, stringLine.count)
-            let offsetIndex = stringLine.index(stringLine.startIndex, offsetBy: clampedOffset)
-
-            if isReverseSearch {
-                let searchRange = NSRange(stringLine.startIndex..<offsetIndex, in: stringLine)
-                let matches = regex.matches(in: stringLine, options: [], range: searchRange)
-                if let match = matches.last, match.range.length > 0, let matchRange = Range(match.range, in: stringLine) {
-                    resultIndex = stringLine.distance(from: stringLine.startIndex, to: matchRange.lowerBound)
-                    matchTerm = String(stringLine[matchRange])
+            let range = isReverseSearch ? line.startIndex..<index : index..<line.endIndex
+            let accepted = { (match: NSTextCheckingResult) -> Range<String.Index>? in
+                guard match.range.length > 0, let range = Range(match.range, in: line),
+                      !options.wholeWord || self.isWholeWord(range, in: line) else {
+                    return nil
                 }
-            } else {
-                let searchRange = NSRange(offsetIndex..<stringLine.endIndex, in: stringLine)
-                if let match = regex.firstMatch(in: stringLine, options: [], range: searchRange), match.range.length > 0,
-                   let matchRange = Range(match.range, in: stringLine) {
-                    resultIndex = stringLine.distance(from: stringLine.startIndex, to: matchRange.lowerBound)
-                    matchTerm = String(stringLine[matchRange])
+                return range
+            }
+            if isReverseSearch {
+                return regex.matches(in: line, options: [], range: NSRange(range, in: line))
+                    .reversed().lazy.compactMap(accepted).first
+            }
+            var found: Range<String.Index>?
+            regex.enumerateMatches(in: line, options: [], range: NSRange(range, in: line)) { match, _, stop in
+                if let match, let range = accepted(match) {
+                    found = range
+                    stop.pointee = true
                 }
             }
-        } else {
-            let searchOptions: String.CompareOptions = options.caseSensitive ? [] : [.caseInsensitive]
-            let clampedOffset = min(offset, stringLine.count)
-            let offsetIndex = stringLine.index(stringLine.startIndex, offsetBy: clampedOffset)
-
-            if isReverseSearch {
-                if clampedOffset - matchTerm.count >= 0 {
-                    let range = stringLine.startIndex..<offsetIndex
-                    if let foundRange = stringLine.range(of: matchTerm, options: searchOptions.union(.backwards), range: range) {
-                        resultIndex = stringLine.distance(from: stringLine.startIndex, to: foundRange.lowerBound)
-                    }
+            return found
+        }
+        let compareOptions: String.CompareOptions = options.caseSensitive ? [] : [.caseInsensitive]
+        if isReverseSearch {
+            var upper = index
+            while let match = line.range(of: term, options: compareOptions.union(.backwards), range: line.startIndex..<upper) {
+                if !options.wholeWord || isWholeWord(match, in: line) {
+                    return match
                 }
-            } else {
-                let range = offsetIndex..<stringLine.endIndex
-                if let foundRange = stringLine.range(of: matchTerm, options: searchOptions, range: range) {
-                    resultIndex = stringLine.distance(from: stringLine.startIndex, to: foundRange.lowerBound)
-                }
+                upper = line.index(before: match.upperBound)
             }
-        }
-
-        guard let foundIndex = resultIndex else {
             return nil
         }
-
-        if options.wholeWord && !isWholeWord(searchIndex: foundIndex, line: stringLine, term: matchTerm) {
-            return nil
+        var lower = index
+        while lower < line.endIndex, let match = line.range(of: term, options: compareOptions, range: lower..<line.endIndex) {
+            if !options.wholeWord || isWholeWord(match, in: line) {
+                return match
+            }
+            lower = line.index(after: match.lowerBound)
         }
+        return nil
+    }
 
+    /// The result for `matchTerm` found `foundIndex` characters into the
+    /// logical line that starts at `row`, whose rows start at `offsets`.
+    private func result (term matchTerm: String, at foundIndex: Int, row: Int, offsets: [Int]) -> SearchResult {
         var startRowOffset = 0
         while startRowOffset < offsets.count - 1 && foundIndex >= offsets[startRowOffset + 1] {
             startRowOffset += 1

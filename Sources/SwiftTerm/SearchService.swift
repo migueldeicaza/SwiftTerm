@@ -21,6 +21,9 @@ final class SearchService {
     private var lastSelection: SearchSelection?
 
     private(set) var lastResult: SearchResult?
+#if DEBUG
+    var testingSearchRowVisits: Int { engine.testingRowVisits }
+#endif
 
     init (terminal: Terminal) {
         self.terminal = terminal
@@ -92,27 +95,7 @@ final class SearchService {
             return []
         }
 
-        lineCache.initLinesCache()
-
-        var results: [SearchResult] = []
-        var prevResult: SearchResult?
-        var result = engine.find(term: term, startRow: 0, startCol: 0, searchOptions: options)
-
-        while let match = result {
-            if results.count >= limit {
-                break
-            }
-            if let prevResult, prevResult.row == match.row && prevResult.col == match.col {
-                break
-            }
-            results.append(match)
-            prevResult = match
-
-            let nextPosition = advancePosition(from: Position(col: match.col, row: match.row), by: max(match.size, 1))
-            result = engine.find(term: term, startRow: nextPosition.row, startCol: nextPosition.col, searchOptions: options)
-        }
-
-        return results
+        return engine.findAll(term: term, searchOptions: options, limit: limit)
     }
 
     func selectionRange (for result: SearchResult) -> (start: Position, end: Position) {

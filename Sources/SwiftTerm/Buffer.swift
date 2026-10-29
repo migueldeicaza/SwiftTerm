@@ -186,10 +186,8 @@ public final class Buffer {
     var savedOriginMode: Bool = false
     /// Saved state for the origin mode
     var savedMarginMode: Bool = false
-    /// Saved state for the wrap around mode
-    var savedWraparound: Bool = false
-    /// Saved state for the reverse wrap around mode
-    var savedReverseWraparound: Bool = false
+    /// The DECSCA or SPA protection saved by DECSC.
+    var savedCharacterProtection: Bool = false
 
     /**
      * The left margin, 0-indexed, used when marginMode is turned on
@@ -320,6 +318,11 @@ public final class Buffer {
     }
     
     private var insertMode: Bool = false
+    /// Whether new cells are protected (DECSCA 1 or SPA).
+    private var characterProtection: Bool = false
+    /// `insertMode || characterProtection`, kept by the setters so that the
+    /// bulk-insert guard reads one field.
+    private var bulkInsertBlocked: Bool = false
     private var marginMode: Bool = false
     private var wraparound: Bool = false
 
@@ -341,6 +344,11 @@ public final class Buffer {
     private var semanticPromptStartLine: BufferLine?
     private var semanticPromptStartRowCache = 0
     private(set) var semanticPromptRowScanCount = 0
+#if DEBUG
+    /// Row visits during prompt checks, including backward chain traversal.
+    /// Access under the terminal lock, as with the buffer state.
+    private(set) var testingSemanticPromptRowVisits = 0
+#endif
 
     // A monotonic prompt-group counter. `beginSemanticPromptGroup` advances it;
     // the group-opening mark and every hard-continuation line of the group are
@@ -553,7 +561,14 @@ public final class Buffer {
     /// hard-continuation lines whose epoch matches the origin mark's group ID;
     /// nil otherwise. The group-ID match is what keeps an old group's stranded
     /// continuation rows from joining a new prompt.
+    ///
+    /// A non-origin row's answer walks back up its chain, so a scan for
+    /// prompts asks `semanticRowOpensPrompt` instead: asking this of every
+    /// row over a long wrapped output is quadratic.
     func semanticRowKind(at row: Int) -> SemanticPromptKind? {
+#if DEBUG
+        testingSemanticPromptRowVisits &+= 1
+#endif
         guard row >= 0, row < lines.count else { return nil }
         let activeOrigin = semanticPromptStartRow
         if originMarkGroup(at: row, activeOrigin: activeOrigin) != nil {
@@ -570,6 +585,9 @@ public final class Buffer {
         var current = row
         var epoch: UInt64? = nil
         while current > 0 {
+#if DEBUG
+            testingSemanticPromptRowVisits &+= 1
+#endif
             let line = lines[current]
             if line.isWrapped {
                 // soft wrap: same physical write, same group inherently
@@ -598,6 +616,15 @@ public final class Buffer {
             }
         }
         return nil
+    }
+
+    /// Whether `semanticRowKind(at: row)` is `initial`, read from the row's
+    /// own marks.
+    func semanticRowOpensPrompt(_ row: Int) -> Bool {
+#if DEBUG
+        testingSemanticPromptRowVisits &+= 1
+#endif
+        return row >= 0 && row < lines.count && originMarkGroup(at: row, activeOrigin: semanticPromptStartRow) != nil
     }
 
     /// The group ID of a row's group-opening mark, or nil if the row is not an
@@ -691,6 +718,12 @@ public final class Buffer {
 
     func setInsertMode(_ value: Bool) {
         self.insertMode = value
+        bulkInsertBlocked = insertMode || characterProtection
+    }
+
+    func setCharacterProtection(_ value: Bool) {
+        self.characterProtection = value
+        bulkInsertBlocked = insertMode || characterProtection
     }
 
     func setMarginMode(_ value: Bool) {
@@ -880,10 +913,9 @@ public final class Buffer {
         savedCharset = CharSets.defaultCharset
         marginRight = cols-1
         marginLeft = 0
-        savedWraparound = false
         savedOriginMode = false
         savedMarginMode = false
-        savedReverseWraparound = false
+        savedCharacterProtection = false
     }
     
     public var isCursorInViewPort : Bool {
@@ -1135,6 +1167,10 @@ public final class Buffer {
                   semanticRowKind(at: row) == .initial else {
                 return false
             }
+        }
+        // The one-pass prompt scan agrees with the row-by-row derivation.
+        for row in 0..<lines.count where semanticRowOpensPrompt(row) != (semanticRowKind(at: row) == .initial) {
+            return false
         }
         return true
     }
@@ -1731,13 +1767,14 @@ public final class Buffer {
 #endif
     
     @inline(__always)
-    var allowsBulkInsert: Bool { !insertMode }
+    var allowsBulkInsert: Bool { !bulkInsertBlocked }
 
     /// Bulk-inserts ASCII characters (all width-1, non-combining).
-    /// Returns number of bytes consumed. Returns 0 if insert mode is active.
+    /// Returns number of bytes consumed. Returns 0 if insert mode or
+    /// character protection is active.
     func insertAsciiRun(_ bytes: ArraySlice<UInt8>, styleID: UInt16,
                         payloadCode: UInt16) -> Int {
-        guard !insertMode else { return 0 }
+        guard allowsBulkInsert else { return 0 }
         let semanticCode = CellArena.semanticContentCode(for: semanticContent)
         let right = marginMode ? _marginRight : _cols - 1
         var consumed = 0
@@ -1770,10 +1807,11 @@ public final class Buffer {
     }
 
     /// Bulk-inserts borrowed ASCII characters (all width-1, non-combining).
-    /// Returns the number of bytes consumed. Returns 0 if insert mode is active.
+    /// Returns the number of bytes consumed. Returns 0 if insert mode or
+    /// character protection is active.
     func insertAsciiRun(_ bytes: Span<UInt8>, styleID: UInt16,
                         payloadCode: UInt16) -> Int {
-        guard !insertMode else { return 0 }
+        guard allowsBulkInsert else { return 0 }
         let semanticCode = CellArena.semanticContentCode(for: semanticContent)
         let right = marginMode ? _marginRight : _cols - 1
         var consumed = 0
@@ -1808,7 +1846,7 @@ public final class Buffer {
     /// Returns the number of scalars consumed.
     func insertScalarRun(_ scalars: UnsafeBufferPointer<UInt32>, width: Int,
                          styleID: UInt16, payloadCode: UInt16) -> Int {
-        guard !insertMode else { return 0 }
+        guard allowsBulkInsert else { return 0 }
         precondition(width == 1 || width == 2)
         let semanticCode = CellArena.semanticContentCode(for: semanticContent)
         let widthState: PackedCell.WidthState = width == 2 ? .wide : .narrow
@@ -1851,8 +1889,11 @@ public final class Buffer {
         // D.1: stamp the OSC 133 role once, here at the insertion funnel, from
         // the buffer's own classification. No caller can forget to stamp, and
         // during ordinary output `semanticContent` is `.none` (a no-op).
-        let cell = inputCell.replacingSemanticContentCode(
+        var cell = inputCell.replacingSemanticContentCode(
             CellArena.semanticContentCode(for: semanticContent))
+        if characterProtection {
+            cell = cell.replacingProtection(true)
+        }
         var chWidth = Int(cellArena.width(for: cell))
         
         let right = marginMode ? _marginRight : _cols - 1
@@ -1916,7 +1957,8 @@ public final class Buffer {
             let packedWideEmpty = cellArena.pack(
                 styleID: cell.styleID, scalar: 0, widthState: .spacerTail,
                 payloadCode: cell.payloadCode,
-                semanticContentCode: cell.semanticContentCode)!
+                semanticContentCode: cell.semanticContentCode,
+                isProtected: characterProtection)!
             chWidth -= 1
             while chWidth != 0 && _x < _cols {
                 bufferRow.setPackedCell(packedWideEmpty, at: _x)

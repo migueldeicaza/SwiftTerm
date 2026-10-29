@@ -293,6 +293,20 @@ final class SearchTests {
         #expect(previous?.row == 0)
     }
 
+    /// A whole-word search passes over a match inside a longer word to the
+    /// next one, either way.
+    @Test func testSearchEngineWholeWordLooksPastPartWords() {
+        let terminal = makeTerminal()
+        let cache = SearchLineCache(terminal: terminal)
+        let engine = SearchEngine(terminal: terminal, lineCache: cache)
+
+        terminal.feed(text: "abc ab abd")
+
+        let wholeWord = SearchOptions(wholeWord: true)
+        #expect(engine.find(term: "ab", startRow: 0, startCol: 0, searchOptions: wholeWord) == SearchResult(term: "ab", col: 4, row: 0, size: 2))
+        #expect(engine.findPreviousWithSelection(term: "ab", searchOptions: wholeWord, cachedSearchTerm: nil, previousSelection: nil) == SearchResult(term: "ab", col: 4, row: 0, size: 2))
+    }
+
     // MARK: - SearchService
 
     @Test func testSearchServiceFindAllAndLimit() {
@@ -309,6 +323,52 @@ final class SearchTests {
 
         let limited = service.findAll(term: "Hello", limit: 2)
         #expect(limited.count == 2)
+    }
+
+    /// Every match of a line counts past a wide character that wrapped to
+    /// the next row and left the row before it a cell short.
+    @Test func testSearchServiceFindAllCountsEveryMatchPastAWrappedWideCharacter() {
+        let terminal = makeTerminal(cols: 5, rows: 6)
+        let service = SearchService(terminal: terminal)
+
+        terminal.feed(text: "世ab世ab世ab")
+
+        #expect(service.findAll(term: "ab").map(\.row) == [0, 1, 2])
+    }
+
+    /// A line wrapped over a thousand rows is searched once, in a loop. Each
+    /// row searched the rest of its line again after recursing up to the
+    /// line's start, so a miss took seconds, counting matches restarted that
+    /// walk at each one, and a long line overflowed a thread's stack.
+    @Test func testSearchOfALongWrappedLineIsOnePass() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24, scrollback: 10_000)
+        let service = SearchService(terminal: terminal)
+        let rows = 1_000
+
+        terminal.feed(text: String(repeating: "needle" + String(repeating: "x", count: 74), count: rows) + "\r\n$ ")
+
+        terminal.terminalLock.withLock {
+#if DEBUG
+            let logicalLines = (0..<terminal.displayBuffer.lines.count).filter {
+                !terminal.displayBuffer.lines[$0].isWrapped
+            }.count
+            let visitsBefore = service.testingSearchRowVisits
+#endif
+            let matches = service.findAll(term: "needle")
+            #expect(matches.count == rows)
+            #expect(matches.last == SearchResult(term: "needle", col: 0, row: rows - 1, size: 6))
+#if DEBUG
+            let visitsAfterMatches = service.testingSearchRowVisits
+            #expect(visitsAfterMatches - visitsBefore <= logicalLines)
+#endif
+            let miss = service.findNext(term: "haystack")
+            #expect(miss == nil)
+#if DEBUG
+            let missVisits = service.testingSearchRowVisits - visitsAfterMatches
+            #expect(missVisits > 0)
+            #expect(missVisits <= logicalLines)
+#endif
+        }
     }
 
     @Test func testSearchServiceSelectionRange() {

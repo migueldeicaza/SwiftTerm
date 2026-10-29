@@ -73,6 +73,34 @@ final class MarginModeLineEditTests {
         #expect(screen[23] == "ROW24")
     }
 
+    /// A count past the rows from the cursor to the region's bottom blanks
+    /// those rows, and costs no more than that: the count was capped only at
+    /// twice the scrollback, so each `CSI 99999 L` made 20,000 lines, or
+    /// copied every row's margins 20,000 times.
+    @Test(arguments: [false, true])
+    func insertingMoreLinesThanTheRegionHoldsBlanksIt(marginMode: Bool) {
+        let rows = 50
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 200, rows: rows, scrollback: 10_000)
+        fill(terminal, rows: rows)
+        if marginMode { terminal.feed(text: "\u{1b}[?69h") }
+        terminal.feed(text: "\u{1b}[5;1H")
+
+        terminal.terminalLock.withLock {
+#if DEBUG
+            let iterationsBefore = terminal.testingInsertLineIterations
+#endif
+            for _ in 0..<3 { terminal.feed(text: "\u{1b}[99999L") }
+#if DEBUG
+            let iterations = terminal.testingInsertLineIterations - iterationsBefore
+            #expect(iterations == 3 * (rows - 4))
+#endif
+        }
+
+        let screen = visible(terminal, rows: rows)
+        #expect(Array(screen[0..<4]) == ["ROW01", "ROW02", "ROW03", "ROW04"])
+        #expect(screen[4...].allSatisfy { $0.isEmpty })
+    }
+
     /// The margin and non-margin paths must agree: enabling DECLRMM with the
     /// margins left at the full width should not change what DL does.
     @Test func marginModeMatchesTheNonMarginPathAtFullWidth() {

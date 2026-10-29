@@ -209,6 +209,158 @@ struct FrameDriverTests {
         driver.shutdown()
     }
 
+    /// A running tick source consumes pending events at its next tick, so a
+    /// dirty mark then publishes no main-actor task. Stopping it delivers a
+    /// mark recorded since its last tick, and only then.
+    @Test func dirtyMarksWhileTheLinkRunsPublishNoTask() async {
+        let signal = FrameDriverSignal()
+        let deliveries = Locked(0)
+        signal.configure { deliveries.withLock { $0 += 1 } }
+
+        signal.setLinkRunning(true)
+        signal.setLinkRunning(false)
+        await drainMainQueue()
+        #expect(deliveries.withLock { $0 } == 0)
+
+        signal.setLinkRunning(true)
+        await Task.detached {
+            for _ in 0..<1_000 {
+                signal.markDirty()
+            }
+        }.value
+        await drainMainQueue()
+        #expect(deliveries.withLock { $0 } == 0)
+
+        signal.setLinkRunning(false)
+        await drainMainQueue()
+        #expect(deliveries.withLock { $0 } == 1)
+    }
+
+    /// Only a dirty mark can wait for the running source's tick: an immediate
+    /// tick and shutdown still publish their delivery.
+    @Test func immediateTicksAndShutdownStillPublishWhileTheLinkRuns() async {
+        let immediateSignal = FrameDriverSignal()
+        let shutdownSignal = FrameDriverSignal()
+        let immediateDeliveries = Locked(0)
+        let shutdownDeliveries = Locked(0)
+        immediateSignal.configure { immediateDeliveries.withLock { $0 += 1 } }
+        shutdownSignal.configure { shutdownDeliveries.withLock { $0 += 1 } }
+        immediateSignal.setLinkRunning(true)
+        shutdownSignal.setLinkRunning(true)
+
+        await Task.detached {
+            immediateSignal.requestImmediateTick()
+            shutdownSignal.requestShutdown()
+        }.value
+        await drainMainQueue()
+
+        #expect(immediateDeliveries.withLock { $0 } == 1)
+        #expect(shutdownDeliveries.withLock { $0 } == 1)
+    }
+
+    /// A pty flood into a running driver costs the main actor no task per
+    /// batch: the tick draws what the marks recorded. Once the source idles
+    /// out, the next mark hops to main again to resume it.
+    @Test func runningSourceConsumesAFloodWithoutDeliveries() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        let signal = driver.signal
+        var tickCount = 0
+        var now: UInt64 = 1_000_000_000
+        driver.nowUptimeNs = { now }
+        driver.onTick = { tickCount += 1 }
+
+        driver.markDirty()
+        await drainMainQueue()
+        #expect(tickCount == 1)
+        #expect(source.isRunning)
+        let deliveriesWhileIdle = driver.currentCounters.deliveries
+
+        await Task.detached {
+            for _ in 0..<1_000 {
+                signal.markDirty()
+            }
+        }.value
+        await drainMainQueue()
+        #expect(driver.currentCounters.deliveries == deliveriesWhileIdle)
+        #expect(tickCount == 1)
+
+        source.tick()
+        #expect(tickCount == 2)
+
+        // An immediate tick does not wait for the source.
+        await Task.detached { signal.requestImmediateTick() }.value
+        await drainMainQueue()
+        #expect(tickCount == 3)
+        #expect(driver.currentCounters.deliveries == deliveriesWhileIdle + 1)
+
+        for _ in 0..<FrameDriver.idleTickLimit { source.tick() }
+        #expect(!source.isRunning)
+
+        now += 20_000_000
+        await Task.detached { signal.markDirty() }.value
+        await drainMainQueue()
+        #expect(driver.currentCounters.deliveries == deliveriesWhileIdle + 2)
+        #expect(source.isRunning)
+        #expect(tickCount == 4)
+        driver.shutdown()
+    }
+
+    /// A mark recorded while the source ran, and not yet ticked, must survive
+    /// the source stopping for any reason. Hiding the terminal stops it without
+    /// a tick; becoming visible again must draw that mark.
+    @Test func markRecordedWhileRunningSurvivesSuspension() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var tickCount = 0
+        var now: UInt64 = 1_000_000_000
+        driver.nowUptimeNs = { now }
+        driver.onTick = { tickCount += 1 }
+
+        driver.markDirty()
+        await drainMainQueue()
+        #expect(tickCount == 1)
+        #expect(source.isRunning)
+
+        driver.markDirty()
+        driver.setVisibilityOnMain(visible: false)
+        #expect(!source.isRunning)
+        await drainMainQueue()
+        #expect(tickCount == 1)
+
+        now += 20_000_000
+        driver.setVisibilityOnMain(visible: true)
+        #expect(source.isRunning)
+        #expect(tickCount == 2)
+        driver.shutdown()
+    }
+
+    /// The same for a view leaving its window, which is how a mobile view
+    /// stops its source.
+    @Test func markRecordedWhileRunningSurvivesWindowDetach() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var tickCount = 0
+        var now: UInt64 = 1_000_000_000
+        driver.nowUptimeNs = { now }
+        driver.onTick = { tickCount += 1 }
+
+        driver.markDirty()
+        await drainMainQueue()
+        #expect(tickCount == 1)
+
+        driver.markDirty()
+        driver.setWindowAttachedOnMain(false)
+        #expect(!source.isRunning)
+        await drainMainQueue()
+
+        now += 20_000_000
+        driver.setWindowAttachedOnMain(true)
+        #expect(source.isRunning)
+        #expect(tickCount == 2)
+        driver.shutdown()
+    }
+
     /// The resume tick is rate limited, so a producer that pauses and wakes the
     /// link repeatedly cannot drive frames faster than the display.
     @Test func resumeTicksAreRateLimited() async {

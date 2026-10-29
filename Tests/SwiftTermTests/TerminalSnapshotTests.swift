@@ -145,6 +145,144 @@ struct TerminalSnapshotTests {
         }
     }
 
+    @Test func outputPreservesSelectionWhenItWritesTheSameText() {
+        let view = makeView()
+        view.feed(text: "selected\r\none")
+        view.withTerminal { _ in
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 8, row: 0))
+        }
+
+        view.feed(text: "\u{1b}[1;1Hselected")
+
+        view.withTerminal { _ in
+            #expect(view.selection.active)
+            #expect(view.selection.getSelectedText() == "selected")
+        }
+    }
+
+    /// A shell's prompt mark arriving on a selected row leaves the selected
+    /// text as it was.
+    @Test func outputPreservesSelectionWhenAPromptMarkOnItChanges() {
+        let view = makeView()
+        view.feed(text: "$ make\r\none")
+        view.withTerminal { _ in
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 6, row: 0))
+        }
+
+        view.feed(text: "\u{1b}[1;1H\u{1b}]133;A\u{7}")
+
+        view.withTerminal { terminal in
+            #expect(terminal.buffer.lines[0].semanticMarks.contains { $0.kind == .initial })
+            #expect(view.selection.active)
+            #expect(view.selection.getSelectedText() == "$ make")
+        }
+    }
+
+    /// DECCOLM resizes every line, but a selection above the screen holds the
+    /// same cells after it, wider or narrower.
+    @Test func aColumnModeChangeKeepsASelectionAboveTheScreen() {
+        let view = makeView()
+        view.feed(text: "hello\r\n1\r\n2\r\n3\r\n4")
+        view.withTerminal { terminal in
+            #expect(terminal.buffer.yBase == 1)
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 5, row: 0))
+        }
+
+        view.feed(text: "\u{1b}[?40h\u{1b}[?3h")
+
+        view.withTerminal { terminal in
+            #expect(terminal.cols == 132)
+            #expect(view.selection.active)
+            #expect(view.selection.getSelectedText() == "hello")
+        }
+
+        view.feed(text: "\u{1b}[?3l")
+
+        view.withTerminal { terminal in
+            #expect(terminal.cols == 80)
+            #expect(view.selection.active)
+            #expect(view.selection.getSelectedText() == "hello")
+        }
+    }
+
+    @Test func aColumnModeChangeKeepsAPartialSelectionWhenOtherTextReflows() {
+        let view = makeView(cols: 132)
+        view.feed(text: "hello" + String(repeating: " ", count: 95) + "tail\r\n1\r\n2\r\n3\r\n4")
+        view.withTerminal { terminal in
+            #expect(terminal.buffer.yBase == 1)
+            view.selection.setSelection(
+                start: Position(col: 0, row: 0),
+                end: Position(col: 5, row: 0))
+        }
+
+        view.feed(text: "\u{1b}[?40h\u{1b}[?3l")
+
+        view.withTerminal { terminal in
+            #expect(terminal.cols == 80)
+            #expect(terminal.buffer.lines[1].isWrapped)
+            #expect(view.selection.active)
+            #expect(view.selection.getSelectedText() == "hello")
+        }
+    }
+
+    /// Blank cells a resize adds or drops leave a line's content as it was,
+    /// but dropping text changes it, so a selection over the blanks that
+    /// widening adds again is cleared.
+    @Test func aResizeChangesTheLineContentOnlyWhenItDropsOrAddsText() {
+        let line = BufferLine(cols: 6)
+        line[4] = CharData(attribute: CharData.defaultAttr, code: 65, size: 1)
+        let generation = line.contentGeneration
+
+        line.resize(cols: 8, fillData: CharData.Null)
+        line.resize(cols: 6, fillData: CharData.Null)
+        #expect(line.contentGeneration == generation)
+
+        line.resize(cols: 4, fillData: CharData.Null)
+        #expect(line.contentGeneration != generation)
+
+        let narrowed = line.contentGeneration
+        line.resize(cols: 6, fillData: CharData(attribute: CharData.defaultAttr, code: 66, size: 1))
+        #expect(line.contentGeneration != narrowed)
+    }
+
+    /// Complete history rows use their content generation. Only screen rows
+    /// and the partial rows at a selection's boundaries need copied cells.
+    @Test func outputUnderALargeSelectionCopiesOnlyScreenAndPartialRows() throws {
+        let view = TerminalView(frame: .zero, font: nil,
+                                options: TerminalOptions(cols: 200, rows: 50, scrollback: 10_000))
+        let line = String(repeating: "y", count: 199)
+        view.feed(text: (1...6_000).map { _ in line }.joined(separator: "\r\n"))
+        view.withTerminal { _ in
+            view.selection.setSelection(
+                start: Position(col: 1, row: 0),
+                end: Position(col: 198, row: 4_999))
+        }
+
+        try view.withTerminal { terminal in
+            #expect(terminal.buffer.yBase > 4_999)
+            let snapshot = try #require(view.selection.captureSelectedContent())
+            #expect(snapshot.rows.count == 5_000)
+            #expect(snapshot.rows.dropFirst().dropLast().allSatisfy { $0.cells == nil })
+            #expect(snapshot.rows.first?.cells?.count == 199)
+            #expect(snapshot.rows.last?.cells?.count == 198)
+        }
+
+        let batch = (1...10).map { "out \($0)" }.joined(separator: "\r\n") + "\r\n"
+        for _ in 0..<20 {
+            view.feed(text: batch)
+        }
+
+        view.withTerminal { _ in
+            #expect(view.selection.active)
+        }
+    }
+
     @Test func frameColorPreservesSRGBAlpha() {
         let view = makeView()
         let captured = FrameColor(

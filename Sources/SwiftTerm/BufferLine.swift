@@ -57,7 +57,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         set {
             guard newValue != renderModeValue else { return }
             renderModeValue = newValue
-            bump()
+            bumpRenderOnly()
         }
     }
 #if DEBUG
@@ -72,7 +72,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         set {
             guard newValue != semanticMarksValue else { return }
             semanticMarksValue = newValue
-            bump()
+            bumpRenderOnly()
         }
     }
     /// The prompt-group epoch of a line created by a hard line feed inside a
@@ -91,7 +91,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         set {
             guard newValue != semanticHardContinuationGroupValue else { return }
             semanticHardContinuationGroupValue = newValue
-            bump()
+            bumpRenderOnly()
         }
     }
     /// Link to the owning buffer, used only so `copyFrom` can ask which of two
@@ -171,19 +171,35 @@ public final class BufferLine: CustomDebugStringConvertible {
             // The common recycle and snapshot path writes nil to an empty row.
             guard newValue != nil || imagesValue != nil else { return }
             imagesValue = newValue
-            bump()
+            bumpRenderOnly()
         }
     }
 
-    /// Monotonically increasing counter incremented on every mutation of this line's
-    /// contents (cells, isWrapped, renderMode, images). Renderers that cache per-line
+    /// Counter that changes on every mutation of this line's contents (cells,
+    /// isWrapped, renderMode, images). Renderers that cache per-line
     /// draw state can compare this counter against a cached value to detect in-place
     /// changes without diffing individual cells.
     public var generation: UInt64 { _generation }
     private(set) var _generation: UInt64 = 0
+    /// A change that a selection of this line does not see adds this step
+    /// to `_generation` instead of 1. The low bits then count only the
+    /// changes a selection sees, so ``contentGeneration`` needs no counter
+    /// of its own and a cell write still costs one increment. The carry out
+    /// of the high bits only wraps `_generation`, which readers compare for
+    /// equality.
+    private static let renderOnlyStep: UInt64 = 1 << 40
+    /// Changes with what a selection of this line holds: the cells,
+    /// `isWrapped` and `bidiState`, and not the prompt marks, images,
+    /// render mode or blank cells a resize adds or drops at the end. A feed
+    /// compares it to keep a selection whose rows it didn't touch without
+    /// copying their cells.
+    var contentGeneration: UInt64 { _generation & (BufferLine.renderOnlyStep - 1) }
 
     @inline(__always)
     private func bump() { _generation &+= 1 }
+
+    @inline(__always)
+    private func bumpRenderOnly() { _generation &+= BufferLine.renderOnlyStep }
 
     public convenience init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false,
                              bidiState: BidiPresentationState = .default)
@@ -504,6 +520,11 @@ public final class BufferLine: CustomDebugStringConvertible {
         (0..<storage.count).map { storage.cell(at: $0) }
     }
 
+    /// Calls `body` with the payload code of each cell that holds one, without unpacking cells.
+    func forEachPayloadCode(_ body: (UInt16) -> Void) {
+        storage.forEachPayloadCode(body)
+    }
+
     /// Accesses the CharIndex at the specified position
     public subscript (index : Int /*, callingMethod: String = #function */) -> CharData {
         get {
@@ -591,7 +612,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             semanticMarksValue.removeAll(keepingCapacity: true)
         }
         semanticHardContinuationGroupValue = nil
-        bump()
+        bumpRenderOnly()
     }
     /// Test whether contains any chars.
     public func hasContent (index: Int) -> Bool {
@@ -746,7 +767,14 @@ public final class BufferLine: CustomDebugStringConvertible {
         if len == cols {
             return
         }
-        defer { bump() }
+        // The selection check compares a row's columns, which stop at the
+        // line's end, so a resize matters to a selection only through a cell
+        // it drops and a later resize adds back. That cell keeps its value
+        // when both are blank.
+        let changesContent = cols < len
+            ? (cols..<len).contains { storage.rawCell(at: $0) != PackedCell() }
+            : fill != PackedCell()
+        defer { changesContent ? bump() : bumpRenderOnly() }
 
         storage = storage.resized(to: cols, fill: fill)
         if cols < len {

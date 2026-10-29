@@ -648,6 +648,8 @@ final class EscapeSequenceParser {
         case 0x71:                                              // q
             if collect == [UInt8(ascii: ">")] {
                 terminal.cmdXTVERSION(pars, collect)
+            } else if collect.count == 1 && collect[0] == UInt8(ascii: "\"") {
+                terminal.cmdSelectCharacterProtection(pars)
             } else {
                 terminal.cmdSetCursorStyle(pars, collect)
             }
@@ -679,8 +681,17 @@ final class EscapeSequenceParser {
         case 0x79: terminal.cmdDECRQCRA(pars, collect)          // y
         case 0x7a: terminal.csiZ(pars, collect)                 // z (DECERA)
         case 0x7b: terminal.csiOpenBrace(pars, collect)         // {
+        case 0x7c:                                              // |
+            if collect == [UInt8(ascii: "*")] {
+                terminal.cmdSetLinesPerScreen(pars)             // DECSNLS
+            }
         case 0x7d: terminal.csiCloseBrace(pars, collect)        // }
-        case 0x7e: terminal.cmdDeleteColumns(pars, collect)     // ~
+        case 0x7e:                                              // ~
+            // DECDC is CSI Pn ' ~. Other intermediates, such as DECSSDT
+            // (CSI Ps $ ~), must not delete columns.
+            if collect == [UInt8(ascii: "'")] {
+                terminal.cmdDeleteColumns(pars, collect)
+            }
         default:
             let ch = Character(UnicodeScalar(code))
             terminal.log ("SwiftTerm: Unknown CSI Code (collect=\(collect) code=\(ch) pars=\(pars))")
@@ -699,6 +710,9 @@ final class EscapeSequenceParser {
             case 0x45: terminal.cmdNextLine()                   // E
             case 0x48: terminal.cmdTabSet()                     // H
             case 0x4d: terminal.reverseIndex()                  // M
+            case 0x5a: terminal.cmdSendDeviceAttributes(.empty, []) // Z (DECID)
+            case 0x56: terminal.cmdProtectedArea(start: true)   // V (SPA)
+            case 0x57: terminal.cmdProtectedArea(start: false)  // W (EPA)
             case 0x3d: terminal.cmdKeypadApplicationMode()      // =
             case 0x3e: terminal.cmdKeypadNumericMode()          // >
             case 0x63: terminal.cmdReset()                      // c
@@ -1162,7 +1176,21 @@ final class EscapeSequenceParser {
         // process input string
         var i = 0
         let end = data.count
-        var input = data
+        // A read from the host can end in the middle of a UTF-8 scalar in an
+        // OSC payload, so this chunk starts with its continuation bytes. The
+        // table would take 0x80-0x9f for C1 controls, abort the sequence and
+        // print the rest of its payload on screen. Within a chunk the `oscPut`
+        // run already keeps them as payload, and 0x9c is routed there by the
+        // table, so the rest are kept here. This runs once per chunk rather
+        // than in the loop: a per-byte check slows ordinary ESC and CSI input.
+        if currentState == ParserState.oscString.rawValue {
+            while i < end, data[i] >= 0x80, data[i] < 0xa0, data[i] != 0x9c,
+                  oscLimitExceeded || EscapeSequenceParser.oscExpectsUTF8Continuation(osc) {
+                appendOscBytes(i..<(i + 1), data: data, to: &osc, &oscLimitExceeded, terminal)
+                i += 1
+            }
+        }
+        var input = data.extracting(droppingFirst: i)
         while !input.isEmpty {
             code = input[0]
 

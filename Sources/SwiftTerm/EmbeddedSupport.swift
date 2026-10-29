@@ -119,6 +119,7 @@ enum SwiftTermTerminfo { static let xtgettcapReplies: [String: String] = [:] }
 extension Terminal {
     func handleKittyGraphics(_ data: ArraySlice<UInt8>) {}
     func clearAllKittyImages() {}
+    func clearKittyImagesOnScreen() {}
     func clearKittyImages(in buffer: Buffer, isAlternateBuffer: Bool) {
         for line in buffer.lines.getArray() { line?.images = nil }
     }

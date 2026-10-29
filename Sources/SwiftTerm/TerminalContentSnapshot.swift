@@ -123,6 +123,10 @@ public struct TerminalContentSnapshot: Sendable, Equatable {
     public let capturedRange: Range<Int>
     public let liveTopRow: Int
     public let rows: [TerminalContentRowSnapshot]
+    /// The cursor row of the copied buffer, in the coordinates of `absoluteRow`.
+    public let cursorRow: Int
+    /// The cursor column of the copied buffer.
+    public let cursorColumn: Int
     /// The 256 palette entries in force when the copy was made, so indexed
     /// cell colors keep their appearance after the palette changes.
     public let palette: [Color]
@@ -140,6 +144,8 @@ public struct TerminalContentSnapshot: Sendable, Equatable {
         capturedRange: Range<Int>,
         liveTopRow: Int,
         rows: [TerminalContentRowSnapshot],
+        cursorRow: Int = 0,
+        cursorColumn: Int = 0,
         palette: [Color] = [],
         defaultPalette: [Color] = [],
         foregroundColor: Color = Color.defaultForeground,
@@ -150,6 +156,8 @@ public struct TerminalContentSnapshot: Sendable, Equatable {
         self.capturedRange = capturedRange
         self.liveTopRow = liveTopRow
         self.rows = rows
+        self.cursorRow = cursorRow
+        self.cursorColumn = cursorColumn
         self.palette = palette
         self.defaultPalette = defaultPalette
         self.foregroundColor = foregroundColor
@@ -197,8 +205,8 @@ extension TerminalContentSnapshot {
     /// autowrap being off can produce, is written with autowrap off, and
     /// autowrap is turned back on after it.
     ///
-    /// This restores contents only. Cursor position, modes, margins and the
-    /// active buffer are not part of the snapshot; replaying a live byte
+    /// This restores contents only. The export does not restore cursor
+    /// position, modes, margins or the active buffer; replaying a live byte
     /// stream after the export is the host's responsibility.
     public func ansiRepresentation() -> String {
         let reset = Attribute.empty.sgrParameters()
@@ -447,9 +455,9 @@ extension Terminal {
     }
 
     func contentSnapshotLocked(region: TerminalContentRegion,
-                               kind: BufferKind = .active) -> TerminalContentSnapshot {
+                               buffer kind: BufferKind = .active) -> TerminalContentSnapshot {
         terminalLock.preconditionLocked()
-        let source = bufferFromKind(kind: kind)
+        let source = kind == .active ? displayBuffer : bufferFromKind(kind: kind)
         // The normal buffer keeps its own size while the alternate one is
         // active: a resize reaches it when it becomes visible again.
         let dimensions = TerminalDimensions(cols: source.cols, rows: source.rows)
@@ -493,6 +501,8 @@ extension Terminal {
             capturedRange: (source.linesTop + start)..<(source.linesTop + end),
             liveTopRow: source.linesTop + liveStart,
             rows: copiedRows,
+            cursorRow: source.linesTop + source.yBase + source.y,
+            cursorColumn: source.x,
             palette: ansiColors,
             defaultPalette: defaultAnsiColors,
             foregroundColor: foregroundColor,
@@ -507,11 +517,17 @@ extension Terminal {
     ///
     /// This is a pure inspection snapshot: it does not mutate render damage
     /// state. By default it copies every retained row of the active buffer;
-    /// `kind` selects the normal or alternate buffer regardless of which one
+    /// `buffer` selects the normal or alternate buffer regardless of which one
     /// is displayed. It intentionally omits images and hyperlinks; use
     /// render/graphics snapshots when a renderer needs those details.
     public func contentSnapshot(region: TerminalContentRegion = .all,
-                                kind: BufferKind = .active) -> TerminalContentSnapshot {
-        terminalLock.withLock { contentSnapshotLocked(region: region, kind: kind) }
+                                buffer: BufferKind = .active) -> TerminalContentSnapshot {
+        terminalLock.withLock { contentSnapshotLocked(region: region, buffer: buffer) }
+    }
+
+    /// Copies the selected buffer. This overload accepts the `kind` label.
+    public func contentSnapshot(region: TerminalContentRegion = .all,
+                                kind: BufferKind) -> TerminalContentSnapshot {
+        contentSnapshot(region: region, buffer: kind)
     }
 }

@@ -139,9 +139,17 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
     /// as ANSI. It does not include images or hyperlinks.
     public func terminalContentSnapshot(
         region: TerminalContentRegion = .all,
-        kind: Terminal.BufferKind = .active
+        buffer: Terminal.BufferKind = .active
     ) -> TerminalContentSnapshot {
-        terminal.contentSnapshot(region: region, kind: kind)
+        terminal.contentSnapshot(region: region, buffer: buffer)
+    }
+
+    /// Copies the selected buffer. This overload accepts the `kind` label.
+    public func terminalContentSnapshot(
+        region: TerminalContentRegion = .all,
+        kind: Terminal.BufferKind
+    ) -> TerminalContentSnapshot {
+        terminalContentSnapshot(region: region, buffer: kind)
     }
 
     /// Changes scrollback size for the underlying terminal at runtime.

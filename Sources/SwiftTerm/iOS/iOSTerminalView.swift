@@ -235,6 +235,30 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    /// The color used to draw link text and its underline, or `nil` (the
+    /// default) to draw each link in its cell's own foreground color.
+    ///
+    /// It applies to every cell drawn as a link, explicit (OSC 8) or implicit,
+    /// whenever ``linkHighlightMode`` highlights it.
+    public var linkColor: UIColor? {
+        didSet {
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
+    }
+
+    /// Overrides only the underline of highlighted OSC 8 and implicit links.
+    /// Text and strikethrough keep their existing colors. This takes precedence
+    /// over ``linkColor`` for the underline; `nil` (the default) preserves it.
+    /// Selection highlighting still takes precedence over link colors.
+    public var linkUnderlineColor: UIColor? {
+        didSet {
+            urlAttributes.removeAll()
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
+    }
+
     private var lastReportedLink: String?
     var commandActive = false
     private var activeCommandKeys: Set<UIKeyboardHIDUsage> = []
@@ -332,6 +356,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 #endif
     var cellDimension: CellDimension
+    /// The backing scale `cellDimension` was snapped to; see `computeFontDimensions`.
+    var cellDimensionBackingScale: CGFloat = 1
     var caretView: CaretView?
     var _lineSpacing: CGFloat = 1.0
     var terminal: Terminal!
@@ -617,9 +643,33 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         progressBarView = bar
     }
 
+    /// The silence that clears a bar the application started and never
+    /// removed, when ``progressReportTimeout`` is left alone.
+    public static let defaultProgressReportTimeout: TimeInterval = 15
+
+    /// How long the view waits for the next OSC 9;4 report before it clears a
+    /// bar the application started and never removed. `nil` turns that clear
+    /// off and leaves the bar up until the application removes it.
+    ///
+    /// The wait is a safety net for a program that dies mid-report, and it
+    /// assumes reports keep arriving while the work runs. A program that
+    /// reports only at the start and the end of a long task looks silent in
+    /// between and loses its bar halfway through, so a host that trusts its
+    /// program to close every bar it opens can turn the net off. Setting this
+    /// while a bar is on screen restarts the wait from now, and `nil` cancels
+    /// a wait that is already running.
+    public var progressReportTimeout: TimeInterval? = TerminalView.defaultProgressReportTimeout {
+        didSet {
+            guard progressBarView?.isHidden == false else { return }
+            resetProgressReportTimer()
+        }
+    }
+
     private func resetProgressReportTimer() {
         progressReportTimer?.invalidate()
-        progressReportTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
+        progressReportTimer = nil
+        guard let progressReportTimeout else { return }
+        progressReportTimer = Timer.scheduledTimer(withTimeInterval: progressReportTimeout, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.clearProgressReport()
             }
@@ -795,6 +845,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     
     /// This controls whether the backspace should send ^? or ^H, the default is ^?
+    /// The backspace key also sends ^H while the application sets DECBKM (`CSI ? 67 h`).
     public var backspaceSendsControlH: Bool = false
 
     /// If this variable is set, this simulates the control key being pressed, it auto resets after we send data
@@ -1695,6 +1746,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         settingBg = true
         _nativeBg = newValue
         terminal.backgroundColor = newValue.getTerminalColor()
+        updateBackgroundLayerColor(newValue)
         refreshCachedViewState()
         settingBg = false
     }
@@ -1713,8 +1765,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         if settingBg { return }
         settingBg = true
         _nativeBg = newValue
+        updateBackgroundLayerColor(newValue)
         refreshCachedViewState()
         settingBg = false
+    }
+
+    private func updateBackgroundLayerColor (_ color: UIColor)
+    {
+        // A clear native color lets default cells use the host's layer color.
+        guard color.cgColor.alpha > 0 else { return }
+        let background = color.cgColor.copy(alpha: backgroundOpacity)
+        if reverseColorsActiveValue() || reverseColorsSavedLayerBackground != nil {
+            // Also update a restore that is waiting for its color callback.
+            reverseColorsSavedLayerBackground = background
+        } else {
+            layer.backgroundColor = background
+        }
     }
 
     /**
@@ -1772,9 +1838,39 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             caretView?.caretTextColor = newValue
         }
     }
+
+    /// Controls the color of the OSC 9;4 progress bar while it is running, if not set
+    /// the bar will render with the view's tint color.
+    ///
+    /// The error and paused states keep their system colors (red and orange) either
+    /// way, so a host that themes the terminal can tint the bar without losing the
+    /// meaning those two states carry. Setting this recolors a bar that is already
+    /// on screen.
+    public var progressBarColor: UIColor? {
+        get { progressBarView?.tint }
+        set { progressBarView?.tint = newValue }
+    }
     
-    /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
-    public var useBrightColors: Bool = true
+    /// Promotes bold ANSI foreground text to bright colors. When disabled,
+    /// `collapseBrightColorsToBase` controls whether explicit bright indexes
+    /// are also collapsed and rendered with a bold font.
+    public var useBrightColors: Bool = true {
+        didSet {
+            guard useBrightColors != oldValue else { return }
+            colorsChanged ()
+        }
+    }
+
+    /// Preserves the historical foreground-index collapse when `useBrightColors`
+    /// is false. Set this to false to keep explicit ANSI indexes (including the
+    /// 256-color palette) while disabling automatic bright colors for bold text.
+    /// The default is true for compatibility.
+    public var collapseBrightColorsToBase: Bool = true {
+        didSet {
+            guard collapseBrightColorsToBase != oldValue else { return }
+            colorsChanged ()
+        }
+    }
 
     /// The least contrast, as a WCAG ratio from 1 to 21, that text keeps against its background. Text whose colors
     /// fall below it, such as colors a program picked for a background of the other brightness, is darkened or
@@ -2126,23 +2222,18 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 let maxRow = maxDisplayRow(in: displayBuffer)
                 if displayBuffer.yDisp != maxRow {
                     terminal.setViewYDisp(maxRow)
+                    terminal.refresh(startRow: 0, endRow: terminal.rows - 1)
                 }
                 setManualScrollingLocked(false, terminal: terminal)
             }
             return
         }
 
-        // Freeze auto-follow only while the finger is physically down
-        // (isTracking). Excluding the momentum coast is essential: after the
-        // finger lifts, deceleration keeps firing sync while streaming output
-        // extends the content and the bottom recedes ahead of the coasting
-        // offset — treating that "not at the bottom yet" reading as a manual
-        // scroll would re-freeze a view the user just flung to the bottom. This
-        // must key off isTracking, not isDragging: on device isDragging stays
-        // true through the entire coast, so it fails to exclude momentum. It also
-        // covers layout/system-driven offset changes (startup sizing, rotation,
-        // keyboard insets, buffer shrink), which are never a manual scroll.
-        guard isTracking else {
+        // A drag can disable auto-follow. Continue to update the displayed
+        // row while that drag decelerates. After the view reaches the bottom,
+        // deceleration must not disable auto-follow again.
+        // Ignore offset changes from layout while the view follows output.
+        guard isTracking || (userScrolling && isDecelerating) else {
             return
         }
 
@@ -2154,6 +2245,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             manualScrollOffsetWithinRow = offsetY - CGFloat(row) * cellDimension.height
             if displayBuffer.yDisp != row {
                 terminal.setViewYDisp(row)
+                terminal.refresh(startRow: 0, endRow: terminal.rows - 1)
             }
             setManualScrollingLocked(true, terminal: terminal)
         }
@@ -2193,11 +2285,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return
         }
 
-        // Without these two lines, on font changes, some junk is being displayed
-        // Once we test the font change, we could disable these two lines, and
-        // enable the #if false in drawterminalContents that should be coping with this now
-        effectiveNativeBackgroundColor.set ()
-        context.fill ([dirtyRect])
+        // Clear old glyphs without covering the background supplied by the layer.
+        context.clear(dirtyRect)
+        // Global reverse video needs an opaque background for its swapped text color.
+        if reverseColorsActiveValue() {
+            effectiveNativeBackgroundColor.setFill()
+            context.fill(dirtyRect)
+        }
 
         // drawTerminalContents and CoreText expect the AppKit coordinate system
         context.scaleBy (x: 1, y: -1)
@@ -2239,11 +2333,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     open override var contentOffset: CGPoint {
         didSet {
             syncYDispFromContentOffset()
-#if canImport(MetalKit)
-            if useMetalRenderer, metalView != nil {
-                frameDriver.markDirty()
+            // Core Graphics also draws from a copied viewport snapshot.
+            // A scroll must refresh that snapshot before the next draw.
+            if oldValue != contentOffset {
+                frameDriver?.markDirty()
             }
-#endif
         }
     }
 
@@ -2265,8 +2359,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             return false
         }
 
-        setContentOffset(CGPoint(x: contentOffset.x, y: targetOffsetY), animated: false)
-        setNeedsDisplay(bounds)
+        let targetRow: Int
+        if targetOffsetY >= maxOffsetY {
+            // A partial text row makes the bottom offset smaller than the
+            // last display row's offset. Keep the last viewport and follow output.
+            targetRow = withTerminal { maxDisplayRow(in: $0.displayBuffer) }
+        } else {
+            targetRow = Int(floor(targetOffsetY / cellDimension.height))
+        }
+        scrollTo(row: targetRow, notifyAccessibility: false)
         // Based on WWDC 2019 presentation: argument is nil
         UIAccessibility.post(notification: .pageScrolled, argument: nil)
         return true
@@ -2447,12 +2548,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     private func kittyEncoder() -> KittyKeyboardEncoder {
         let terminalState = withTerminal { terminal in
-            (terminal.keyboardEnhancementFlags, terminal.applicationCursor, terminal.applicationKeypad)
+            (terminal.keyboardEnhancementFlags, terminal.applicationCursor, terminal.applicationKeypad,
+             terminal.backarrowKeyMode)
         }
         return KittyKeyboardEncoder(flags: terminalState.0,
                                     applicationCursor: terminalState.1,
                                     applicationKeypad: terminalState.2,
-                                    backspaceSendsControlH: backspaceSendsControlH)
+                                    backspaceSendsControlH: backspaceSendsControlH || terminalState.3)
     }
 
     private func kittyModifiers(from key: UIKey, includeOption: Bool) -> KittyKeyboardModifiers {
@@ -2829,7 +2931,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     private func sendBackspaceKey() {
         let flags = withTerminal { $0.keyboardEnhancementFlags }
         if flags.isEmpty {
-            send([backspaceSendsControlH ? 8 : 0x7f])
+            send([backspaceKeySendsControlH ? 8 : 0x7f])
             return
         }
         let pendingEvent = pendingKittyKeyEvent
@@ -4057,13 +4159,18 @@ extension TerminalView: UIAccessibilityReadingContent {
         terminal.terminalLock.preconditionLocked()
         var endingLine = lineNumber
         while (endingLine < terminal.buffer.lines.count - 1) {
-            let start = Position(col: 0, row: endingLine)
-            let end = Position(col: terminal.buffer.lines[endingLine].count, row: endingLine)
-            let text =  terminal.getDisplayText(start: start, end: end)
-            if (text.count != terminal.buffer.lines[endingLine].count || text.last != " ")
-            && !terminal.buffer.lines[endingLine + 1].isWrapped {
-                // this line is incomplete. We stop here.
-                break
+            // A row that wraps onto the next continues whatever its text, so
+            // read the text only where the line could end: reading every row
+            // of a line wrapped over thousands of them made each VoiceOver
+            // query of it slow.
+            if !terminal.buffer.lines[endingLine + 1].isWrapped {
+                let start = Position(col: 0, row: endingLine)
+                let end = Position(col: terminal.buffer.lines[endingLine].count, row: endingLine)
+                let text =  terminal.getDisplayText(start: start, end: end)
+                if text.count != terminal.buffer.lines[endingLine].count || text.last != " " {
+                    // this line is incomplete. We stop here.
+                    break
+                }
             }
             endingLine += 1
         }

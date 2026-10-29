@@ -34,10 +34,12 @@ struct SnapshotStyle {
     var selectionActive: Bool
     var selectionStart: Position
     var selectionEnd: Position
+    var selectionIsBlock: Bool = false
     var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
     var linkHighlightMode: LinkHighlightMode
     var commandActive: Bool
     var textBlinkVisible: Bool
+    var enableOsc8Hyperlinks: Bool = true
 
     static let empty = SnapshotStyle(selectionActive: false,
                                      selectionStart: Position(col: 0, row: 0),
@@ -50,9 +52,11 @@ struct SnapshotStyle {
     func hasSameValue (as other: SnapshotStyle) -> Bool {
         selectionActive == other.selectionActive &&
             selectionStart == other.selectionStart && selectionEnd == other.selectionEnd &&
+            selectionIsBlock == other.selectionIsBlock &&
             linkHighlightRange == other.linkHighlightRange &&
             linkHighlightMode.tag == other.linkHighlightMode.tag &&
-            commandActive == other.commandActive && textBlinkVisible == other.textBlinkVisible
+            commandActive == other.commandActive && textBlinkVisible == other.textBlinkVisible &&
+            enableOsc8Hyperlinks == other.enableOsc8Hyperlinks
     }
 }
 
@@ -62,27 +66,31 @@ struct SnapshotStyle {
 /// main actor captures view geometry because the parser can adjust it at the
 /// same time. The render owner creates this value inside its terminal-lock
 /// transaction and gives only the value to the snapshot.
-struct SnapshotSelectionState: Sendable {
+struct SnapshotSelectionState: Equatable, Sendable {
     let active: Bool
     let start: Position
     let end: Position
+    let isBlock: Bool
 
     static let empty = SnapshotSelectionState(
         active: false,
         start: Position(col: 0, row: 0),
-        end: Position(col: 0, row: 0))
+        end: Position(col: 0, row: 0),
+        isBlock: false)
 
     init (selection: SelectionService?) {
         selection?.terminal.terminalLock.preconditionLocked()
         active = selection?.active == true
         start = selection?.start ?? Position(col: 0, row: 0)
         end = selection?.end ?? Position(col: 0, row: 0)
+        isBlock = selection?.isBlock == true
     }
 
-    private init (active: Bool, start: Position, end: Position) {
+    private init (active: Bool, start: Position, end: Position, isBlock: Bool) {
         self.active = active
         self.start = start
         self.end = end
+        self.isBlock = isBlock
     }
 }
 
@@ -242,6 +250,8 @@ final class TerminalSnapshot {
             selectedTextForegroundColor: appearance.selectedTextForegroundColor.nativeColor,
             caretColor: appearance.caretColor.nativeColor,
             caretTextColor: appearance.caretTextColor.nativeColor,
+            linkColor: appearance.linkColor?.nativeColor,
+            linkUnderlineColor: appearance.linkUnderlineColor?.nativeColor,
             ansiColors: ansiColors.map(TTColor.make(color:)))
         nativeColorCache = NativeColorCache(
             appearance: appearance, ansiColors: ansiColors, nativeColors: result)
@@ -360,14 +370,32 @@ final class TerminalSnapshot {
             cellArenaSnapshot = sourceArena.snapshotCopy()
         }
         let snapshotArena = cellArenaSnapshot!
+        let linkHighlightRange: [Terminal.LinkMatch.RowRange]?
+        if terminal.enableOsc8Hyperlinks {
+            linkHighlightRange = viewState.linkHighlightRange
+        } else if let first = viewState.linkHighlightRange?.first,
+                  !first.range.isEmpty,
+                  first.row >= 0, first.row < buffer.lines.count,
+                  first.range.lowerBound >= 0,
+                  first.range.lowerBound < min(terminal.cols, buffer.lines[first.row].count) {
+            // A host can change the terminal option without the view setter.
+            // Check the old range again to keep only an implicit link.
+            linkHighlightRange = terminal.linkMatch(
+                at: .buffer(Position(col: first.range.lowerBound, row: first.row)),
+                mode: .explicitAndImplicit)?.rowRanges
+        } else {
+            linkHighlightRange = nil
+        }
         let newStyle = SnapshotStyle(
             selectionActive: selection.active,
             selectionStart: selection.start,
             selectionEnd: selection.end,
-            linkHighlightRange: viewState.linkHighlightRange,
+            selectionIsBlock: selection.isBlock,
+            linkHighlightRange: linkHighlightRange,
             linkHighlightMode: viewState.linkHighlightMode,
             commandActive: viewState.commandActive,
-            textBlinkVisible: viewState.textBlinkVisible)
+            textBlinkVisible: viewState.textBlinkVisible,
+            enableOsc8Hyperlinks: terminal.enableOsc8Hyperlinks)
         let styleChanged = previousStyle?.hasSameValue(as: newStyle) != true ||
             previousAnsiColors != terminal.ansiColors
         appearanceChanged = styleChanged

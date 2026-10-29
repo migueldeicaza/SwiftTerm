@@ -51,7 +51,11 @@ final class TerminalTestDelegate: TerminalDelegate {
         terminalTitles.append(title)
     }
     func setTerminalIconTitle(source: Terminal, title: String) {}
-    func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? { return nil }
+    private(set) var windowCommands: [Terminal.WindowManipulationCommand] = []
+    func windowCommand(source: Terminal, command: Terminal.WindowManipulationCommand) -> [UInt8]? {
+        windowCommands.append(command)
+        return nil
+    }
     func sizeChanged(source: Terminal) {}
     func bufferActivated(source: Terminal) { bufferActivatedCount += 1 }
     func bell(source: Terminal) {}

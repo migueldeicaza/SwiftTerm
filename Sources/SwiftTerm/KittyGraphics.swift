@@ -2028,6 +2028,23 @@ extension Terminal {
         updateRange(startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
     }
 
+    /// Removes the placements on the screen rows, then each image of this screen that has no
+    /// placement, as Ghostty does for a full-screen erase. Placements in scrollback, virtual
+    /// placements, and the other screen stay.
+    func clearKittyImagesOnScreen() {
+        let screenTop = buffer.yBase
+        let screenBottom = buffer.yBase + rows - 1
+        // Only the rows decide: after DECCOLM, a placement can start past the right edge.
+        // Relative placements go with their parents (removeOrphanedKittyPlacements).
+        _ = removePlacementRecords { record in
+            guard !record.isVirtual, record.parentImageId == nil else { return false }
+            let bottom = record.row + max(1, record.rows) - 1
+            return record.row <= screenBottom && bottom >= screenTop
+        }
+        _ = removeOrphanedKittyPlacements()
+        cleanupUnusedKittyImages()
+    }
+
     private func resetKittyGraphicsStore(_ store: KittyGraphicsScreenState) {
         store.imagesById.removeAll()
         store.imageNumbers.removeAll()
@@ -2577,7 +2594,8 @@ extension Terminal {
     ///
     /// - Returns: Images and resolved placements for the active screen.
     public func kittyGraphicsRenderSnapshot() -> KittyGraphicsRenderSnapshot {
-        kittyGraphicsState.activeIsAlternate = isCurrentBufferAlternate
+        let isAlternate = isCurrentBufferAlternate
+        kittyGraphicsState.activeIsAlternate = isAlternate
         let store = kittyGraphicsState.active
         if store.imagesById.isEmpty && store.placementsByKey.isEmpty {
             return KittyGraphicsRenderSnapshot(
@@ -2617,12 +2635,19 @@ extension Terminal {
         placements.reserveCapacity(store.placementsByKey.count)
         for (key, record) in store.placementsByKey {
             guard let image = images[record.imageId] else { continue }
-            var visiting = Set<KittyPlacementKey>()
-            guard let position = resolveKittyPlacementPosition(
-                for: key,
-                positions: positions,
-                resolved: &resolved,
-                visiting: &visiting) else { continue }
+            let position: (row: Int, col: Int)
+            if record.parentImageId != nil && record.parentPlacementId != nil {
+                var visiting = Set<KittyPlacementKey>()
+                guard let relativePosition = resolveKittyPlacementPosition(
+                    for: key,
+                    positions: positions,
+                    resolved: &resolved,
+                    visiting: &visiting) else { continue }
+                position = relativePosition
+            } else {
+                guard record.isAlternateBuffer == isAlternate else { continue }
+                position = (row: record.row, col: record.col)
+            }
 
             let sourceX = max(0, min(record.sourceX, image.width))
             let sourceY = max(0, min(record.sourceY, image.height))

@@ -289,7 +289,7 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
-    func mouseEventBytes(button: Int, release: Bool, shift: Bool, meta: Bool,
+    func mouseEventBytes(button: Int, release: Bool, motion: Bool, shift: Bool, meta: Bool,
                          control: Bool, col: Int, row: Int,
                          pixelX: Int?, pixelY: Int?) -> [UInt8]? {
         switch button {
@@ -306,6 +306,7 @@ final class TerminalRenderOwner: Sendable {
         return terminal.terminalLock.withLock {
             let flags = terminal.encodeButton(button: button, release: release,
                                                shift: shift, meta: meta, control: control)
+                + (motion && !release ? 32 : 0)
             return terminal.mouseEventBytes(buttonFlags: flags, x: col, y: row,
                                             pixelX: pixelX ?? col, pixelY: pixelY ?? row)
         }
@@ -325,8 +326,8 @@ final class TerminalRenderOwner: Sendable {
     }
 
     func contentSnapshot(region: TerminalContentRegion,
-                         kind: Terminal.BufferKind = .active) -> TerminalContentSnapshot? {
-        currentSession()?.terminal.contentSnapshot(region: region, kind: kind)
+                         buffer: Terminal.BufferKind = .active) -> TerminalContentSnapshot? {
+        currentSession()?.terminal.contentSnapshot(region: region, buffer: buffer)
     }
 
     func keyboardEnhancementFlags() -> KittyKeyboardFlags {
@@ -445,13 +446,13 @@ final class TerminalRenderOwner: Sendable {
             if searchingUpward {
                 guard start > 0 else { return nil }
                 for row in stride(from: start - 1, through: 0, by: -1) {
-                    if terminal.semanticRowKind(at: row) == .initial {
+                    if buffer.semanticRowOpensPrompt(row) {
                         return row
                     }
                 }
             } else if start + 1 < buffer.lines.count {
                 for row in (start + 1)..<buffer.lines.count {
-                    if terminal.semanticRowKind(at: row) == .initial {
+                    if buffer.semanticRowOpensPrompt(row) {
                         return row
                     }
                 }
@@ -553,6 +554,7 @@ final class TerminalRenderOwner: Sendable {
                 frozen.resizedTo = (cols: resizedTo.cols, rows: resizedTo.rows)
 #if os(macOS)
                 frozen.scroller = scrollerState
+                frozen.mainEffects.selection = selectionState
 #endif
                 return frozen
             }
@@ -652,6 +654,7 @@ final class TerminalRenderOwner: Sendable {
             result.resizedTo = resizedTo.map { (cols: $0.cols, rows: $0.rows) }
 #if os(macOS)
             result.scroller = scrollerState
+            result.mainEffects.selection = selectionState
 #endif
             return result
         }
