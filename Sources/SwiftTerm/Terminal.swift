@@ -3650,8 +3650,8 @@ open class Terminal {
     /// only keep their state.
     static let reportedOnlyDECModes: Set<Int> = [18, 19, 35, 42]
 
-    // This is the last stored property, and it is a single reference, so that
-    // cold state does not move the offsets of the hot fields above it.
+    // This is a single reference after the hot fields, so that cold state does
+    // not move their offsets. Only cold fields come after it.
     private let reportedOnly = ReportedOnlyState()
 
     private func resolveActiveHyperlink() -> TinyAtom? {
