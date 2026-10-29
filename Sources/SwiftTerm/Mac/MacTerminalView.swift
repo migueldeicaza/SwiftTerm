@@ -1915,7 +1915,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     
     public override func cursorUpdate(with event: NSEvent)
     {
-        NSCursor.iBeam.set ()
+        // AppKit calls this on every mouse move over the view and on every display
+        // cycle that re-evaluates cursor rects. With a customized pointer (size or
+        // colour in Accessibility settings) each set() re-renders the cursor image,
+        // so setting the cursor that is already current is expensive. Skip it.
+        if NSCursor.current != NSCursor.iBeam {
+            NSCursor.iBeam.set ()
+        }
     }
     
     func makeFirstResponder ()
