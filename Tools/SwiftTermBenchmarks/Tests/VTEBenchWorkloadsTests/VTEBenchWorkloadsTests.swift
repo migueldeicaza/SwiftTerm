@@ -35,7 +35,8 @@ struct VTEBenchWorkloadsTests {
             "hardening_osc_bounded_over_limit",
             "hardening_osc_bounded_chunked",
             "hardening_osc_short_normal",
-            "hardening_osc_short_chunked"
+            "hardening_osc_short_chunked",
+            "hardening_block_color_cells"
         ])
 
         let byName = Dictionary(uniqueKeysWithValues: workloads.map { ($0.name, $0) })
@@ -48,6 +49,8 @@ struct VTEBenchWorkloadsTests {
         #expect(byName["hardening_osc_bounded_chunked"]?.inputChunkSize == 127)
         #expect(byName["hardening_osc_short_normal"]?.payload == Array("\u{1b}]2;title\u{07}".utf8))
         #expect(byName["hardening_osc_short_chunked"]?.payload == byName["hardening_osc_short_normal"]?.payload)
+        let blocks = String(decoding: byName["hardening_block_color_cells"]!.payload, as: UTF8.self)
+        #expect(blocks.unicodeScalars.filter { $0 == "\u{2580}" }.count == 8 * 80 * 25)
         #expect(byName["hardening_osc_short_chunked"]?.inputChunkSize == 1)
     }
 

@@ -175,7 +175,11 @@ public enum VTEBenchWorkloads {
             VTEBenchWorkload(
                 name: "hardening_osc_short_chunked",
                 payload: bytes("\u{1b}]2;title\u{07}"),
-                inputChunkSize: 1)
+                inputChunkSize: 1),
+            VTEBenchWorkload(
+                name: "hardening_block_color_cells",
+                setup: alternateScreen,
+                payload: blockColorCells(columns: columns, rows: rows))
         ]
     }
 
@@ -339,6 +343,26 @@ public enum VTEBenchWorkloads {
                     result.append(contentsOf: bytes(
                         "\u{1b}[38;5;\(foreground);48;5;\(background);1;3;4m"))
                     result.append(character)
+                }
+            }
+        }
+        return result
+    }
+
+    /// A half-block image, as a terminal image viewer or a DOOM-fire demo
+    /// draws one: every cell sets a 256-color foreground and background, then
+    /// prints U+2580, so each print run is a single non-ASCII scalar.
+    private static func blockColorCells(columns: Int, rows: Int) -> [UInt8] {
+        var result: [UInt8] = []
+        result.reserveCapacity(columns * rows * 8 * 22)
+        for frame in 0..<8 {
+            result.append(contentsOf: bytes("\u{1b}[H"))
+            for row in 1...rows {
+                for column in 1...columns {
+                    let index = row * 7 + column * 3 + frame * 11
+                    let foreground = 16 + index % 216
+                    let background = 16 + (index + 36) % 216
+                    result.append(contentsOf: bytes("\u{1b}[38;5;\(foreground);48;5;\(background)m\u{2580}"))
                 }
             }
         }
