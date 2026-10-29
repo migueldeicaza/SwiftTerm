@@ -1047,9 +1047,9 @@ final class SnapshotTextBuilder {
     {
         switch context.linkHighlightMode {
         case .always:
-            return cell.hasPayload
+            return context.enableOsc8Hyperlinks && cell.hasPayload
         case .alwaysWithModifier:
-            return context.commandActive && cell.hasPayload
+            return context.enableOsc8Hyperlinks && context.commandActive && cell.hasPayload
         case .hover:
             guard let highlight = context.linkHighlightRange?.first(where: { $0.row == row }) else {
                 return false

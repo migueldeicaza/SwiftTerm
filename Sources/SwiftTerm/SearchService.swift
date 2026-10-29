@@ -21,6 +21,9 @@ final class SearchService {
     private var lastSelection: SearchSelection?
 
     private(set) var lastResult: SearchResult?
+#if DEBUG
+    var testingSearchRowVisits: Int { engine.testingRowVisits }
+#endif
 
     init (terminal: Terminal) {
         self.terminal = terminal

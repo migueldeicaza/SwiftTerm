@@ -495,42 +495,9 @@ struct SnapshotSelectionResolver {
 
     func columns (forRow row: Int) -> Range<Int>? {
         guard style.selectionActive else { return nil }
-        let start = style.selectionStart
-        let end = style.selectionEnd
-        var lower = 0
-        var upper = 0
-
-        if start.row == end.row, row == start.row {
-            if start.col < end.col {
-                lower = start.col
-                upper = end.col + (end.col == cols - 1 ? 1 : 0)
-            } else if start.col > end.col {
-                lower = end.col
-                upper = start.col
-            }
-        } else if end.row > start.row {
-            if row == start.row {
-                lower = start.col
-                upper = cols
-            } else if row > start.row, row < end.row {
-                upper = cols
-            } else if row == end.row {
-                upper = end.col + (end.col == cols - 1 ? 1 : 0)
-            }
-        } else if start.row > end.row {
-            if row == end.row {
-                lower = end.col
-                upper = cols
-            } else if row > end.row, row < start.row {
-                upper = cols
-            } else if row == start.row {
-                upper = start.col + (start.col == cols - 1 ? 1 : 0)
-            }
-        }
-
-        lower = max(0, min(lower, cols))
-        upper = max(lower, min(upper, cols))
-        return lower < upper ? lower..<upper : nil
+        return SelectionService.selectedColumns(
+            row: row, cols: cols, start: style.selectionStart, end: style.selectionEnd,
+            block: style.selectionIsBlock, exclusiveEnd: false)
     }
 }
 
@@ -694,6 +661,7 @@ struct SnapshotRenderContext {
     let linkHighlightMode: LinkHighlightMode
     let commandActive: Bool
     let customBlockGlyphs: Bool
+    let enableOsc8Hyperlinks: Bool
     let useBrightColors: Bool
     let collapseBrightColorsToBase: Bool
     let minimumContrastRatio: CGFloat
@@ -772,6 +740,7 @@ struct SnapshotRenderContext {
         linkHighlightRange = style.linkHighlightRange
         linkHighlightMode = style.linkHighlightMode
         commandActive = style.commandActive
+        enableOsc8Hyperlinks = style.enableOsc8Hyperlinks
         customBlockGlyphs = viewState.customBlockGlyphs
         useBrightColors = viewState.useBrightColors
         collapseBrightColorsToBase = viewState.collapseBrightColorsToBase
@@ -1735,6 +1704,12 @@ extension TerminalView {
         #endif
     }
 
+    /// Whether the backspace key sends BS (^H) instead of DEL: the host set
+    /// `backspaceSendsControlH`, or the application set DECBKM.
+    var backspaceKeySendsControlH: Bool {
+        backspaceSendsControlH || withTerminal { $0.backarrowKeyMode }
+    }
+
     /// Runs `body` while holding the terminal lock.
     ///
     /// The closure must not call another API that synchronously acquires the
@@ -1753,6 +1728,21 @@ extension TerminalView {
     /// Returns the current terminal grid size as a copied value.
     public nonisolated var terminalDimensions: TerminalDimensions {
         renderOwner.dimensions()
+    }
+
+    /// Accept OSC 8 hyperlinks. The default is true.
+    /// Changes also apply to links already in the terminal buffer.
+    /// Implicit URL and path detection remain available when this is false.
+    public var enableOsc8Hyperlinks: Bool {
+        get { withTerminal { $0.enableOsc8Hyperlinks } }
+        set {
+            withTerminal { $0.enableOsc8Hyperlinks = newValue }
+            linkHighlightRange = nil
+#if os(macOS)
+            removePreviewUrl()
+#endif
+            frameDriver.markDirty()
+        }
     }
 
     /// The kitty keyboard protocol flags the running application has enabled, as a copied value.
@@ -2885,6 +2875,7 @@ extension TerminalView {
             selectionActive: selection?.active == true,
             selectionStart: selection?.start ?? Position(col: 0, row: 0),
             selectionEnd: selection?.end ?? Position(col: 0, row: 0),
+            selectionIsBlock: selection?.isBlock == true,
             linkHighlightRange: linkHighlightRange,
             linkHighlightMode: linkHighlightMode,
             commandActive: commandActive,
@@ -2926,6 +2917,7 @@ extension TerminalView {
     func payloadStringLocked(at position: Position) -> String?
     {
         terminal.terminalLock.preconditionLocked()
+        guard terminal.enableOsc8Hyperlinks else { return nil }
         let buffer = terminal.displayBuffer
         guard position.row >= 0 && position.row < buffer.lines.count else {
             return nil
@@ -3005,14 +2997,14 @@ extension TerminalView {
         }
     }
 
-    func linkForClick(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String])?
+    func linkForClick(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String], isExplicit: Bool)?
     {
         withTerminal { _ in
             linkForClickLocked(at: position, hasCommandModifier: hasCommandModifier)
         }
     }
 
-    func linkForClickLocked(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String])?
+    func linkForClickLocked(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String], isExplicit: Bool)?
     {
         terminal.terminalLock.preconditionLocked()
         let mode: Terminal.LinkLookupMode = implicitLinkCouldBeVisible(hasCommandModifier: hasCommandModifier)
@@ -3027,9 +3019,9 @@ extension TerminalView {
         if match.isExplicit,
            let payload = payloadStringLocked(at: position),
            let (url, params) = urlAndParamsFrom(payload: payload) {
-            return (url, params)
+            return (url, params, true)
         }
-        return (match.text, [:])
+        return (match.text, [:], match.isExplicit)
     }
     
     /// Returns the selection range for the specified row, if any.
@@ -4049,6 +4041,11 @@ extension TerminalView {
     func captureFrameViewState () -> FrameViewState?
     {
         guard terminal != nil else { return nil }
+#if os(macOS)
+        if urlPreview != nil && !enableOsc8Hyperlinks {
+            removePreviewUrl()
+        }
+#endif
         return FrameViewState(view: self)
     }
 
@@ -5079,6 +5076,15 @@ extension TerminalView {
         }
     }
     
+    /// Which clicks at an OSC 133 shell prompt move the cursor to the click.
+    /// The default, `.enabled`, takes a click with no modifiers held.
+    /// `.requireModifier([.option])` takes only an Option-click, as
+    /// Terminal.app does, and leaves plain clicks to select and open links.
+    public var semanticPromptClickBehavior: SemanticPromptClickBehavior {
+        get { withTerminal { $0.semanticPromptClickBehavior } }
+        set { withTerminal { $0.semanticPromptClickBehavior = newValue } }
+    }
+
     /// Set to true if the selection is active, false otherwise
     public var selectionActive: Bool {
         get {

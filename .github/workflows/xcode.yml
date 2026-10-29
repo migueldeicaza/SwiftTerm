@@ -7,15 +7,20 @@ on:
     branches: [ main ]
 
 env:
-  DEVELOPER_DIR: /Applications/Xcode_26.0.app/Contents/Developer
+  DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
 
 jobs:
   build:
 
-    runs-on: macos-15
+    runs-on: xcode-27
 
     steps:
     - uses: actions/checkout@v4
+
+    - name: Show toolchain versions
+      run: |
+        xcodebuild -version
+        swift --version
 
 #    - name: Checkout esctest for testing
 #      uses: actions/checkout@v4
@@ -49,9 +54,52 @@ jobs:
         BINDIR=$(swift build --show-bin-path)
         xcrun llvm-cov report "$BINDIR/SwiftTermPackageTests.xctest/Contents/MacOS/SwiftTermPackageTests" --instr-profile=.build/debug/codecov/default.profdata -use-color
 
-  thread-sanitizer:
+  esctest:
 
     runs-on: macos-15
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Fetch esctest
+      run: make clone-esctest
+
+    # Fails the build if a test in Tests/SwiftTermTests/Fixtures/esctest-known-good.txt fails.
+    - name: Known-good esctest tests
+      run: swift test --filter testKnownGood
+
+    # Only reports: the summary lists esctest's tally and the failing tests.
+    - name: Full esctest run
+      if: always()
+      continue-on-error: true
+      env:
+        ESCTEST_REPORT_LOG: ${{ github.workspace }}/esctest.log
+      run: swift test --filter testFullSuiteReport
+
+    - name: esctest summary
+      if: always()
+      run: |
+        {
+          echo '## esctest'
+          echo
+          grep 'tests passed' esctest.log || echo 'esctest wrote no summary.'
+          echo
+          echo '```'
+          sed -n '/^Failing tests:$/,$p' esctest.log
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Upload esctest log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: esctest-log
+        path: esctest.log
+        if-no-files-found: ignore
+
+  thread-sanitizer:
+
+    runs-on: xcode-27
 
     steps:
     - uses: actions/checkout@v4
@@ -61,7 +109,7 @@ jobs:
 
   swiftpm-strict-concurrency:
 
-    runs-on: macos-15
+    runs-on: xcode-27
 
     steps:
     - uses: actions/checkout@v4
@@ -73,7 +121,7 @@ jobs:
 
   swift6-tools:
 
-    runs-on: macos-15
+    runs-on: xcode-27
 
     steps:
     - uses: actions/checkout@v4

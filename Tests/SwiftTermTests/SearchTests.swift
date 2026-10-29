@@ -347,17 +347,28 @@ final class SearchTests {
 
         terminal.feed(text: String(repeating: "needle" + String(repeating: "x", count: 74), count: rows) + "\r\n$ ")
 
-        let clock = ContinuousClock()
-        var matches: [SearchResult] = []
-        var miss: SearchResult?
-        let elapsed = clock.measure {
-            matches = service.findAll(term: "needle")
-            miss = service.findNext(term: "haystack")
+        terminal.terminalLock.withLock {
+#if DEBUG
+            let logicalLines = (0..<terminal.displayBuffer.lines.count).filter {
+                !terminal.displayBuffer.lines[$0].isWrapped
+            }.count
+            let visitsBefore = service.testingSearchRowVisits
+#endif
+            let matches = service.findAll(term: "needle")
+            #expect(matches.count == rows)
+            #expect(matches.last == SearchResult(term: "needle", col: 0, row: rows - 1, size: 6))
+#if DEBUG
+            let visitsAfterMatches = service.testingSearchRowVisits
+            #expect(visitsAfterMatches - visitsBefore <= logicalLines)
+#endif
+            let miss = service.findNext(term: "haystack")
+            #expect(miss == nil)
+#if DEBUG
+            let missVisits = service.testingSearchRowVisits - visitsAfterMatches
+            #expect(missVisits > 0)
+            #expect(missVisits <= logicalLines)
+#endif
         }
-        #expect(matches.count == rows)
-        #expect(matches.last == SearchResult(term: "needle", col: 0, row: rows - 1, size: 6))
-        #expect(miss == nil)
-        #expect(elapsed < .milliseconds(500), "took \(elapsed)")
     }
 
     @Test func testSearchServiceSelectionRange() {

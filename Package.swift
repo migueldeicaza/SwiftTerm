@@ -112,6 +112,7 @@ var targets: [Target] = [
         path: "Tests/SwiftTermTests",
         resources: [
             .copy("Fixtures/xterm-ghostty.infocmp"),
+            .copy("Fixtures/esctest-known-good.txt"),
             .copy("Fixtures/GhosttyFuzzCorpus"),
             .copy("KittyGraphics/Fixtures")
         ]
@@ -145,6 +146,7 @@ var targets: [Target] = [
         path: "Tests/SwiftTermTests",
         resources: [
             .copy("Fixtures/xterm-ghostty.infocmp"),
+            .copy("Fixtures/esctest-known-good.txt"),
             .copy("Fixtures/GhosttyFuzzCorpus"),
             .copy("KittyGraphics/Fixtures")
         ]

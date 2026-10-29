@@ -435,6 +435,20 @@ open class Terminal {
     }
     private var _options: TerminalOptions
     private let defaultCursorStyle: CursorStyle
+
+    /// Accept OSC 8 hyperlinks. Changes take effect without a terminal reset.
+    /// Implicit URL and path detection remain available when this is false.
+    public var enableOsc8Hyperlinks: Bool {
+        get { _options.enableOsc8Hyperlinks }
+        set {
+            guard _options.enableOsc8Hyperlinks != newValue else { return }
+            _options.enableOsc8Hyperlinks = newValue
+            if !newValue {
+                activeHyperlink = nil
+            }
+            updateFullScreen()
+        }
+    }
     
     // Selection services attached to this terminal.  The views own them; a
     // `SelectionService` owns its terminal, so this side must not retain, or the
@@ -524,6 +538,12 @@ open class Terminal {
     /// Active-selection count, for tests. Drift here silently stops selections
     /// from tracking in-place scrolls.
     var testingActiveSelectionCount: Int { activeSelectionCount }
+
+#if DEBUG
+    /// Actual loop work for regression tests. Access under the terminal lock.
+    private(set) var testingInsertLineIterations = 0
+    private(set) var testingImplicitLinkCandidates = 0
+#endif
 
     /// Notifies attached selections that `lines` rows were shifted up in place
     /// within the absolute row range `top...bottom`.
@@ -663,7 +683,31 @@ open class Terminal {
     var marginMode: Bool = false
     
     var insertMode: Bool = false
+
+    /// KAM (ANSI mode 2). SwiftTerm keeps and reports the mode, but does not
+    /// lock the keyboard: an application must not be able to take the
+    /// keyboard away from the user.
+    var keyboardActionMode: Bool = false
+
+    /// SRM (ANSI mode 12). When it is reset, the terminal echoes typed text
+    /// locally. SwiftTerm keeps and reports the mode, but never echoes.
+    var sendReceiveMode: Bool = true
+
+    /// Backarrow Key Mode (DECBKM, private mode 67). When the application sets
+    /// it, the backspace key sends BS (^H) instead of DEL.
+    public private(set) var backarrowKeyMode: Bool = false
     
+    /// The kind of protection that was selected last, as xterm's `protected_mode`.
+    /// DECSCA selects `.dec` and SPA selects `.iso`.
+    enum CharacterProtectionMode {
+        case off, dec, iso
+    }
+
+    var characterProtectionMode: CharacterProtectionMode = .off
+
+    /// Whether new characters are protected (DECSCA 1, or SPA up to EPA).
+    var characterProtection: Bool = false
+
     var wraparound: Bool = false
 
     func setMarginMode(_ value: Bool) {
@@ -682,6 +726,12 @@ open class Terminal {
         wraparound = value
         normalBuffer.setWraparound(value)
         altBuffer.setWraparound(value)
+    }
+
+    func setCharacterProtection(_ value: Bool) {
+        characterProtection = value
+        normalBuffer.setCharacterProtection(value)
+        altBuffer.setCharacterProtection(value)
     }
 
     /// Indicates that the application has toggled bracketed paste mode, which means that when content is pasted into
@@ -708,7 +758,12 @@ open class Terminal {
     private var charset: [UInt8:String]? = nil
     private var gCharsets: [[UInt8:String]?] = [CharSets.defaultCharset, nil, nil, nil]
     var gcharset: Int = 0
+    /// Private mode 45. Since xterm 383, backspace and CUB wrap back only
+    /// across rows that wrapped.
     var reverseWraparound: Bool = false
+    /// Private mode 1045, which keeps the original mode 45: backspace and CUB
+    /// wrap across any row, and from the top margin to the bottom margin.
+    var reverseWraparoundExtended: Bool = false
 #if SWIFTTERM_EMBEDDED
     var tdel: TerminalDelegate?
 #else
@@ -1348,6 +1403,10 @@ open class Terminal {
             clearProgramStatus()
             resetNormalBuffer()
             activateNormalBuffer(clearAlt: false)
+            // A full reset also clears the alternate screen, even when it is not
+            // active, so that a later switch to it shows a blank page.
+            clearKittyImages(in: altBuffer, isAlternateBuffer: true)
+            altBuffer.clear ()
             resetSemanticPromptState(clearingScreenMarks: true)
         } else {
             normalBuffer.resize(newCols: cols, newRows: rows)
@@ -1358,11 +1417,16 @@ open class Terminal {
         // modes
         applicationKeypad = false
         applicationCursor = false
+        keyboardActionMode = false
+        sendReceiveMode = true
+        backarrowKeyMode = false
         setReverseColors(false)
         originMode = false
         
         setMarginMode(false)
         setInsertMode(false)
+        characterProtectionMode = .off
+        setCharacterProtection(false)
         setWraparound(true)
         _ = applyDECPrivateMode(SpecialDECPrivateMode.bracketedPaste.rawValue, value: false)
         alternateScrollMode = true
@@ -1371,6 +1435,8 @@ open class Terminal {
         _ = applyDECPrivateMode(SpecialDECPrivateMode.visibilityReports.rawValue, value: false)
         _ = applyDECPrivateMode(SpecialDECPrivateMode.inBandSizeReports.rawValue, value: false)
         _ = applyDECPrivateMode(SpecialDECPrivateMode.kittyPasteEvents.rawValue, value: false)
+        reportedOnly.decModes.removeAll()
+        reportedOnly.attributeChangeExtent = 0
         if isReset {
             savedPrivateModes.removeAll()
 #if !SWIFTTERM_EMBEDDED
@@ -1673,8 +1739,8 @@ open class Terminal {
             var ok = 1 // 0 means the request is valid according to docs, but tests expect 0?
             var result: String
             switch (newData) {
-            case "\"q": // DECCSA - Set Character Attribute
-                result = "\"q"
+            case "\"q": // DECSCA - Select Character Protection Attribute
+                result = "\(terminal.characterProtection ? 1 : 0)\"q"
             case "\"p": // DECSCL - conformance level
                 result = "65;1\"p"
             case "r": // DECSTBM - the top and bottom margins
@@ -1686,6 +1752,16 @@ open class Terminal {
                 result = "\(terminal.buffer.marginLeft+1);\(terminal.buffer.marginRight+1)s"
             case " q": // DECSCUSR - the set cursor style
                 result = "\(terminal.options.cursorStyle.decscusrParameter) q"
+            case "*x": // DECSACE - attribute change extent
+                result = "\(terminal.reportedOnly.attributeChangeExtent)*x"
+            case "t": // DECSLPP - lines per page
+                result = "\(terminal.rows)t"
+            case "*|": // DECSNLS - lines per screen
+                result = "\(terminal.rows)*|"
+            case "$~": // DECSSDT - SwiftTerm has no status line
+                result = "0$~"
+            case "$}": // DECSASD - output always goes to the main display
+                result = "0$}"
             default:
                 ok = 0 // this means the request is not valid, report that to the host.
                 // invalid: DCS 0 $ r Pt ST (xterm)
@@ -1867,8 +1943,8 @@ open class Terminal {
                     previousScalar = UnicodeUtil.graphemeNeutralScalar
                 }
                 updateRange(borrowing: buffer, buffer.y)
-                // A short consume means insertMode is active; the per-character
-                // path picks up the rest.
+                // A short consume means insertMode or character protection is
+                // active; the per-character path picks up the rest.
                 pending = pending[(pending.startIndex + consumed)...]
                 if pending.isEmpty {
                     return
@@ -2733,31 +2809,16 @@ open class Terminal {
     func cmdBackspace ()
     {
         let buffer = self.buffer
-        restrictCursor(!reverseWraparound)
-        
+        if reverseWrapActive {
+            reverseWrapBackward (count: 1)
+            return
+        }
+        restrictCursor()
+
         let left = marginMode ? buffer.marginLeft : 0
-        let right = marginMode ? buffer.marginRight : buffer.cols-1
 
         if buffer.x > left {
             buffer.x -= 1
-        } else if reverseWraparound {
-            if buffer.x <= left {
-                if buffer.y > buffer.scrollTop && buffer.y <= buffer.scrollBottom && (buffer.lines [buffer.y + buffer.yBase].isWrapped || marginMode) {
-                    if !marginMode {
-                        buffer.lines [buffer.y + buffer.yBase].isWrapped = false
-                    }
-                    
-                    buffer.y -= 1
-                    buffer.x = right
-                // TODO: find actual last cell based on width used
-                } else if buffer.y == buffer.scrollTop {
-                    buffer.x = right
-                    buffer.y = buffer.scrollBottom
-                } else if buffer.y > 0 {
-                    buffer.x = right
-                    buffer.y -= 1
-                }
-            }
         } else {
             if buffer.x < left && buffer.x > 0 {
                 // This compensates for the scenario where backspace is supposed to move one step
@@ -3651,6 +3712,24 @@ open class Terminal {
     }
     private let payloads = PayloadState()
 
+    /// State that SwiftTerm keeps only so that DECRQM and DECRQSS can report it.
+    private final class ReportedOnlyState {
+        /// The set DEC private modes in `reportedOnlyDECModes`.
+        var decModes: Set<Int> = []
+        /// DECSACE: 0 or 1 is stream, 2 is rectangle. SwiftTerm has no DECCARA or
+        /// DECRARA, so the value changes nothing.
+        var attributeChangeExtent = 0
+    }
+
+    /// DECPFF (18), DECPEX (19), DECHEBM (35) and DECNRCM (42). SwiftTerm has no
+    /// printer, Hebrew keyboard or national replacement sets, so these modes
+    /// only keep their state.
+    static let reportedOnlyDECModes: Set<Int> = [18, 19, 35, 42]
+
+    // This is a single reference after the hot fields, so that cold state does
+    // not move their offsets. Only cold fields come after it.
+    private let reportedOnly = ReportedOnlyState()
+
     @inline(never)
     private func resolveActiveHyperlink() -> TinyAtom? {
         guard let activeHyperlink else {
@@ -3730,10 +3809,14 @@ open class Terminal {
 
     func oscHyperlink (_ data: ArraySlice<UInt8>)
     {
+        guard enableOsc8Hyperlinks else {
+            activeHyperlink = nil
+            return
+        }
         if data.count == 1 && data [data.startIndex] == UInt8 (ascii: ";") {
             activeHyperlink = nil
         } else {
-            let payload = terminalStringASCII(data) ?? ""
+            let payload = terminalStringUTF8(data) ?? terminalStringASCII(data) ?? ""
             activeHyperlink = .pending(payload)
         }
     }
@@ -4146,8 +4229,9 @@ open class Terminal {
     //
     func cmdNextLine ()
     {
-        buffer.x = usingMargins () ? buffer.marginLeft : 0
+        // As xterm, index first: the column decides whether the region scrolls.
         cmdIndex ()
+        cmdCarriageReturn ()
     }
 
     /**
@@ -4262,7 +4346,71 @@ open class Terminal {
     //
     func cmdCursorBackward (_ pars: CsiParameters, _ collect: cstring)
     {
-        cursorBackward(count: pars.count > 0 ? pars [0] : 1)
+        let count = pars.count > 0 ? pars [0] : 1
+        if reverseWrapActive {
+            reverseWrapBackward (count: max (1, count))
+        } else {
+            cursorBackward(count: count)
+        }
+    }
+
+    /// Whether backspace and CUB wrap back to the previous row. As xterm,
+    /// this needs DECAWM when the cursor moves, not when the mode is set.
+    var reverseWrapActive: Bool {
+        wraparound && (reverseWraparound || reverseWraparoundExtended)
+    }
+
+    /// Moves the cursor back `count` cells with reverse wraparound, as
+    /// xterm's CursorBack. From the left margin the cursor goes to the right
+    /// margin of the previous row. Mode 1045 goes to any previous row, and from
+    /// the top margin to the bottom margin. Mode 45 goes only to the row that
+    /// the current row wrapped from.
+    func reverseWrapBackward (count: Int)
+    {
+        let buffer = self.buffer
+        restrictCursor(false)
+        var left = marginMode ? buffer.marginLeft : 0
+        let right = marginMode ? buffer.marginRight : cols - 1
+        var n = count
+
+        // After a write to the last column the cursor waits past it. The first
+        // step only cancels the wait.
+        if buffer.x > right {
+            buffer.x = right
+            n -= 1
+        }
+        // If the cursor is already left of the left margin, let it go to the edge.
+        if buffer.x < left {
+            left = 0
+        }
+        while n > 0 {
+            if buffer.x - n >= left {
+                buffer.x -= n
+                break
+            }
+            // Go to the left margin, and use one more step to wrap.
+            n -= buffer.x - left + 1
+            let y = buffer.y
+            if reverseWraparoundExtended {
+                if y == buffer.scrollTop {
+                    buffer.y = buffer.scrollBottom
+                } else if y > 0 {
+                    buffer.y = y - 1
+                } else {
+                    buffer.x = left
+                    break
+                }
+            } else {
+                guard y > 0, y != buffer.scrollTop,
+                      buffer.lines [y + buffer.yBase].isWrapped else {
+                    buffer.x = left
+                    break
+                }
+                buffer.y = y - 1
+            }
+            buffer.x = right
+        }
+        updateRange (buffer.y)
     }
     
     func cursorBackward (count: Int)
@@ -4419,7 +4567,22 @@ open class Terminal {
     func cmdEraseInLine (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = pars.count == 0 ? 0 : pars [0]
-        
+
+        // DECSEL always keeps protected cells. EL keeps them only for ISO protection.
+        if characterProtectionMode == .iso || (collect.count == 1 && collect [0] == UInt8 (ascii: "?")) {
+            switch p {
+            case 0:
+                eraseUnprotectedInBufferLine (y: buffer.y, start: buffer.x, end: cols)
+            case 1:
+                eraseUnprotectedInBufferLine (y: buffer.y, start: 0, end: buffer.x + 1)
+            case 2:
+                eraseUnprotectedInBufferLine (y: buffer.y, start: 0, end: cols)
+            default:
+                break
+            }
+            return
+        }
+
         switch p {
         case 0:
             eraseInBufferLine (y: buffer.y, start: buffer.x, end: cols)
@@ -4449,6 +4612,29 @@ open class Terminal {
     {
         let p = pars.count == 0 ? 0 : pars [0]
         var j: Int
+
+        // DECSED always keeps protected cells. ED keeps them only for ISO protection.
+        if p <= 2 && (characterProtectionMode == .iso || (collect.count == 1 && collect [0] == UInt8 (ascii: "?"))) {
+            let y = buffer.y
+            switch p {
+            case 0:
+                eraseUnprotectedInBufferLine (y: y, start: buffer.x, end: cols)
+                for row in (y + 1)..<max (rows, y + 1) {
+                    eraseUnprotectedInBufferLine (y: row, start: 0, end: cols)
+                }
+            case 1:
+                for row in 0..<y {
+                    eraseUnprotectedInBufferLine (y: row, start: 0, end: cols)
+                }
+                eraseUnprotectedInBufferLine (y: y, start: 0, end: buffer.x + 1)
+            default:
+                for row in 0..<rows {
+                    eraseUnprotectedInBufferLine (y: row, start: 0, end: cols)
+                }
+            }
+            return
+        }
+
         switch p {
         case 0:
             j = buffer.y
@@ -4531,6 +4717,33 @@ open class Terminal {
     }
 
     //
+    // Erases the cells in a terminal row that are not protected, for the
+    // erase commands that respect DECSCA or SPA protection.
+    // - Parameter y: row index
+    // - Parameter start: first cell index to be erased
+    // - Parameter end:   end - 1 is last erased cell
+    //
+    func eraseUnprotectedInBufferLine (y: Int, start: Int, end: Int)
+    {
+        let line = buffer.lines [buffer.yBase + y]
+        let end = min (end, cols)
+        var col = max (start, 0)
+        while col < end {
+            if line.packedCell(at: col).isProtected {
+                col += 1
+                continue
+            }
+            var runEnd = col + 1
+            while runEnd < end && !line.packedCell(at: runEnd).isProtected {
+                runEnd += 1
+            }
+            eraseInBufferLine (y: y, start: col, end: runEnd)
+            col = runEnd
+        }
+        updateRange (y)
+    }
+
+    //
     // CSI Ps L
     // Insert Ps Line(s) (default = 1) (IL).
     //
@@ -4562,6 +4775,9 @@ open class Terminal {
                     repairWideCellsForColumnRestrictedShift(row: row + i)
                 }
                 for _ in 0..<p {
+#if DEBUG
+                    testingInsertLineIterations &+= 1
+#endif
                     for i in (0..<rowCount).reversed() {
                         let src = buffer.lines [row+i]
                         let dst = buffer.lines [row+i+1]
@@ -4579,6 +4795,9 @@ open class Terminal {
         } else {
             let inserted = p
             for _ in 0..<p {
+#if DEBUG
+                testingInsertLineIterations &+= 1
+#endif
                 p -= 1
                 // test: echo -e '\e[44m\e[1L\e[0m'
                 // blankLine(true) - xterm/linux behavior
@@ -4706,6 +4925,11 @@ open class Terminal {
         let cell = makePackedCell(attribute: curAttr.justColor(),
                                   character: "E", width: 1)
 
+        // As xterm, DECALN also resets the margins.
+        buffer.scrollTop = 0
+        buffer.scrollBottom = rows - 1
+        buffer.marginLeft = 0
+        buffer.marginRight = cols - 1
         setCursor (col: 0, row: 0)
         for yOffset in 0..<rows {
             let rowN = buffer.y + buffer.yBase + yOffset
@@ -4730,8 +4954,7 @@ open class Terminal {
         charset = buffer.savedCharset
         originMode = buffer.savedOriginMode
         setMarginMode(buffer.savedMarginMode)
-        setWraparound(buffer.savedWraparound)
-        reverseWraparound = buffer.savedReverseWraparound
+        setCharacterProtection(buffer.savedCharacterProtection)
     }
 
     //
@@ -4854,6 +5077,12 @@ open class Terminal {
                         line.setPackedCell(fillData, at: col)
                     }
                 }
+            }
+        } else if collect == [UInt8 (ascii: "*")] {
+            // DECSACE
+            let extent = pars.count > 0 ? pars [0] : 0
+            if extent >= 0 && extent <= 2 {
+                reportedOnly.attributeChangeExtent = extent
             }
         } else {
             log ("Not implemented CSI x with collect: collect=\(collect) and pars=\(pars)")
@@ -4991,7 +5220,8 @@ open class Terminal {
                 let line = buffer.lines [row+buffer.yBase]
                 for col in left...right {
                     let cell = line.packedCell(at: col)
-                    guard !cell.isProtected,
+                    // DECSERA keeps DECSCA protection, but not ISO protection.
+                    guard !cell.isProtected || characterProtectionMode == .iso,
                           let erased = cellArena.replacingContent(
                             of: cell, with: " ", widthState: .narrow) else {
                         continue
@@ -5124,6 +5354,16 @@ open class Terminal {
         }
     }
 
+    // CSI Ps * | Set Number of Lines per Screen (DECSNLS), VT420 and up.
+    // As DECSLPP, the host decides whether to resize.
+    func cmdSetLinesPerScreen (_ pars: CsiParameters)
+    {
+        guard let tdel = self.tdel, pars.count > 0, pars [0] > 0 else {
+            return
+        }
+        tdel.windowCommand(source: self, command: .resizeTerminal(cols: cols, rows: pars [0]))
+    }
+
     //
     // CSI Ps ; Ps ; Ps t - Various window manipulations and reports (xterm)
     // See https://invisible-island.net/xterm/ctlseqs/ctlseqs.html for a full
@@ -5148,6 +5388,9 @@ open class Terminal {
             tdel.windowCommand(source: self, command: .sendToBack)
         case [7]:
             tdel.windowCommand(source: self, command: .refreshWindow)
+        case _ where pars.count == 1 && pars [0] >= 24:
+            // DECSLPP: as CSI 8 t, the host decides whether to resize.
+            tdel.windowCommand(source: self, command: .resizeTerminal(cols: cols, rows: pars [0]))
         case _ where pars.count == 3 && pars.first == 8:
             tdel.windowCommand(source: self, command: .resizeTerminal(cols: pars [2], rows: pars [1]))
         case [9, 0]:
@@ -5283,10 +5526,9 @@ open class Terminal {
         buffer.savedY = buffer.y
         buffer.savedAttr = curAttr
         buffer.savedCharset = charset
-        buffer.savedWraparound = wraparound
         buffer.savedOriginMode = originMode
         buffer.savedMarginMode = marginMode
-        buffer.savedReverseWraparound = reverseWraparound
+        buffer.savedCharacterProtection = characterProtection
     }
 
     //
@@ -5338,6 +5580,29 @@ open class Terminal {
     //   Ps = 5  -> blinking bar (xterm).
     //   Ps = 6  -> steady bar (xterm).
     //
+    //
+    // CSI Ps " q
+    //   Select character protection attribute (DECSCA).
+    //     Ps = 0, 2 -> DECSED and DECSEL can erase (default).
+    //     Ps = 1 -> DECSED and DECSEL cannot erase.
+    //
+    func cmdSelectCharacterProtection (_ pars: CsiParameters)
+    {
+        let p = pars.count == 0 ? 0 : pars [0]
+        guard p <= 2 else { return }
+        characterProtectionMode = .dec
+        setCharacterProtection(p == 1)
+    }
+
+    //
+    // ESC V (SPA) starts an ISO protected area, ESC W (EPA) ends it.
+    //
+    func cmdProtectedArea (start: Bool)
+    {
+        characterProtectionMode = .iso
+        setCharacterProtection(start)
+    }
+
     func cmdSetCursorStyle (_ pars: CsiParameters, _ collect: cstring)
     {
         if collect.count == 0 || collect != [32] { /* space */
@@ -5536,6 +5801,12 @@ open class Terminal {
 
     private func readDECPrivateMode(_ mode: Int) -> Bool? {
         switch mode {
+        case 7:
+            return wraparound
+        case 67:
+            return backarrowKeyMode
+        case _ where Terminal.reportedOnlyDECModes.contains(mode):
+            return reportedOnly.decModes.contains(mode)
         case SpecialDECPrivateMode.bracketedPaste.rawValue:
             return bracketedPasteMode
         case SpecialDECPrivateMode.synchronizedOutput.rawValue:
@@ -5561,6 +5832,12 @@ open class Terminal {
 
     private func defaultDECPrivateModeValue(_ mode: Int) -> Bool? {
         switch mode {
+        case 7:
+            return true
+        case 67:
+            return false
+        case _ where Terminal.reportedOnlyDECModes.contains(mode):
+            return false
         case SpecialDECPrivateMode.bracketedPaste.rawValue,
              SpecialDECPrivateMode.synchronizedOutput.rawValue,
              SpecialDECPrivateMode.colorSchemeReports.rawValue,
@@ -5582,7 +5859,17 @@ open class Terminal {
     @discardableResult
     private func applyDECPrivateMode(_ mode: Int, value: Bool) -> Bool {
         switch mode {
-        case 117:
+        case 7: // DECAWM - Wraparound Mode
+            setWraparound(value)
+        case 67: // DECBKM
+            backarrowKeyMode = value
+        case _ where Terminal.reportedOnlyDECModes.contains(mode):
+            if value {
+                reportedOnly.decModes.insert(mode)
+            } else {
+                reportedOnly.decModes.remove(mode)
+            }
+        case 117, 60:
             break
         case SpecialDECPrivateMode.bracketedPaste.rawValue:
             bracketedPasteMode = value
@@ -5634,7 +5921,8 @@ open class Terminal {
     }
 
     private func decPrivateModeReportState(_ mode: Int) -> DECModeReportState? {
-        if mode == 117 {
+        // DECHCCM (60) needs horizontal scrolling, which SwiftTerm does not have.
+        if mode == 117 || mode == 60 {
             return .permanentlyReset
         }
         if mode == SpecialDECPrivateMode.graphemeClustering.rawValue {
@@ -5656,6 +5944,10 @@ open class Terminal {
     }
 
     func cmdDecRqm (_ pars: CsiParameters, decMode: Bool) {
+        // DECRQM is a VT320 feature.
+        if conformance == .vt100 || conformance == .vt200 {
+            return
+        }
         let modeUnknown = 0
         let modeSet = 1
         let modeReset = 2
@@ -5699,10 +5991,6 @@ open class Terminal {
                 res = modeCouldBeImplementedButReset
             case 14: // cursor blink xor
                 res = modeCouldBeImplementedButReset
-            case 18: // DECPFF - Print screen with form feed
-                res = modeCouldBeImplementedButSet
-            case 19: // DECPEX - print region limitation
-                res = modeCouldBeImplementedButSet
             case 25: // DECTCEM cursor visbiolity
                 res = cursorHidden ? modeReset : modeSet
             case 30: // RXVT show scrollbar
@@ -5711,20 +5999,20 @@ open class Terminal {
                 res = allow80To132 ? modeSet : modeReset
             case 41: // xterm tab workaround in "more(1)" command
                 res = modeReset
-            case 42: // DECNRCM - national character set
-                res = modeAlwaysReset
             case 44: // MARGIN_BELL
                 res = modeAlwaysReset
             case 45: // REVERSEWRAP
                 res = reverseWraparound ? modeSet : modeReset
+            case 1045: // REVERSEWRAP2
+                res = reverseWraparoundExtended ? modeSet : modeReset
             case 46: // allow logging
                 res = modeAlwaysReset
             case 47: // ALTBUF - alternate screen buffer
                 res = isCurrentBufferAlternate ? modeSet : modeReset
             case 66: // DECNKCM
                 res = applicationKeypad ? modeSet : modeReset
-            case 67: // backspace sends delete
-                res = modeAlwaysReset
+            case 67: // DECBKM - backarrow key sends backspace
+                res = backarrowKeyMode ? modeSet : modeReset
             case 69: // DECLRMM - mmargins
                 res = marginMode ? modeSet : modeReset
             case 80: // DECSDM - Sixel scrolling
@@ -5765,9 +6053,8 @@ open class Terminal {
             switch mode {
             case 1: // GATM - guarded area transfer
                 res = modeAlwaysReset
-            case 2: // Disable keyboard input KAM
-                // If implemented elsewhere, this can be added here, but I have reservations about this
-                res = modeCouldBeImplementedButReset
+            case 2: // KAM - reported, but the keyboard is never locked
+                res = keyboardActionMode ? modeSet : modeReset
             case 3: // CRM - Display control characters
                 res = modeCouldBeImplementedButReset
             case 4: // IRM Insert mode
@@ -5782,8 +6069,8 @@ open class Terminal {
                 res = modeAlwaysReset
             case 11: // PUM positioning unit
                 res = modeAlwaysReset
-            case 12: // SRM send-receive mode, update when we implement
-                res = modeCouldBeImplementedButSet
+            case 12: // SRM send-receive mode, reported, but SwiftTerm never echoes
+                res = sendReceiveMode ? modeSet : modeReset
             case 13: // FEAM Format effector action
                 res = modeAlwaysReset
             case 14: // FETM Format effector transfer
@@ -5886,10 +6173,16 @@ open class Terminal {
         }
         cursorHidden = false
         insertMode = false
+        keyboardActionMode = false
+        sendReceiveMode = true
+        backarrowKeyMode = false
         originMode = false
 
         reverseWraparound = false
-        
+        reverseWraparoundExtended = false
+        // DEC STD 070: DECSTR resets DECLRMM.
+        setMarginMode(false)
+
         setWraparound(true)  // defaults: xterm - true, vt100 - false
         applicationKeypad = false
         syncScrollArea ()
@@ -5897,6 +6190,8 @@ open class Terminal {
         buffer.scrollTop = 0
         buffer.scrollBottom = rows - 1
         setCurrentAttribute(CharData.defaultAttr)
+        characterProtectionMode = .off
+        setCharacterProtection(false)
         buffer.softReset ()
         resetSemanticPromptState(clearingScreenMarks: true)
 
@@ -5953,8 +6248,10 @@ open class Terminal {
                 // cursor position
                 let y = max (1, buffer.y + 1 - (originMode ? buffer.scrollTop : 0))
                 
-                // Need the max, because the cursor could be before the leftMargin
-                let x = max (1, buffer.x + 1 - (originMode ? buffer.marginLeft : 0))
+                // Need the max, because the cursor could be before the leftMargin.
+                // After a write to the last column the cursor waits one cell past
+                // it, but the report gives the last column.
+                let x = max (1, min (buffer.x, cols - 1) + 1 - (originMode ? buffer.marginLeft : 0))
                 sendResponse (cc.CSI, "\(y);\(x)R")
             default:
                 break;
@@ -5966,8 +6263,9 @@ open class Terminal {
             case 6:
                 // cursor position
                 let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
-                // Need the max, because the cursor could be before the leftMargin
-                let x = max (1, buffer.x + 1  - (usingMargins () ? buffer.marginLeft : 0))
+                // Need the max, because the cursor could be before the leftMargin,
+                // and the min for a write to the last column, as in CPR.
+                let x = max (1, min (buffer.x, cols - 1) + 1  - (usingMargins () ? buffer.marginLeft : 0))
                 sendResponse (cc.CSI, "?\(y);\(x);1R")
             case 15:
                 // Request printer status report, we respond "We are ready"
@@ -6481,7 +6779,8 @@ open class Terminal {
         }
         buffer.x = 0
         buffer.y = 0
-        if !noClearOnColumnChange {
+        // DECNCSM is a VT510 feature, so a lower DECSCL level always clears.
+        if !noClearOnColumnChange || conformance != .vt500 {
             // Buffers without reflow keep cells past a narrower width. The cleared page must not keep them.
             for row in 0..<rows {
                 buffer.lines[buffer.yBase + row].resize(cols: cols, fill: PackedCell())
@@ -6498,14 +6797,17 @@ open class Terminal {
         if collect == [] {
             switch (par) {
             case 2:
-                // KAM mode - unlocks the keyboard, not supported
-                break
+                // KAM mode - unlocks the keyboard
+                keyboardActionMode = false
             case 4:
                 // IRM Insert/Replace Mode
                 setInsertMode(false)
             case 8:
                 // BDSM explicit mode: present logical order, app does BiDi
                 updateCurrentBidiState(property: .supportMode) { $0.supportMode = .explicit }
+            case 12:
+                // SRM—Local Echo: Send/Receive Mode
+                sendReceiveMode = false
             case 20:
                 // LNM—Line Feed/New Line Mode
                 lineFeedMode = false
@@ -6530,8 +6832,6 @@ open class Terminal {
             case 6:
                 // DECOM Reset
                 originMode = false
-            case 7:
-                setWraparound(false)
             case 12:
                 cursorBlink = false
             case 40:
@@ -6541,13 +6841,17 @@ open class Terminal {
                 break
             case 45:
                 reverseWraparound = false
+            case 1045:
+                reverseWraparoundExtended = false
             case 66:
                 //log ("Switching back to normal keypad.");
                 applicationKeypad = false
                 syncScrollArea ()
             case 69:
-                // DECSLRM
+                // DECLRMM: as xterm, the left and right margins go back to the screen edges.
                 setMarginMode(false)
+                buffer.marginLeft = 0
+                buffer.marginRight = cols - 1
             case 9: // X10 Mouse
                 mouseMode = .off
             case 1000: // vt200 mouse
@@ -6712,8 +7016,8 @@ open class Terminal {
         if (collect == []) {
             switch par {
             case 2:
-                // KAM mode - unlocks the keyboard, I do not want to support it
-                break
+                // KAM mode - locks the keyboard. Only reported, see keyboardActionMode.
+                keyboardActionMode = true
             case 4:
                 // IRM Insert/Replace Mode
                 // https://vt100.net/docs/vt510-rm/IRM.html
@@ -6721,10 +7025,9 @@ open class Terminal {
             case 8:
                 // BDSM implicit mode: the terminal performs BiDi reordering
                 updateCurrentBidiState(property: .supportMode) { $0.supportMode = .implicit }
-//            case 12:
-//                 SRM—Local Echo: Send/Receive Mode
-//                 When implemented, hook up cmdDecRqm
-//                break
+            case 12:
+                // SRM—Local Echo: Send/Receive Mode
+                sendReceiveMode = true
             case 20:
                 // Automatic New Line (LNM)
                 lineFeedMode = true
@@ -6757,8 +7060,6 @@ open class Terminal {
             case 6:
                 // DECOM Set
                 originMode = true
-            case 7:
-                setWraparound(true)
             case 12:
                 cursorBlink = true
                 break;
@@ -6771,14 +7072,15 @@ open class Terminal {
             case 9:
                 // X10 Mouse
                 mouseMode = .x10
-            case 45: // Xterm Reverse Wrap-around
-                // reverse wraparound can only be enabled if Auto-wrap is enabled (DECAWM)
-                if wraparound {
-                    reverseWraparound = true
-                }
+            case 45: // Xterm Reverse Wrap-around, which also needs DECAWM to work
+                reverseWraparound = true
+            case 1045: // Xterm Extended Reverse Wrap-around
+                reverseWraparoundExtended = true
             case 69:
-                // Enable left and right margin mode (DECLRMM),
-                setMarginMode(true)
+                // Enable left and right margin mode (DECLRMM), a VT420 feature.
+                if conformance == .vt400 || conformance == .vt500 {
+                    setMarginMode(true)
+                }
             case 95: // DECNCSM
                 noClearOnColumnChange = true
             case 1000:
@@ -6924,10 +7226,12 @@ open class Terminal {
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
-        if (p - 1 >= rows) {
-            buffer.y = rows - 1
+        // As xterm, in origin mode the row is relative to the top margin, and
+        // stops at the bottom margin.
+        if originMode {
+            buffer.y = min (buffer.scrollTop + p - 1, buffer.scrollBottom)
         } else {
-            buffer.y = p - 1
+            buffer.y = min (p - 1, rows - 1)
         }
     }
 
@@ -7069,10 +7373,11 @@ open class Terminal {
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
-        buffer.x = p - 1
-        if buffer.x >= cols {
-            buffer.x = cols - 1
-        }
+        // As xterm, in origin mode the column is relative to the left margin,
+        // and stops at the right margin.
+        let left = usingMargins () ? buffer.marginLeft : 0
+        let right = usingMargins () ? buffer.marginRight : cols - 1
+        buffer.x = min (left + p - 1, right)
     }
 
     //
@@ -7097,6 +7402,12 @@ open class Terminal {
     func cmdEraseChars (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
+
+        // ECH keeps protected cells only for ISO protection.
+        if characterProtectionMode == .iso {
+            eraseUnprotectedInBufferLine (y: buffer.y, start: buffer.x, end: buffer.x + min (p, cols))
+            return
+        }
 
         let line = buffer.lines[buffer.y + buffer.yBase]
         line.repairWideSeam(at: buffer.x)
@@ -7989,7 +8300,13 @@ open class Terminal {
         let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
 
         var movedToNextLine = false
-        if newY > buffer.scrollBottom {
+        if buffer.y > buffer.scrollBottom {
+            // Below the scroll region, move down to the last row, but do not scroll.
+            if newY < rows {
+                buffer.y = newY
+                movedToNextLine = true
+            }
+        } else if newY > buffer.scrollBottom {
             if canScroll {
                 scroll ()
                 movedToNextLine = true
@@ -8329,6 +8646,10 @@ open class Terminal {
     func cmdReset ()
     {
             parser.reset (self)
+            // As xterm, RIS leaves 132-column mode when DECCOLM can change it.
+            if allow80To132 && cols == 132 {
+                resize (cols: 80, rows: rows)
+            }
             resetToInitialState ()
     }
             
@@ -9183,6 +9504,7 @@ open class Terminal {
 
     private func explicitLink(at position: Position, in buffer: Buffer) -> String?
     {
+        guard enableOsc8Hyperlinks else { return nil }
         let line = buffer.lines[position.row]
         guard let payload = stringPayload(from: line.packedView(at: position.col)) else {
             return nil
@@ -9209,6 +9531,7 @@ open class Terminal {
 
     private func explicitLinkMatch(at position: Position, in buffer: Buffer) -> LinkMatch?
     {
+        guard enableOsc8Hyperlinks else { return nil }
         guard let payloadToken = payloadCode(at: position, in: buffer) else {
             return nil
         }
@@ -9288,6 +9611,9 @@ open class Terminal {
                 continue
             }
 
+#if DEBUG
+            testingImplicitLinkCandidates &+= 1
+#endif
             let startOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.lowerBound)
             let endOffset = lineMap.text.distance(from: lineMap.text.startIndex, to: textRange.upperBound)
             guard startOffset < lineMap.cells.count else {

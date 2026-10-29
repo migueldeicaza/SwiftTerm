@@ -175,27 +175,31 @@ public final class BufferLine: CustomDebugStringConvertible {
         }
     }
 
-    /// Monotonically increasing counter incremented on every mutation of this line's
-    /// contents (cells, isWrapped, renderMode, images). Renderers that cache per-line
+    /// Counter that changes on every mutation of this line's contents (cells,
+    /// isWrapped, renderMode, images). Renderers that cache per-line
     /// draw state can compare this counter against a cached value to detect in-place
     /// changes without diffing individual cells.
     public var generation: UInt64 { _generation }
     private(set) var _generation: UInt64 = 0
+    /// A change that a selection of this line does not see adds this step
+    /// to `_generation` instead of 1. The low bits then count only the
+    /// changes a selection sees, so ``contentGeneration`` needs no counter
+    /// of its own and a cell write still costs one increment. The carry out
+    /// of the high bits only wraps `_generation`, which readers compare for
+    /// equality.
+    private static let renderOnlyStep: UInt64 = 1 << 40
     /// Changes with what a selection of this line holds: the cells,
     /// `isWrapped` and `bidiState`, and not the prompt marks, images,
     /// render mode or blank cells a resize adds or drops at the end. A feed
     /// compares it to keep a selection whose rows it didn't touch without
     /// copying their cells.
-    private(set) var contentGeneration: UInt64 = 0
+    var contentGeneration: UInt64 { _generation & (BufferLine.renderOnlyStep - 1) }
 
     @inline(__always)
-    private func bump() {
-        _generation &+= 1
-        contentGeneration &+= 1
-    }
+    private func bump() { _generation &+= 1 }
 
     @inline(__always)
-    private func bumpRenderOnly() { _generation &+= 1 }
+    private func bumpRenderOnly() { _generation &+= BufferLine.renderOnlyStep }
 
     public convenience init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false,
                              bidiState: BidiPresentationState = .default)

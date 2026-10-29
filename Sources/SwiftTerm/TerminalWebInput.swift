@@ -64,7 +64,7 @@ public extension Terminal {
             eventType: type, text: text, shiftedKey: shiftedKey == 0 ? nil : UnicodeScalar(shiftedKey),
             baseLayoutKey: baseLayoutKey == 0 ? nil : UnicodeScalar(baseLayoutKey))
         let encoder = KittyKeyboardEncoder(flags: flags, applicationCursor: applicationCursor,
-            applicationKeypad: applicationKeypad, backspaceSendsControlH: false)
+            applicationKeypad: applicationKeypad, backspaceSendsControlH: backarrowKeyMode)
         guard let bytes = encoder.encode(event) else { return 2 }
         sendUserInput(bytes[...])
         return 1

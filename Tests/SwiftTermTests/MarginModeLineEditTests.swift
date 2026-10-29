@@ -85,15 +85,20 @@ final class MarginModeLineEditTests {
         if marginMode { terminal.feed(text: "\u{1b}[?69h") }
         terminal.feed(text: "\u{1b}[5;1H")
 
-        let clock = ContinuousClock()
-        let elapsed = clock.measure {
+        terminal.terminalLock.withLock {
+#if DEBUG
+            let iterationsBefore = terminal.testingInsertLineIterations
+#endif
             for _ in 0..<3 { terminal.feed(text: "\u{1b}[99999L") }
+#if DEBUG
+            let iterations = terminal.testingInsertLineIterations - iterationsBefore
+            #expect(iterations == 3 * (rows - 4))
+#endif
         }
 
         let screen = visible(terminal, rows: rows)
         #expect(Array(screen[0..<4]) == ["ROW01", "ROW02", "ROW03", "ROW04"])
         #expect(screen[4...].allSatisfy { $0.isEmpty })
-        #expect(elapsed < .milliseconds(100), "took \(elapsed)")
     }
 
     /// The margin and non-margin paths must agree: enabling DECLRMM with the

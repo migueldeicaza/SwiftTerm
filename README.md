@@ -260,17 +260,24 @@ it will run this one.   To run the test suite, select the 'SwiftTerm' target
 instead, and you can use 'SwiftTermFuzz' to run the fuzzer.
 
 You can use `swift build` to build the package, and `swift test` to
-run the test suite.  For better test coverage, clone the esctest
-repository which contains comprehensive terminal emulator tests:
+run the test suite.  For better test coverage, fetch esctest, a
+conformance suite for terminal emulators:
 
 ```
 make clone-esctest
 swift test
 ```
 
-This clones the [esctest](https://github.com/migueldeicaza/esctest)
-repository (Python 3 branch) and enables the full terminal compliance
-test suite to run.
+This fetches a pinned commit of
+[esctest2](https://github.com/ThomasDickey/esctest2). `testKnownGood`
+then runs the esctest tests listed in
+`Tests/SwiftTermTests/Fixtures/esctest-known-good.txt`, and fails if one
+of them fails.
+
+To run the whole suite and see every failure, run `make esctest-report`,
+which writes `esctest.log`.  When a change makes more tests pass, make
+two logs and update the list with `scripts/esctest-known-good.py`; the
+script describes the steps.
 
 If using Xcode, you can select the "SwiftTerm" project, and then use Command-U 
 to run the test suite.

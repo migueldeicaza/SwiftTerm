@@ -24,16 +24,18 @@ struct SemanticPromptNavigationTests {
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.01))
         }
         view.scrollTo(row: output / 2)
-        let clock = ContinuousClock()
-        var previous: Int?
-        var next: Int?
-        let elapsed = clock.measure {
-            previous = view.previousSemanticPromptRow()
-            next = view.nextSemanticPromptRow()
-        }
+#if DEBUG
+        let visitsBefore = view.withTerminal { $0.buffer.testingSemanticPromptRowVisits }
+#endif
+        let previous = view.previousSemanticPromptRow()
+        let next = view.nextSemanticPromptRow()
         #expect(previous == 0)
         #expect(next == output + 1)
-        #expect(elapsed < .milliseconds(500), "took \(elapsed)")
+#if DEBUG
+        let visits = view.withTerminal { $0.buffer.testingSemanticPromptRowVisits } - visitsBefore
+        #expect(visits > 0)
+        #expect(visits <= output + 1)
+#endif
     }
 }
 #endif

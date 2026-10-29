@@ -52,6 +52,20 @@ final class SelectionTests: TerminalDelegate {
         #expect(selection.getSelectedText() == "hello")
     }
 
+    @Test func testExplicitRangeAfterRowSelectionCopiesOnlyTheRange() {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 40, rows: 5))
+        let selection = SelectionService(terminal: terminal)
+        terminal.feed(text: "hello world trailing")
+        selection.select(row: 0)
+
+        selection.setSelection(start: Position(col: 6, row: 0), end: Position(col: 11, row: 0))
+
+        #expect(selection.getSelectedText() == "world")
+        selection.dragExtend(bufferPosition: Position(col: 12, row: 0))
+        #expect(selection.start == Position(col: 6, row: 0))
+        #expect(selection.end == Position(col: 12, row: 0))
+    }
+
     @Test func testSelectWordOrExpressionSelectsBalancedParens() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 20, rows: 1))
         let selection = SelectionService(terminal: terminal)
@@ -65,6 +79,15 @@ final class SelectionTests: TerminalDelegate {
     }
 
 #if os(macOS)
+    @Test func testSearchAfterRowSelectionCopiesOnlyTheMatch() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        view.feed(text: "hello world trailing")
+        view.withTerminal { _ in view.selection.select(row: 0) }
+
+        #expect(view.findNext("world", scrollToResult: false))
+        #expect(view.getSelection() == "world")
+    }
+
     // Test only on macOS due to differences in how frames are handled on mac and iOS
     @Test func testMouseHitCorrectWhenScrolled() {
         let view = TerminalView(frame: CGRect(origin: .zero, size: .init(width: 10, height: 10)))
