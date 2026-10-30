@@ -20,9 +20,9 @@ import UIKit
 ///
 /// The handle contains no view, display-link, or other UI state. Its locked
 /// event set also limits publication to one pending main-actor task, and while
-/// the driver's tick source runs a dirty mark publishes no task at all: the
-/// next tick consumes it. A producer can keep this handle without keeping the
-/// terminal view or its driver alive.
+/// the driver's tick source runs a dirty mark or a view update publishes no
+/// task at all: the next tick consumes it. A producer can keep this handle
+/// without keeping the terminal view or its driver alive.
 final class FrameDriverSignal: Sendable {
     fileprivate struct Events: OptionSet, Sendable {
         let rawValue: UInt8
@@ -31,6 +31,10 @@ final class FrameDriverSignal: Sendable {
         static let immediate = Events(rawValue: 1 << 1)
         static let displayLink = Events(rawValue: 1 << 2)
         static let shutdown = Events(rawValue: 1 << 3)
+        static let viewUpdate = Events(rawValue: 1 << 4)
+
+        /// Events that a running source's next tick can consume.
+        static let deferrable: Events = [.dirty, .viewUpdate]
     }
 
     typealias Sink = @MainActor @Sendable () -> Void
@@ -69,6 +73,17 @@ final class FrameDriverSignal: Sendable {
     /// Marks the next frame as dirty. Safe on any thread.
     func markDirty() {
         publish([.dirty])
+    }
+
+    /// Asks the driver to run its `onViewUpdate` callback on the main actor,
+    /// then draw. Safe on any thread.
+    ///
+    /// The producer records what changed in its own locked state first. Like
+    /// a dirty mark, this publishes no task while the tick source runs, so a
+    /// flood of changes costs the producer no main-queue hop each: with the
+    /// main thread asleep, a hop is a Mach message to wake its run loop.
+    func requestViewUpdate() {
+        publish([.dirty, .viewUpdate])
     }
 
     /// Requests one coalesced tick without waiting for display cadence.
@@ -142,9 +157,10 @@ final class FrameDriverSignal: Sendable {
         state.withLock { state in
             guard !state.shutdownRequested else { return }
             state.pending.formUnion(events)
-            // The running source's next tick consumes a dirty mark. An
-            // immediate tick, a Core Video tick and shutdown cannot wait.
-            if state.linkRunning && events == .dirty { return }
+            // The running source's next tick consumes a dirty mark and a view
+            // update. An immediate tick, a Core Video tick and shutdown
+            // cannot wait.
+            if state.linkRunning && Events.deferrable.isSuperset(of: events) { return }
             guard !state.deliveryScheduled, let configuredSink = state.sink else { return }
             state.deliveryScheduled = true
             sink = configuredSink
@@ -287,6 +303,12 @@ final class FrameDriver {
     /// The view installs a weakly captured frame callback here.
     var onTick: (() -> Void)?
 
+    /// The view installs a callback here that applies the state its producers
+    /// recorded before `FrameDriverSignal.requestViewUpdate()`. It runs on
+    /// the main actor before the tick that consumes the request draws, and
+    /// also while the driver is suspended.
+    var onViewUpdate: (() -> Void)?
+
     /// Publishes the same effective visibility that controls frame suspension.
     var onVisibilityChanged: ((Bool) -> Void)?
 
@@ -364,6 +386,9 @@ final class FrameDriver {
         }
         guard !invalidated else { return }
 
+        if events.contains(.viewUpdate) {
+            onViewUpdate?()
+        }
         if events.contains(.dirty) {
             dirty = true
             if resumeOnMainIfNeeded() {
@@ -640,6 +665,7 @@ final class FrameDriver {
 #endif
         displayLinkTarget.driver = nil
         onTick = nil
+        onViewUpdate = nil
         signal.detachSink()
     }
 

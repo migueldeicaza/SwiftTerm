@@ -1317,6 +1317,12 @@ struct TerminalViewCrossThreadState: Sendable {
     var cachedCellPixelSize: (width: Int, height: Int)?
     var cachedNativeColors: (foreground: Color, background: Color)?
     var scrolledDirty = false
+    /// The scroll position at the last end of synchronized output, waiting
+    /// for `applyPendingViewUpdates`.
+    var pendingSyncEndScrollPosition: Double?
+    /// The last cursor style the terminal set, waiting for
+    /// `applyPendingViewUpdates`.
+    var pendingCursorStyle: CursorStyle?
 }
 
 final class AppleKittyClipboardBridge: Sendable {
@@ -2583,11 +2589,30 @@ extension TerminalView {
                 ? 1
                 : Double(displayBuffer.yDisp) / Double(maxScrollback)
         }
-        onMain { [weak self] in
-            guard let self else { return }
-            self.updateScroller()
-            self.frameDriver.markDirty()
-            self.terminalDelegate?.scrolled(source: self, position: position)
+        // A program that wraps each frame in 2026 ends it thousands of times
+        // a second. Record only the latest position: the frame driver applies
+        // it once, at its next tick (applyPendingViewUpdates).
+        crossThreadState.withLock { $0.pendingSyncEndScrollPosition = position }
+        frameSignal.requestViewUpdate()
+    }
+
+    /// Applies the changes the parse thread recorded for the main actor since
+    /// the last call. The frame driver calls this before it draws.
+    func applyPendingViewUpdates ()
+    {
+        let (position, cursorStyle) = crossThreadState.withLock { state in
+            let pending = (state.pendingSyncEndScrollPosition, state.pendingCursorStyle)
+            state.pendingSyncEndScrollPosition = nil
+            state.pendingCursorStyle = nil
+            return pending
+        }
+        if let cursorStyle {
+            caretView?.style = cursorStyle
+            updateCaretView()
+        }
+        if let position {
+            updateScroller()
+            terminalDelegate?.scrolled(source: self, position: position)
         }
     }
 
@@ -4449,6 +4474,9 @@ extension TerminalView {
         let driver = FrameDriver(signal: frameSignal)
         driver.onTick = { [weak self] in
             self?.frameTick()
+        }
+        driver.onViewUpdate = { [weak self] in
+            self?.applyPendingViewUpdates()
         }
         driver.onVisibilityChanged = { [weak self] visible in
             self?.renderOwner.setTerminalVisibility(
