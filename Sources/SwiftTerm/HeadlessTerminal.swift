@@ -129,14 +129,14 @@ public class HeadlessTerminal : TerminalDelegate, LocalProcessDelegate {
         terminal.inputStateSnapshot()
     }
 
-    /// Copies a bounded region and its input state in one transaction.
+    /// Copies a region of a buffer, with its palette and the input state, in
+    /// one transaction.
     ///
     /// Do not call this method from a terminal delegate callback that already
     /// holds the terminal lock.
     ///
-    /// The snapshot is useful for inspection and bounded text capture. It does
-    /// not include images, hyperlinks, or palette values, and is not sufficient
-    /// to reproduce the full display.
+    /// The snapshot is useful for inspection, text capture and re-encoding
+    /// as ANSI. It does not include images or hyperlinks.
     public func terminalContentSnapshot(
         region: TerminalContentRegion,
         buffer: Terminal.BufferKind = .active

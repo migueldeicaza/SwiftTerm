@@ -1865,6 +1865,10 @@ open class Terminal {
     // TODO: was this unused
     var lastBufferCol: Int = 0
 
+    // An explicit cursor move starts a new spacing character. Zero-width
+    // marks can still attach to the cell before the new cursor position.
+    private var cursorStartsNewGrapheme = false
+
     /// Finds the glyph that owns the terminal cell immediately before the cursor.
     /// A wide glyph has one or more width-zero trailing cells, so walk back to
     /// its leading cell before attempting to extend its grapheme cluster.
@@ -1940,6 +1944,7 @@ open class Terminal {
                                                      styleID: curStyleID,
                                                      payloadCode: resolveActiveHyperlinkPayloadCode())
                 if consumed > 0 {
+                    cursorStartsNewGrapheme = false
                     previousScalar = UnicodeUtil.graphemeNeutralScalar
                 }
                 updateRange(borrowing: buffer, buffer.y)
@@ -1979,6 +1984,7 @@ open class Terminal {
                     data.extracting(pendingStart..<end), styleID: curStyleID,
                     payloadCode: resolveActiveHyperlinkPayloadCode())
                 if consumed > 0 {
+                    cursorStartsNewGrapheme = false
                     previousScalar = UnicodeUtil.graphemeNeutralScalar
                 }
                 updateRange(borrowing: buffer, buffer.y)
@@ -2133,22 +2139,16 @@ open class Terminal {
         @inline(__always)
         func joinWithPrevious(_ value: UInt32, properties: UInt8,
                               width: Int) -> UnicodeUtil.GraphemeJoin {
+            if cursorStartsNewGrapheme && width > 0 { return .breaks }
             let previous = resolvePreviousScalar()
             guard previous != 0 else { return .breaks }
-            // UTS #51 defines an emoji modifier sequence as an emoji modifier
-            // base followed immediately by an emoji modifier. A standalone
-            // modifier must remain visible. Batchable scalars exclude emoji
-            // modifiers, so this tailoring stays on the scalar path. Keep the
-            // rule here so `graphemeJoinNonEmojiModifier` stays small enough to
-            // inline into both batch call sites.
-            if UnicodeUtil.isEmojiModifier(value) {
-                return UnicodeUtil.isEmojiModifierBase(previous) ? .joins : .breaks
-            }
-            return UnicodeUtil.graphemeJoinNonEmojiModifier(
-                previous: previous,
-                previousProperties: UnicodeUtil.graphemeProperties(previous),
-                incoming: value, incomingProperties: properties,
-                incomingWidth: width)
+            // Batchable scalars exclude emoji modifiers, so the emoji-modifier
+            // tailoring in `graphemeJoin` stays on the scalar path. The batch
+            // call sites use `graphemeJoinNonEmojiModifier`, which stays small
+            // enough to inline into both of them.
+            return UnicodeUtil.graphemeJoin(
+                previous: previous, incoming: value,
+                incomingProperties: properties, incomingWidth: width)
         }
 
         @inline(__always)
@@ -2323,6 +2323,7 @@ open class Terminal {
                                     consumedBytes += Int(sizes[index])
                                 }
                                 inputIndex = batchStart + consumedBytes
+                                cursorStartsNewGrapheme = false
                                 previousScalar = scalars[inserted + consumed - 1]
                             }
                             inserted += consumed
@@ -2382,6 +2383,7 @@ open class Terminal {
                                                               width: Int8(chWidth),
                                                               payloadCode: hyperlinkPayloadCode))
                         previousScalar = ch.unicodeScalars.last?.value ?? 0
+                        cursorStartsNewGrapheme = false
                         continue
                     }
                 }
@@ -2394,6 +2396,7 @@ open class Terminal {
                                                           width: Int8(chWidth),
                                                           payloadCode: hyperlinkPayloadCode))
                     previousScalar = UInt32(code)
+                    cursorStartsNewGrapheme = false
                 }
                 continue
             } else if bytesLeft() >= (n-1) {
@@ -2426,6 +2429,7 @@ open class Terminal {
                                                               width: Int8(chWidth),
                                                               payloadCode: hyperlinkPayloadCode))
                         previousScalar = UInt32(code)
+                        cursorStartsNewGrapheme = false
                     }
                     continue
                 }
@@ -2472,8 +2476,6 @@ open class Terminal {
                 // already covers UnicodeUtil.isCombining(firstScalarValue).
                 let firstScalarValue = firstScalar.value
                 let graphemeProperties = UnicodeUtil.graphemeProperties(firstScalarValue)
-                let indicBreak = UnicodeUtil.indicConjunctBreak(
-                    properties: graphemeProperties)
                 // Two table lookups rule out every pair that UAX #29 breaks
                 // unconditionally. Only a pair that survives them pays for
                 // combinedGraphemeScalars, which builds a String and asks the
@@ -2483,6 +2485,9 @@ open class Terminal {
                 let join = joinWithPrevious(firstScalarValue,
                                             properties: graphemeProperties,
                                             width: chWidth)
+                if chWidth > 0 {
+                    cursorStartsNewGrapheme = false
+                }
                 if join != .breaks {
                     target = combiningTarget(in: buffer)
                     if let target {
@@ -2551,10 +2556,10 @@ open class Terminal {
                                 widthState: .narrow)!
                             existingLine.setPackedCell(updated, at: lastx)
                         }
-                    } else if (chWidth > 0 ||
-                               (UnicodeUtil.isSpacingMarkWidth(firstScalarValue) &&
-                                indicBreak != .linker &&
-                                !UnicodeUtil.isVirama(firstScalarValue))) &&
+                    } else if UnicodeUtil.widensJoinedCell(
+                                incoming: firstScalarValue,
+                                properties: graphemeProperties,
+                                width: chWidth) &&
                               oldSize != 2 {
                         if !widenCombinedCell(
                             lineIndex: target.y, x: lastx, cell: cell,
@@ -2760,6 +2765,7 @@ open class Terminal {
 
     private func cmdLineFeedBasic (buffer: borrowing Buffer)
     {
+        cursorStartsNewGrapheme = true
         let by = buffer.y
         var movedToNextLine = false
         
@@ -2855,6 +2861,7 @@ open class Terminal {
     //
     func cmdBackspace ()
     {
+        cursorStartsNewGrapheme = true
         let buffer = self.buffer
         if reverseWrapActive {
             reverseWrapBackward (count: 1)
@@ -2883,6 +2890,7 @@ open class Terminal {
     
     func cmdCarriageReturn ()
     {
+        cursorStartsNewGrapheme = true
         let buffer = self.buffer
         if marginMode {
             if buffer.x < buffer.marginLeft {
@@ -2900,6 +2908,7 @@ open class Terminal {
     //
     func cmdTab ()
     {
+        cursorStartsNewGrapheme = true
         buffer.x = buffer.nextTabStop (marginMode: marginMode)
     }
 
@@ -4276,6 +4285,7 @@ open class Terminal {
     //
     func cmdNextLine ()
     {
+        cursorStartsNewGrapheme = true
         // As xterm, index first: the column decides whether the region scrolls.
         cmdIndex ()
         cmdCarriageReturn ()
@@ -4322,6 +4332,7 @@ open class Terminal {
     //
     func cmdCursorUp (_ pars: CsiParameters, _ collect: cstring)
     {
+        cursorStartsNewGrapheme = true
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
         let buffer = self.buffer
         var top = buffer.scrollTop
@@ -4342,6 +4353,7 @@ open class Terminal {
     //
     func cmdCursorDown (_ pars: CsiParameters, _ collect: cstring)
     {
+        cursorStartsNewGrapheme = true
         let buffer = self.buffer
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
         
@@ -4375,6 +4387,7 @@ open class Terminal {
     
     func cursorForward (count: Int)
     {
+        cursorStartsNewGrapheme = true
         var right = marginMode ? buffer.marginRight : cols-1
         
         // When the cursor starts after the right margin, CUF moves to the full width
@@ -4462,6 +4475,7 @@ open class Terminal {
     
     func cursorBackward (count: Int)
     {
+        cursorStartsNewGrapheme = true
         let buffer = self.buffer
         
         // What is our left margin - depending on the settings.
@@ -4485,6 +4499,7 @@ open class Terminal {
     //
     func cmdCursorForwardTab (_ pars: CsiParameters, _ collect: cstring)
     {
+        cursorStartsNewGrapheme = true
         let param = min (cols-1, max (pars.count > 0 ? pars [0] : 1, 1))
         for _ in 0..<param {
             buffer.x = buffer.nextTabStop (marginMode: marginMode)
@@ -4517,6 +4532,7 @@ open class Terminal {
     
     func setCursor (col: Int, row: Int)
     {
+        cursorStartsNewGrapheme = true
         let buffer = self.buffer
         updateRange(borrowing: buffer, buffer.y)
         if originMode {
@@ -4594,6 +4610,7 @@ open class Terminal {
     //
     func cmdCursorCharAbsolute (_ pars: CsiParameters, _ collect: cstring)
     {
+        cursorStartsNewGrapheme = true
         let buffer = self.buffer
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
 
@@ -4992,6 +5009,7 @@ open class Terminal {
         // CSI u (no intermediates) = DECRC (Restore Cursor)
         // CSI > Ps u / CSI < u / CSI = Ps u = Kitty keyboard protocol (not cursor commands)
         guard collect.isEmpty else { return }
+        cursorStartsNewGrapheme = true
 
         // Clamp savedX and savedY to valid ranges to prevent abort() in Debug builds.
         // Saved values can become invalid after resize/scroll operations.
@@ -7222,6 +7240,7 @@ open class Terminal {
     //
     func cmdHVPosition (_ pars: CsiParameters, _ collect: cstring)
     {
+        cursorStartsNewGrapheme = true
         var p = 1
         var q = 1
         if pars.count > 0 {
@@ -7249,6 +7268,7 @@ open class Terminal {
     //
     func cmdVPositionRelative (_ pars: CsiParameters, _ collect: cstring)
     {
+        cursorStartsNewGrapheme = true
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         let newY = buffer.y + p
 
@@ -7271,6 +7291,7 @@ open class Terminal {
     //
     func cmdLinePosAbsolute (_ pars: CsiParameters, _ collect: cstring)
     {
+        cursorStartsNewGrapheme = true
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
         // As xterm, in origin mode the row is relative to the top margin, and
@@ -7404,6 +7425,7 @@ open class Terminal {
     //
     func cmdHPositionRelative (_ pars: CsiParameters, _ collect: cstring)
     {
+        cursorStartsNewGrapheme = true
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         
         buffer.x += p
@@ -7418,6 +7440,7 @@ open class Terminal {
     //
     func cmdCharPosAbsolute (_ pars: CsiParameters, _ collect: cstring)
     {
+        cursorStartsNewGrapheme = true
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
 
         // As xterm, in origin mode the column is relative to the left margin,
@@ -7432,6 +7455,7 @@ open class Terminal {
     //
     func cmdCursorBackwardTab (_ pars: CsiParameters, _ collect: cstring)
     {
+        cursorStartsNewGrapheme = true
         if buffer.x > cols {
             return
         }
@@ -8290,6 +8314,7 @@ open class Terminal {
     // ESC 9 Forward Index (DECFI)
     func columnIndex (back: Bool)
     {
+        cursorStartsNewGrapheme = true
         let buffer = self.buffer
         let x = buffer.x
         let leftMargin = buffer.marginLeft
@@ -8338,6 +8363,7 @@ open class Terminal {
     // ESC D Index (Index is 0x84) - IND
     func cmdIndex ()
     {
+        cursorStartsNewGrapheme = true
         restrictCursor()
 
         let buffer = self.buffer
@@ -9304,6 +9330,7 @@ open class Terminal {
 
     func reverseIndex ()
     {
+        cursorStartsNewGrapheme = true
         let buffer = self.buffer
         restrictCursor()
 

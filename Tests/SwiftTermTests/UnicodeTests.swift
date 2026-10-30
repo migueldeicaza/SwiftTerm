@@ -405,6 +405,48 @@ final class SwiftTermUnicode {
         #expect(t.getCharacter(col: 2, row: 1) == "x")
     }
 
+    @Test(arguments: ["\u{1b}[2G", "\u{1b}[1;2H", "\u{1b}[1;2f", "\u{1b}[2`",
+                      "\u{1b}[D\u{1b}[C", "\u{1b}[A", "\r\u{1b}[C"], [false, true])
+    func testCursorMoveStartsANewSpacingCharacter(command: String, batched: Bool) {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        t.feed(text: "\u{0d4e}")
+        // Include cursor commands that leave the position unchanged.
+        t.feed(text: command)
+        t.feed(text: batched ? "\u{3000}界" : "\u{3000}")
+
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == "\u{0d4e}")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 1)
+        #expect(t.getCharData(col: 1, row: 0)?.getText() == "\u{3000}")
+        #expect(t.getCharData(col: 1, row: 0)?.width == 2)
+        if batched {
+            #expect(t.getCharData(col: 3, row: 0)?.getText() == "界")
+        }
+    }
+
+    @Test(arguments: ["", "\u{1b}[31m"])
+    func testPrependStillJoinsAcrossFeedsAndSgr(separator: String) {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        t.feed(text: "\u{0d4e}")
+        t.feed(text: separator)
+        t.feed(text: "\u{3000}")
+
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == "\u{0d4e}\u{3000}")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+    }
+
+    @Test func testCursorBoundarySurvivesACombiningMark() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        t.feed(text: "\u{0d4e}\u{1b}[2G\u{0301}\u{3000}")
+
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == "\u{0d4e}\u{0301}")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 1)
+        #expect(t.getCharData(col: 1, row: 0)?.getText() == "\u{3000}")
+        #expect(t.getCharData(col: 1, row: 0)?.width == 2)
+    }
+
     @Test func testStandaloneEmojiModifiersDoNotJoinTablePrefix() {
         for value in UInt32(0x1F3FB)...0x1F3FF {
             let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
