@@ -45,8 +45,9 @@ The suite contains these vtebench cases:
 - `scrolling` and four scrolling-region variants
 - `scrolling_fullscreen`, `sync_medium_cells`, and `unicode`
 
-Eight opt-in hardening cases cover ASCII and wide-cell seams, horizontal
-margins, bounded OSC input, and short title OSC commands. Enable them without changing the default
+Nine opt-in hardening cases cover ASCII and wide-cell seams, horizontal
+margins, bounded OSC input, short title OSC commands, and a half-block image
+that changes color around every cell (`hardening_block_color_cells`). Enable them without changing the default
 vtebench selection:
 
 ```bash

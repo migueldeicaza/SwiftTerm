@@ -1989,12 +1989,76 @@ open class Terminal {
             }
         }
 
+        handlePrintRemainder(data, from: pendingStart, buffer: buffer, previousScalar: previousScalar)
+    }
+
+    /// The part of a print run that the ASCII inserter left: a single plain
+    /// scalar goes straight into its cell (`insertPlainScalar`), anything else
+    /// to `handlePrintSlow`. Out of line, so the ASCII runs that return before
+    /// it keep `handlePrintBorrowed` as lean as it was.
+    @inline(never)
+    private func handlePrintRemainder(_ data: Span<UInt8>, from start: Int, buffer: borrowing Buffer,
+                                      previousScalar: UInt32?)
+    {
+        if start < data.count && data[start] >= 0x80 &&
+            charset == nil && readingBuffer.putbackBuffer.isEmpty,
+           insertPlainScalar(data, from: start, buffer: buffer, previousScalar: previousScalar) {
+            return
+        }
         handlePrintSlow(
-            byteCount: data.count - pendingStart,
+            byteCount: data.count - start,
             previousScalar: previousScalar
         ) { index in
-            data[pendingStart + index]
+            data[start + index]
         }
+    }
+
+    /// Inserts a print run that is one plain scalar — well-formed UTF-8, one
+    /// or two columns wide, with no grapheme-break property — straight into
+    /// its cell. Output that changes color around every character, such as
+    /// a block-element image or a box drawing in several colors, sends runs
+    /// like this; `handlePrintSlow` would set up its closures and decoder for
+    /// each. A run of several scalars keeps the batch path there.
+    ///
+    /// A scalar with no break property, at least one column wide and not a
+    /// regional indicator breaks from whatever precedes it unless that is a
+    /// Prepend scalar or a zero-width joiner (`graphemeJoinNonEmojiModifier`),
+    /// so only the cell before it needs checking. The cell is inserted as the
+    /// scalar path inserts one. Returns false, changing nothing, for any
+    /// other run. Call it only with no charset and no putback.
+    private func insertPlainScalar(_ data: Span<UInt8>, from start: Int, buffer: borrowing Buffer,
+                                   previousScalar: UInt32?) -> Bool
+    {
+        let first = data[start]
+        let size = UnicodeUtil.expectedSizeFromFirstByte(first)
+        guard size > 1, start + size == data.count else { return false }
+        var value = UInt32(first) & (0x7F >> UInt32(size))
+        for offset in 1..<size {
+            let next = data[start + offset]
+            guard next & 0xC0 == 0x80 else { return false }
+            value = (value << 6) | (UInt32(next) & 0x3F)
+        }
+        let minimum: UInt32 = size == 2 ? 0x80 : (size == 3 ? 0x800 : 0x10000)
+        guard value >= minimum, let scalar = Unicode.Scalar(value),
+              UnicodeUtil.graphemeProperties(value) == 0,
+              !UnicodeUtil.isRegionalIndicator(scalar),
+              !UnicodeUtil.isEmojiModifier(value) else { return false }
+        let width = UnicodeUtil.columnWidth(rune: scalar)
+        guard width == 1 || width == 2 else { return false }
+        let previous: UInt32
+        if let known = previousScalar {
+            previous = known
+        } else if let target = combiningTarget(in: buffer) {
+            previous = buffer.lines[target.y].packedView(at: target.x).lastScalarValue() ?? 0
+        } else {
+            previous = 0
+        }
+        guard previous != 0x200D, !UnicodeUtil.isGraphemePrepend(previous) else { return false }
+        updateRange(borrowing: buffer, buffer.y)
+        buffer.insertCharacter(makePackedCell(styleID: curStyleID, scalar: scalar, width: Int8(width),
+                                              payloadCode: resolveActiveHyperlinkPayloadCode()))
+        updateRange(borrowing: buffer, buffer.y)
+        return true
     }
 
     /// Processes the non-bulk part of a print run. The byte accessor is
@@ -2289,8 +2353,10 @@ open class Terminal {
             if insertScalarBatch() {
                 continue
             }
-            var ch: Character = " "
             var chWidth: Int = 0
+            // The decoded scalar. Charset mappings, the only multi-scalar
+            // characters, insert and continue before it is read.
+            var decoded = Unicode.Scalar(UInt8(0))
             let code = getNext()
             
             let n = UnicodeUtil.expectedSizeFromFirstByte(code)
@@ -2307,7 +2373,7 @@ open class Terminal {
                     // Notice that the charset mapping can contain the dutch unicode sequence for "ij",
                     // so it is not a simple byte, it is a Character
                     if let str = charset! [UInt8 (code)] {
-                        ch = str.first!
+                        let ch = str.first!
                         
                         // Every single mapping in the charset only takes one slot
                         chWidth = 1
@@ -2349,7 +2415,7 @@ open class Terminal {
                 // 0x10FFFF; the minimum rejects overlong encodings.
                 let minimum: UInt32 = n == 2 ? 0x80 : (n == 3 ? 0x800 : 0x10000)
                 if wellFormed, value >= minimum, let scalar = Unicode.Scalar(value) {
-                    ch = Character(scalar)
+                    decoded = scalar
                 } else {
                     // Invalid UTF-8 sequence, fall back to interpreting the first byte
                     let rune = UnicodeScalar(code)
@@ -2364,21 +2430,7 @@ open class Terminal {
                     continue
                 }
 
-                // Now the challenge is that we have a character, not a rune, and we want to compute
-                // the width of it.
-                if ch.unicodeScalars.count == 1 {
-                    chWidth = UnicodeUtil.columnWidth(rune: ch.unicodeScalars.first!)
-                } else {
-                    chWidth = 0
-                    for scalar in ch.unicodeScalars {
-                        let width = UnicodeUtil.columnWidth(rune: scalar)
-                        if width < 0 {
-                            chWidth = -1
-                            break
-                        }
-                        chWidth = max (chWidth, width)
-                    }
-                }
+                chWidth = UnicodeUtil.columnWidth(rune: decoded)
             } else {
                 putBack(code)
                 return
@@ -2391,23 +2443,18 @@ open class Terminal {
             // When regionalIndicatorWidth is .narrow, override individual RI width to 1.
             // The combining logic below will widen the pair to 2 when they form a flag.
             let narrowRI = options.regionalIndicatorWidth == .narrow
-            if narrowRI, chWidth == 2,
-               let firstScalarForRI = ch.unicodeScalars.first,
-               UnicodeUtil.isRegionalIndicator(firstScalarForRI) {
+            if narrowRI, chWidth == 2, UnicodeUtil.isRegionalIndicator(decoded) {
                 chWidth = 1
             }
 
             // Each path that reaches this point starts with one valid multi-byte
             // scalar. ASCII and malformed input continue above, incomplete input
             // returns, and charset mappings continue after inserting their
-            // possibly multi-scalar Character. Reuse this scalar when no
-            // combination occurs so CellArena does not create a temporary
-            // scalar array for an ordinary codepoint.
-            //
-            // TODO: Retain the scalar produced by the decoder and use it for the
-            // width, regional-indicator, combining, and final-insertion checks.
-            // Keep charset mappings and a combined newCh on the Character path.
-            if let firstScalar = ch.unicodeScalars.first {
+            // possibly multi-scalar Character. The decoder's scalar serves the
+            // width, regional-indicator, combining and insertion checks, so an
+            // ordinary codepoint never becomes a String-backed Character.
+            do {
+                let firstScalar = decoded
                 // Check if we should try to combine this character with the previous one.
                 // This applies to:
                 // 1. Unicode combining characters (diacritics, etc.)
