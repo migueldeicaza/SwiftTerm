@@ -208,6 +208,66 @@ changes.
 
 The `TinyAtom` table is now an array indexed by code, not a dictionary.
 
+### Main-queue hops under the parse lock — 2026-10-30
+
+After #766 (`56ffb529`), `sync_medium_cells` in the PTY benchmark was 6-7%
+slower than its parent, `e0be0f2c`, with both renderers. The headless suite
+and RenderBench did not show the loss. The batch count did not change (about
+2,110 for each 130 MiB repetition), but each batch held the parse lock longer.
+
+**Function layout was not the cause.** #766 moved the parser in the app
+binary, but the hot parser functions had the same instructions. With
+`-align-all-functions=6` in both app builds, the commit was still +4.6% and
++5.5% slower in the two run orders.
+
+**The cause was one main-queue block for each end of synchronized output.**
+The workload ends DECSET 2026 462 times in each 185,737-byte sample, which
+is about 339,000 times in each repetition.
+`TerminalView.synchronizedOutputChanged` sent one `DispatchQueue.main.async`
+for each end, and `cursorStyleChanged` sent one for each DECSCUSR. Both builds
+sent 343,486 blocks in each repetition. #766 removed the main-actor task for
+each dirty mark, so the main thread was asleep during the flood. Each block
+then had to wake the main run loop with a Mach message, while the parse
+thread held the lock. A Time Profiler capture of the parse thread showed
+`mach_msg2_trap` under `TerminalView.onMain` at 501 ms in the parent and
+849 ms in the commit, for 12 repetitions. This was the largest change in
+self time on that thread.
+
+**The fix sends these events through `FrameDriverSignal`.** The parse thread
+records the last scroll position and the last cursor style in
+`crossThreadState`, and calls `requestViewUpdate()`. While the display link
+runs, this publishes no task; the next tick applies the values
+(`applyPendingViewUpdates`) before it draws. When the link is stopped, one
+coalesced delivery applies them, also while the view is hidden. The delegate
+receives one `scrolled` call for each delivery, with the last position, not
+one call for each end of synchronized output.
+
+Results against `main` (`2930f583`), Release, 5 pairs of 5 repetitions in
+each order. All results had frames and no `status=no_render`:
+
+| Measurement | `main` | Fix | Change |
+| --- | ---: | ---: | ---: |
+| PTY Metal, median elapsed, both orders | 1.226 / 1.217 s | 0.916 / 0.924 s | -25.5% / -24.1% |
+| PTY Core Graphics, median elapsed, both orders | 1.211 / 1.208 s | 0.906 / 0.909 s | -24.9% / -24.7% |
+| PTY main-queue hops, one repetition | 343,486 | 1,467 | -99.6% |
+| PTY parse lock hold, median for each batch | 0.582 ms | 0.446 ms | -23% |
+| RenderBench Metal, A-B-B-A, MB/s | 134.3, 134.9 | 168.6, 167.5 | about +25% |
+| RenderBench Core Graphics, A-B-B-A, MB/s | 122.8, 126.4 | 160.0, 161.7 | about +29% |
+| Headless `SwiftTermProfile`, 500 iterations, both orders | 3.181 / 3.140 s | 3.187 / 3.146 s | none |
+
+The removed cost was about 0.9 µs of parse-thread time for each block, more
+than the Mach message alone. The block allocation, the weak capture and the
+release were also on the parse thread. RenderBench also drew more frames, about
+60 fps against 54-59 fps, and all its runs settled. In the 12-case PTY suite
+(3 pairs in each order), the other cases moved by -4% to +5% with the sign
+changing between the orders. This is the layout floor.
+
+Focused tests in `FrameDriverTests` check that view updates publish no task
+while the link runs, that a tick applies them before it draws, that a
+suspended driver still applies them, and that a `TerminalView` fed 100
+synchronized frames makes no main-queue hop and calls `scrolled` once. The
+last test fails on `main`.
+
 ### Separate code from function layout
 
 When a change retires the same or fewer instructions but uses more cycles,
@@ -685,11 +745,37 @@ you are in the trap.
 | PTY driver order bias and layout floor | The driver always runs A then B in a pair. Swap the trees for the reverse direction. Even then the comparison has a layout floor of about 2%: `cursor_motion`, an untouched path at 0.0% headless, read +2.0% in both orders. Judge small engine deltas with the headless suite. |
 | Function layout in the default build | A case reads 3-8% slower with the same or fewer instructions retired, in both orders. For #792, these differences went away when both sides used `-align-all-functions=6`. See "Separate code from function layout". |
 | New stored properties in `Terminal` | Cycles go up 4-8% with the same instructions, even with aligned functions. New fields move the offsets of hot fields after them. Put the new state behind one reference in the place of an existing field of the same size. |
+| Main-queue hops get more expensive when the main thread is idle | A change that removes main-thread work makes a PTY case slower. Parse lock hold rises, the batch count does not change, and the parser code is the same. The parse thread shows `mach_msg2_trap` under `TerminalView.onMain`. `dispatch_async` to an empty main queue must wake the run loop. Do not send one block for each terminal event; record the state and use `FrameDriverSignal.requestViewUpdate()`. |
 | Benchmark filter is a regular expression | The filter must match the whole name. `--filter osc8_` or `--filter hardening_` selects no case and prints an empty result. Use `--filter 'osc8_.*'`. |
 | Run out of link codes | Before #780, OSC 8 code stops resolving links after 65,534 link prints. It then prints plain text and is faster. The `osc8_*` link check stops the run in this condition. |
 
 Profiling recipes
 -----------------
+
+### Profile the PTY benchmark app
+
+`xctrace record --launch` starts MacTerminal, but the app cannot start its
+shell, and every case times out. Start the app normally and attach to its
+process. Run `caffeinate` as a separate process: if you attach to
+`caffeinate -dius "$APP"`, the trace records `caffeinate`.
+
+```bash
+caffeinate -dius & CAF=$!
+SWIFTTERM_PROFILE_STATS=1 SWIFTTERM_BASELINE=sync_medium_cells \
+SWIFTTERM_BASELINE_REPEAT=12 SWIFTTERM_BASELINE_TIMEOUT=60 \
+SWIFTTERM_METAL=1 "$APP" > /tmp/app.out 2>&1 & APPPID=$!
+xcrun xctrace record --template 'Time Profiler' --output /tmp/pty.trace \
+    --attach $APPPID
+wait $APPPID; kill $CAF
+```
+
+The trace stops when the app exits. Export the `time-profile` table and
+compare the `swiftterm-io-reader` thread, which parses, between the two
+builds. The `swiftterm-io-gather` thread reads the PTY. Each frame element is
+a direct child of `tagged-backtrace`. Compare self time for each function, then
+group the callers of the largest change. With `SWIFTTERM_PROFILE_STATS=1`,
+the report also shows "Main-queue hops by callback". A large count there,
+compared with frames, is a cost on the parse thread.
 
 ### Find the run in a trace
 
