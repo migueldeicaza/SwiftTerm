@@ -49,7 +49,7 @@ buffer lines or cells. A `.full` snapshot includes the complete viewport. A
 uses viewport rows, while the scroll-invariant range uses buffer rows.
 
 For content inspection that should not mutate damage state, use
-``Terminal/contentSnapshot(region:kind:)`` instead. It can copy the whole
+``Terminal/contentSnapshot(region:buffer:)`` instead. It can copy the whole
 retained buffer, the viewport, a bounded history window or a row range, from
 the normal or the alternate buffer, with scroll-invariant row numbers and the
 palette in force, but intentionally omits renderer-only details such as images

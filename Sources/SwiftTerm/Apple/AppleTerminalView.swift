@@ -1795,26 +1795,18 @@ extension TerminalView {
     /// Safe to call from any thread, but not from a terminal delegate callback
     /// that already holds the terminal lock.
     ///
-    /// By default it copies every retained row of the active buffer; `buffer`
-    /// selects the normal or alternate buffer regardless of which one is
-    /// displayed. The snapshot is useful for inspection, text capture and
+    /// `region` selects the rows; ``TerminalContentRegion/all`` copies every
+    /// retained row. `buffer` selects the normal or alternate buffer
+    /// regardless of which one is displayed. The snapshot is useful for inspection, text capture and
     /// re-encoding as ANSI through ``TerminalContentSnapshot/ansiRepresentation()``.
     /// It does not include images or hyperlinks.
     /// Returns nil when no terminal session is attached. The returned values
     /// remain valid after later feeds, resizes, scrolls, and history trimming.
     public nonisolated func terminalContentSnapshot(
-        region: TerminalContentRegion = .all,
+        region: TerminalContentRegion,
         buffer: Terminal.BufferKind = .active
     ) -> TerminalContentSnapshot? {
         renderOwner.contentSnapshot(region: region, buffer: buffer)
-    }
-
-    /// Copies the selected buffer. This overload accepts the `kind` label.
-    public nonisolated func terminalContentSnapshot(
-        region: TerminalContentRegion = .all,
-        kind: Terminal.BufferKind
-    ) -> TerminalContentSnapshot? {
-        terminalContentSnapshot(region: region, buffer: kind)
     }
 
     /// Copies terminal buffer contents without exposing the mutable terminal.

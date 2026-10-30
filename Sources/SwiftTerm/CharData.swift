@@ -160,8 +160,8 @@ public struct Attribute: Equatable, Hashable, Sendable {
         if style.contains(.invisible) { params.append("8") }
         if style.contains(.crossedOut) { params.append("9") }
 
-        params.append(Attribute.sgrColorParameters(fg, base: 30))
-        params.append(Attribute.sgrColorParameters(bg, base: 40))
+        if let color = Attribute.sgrColorParameters(fg, base: 30) { params.append(color) }
+        if let color = Attribute.sgrColorParameters(bg, base: 40) { params.append(color) }
         if let underlineColor {
             switch underlineColor {
             case .ansi256(let code):
@@ -183,8 +183,10 @@ public struct Attribute: Equatable, Hashable, Sendable {
 
     /// Foreground (`base` 30) or background (`base` 40) color parameters.
     /// Only the first 16 palette entries have the compact 30-37/90-97 forms;
-    /// every other index, 16 included, needs `38;5;n`.
-    private static func sgrColorParameters (_ color: Color, base: Int) -> String
+    /// every other index, 16 included, needs `38;5;n`. The default colors
+    /// return nil: the leading `0` already selects them, and DECRQSS replies
+    /// leave them out, as xterm does.
+    private static func sgrColorParameters (_ color: Color, base: Int) -> String?
     {
         switch color {
         case .ansi256(let code):
@@ -198,7 +200,7 @@ public struct Attribute: Equatable, Hashable, Sendable {
         case .trueColor(let r, let g, let b):
             return "\(base + 8);2;\(r);\(g);\(b)"
         case .defaultColor, .defaultInvertedColor:
-            return "\(base + 9)"
+            return nil
         }
     }
 

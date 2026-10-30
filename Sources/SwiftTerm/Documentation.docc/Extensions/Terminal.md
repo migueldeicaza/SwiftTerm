@@ -18,7 +18,7 @@ bundled views and ``HeadlessTerminal`` manage this lock for their operations.
 When you use a `Terminal` directly, hold the lock while you feed, query, or
 change terminal state, except for methods that explicitly copy state under one
 terminal lock themselves, such as ``inputStateSnapshot()``,
-``contentSnapshot(region:kind:)``, and ``makeRenderSnapshot(scope:)``.
+``contentSnapshot(region:buffer:)``, and ``makeRenderSnapshot(scope:)``.
 
 ## Topics
 
@@ -62,7 +62,7 @@ terminal lock themselves, such as ``inputStateSnapshot()``,
 - ``BufferKind``
 - ``isCurrentBufferAlternate``
 - ``inputStateSnapshot()``
-- ``contentSnapshot(region:kind:)``
+- ``contentSnapshot(region:buffer:)``
 - ``getBufferAsData(kind:encoding:)``
 - ``getText(start:end:)``
 - ``getCharData(col:row:)``

@@ -2078,20 +2078,13 @@ open class Terminal {
             if cursorStartsNewGrapheme && width > 0 { return .breaks }
             let previous = resolvePreviousScalar()
             guard previous != 0 else { return .breaks }
-            // UTS #51 defines an emoji modifier sequence as an emoji modifier
-            // base followed immediately by an emoji modifier. A standalone
-            // modifier must remain visible. Batchable scalars exclude emoji
-            // modifiers, so this tailoring stays on the scalar path. Keep the
-            // rule here so `graphemeJoinNonEmojiModifier` stays small enough to
-            // inline into both batch call sites.
-            if UnicodeUtil.isEmojiModifier(value) {
-                return UnicodeUtil.isEmojiModifierBase(previous) ? .joins : .breaks
-            }
-            return UnicodeUtil.graphemeJoinNonEmojiModifier(
-                previous: previous,
-                previousProperties: UnicodeUtil.graphemeProperties(previous),
-                incoming: value, incomingProperties: properties,
-                incomingWidth: width)
+            // Batchable scalars exclude emoji modifiers, so the emoji-modifier
+            // tailoring in `graphemeJoin` stays on the scalar path. The batch
+            // call sites use `graphemeJoinNonEmojiModifier`, which stays small
+            // enough to inline into both of them.
+            return UnicodeUtil.graphemeJoin(
+                previous: previous, incoming: value,
+                incomingProperties: properties, incomingWidth: width)
         }
 
         @inline(__always)
@@ -2436,8 +2429,6 @@ open class Terminal {
                 // already covers UnicodeUtil.isCombining(firstScalarValue).
                 let firstScalarValue = firstScalar.value
                 let graphemeProperties = UnicodeUtil.graphemeProperties(firstScalarValue)
-                let indicBreak = UnicodeUtil.indicConjunctBreak(
-                    properties: graphemeProperties)
                 // Two table lookups rule out every pair that UAX #29 breaks
                 // unconditionally. Only a pair that survives them pays for
                 // combinedGraphemeScalars, which builds a String and asks the
@@ -2518,10 +2509,10 @@ open class Terminal {
                                 widthState: .narrow)!
                             existingLine.setPackedCell(updated, at: lastx)
                         }
-                    } else if (chWidth > 0 ||
-                               (UnicodeUtil.isSpacingMarkWidth(firstScalarValue) &&
-                                indicBreak != .linker &&
-                                !UnicodeUtil.isVirama(firstScalarValue))) &&
+                    } else if UnicodeUtil.widensJoinedCell(
+                                incoming: firstScalarValue,
+                                properties: graphemeProperties,
+                                width: chWidth) &&
                               oldSize != 2 {
                         if !widenCombinedCell(
                             lineIndex: target.y, x: lastx, cell: cell,

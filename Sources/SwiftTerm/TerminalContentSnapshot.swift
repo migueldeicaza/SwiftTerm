@@ -116,10 +116,15 @@ private func terminalContentSnapshotText(_ cells: [TerminalCellSnapshot]) -> Str
 /// `Terminal.getScrollInvariantLine(row:)`. Only `capturedRange` is copied;
 /// it is not necessarily the complete history retained by the terminal.
 public struct TerminalContentSnapshot: Sendable, Equatable {
+    /// The input modes and the size of the terminal grid.
     public let inputState: TerminalInputStateSnapshot
     /// The buffer the rows were copied from: `.normal` or `.alt`, never
     /// `.active`.
     public let bufferKind: Terminal.BufferKind
+    /// The size of the copied buffer. The normal buffer keeps its own size
+    /// while the alternate one is active, so this can differ from
+    /// `inputState.dimensions`.
+    public let dimensions: TerminalDimensions
     public let capturedRange: Range<Int>
     public let liveTopRow: Int
     public let rows: [TerminalContentRowSnapshot]
@@ -128,38 +133,40 @@ public struct TerminalContentSnapshot: Sendable, Equatable {
     /// The cursor column of the copied buffer.
     public let cursorColumn: Int
     /// The 256 palette entries in force when the copy was made, so indexed
-    /// cell colors keep their appearance after the palette changes.
+    /// cell colors keep their appearance after the palette changes. Empty
+    /// when the palette was not captured.
     public let palette: [Color]
-    /// The palette the terminal derives from its installed colors and
-    /// default colors; the entries of ``palette`` that differ were set by
-    /// the application with `OSC 4`.
-    public let defaultPalette: [Color]
-    /// The colors cells with ``Attribute/Color/defaultColor`` resolve to.
-    public let foregroundColor: Color
-    public let backgroundColor: Color
+    /// The color cells with ``Attribute/Color/defaultColor`` resolve to as
+    /// a foreground, or nil when it was not captured.
+    public let foregroundColor: Color?
+    /// The color cells with ``Attribute/Color/defaultColor`` resolve to as
+    /// a background, or nil when it was not captured.
+    public let backgroundColor: Color?
 
+    /// Makes a snapshot. When `dimensions` is nil, the copied buffer has the
+    /// size in `inputState`.
     public init(
         inputState: TerminalInputStateSnapshot,
         bufferKind: Terminal.BufferKind = .normal,
+        dimensions: TerminalDimensions? = nil,
         capturedRange: Range<Int>,
         liveTopRow: Int,
         rows: [TerminalContentRowSnapshot],
         cursorRow: Int = 0,
         cursorColumn: Int = 0,
         palette: [Color] = [],
-        defaultPalette: [Color] = [],
-        foregroundColor: Color = Color.defaultForeground,
-        backgroundColor: Color = Color.defaultBackground
+        foregroundColor: Color? = nil,
+        backgroundColor: Color? = nil
     ) {
         self.inputState = inputState
         self.bufferKind = bufferKind == .alt ? .alt : .normal
+        self.dimensions = dimensions ?? inputState.dimensions
         self.capturedRange = capturedRange
         self.liveTopRow = liveTopRow
         self.rows = rows
         self.cursorRow = cursorRow
         self.cursorColumn = cursorColumn
         self.palette = palette
-        self.defaultPalette = defaultPalette
         self.foregroundColor = foregroundColor
         self.backgroundColor = backgroundColor
     }
@@ -169,9 +176,11 @@ extension TerminalContentSnapshot {
     /// The copied rows as text with SGR sequences, ready to feed into another
     /// terminal of the same width.
     ///
-    /// The output starts with both default colors and all captured palette
-    /// entries, as `OSC 10`, `OSC 11` and `OSC 4`. This keeps their appearance
-    /// even when the receiving terminal has different colors.
+    /// When the snapshot has its colors, the output starts with both default
+    /// colors and all captured palette entries, as `OSC 10`, `OSC 11` and
+    /// `OSC 4`. This keeps their appearance even when the receiving terminal
+    /// has different colors. A snapshot without colors does not change the
+    /// colors of the receiver.
     /// Every attribute is re-encoded with ``Attribute/sgrParameters()``,
     /// including dim, italic, strikethrough, underline styles and underline
     /// colors. Wide characters are emitted once and their continuation cells
@@ -181,35 +190,45 @@ extension TerminalContentSnapshot {
     /// same blank cells and the same colored blanks instead of spaces. Blank
     /// cells with a style that shows without text (inverse, underline,
     /// crossed out), which an erase cannot produce, become spaces that look
-    /// the same.
+    /// the same. A wide character cut by the last column, which a buffer
+    /// without reflow keeps after its width shrinks, becomes a blank cell.
     ///
-    /// Rows end with `CR LF` unless the next row is a soft-wrapped
-    /// continuation. Only a written character wraps the cursor and marks the
-    /// next row as a continuation, and only a wide character does so without
-    /// writing into the last column: a continued row ends with the cursor
-    /// moved to its last column and an ideographic space (`U+3000`), which
-    /// does not fit there, wraps and is erased from the start of the next
-    /// row. Trailing blank cells of the other rows are dropped. The output
-    /// ends with a reset and no line break, so the receiving cursor stays on
-    /// the last row. The first copied row cannot be marked as a continuation
-    /// of a row that was not copied.
+    /// The output starts with a carriage return, so the first row starts at
+    /// column 0 of the receiving cursor row. Rows end with `CR LF` unless
+    /// the next row is a soft-wrapped continuation. Only a written character
+    /// wraps the cursor and marks the next row as a continuation, and only a
+    /// wide character does so without writing into the last column: a
+    /// continued row ends with the cursor moved to its last column and an
+    /// ideographic space (`U+3000`), which does not fit there, wraps and is
+    /// erased from the start of the next row. Trailing blank cells of the
+    /// other rows are dropped. The output ends with a reset and no line
+    /// break, so the receiving cursor stays on the last row. The first copied
+    /// row cannot be marked as a continuation of a row that was not copied.
     ///
     /// Two adjacent stored cells whose text the terminal would merge when
     /// written in sequence, such as a cell ending in a scalar with the
     /// Unicode `Prepend` property and the cell after it, are separated by a
     /// cursor move to the second cell's column, which starts a new spacing
     /// character; the test is the terminal's, with the pairs it leaves to
-    /// segmentation counted as joining. A narrow cell in
-    /// the last column whose text would widen it when written, which only
-    /// autowrap being off can produce, is written with autowrap off, and
-    /// autowrap is turned back on after it.
+    /// segmentation counted as joining.
+    ///
+    /// Some narrow cells change width when their text is written again.
+    /// These cells are written before the other cells of their row. A cell
+    /// whose text widens it (such as `❤` and `U+FE0F`) stays narrow only at
+    /// the right edge with autowrap off: it is written in the last column
+    /// with autowrap off, and `DCH` moves it to its column. A cell in the
+    /// last column whose wide first scalar was made narrow (such as `⌚` and
+    /// `U+FE0E`) does not fit there before it becomes narrow: it is written
+    /// one column to the left, and `ICH` moves it to the last column.
     ///
     /// This restores contents only. The export does not restore cursor
-    /// position, modes, margins or the active buffer; replaying a live byte
-    /// stream after the export is the host's responsibility.
+    /// position, modes, margins or the active buffer, and it expects the
+    /// receiving terminal to have no margins and empty rows below its cursor.
+    /// Replaying a live byte stream after the export is the host's
+    /// responsibility.
     public func ansiRepresentation() -> String {
         let reset = Attribute.empty.sgrParameters()
-        var result = colorSequences() + "\u{1b}[" + reset + "m"
+        var result = colorSequences() + "\u{1b}[" + reset + "m\r"
         // Attributes are compared by their SGR encoding: the two spellings of
         // the default colors look the same and must not produce a sequence.
         var current = Attribute.empty
@@ -223,12 +242,42 @@ extension TerminalContentSnapshot {
             }
             current = attribute
         }
-        let width = inputState.dimensions.cols
+        let width = dimensions.cols
         for (index, row) in rows.enumerated() {
             let continues = index + 1 < rows.count && rows[index + 1].isWrapped
+            let pieces = exportPieces(of: row, width: width, continues: continues)
+            // The cells that move into place go first, in column order, while
+            // the cells to their right are still empty. The deleted and the
+            // inserted cells come back as blanks with the default background.
+            var moved = false
+            for piece in pieces where piece.placement != .inPlace {
+                switch piece.placement {
+                case .fromLastColumn:
+                    result += "\u{1b}[\(width)G"
+                    select(piece.attribute)
+                    result += "\u{1b}[?7l" + piece.text + "\u{1b}[?7h"
+                    if piece.column < width - 1 {
+                        select(.empty)
+                        result += "\u{1b}[\(piece.column + 1)G\u{1b}[\(width - 1 - piece.column)P"
+                    }
+                case .fromPreviousColumn:
+                    result += "\u{1b}[\(width - 1)G"
+                    select(piece.attribute)
+                    result += piece.text
+                    select(.empty)
+                    result += "\u{1b}[\(width - 1)G\u{1b}[@"
+                case .inPlace:
+                    break
+                }
+                moved = true
+            }
             var cursor = 0
             var previous: TerminalExportPiece?
-            for piece in exportPieces(of: row, width: width, continues: continues) {
+            for piece in pieces where piece.placement == .inPlace {
+                if moved {
+                    result += "\r"
+                    moved = false
+                }
                 if piece.column > cursor {
                     result += "\u{1b}[\(piece.column - cursor)C"
                 } else if let previous, previous.joins(piece) {
@@ -276,8 +325,10 @@ extension TerminalContentSnapshot {
             let cell = cells[column]
             let start = column
             column += 1
-            guard cell.width > 0, !cell.isBlank || cell.attribute.showsWhenBlank else { continue }
-            if cell.isBlank {
+            // A wide character that does not fit is kept as a blank cell.
+            let cut = cell.width > 1 && start + cell.width > width
+            guard cell.width > 0, !cell.isBlank || cut || cell.attribute.showsWhenBlank else { continue }
+            if cell.isBlank || cut {
                 // An erase keeps only the background, so blank cells are
                 // grouped by what an erase would leave. The half of a wide
                 // character left when the other half is overwritten keeps
@@ -285,7 +336,7 @@ extension TerminalContentSnapshot {
                 // shows on a blank cell; those are written as the spaces
                 // that look the same.
                 let attribute = cell.attribute.blankForm
-                var run = cell.width
+                var run = cut ? 1 : cell.width
                 while column < end, cells[column].width > 0, cells[column].isBlank,
                       cells[column].attribute.blankForm == attribute {
                     run += cells[column].width
@@ -301,19 +352,19 @@ extension TerminalContentSnapshot {
                         text: "\u{1b}[\(run)X\u{1b}[\(run)C", lastCell: nil))
                 }
             } else {
-                let scalars = cell.text.unicodeScalars
-                var text = cell.text
-                if cell.width == 1, start == width - 1,
-                   scalars.dropFirst().contains(where: TerminalExportPiece.widens) {
-                    // A scalar that widens the cell it joins moves a cell in
-                    // the last column to the next row instead, unless
-                    // autowrap is off: only that leaves a narrow cell with
-                    // such text, so the cell is written the same way.
-                    text = "\u{1b}[?7l" + text + "\u{1b}[?7h"
+                var placement = TerminalExportPiece.Placement.inPlace
+                if cell.width == 1 {
+                    if TerminalExportPiece.widens(cell.text) {
+                        placement = .fromLastColumn
+                    } else if start == width - 1, width > 1,
+                              let first = cell.text.unicodeScalars.first,
+                              UnicodeUtil.columnWidth(rune: first) > 1 {
+                        placement = .fromPreviousColumn
+                    }
                 }
                 pieces.append(TerminalExportPiece(
                     column: start, width: cell.width, attribute: cell.attribute,
-                    text: text, lastCell: cell.text))
+                    text: cell.text, lastCell: cell.text, placement: placement))
             }
         }
         return pieces
@@ -322,8 +373,13 @@ extension TerminalContentSnapshot {
     /// Writes both default colors, then every captured palette entry.
     /// The default colors go first because they can rebuild the palette.
     func colorSequences() -> String {
-        var result = "\u{1b}]10;\(foregroundColor.formatAsXcolor())\u{7}"
-        result += "\u{1b}]11;\(backgroundColor.formatAsXcolor())\u{7}"
+        var result = ""
+        if let foregroundColor {
+            result += "\u{1b}]10;\(foregroundColor.formatAsXcolor())\u{7}"
+        }
+        if let backgroundColor {
+            result += "\u{1b}]11;\(backgroundColor.formatAsXcolor())\u{7}"
+        }
         if palette.count == 256 {
             for (index, color) in palette.enumerated() {
                 result += "\u{1b}]4;\(index);\(color.formatAsXcolor())\u{7}"
@@ -336,6 +392,17 @@ extension TerminalContentSnapshot {
 /// One sequence of ``TerminalContentSnapshot/ansiRepresentation()``: a cell's
 /// text, a run of styled spaces or an erase, with the columns it covers.
 private struct TerminalExportPiece {
+    /// Where the text is written before it is in its column.
+    enum Placement: Equatable {
+        /// At its column.
+        case inPlace
+        /// In the last column with autowrap off, then moved left with `DCH`.
+        case fromLastColumn
+        /// One column to the left of the last column, then moved into the
+        /// last column with `ICH`.
+        case fromPreviousColumn
+    }
+
     let column: Int
     let width: Int
     let attribute: Attribute
@@ -343,6 +410,7 @@ private struct TerminalExportPiece {
     /// The text of the last cell the sequence writes; nil for an erase,
     /// which leaves cells the terminal never extends.
     let lastCell: String?
+    var placement: Placement = .inPlace
 
     /// True when writing `next` right after this piece would extend this
     /// piece's last cell instead of starting a cell of its own.
@@ -351,13 +419,30 @@ private struct TerminalExportPiece {
         return TerminalExportPiece.joins(lastCell, nextCell.unicodeScalars.first!)
     }
 
-    /// True when the terminal widens a narrow cell that `scalar` joins: a
-    /// scalar with a column width, a spacing mark or the emoji presentation
-    /// selector.
-    static func widens(_ scalar: Unicode.Scalar) -> Bool {
-        UnicodeUtil.columnWidth(rune: scalar) > 0
-            || UnicodeUtil.isSpacingMarkWidth(scalar.value)
-            || scalar.value == 0xFE0F
+    /// True when the terminal makes a narrow cell wide while it writes
+    /// `text`: a scalar after the first one widens the cell it joins.
+    static func widens(_ text: String) -> Bool {
+        var previous: UInt32?
+        for scalar in text.unicodeScalars {
+            defer { previous = scalar.value }
+            guard let previous else { continue }
+            switch scalar.value {
+            case 0xFE0F:
+                if let base = Unicode.Scalar(previous), UnicodeUtil.isEmojiVs16Base(rune: base) {
+                    return true
+                }
+            case 0xFE0E:
+                continue
+            default:
+                if UnicodeUtil.widensJoinedCell(
+                    incoming: scalar.value,
+                    properties: UnicodeUtil.graphemeProperties(scalar.value),
+                    width: UnicodeUtil.columnWidth(rune: scalar)) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     /// The test the terminal makes before it stores `scalar` after the cell
@@ -365,16 +450,10 @@ private struct TerminalExportPiece {
     /// library's segmentation count as joining: a cursor move they did not
     /// need costs four bytes, a missing one merges two cells.
     static func joins(_ cell: String, _ scalar: Unicode.Scalar) -> Bool {
-        let previous = cell.unicodeScalars.last!.value
-        let value = scalar.value
-        if UnicodeUtil.isEmojiModifier(value) {
-            return UnicodeUtil.isEmojiModifierBase(previous)
-        }
-        return UnicodeUtil.graphemeJoinNonEmojiModifier(
-            previous: previous,
-            previousProperties: UnicodeUtil.graphemeProperties(previous),
-            incoming: value,
-            incomingProperties: UnicodeUtil.graphemeProperties(value),
+        UnicodeUtil.graphemeJoin(
+            previous: cell.unicodeScalars.last!.value,
+            incoming: scalar.value,
+            incomingProperties: UnicodeUtil.graphemeProperties(scalar.value),
             incomingWidth: UnicodeUtil.columnWidth(rune: scalar)) != .breaks
     }
 }
@@ -414,10 +493,10 @@ extension Attribute {
 }
 
 extension Terminal {
-    func inputStateSnapshotLocked(dimensions: TerminalDimensions? = nil) -> TerminalInputStateSnapshot {
+    func inputStateSnapshotLocked() -> TerminalInputStateSnapshot {
         terminalLock.preconditionLocked()
         return TerminalInputStateSnapshot(
-            dimensions: dimensions ?? TerminalDimensions(cols: cols, rows: rows),
+            dimensions: TerminalDimensions(cols: cols, rows: rows),
             isAlternateBuffer: isCurrentBufferAlternate,
             applicationCursor: applicationCursor,
             applicationKeypad: applicationKeypad,
@@ -488,15 +567,15 @@ extension Terminal {
                 isWrapped: line.isWrapped)
         }
         return TerminalContentSnapshot(
-            inputState: inputStateSnapshotLocked(dimensions: dimensions),
+            inputState: inputStateSnapshotLocked(),
             bufferKind: source === altBuffer ? .alt : .normal,
+            dimensions: dimensions,
             capturedRange: (source.linesTop + start)..<(source.linesTop + end),
             liveTopRow: source.linesTop + liveStart,
             rows: copiedRows,
             cursorRow: source.linesTop + source.yBase + source.y,
             cursorColumn: source.x,
             palette: ansiColors,
-            defaultPalette: defaultAnsiColors,
             foregroundColor: foregroundColor,
             backgroundColor: backgroundColor)
     }
@@ -508,18 +587,13 @@ extension Terminal {
     /// terminal delegate callback that already holds it.
     ///
     /// This is a pure inspection snapshot: it does not mutate render damage
-    /// state. By default it copies every retained row of the active buffer;
-    /// `buffer` selects the normal or alternate buffer regardless of which one
-    /// is displayed. It intentionally omits images and hyperlinks; use
+    /// state. `region` selects the rows: ``TerminalContentRegion/all`` copies
+    /// every retained row, with one `String` for each cell, while it holds the
+    /// lock. `buffer` selects the normal or alternate buffer regardless of
+    /// which one is displayed. It intentionally omits images and hyperlinks; use
     /// render/graphics snapshots when a renderer needs those details.
-    public func contentSnapshot(region: TerminalContentRegion = .all,
+    public func contentSnapshot(region: TerminalContentRegion,
                                 buffer: BufferKind = .active) -> TerminalContentSnapshot {
         terminalLock.withLock { contentSnapshotLocked(region: region, buffer: buffer) }
-    }
-
-    /// Copies the selected buffer. This overload accepts the `kind` label.
-    public func contentSnapshot(region: TerminalContentRegion = .all,
-                                kind: BufferKind) -> TerminalContentSnapshot {
-        contentSnapshot(region: region, buffer: kind)
     }
 }

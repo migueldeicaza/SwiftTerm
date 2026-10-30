@@ -22,8 +22,8 @@ struct TerminalContentSnapshotExportTests {
         }
 
         func snapshot(_ region: TerminalContentRegion = .all,
-                      kind: Terminal.BufferKind = .active) -> TerminalContentSnapshot {
-            terminal.contentSnapshot(region: region, kind: kind)
+                      buffer: Terminal.BufferKind = .active) -> TerminalContentSnapshot {
+            terminal.contentSnapshot(region: region, buffer: buffer)
         }
     }
 
@@ -50,8 +50,8 @@ struct TerminalContentSnapshotExportTests {
 
     /// The snapshot fed into a fresh terminal of the same size, copied back.
     private func replay(_ snapshot: TerminalContentSnapshot, scrollback: Int = 20) -> TerminalContentSnapshot {
-        let copy = Fixture(cols: snapshot.inputState.dimensions.cols,
-                           rows: snapshot.inputState.dimensions.rows,
+        let copy = Fixture(cols: snapshot.dimensions.cols,
+                           rows: snapshot.dimensions.rows,
                            scrollback: scrollback)
         copy.feed(snapshot.ansiRepresentation())
         return copy.snapshot()
@@ -137,7 +137,7 @@ struct TerminalContentSnapshotExportTests {
     @Test func defaultRegionCopiesTheWholeRetainedBuffer() {
         let fixture = Fixture()
         fixture.feed(lines(1...10))
-        let all = fixture.terminal.contentSnapshot()
+        let all = fixture.terminal.contentSnapshot(region: .all)
         #expect(all.rows.count == 10)
         #expect(all.capturedRange == 0..<10)
         #expect(all.liveTopRow == 6)
@@ -180,7 +180,7 @@ struct TerminalContentSnapshotExportTests {
         #expect(fixture.snapshot(.rows(Int.min..<(top + 1))).rows == Array(retained.rows.prefix(1)))
     }
 
-    @Test func kindSelectsTheNormalOrAlternateBuffer() {
+    @Test func bufferSelectsTheNormalOrAlternateBuffer() {
         let fixture = Fixture()
         fixture.feed("normal text")
         fixture.feed("\u{1b}[?1049h\u{1b}[Halt text")
@@ -188,9 +188,9 @@ struct TerminalContentSnapshotExportTests {
         #expect(active.bufferKind == .alt)
         #expect(active.inputState.isAlternateBuffer)
         #expect(active.rows.first?.text == "alt text")
-        #expect(active == fixture.snapshot(kind: .alt))
+        #expect(active == fixture.snapshot(buffer: .alt))
 
-        let normal = fixture.snapshot(kind: .normal)
+        let normal = fixture.snapshot(buffer: .normal)
         #expect(normal.bufferKind == .normal)
         #expect(normal.rows.first?.text == "normal text")
         #expect(normal.inputState.isAlternateBuffer)
@@ -198,15 +198,14 @@ struct TerminalContentSnapshotExportTests {
         fixture.feed("\u{1b}[?1049l")
         #expect(fixture.snapshot().bufferKind == .normal)
         #expect(fixture.snapshot().rows.first?.text == "normal text")
-        #expect(fixture.snapshot(kind: .alt).bufferKind == .alt)
+        #expect(fixture.snapshot(buffer: .alt).bufferKind == .alt)
     }
 
-    @Test func bufferAndKindLabelsKeepCursorAndPaletteData() {
+    @Test func bufferSnapshotKeepsCursorAndPaletteData() {
         let fixture = Fixture()
         fixture.feed("\u{1b}]4;1;rgb:ff/00/ff\u{7}normal")
         fixture.feed("\u{1b}[?1049halt")
         let normal = fixture.terminal.contentSnapshot(region: .all, buffer: .normal)
-        #expect(normal == fixture.terminal.contentSnapshot(region: .all, kind: .normal))
         #expect(normal.cursorRow == normal.liveTopRow)
         #expect(normal.cursorColumn == 6)
         #expect(normal.palette[1] == Color(red: 65535, green: 0, blue: 65535))
@@ -276,7 +275,7 @@ struct TerminalContentSnapshotExportTests {
         #expect(samples[0].sgrParameters() == "0;38;5;16;48;5;16")
         #expect(samples[1].sgrParameters() == "0;1;2;3;37;100")
         #expect(samples[3].sgrParameters() == "0;4:3;38;2;1;2;3;48;2;4;5;6;58;2;7;8;9")
-        #expect(Attribute.empty.sgrSequence == "\u{1b}[0;39;49m")
+        #expect(Attribute.empty.sgrSequence == "\u{1b}[0m")
 
         for sample in samples {
             let fixture = Fixture()
@@ -368,7 +367,7 @@ struct TerminalContentSnapshotExportTests {
         #expect(plainCopy.rows.map(\.isWrapped) == [false, true, false])
         expectSameContents(plain.snapshot(), plainCopy)
         #expect(visibleExportContents(plain.snapshot())
-                == visible("\u{1b}[0;39;49mabcde\u{1b}[6G\u{3000}\r\u{1b}[2Xg\r\n"))
+                == visible("\u{1b}[0m\rabcde\u{1b}[6G\u{3000}\r\u{1b}[2Xg\r\n"))
     }
 
     @Test func wrapPlaceholdersDoNotLeakTheirColorIntoTheNextRow() {
@@ -431,7 +430,7 @@ struct TerminalContentSnapshotExportTests {
         #expect(original.rows[0].cells[2].attribute.fg == .ansi256(code: 1))
         #expect(original.rows[0].cells[3].attribute.fg == .defaultColor)
         #expect(visibleExportContents(original)
-                == visible("\u{1b}[0;39;49m\u{1b}[0;31;44mab\u{1b}[0;39;44m\u{1b}[4X\u{1b}[4C\u{1b}[0;39;49m\r\n"))
+                == visible("\u{1b}[0m\r\u{1b}[0;31;44mab\u{1b}[0;44m\u{1b}[4X\u{1b}[4C\u{1b}[0m\r\n"))
         expectSameContents(original, replay(original))
     }
 
@@ -500,7 +499,9 @@ struct TerminalContentSnapshotExportTests {
         // be undone afterwards; the wrap must leave that column alone.
         let fixture = Fixture(cols: 6, rows: 3)
         fixture.feed("abcdefg\u{1b}[1;6H\u{1b}[X\u{1b}[2;2H")
-        fixture.terminal.resize(cols: 6, rows: 1)
+        fixture.terminal.terminalLock.withLock {
+            fixture.terminal.resize(cols: 6, rows: 1)
+        }
         let original = fixture.snapshot()
         #expect(original.rows.map(\.text) == ["abcde", "g"])
         #expect(original.rows.map(\.isWrapped) == [false, true])
@@ -557,13 +558,17 @@ struct TerminalContentSnapshotExportTests {
         // so a snapshot of it describes its cells with its own dimensions.
         let fixture = Fixture(cols: 12, rows: 4)
         fixture.feed("abcdefghijkl\u{1b}[?1049h")
-        fixture.terminal.resize(cols: 6, rows: 2)
-        let snapshot = fixture.snapshot(kind: .normal)
-        #expect(snapshot.inputState.dimensions == TerminalDimensions(cols: 12, rows: 4))
+        fixture.terminal.terminalLock.withLock {
+            fixture.terminal.resize(cols: 6, rows: 2)
+        }
+        let snapshot = fixture.snapshot(buffer: .normal)
+        #expect(snapshot.dimensions == TerminalDimensions(cols: 12, rows: 4))
+        // The input state describes the terminal grid, not the copied buffer.
+        #expect(snapshot.inputState.dimensions == TerminalDimensions(cols: 6, rows: 2))
         #expect(snapshot.rows.map(\.text) == ["abcdefghijkl", "", "", ""])
         #expect(snapshot.liveTopRow == 0)
         #expect(snapshot.capturedRange == 0..<4)
-        #expect(fixture.snapshot(kind: .alt).inputState.dimensions == TerminalDimensions(cols: 6, rows: 2))
+        #expect(fixture.snapshot(buffer: .alt).dimensions == TerminalDimensions(cols: 6, rows: 2))
 
         let copy = replay(snapshot)
         #expect(copy.rows.map(\.text) == ["abcdefghijkl", "", "", ""])
@@ -581,8 +586,7 @@ struct TerminalContentSnapshotExportTests {
             source.installPalette(colors: colors)
             source.feed(text: "\u{1b}]10;rgb:0a/0b/0c\u{7}\u{1b}]11;rgb:10/20/30\u{7}\u{1b}]4;2;rgb:00/ff/ff\u{7}\u{1b}[31mx\u{1b}[38;5;100my")
         }
-        let original = source.contentSnapshot()
-        #expect(original.palette[1] == original.defaultPalette[1])
+        let original = source.contentSnapshot(region: .all)
         let copy = replay(original)
         #expect(copy.palette == original.palette)
         #expect(copy.foregroundColor == original.foregroundColor)
@@ -606,7 +610,7 @@ struct TerminalContentSnapshotExportTests {
             receiver.feed(text: "\u{1b}]10;rgb:ff/ff/ff\u{7}\u{1b}]11;rgb:00/00/ff\u{7}\u{1b}]4;255;rgb:00/ff/00\u{7}")
             receiver.feed(text: original.ansiRepresentation())
         }
-        let copy = receiver.contentSnapshot()
+        let copy = receiver.contentSnapshot(region: .all)
         #expect(copy.palette == original.palette)
         #expect(copy.foregroundColor == original.foregroundColor)
         #expect(copy.backgroundColor == original.backgroundColor)
@@ -621,7 +625,6 @@ struct TerminalContentSnapshotExportTests {
         let original = source.snapshot()
         let magenta = try #require(Color.parse("rgb:ff/00/ff"))
         #expect(original.palette[1] == magenta)
-        #expect(original.defaultPalette[1] != magenta)
         #expect(original.foregroundColor == Color.parse("rgb:0a/0b/0c"))
 
         let copy = replay(original)
@@ -640,28 +643,28 @@ struct TerminalContentSnapshotExportTests {
         // The same content follows the color commands for stock colors.
         let stock = Fixture(cols: 6, rows: 3)
         stock.feed("x")
-        #expect(visibleExportContents(stock.snapshot()) == visible("\u{1b}[0;39;49mx\r\n\r\n"))
+        #expect(visibleExportContents(stock.snapshot()) == visible("\u{1b}[0m\rx\r\n\r\n"))
     }
 
     @Test func ansiRepresentationLeavesUnwrittenCellsAlone() {
         let fixture = Fixture(cols: 6, rows: 2)
         fixture.feed("ab\r\n")
-        #expect(visibleExportContents(fixture.snapshot(.viewport)) == visible("\u{1b}[0;39;49mab\r\n"))
+        #expect(visibleExportContents(fixture.snapshot(.viewport)) == visible("\u{1b}[0m\rab\r\n"))
 
         let gap = Fixture(cols: 6, rows: 2)
         gap.feed("a\u{1b}[2Cb")
-        #expect(visibleExportContents(gap.snapshot(.viewport)) == visible("\u{1b}[0;39;49ma\u{1b}[2Cb\r\n"))
+        #expect(visibleExportContents(gap.snapshot(.viewport)) == visible("\u{1b}[0m\ra\u{1b}[2Cb\r\n"))
 
         let wideWrap = Fixture(cols: 6, rows: 3)
         wideWrap.feed("12345界")
         #expect(wideWrap.snapshot(.viewport).rows[1].isWrapped)
         #expect(visibleExportContents(wideWrap.snapshot(.viewport))
-                == visible("\u{1b}[0;39;49m12345\u{1b}[6G\u{3000}\r\u{1b}[2X界\r\n"))
+                == visible("\u{1b}[0m\r12345\u{1b}[6G\u{3000}\r\u{1b}[2X界\r\n"))
 
         let erased = Fixture(cols: 6, rows: 2)
         erased.feed("\u{1b}[42m\u{1b}[2K\u{1b}[0mab")
         #expect(visibleExportContents(erased.snapshot(.viewport))
-                == visible("\u{1b}[0;39;49mab\u{1b}[0;39;42m\u{1b}[4X\u{1b}[4C\u{1b}[0;39;49m\r\n"))
+                == visible("\u{1b}[0m\rab\u{1b}[0;42m\u{1b}[4X\u{1b}[4C\u{1b}[0m\r\n"))
     }
 
     @Test func cellsTheTerminalWouldMergeAreSeparatedByACursorMove() {
@@ -675,7 +678,7 @@ struct TerminalContentSnapshotExportTests {
         #expect(Array(original.rows[0].cells.map(\.text)[0...4]) == ["\u{0d4e}", "\u{0}", "x", "\u{0d4e}", "\u{0d4e}"])
         #expect(original.rows[0].cells[1].attribute.style.contains(.inverse))
         #expect(visibleExportContents(original)
-                == visible("\u{1b}[0;39;49m\u{1b}[0;7;39;49m\u{0d4e}\u{1b}[2G \u{1b}[0;39;49mx\u{0d4e}\u{1b}[5G\u{0d4e}\r\n\r\n"))
+                == visible("\u{1b}[0m\r\u{1b}[0;7m\u{0d4e}\u{1b}[2G \u{1b}[0mx\u{0d4e}\u{1b}[5G\u{0d4e}\r\n\r\n"))
         expectSameContents(original, replay(original))
 
         // The wrap moves the cursor to the last column, so the wrap character
@@ -684,7 +687,7 @@ struct TerminalContentSnapshotExportTests {
         wrapped.feed("abcdefg\u{1b}[1;5H\u{0d4e}\u{1b}[1;6H\u{1b}[X")
         let snapshot = wrapped.snapshot()
         #expect(visibleExportContents(snapshot)
-                == visible("\u{1b}[0;39;49mabcd\u{0d4e}\u{1b}[6G\u{3000}\r\u{1b}[2Xg\r\n"))
+                == visible("\u{1b}[0m\rabcd\u{0d4e}\u{1b}[6G\u{3000}\r\u{1b}[2Xg\r\n"))
         expectSameContents(snapshot, replay(snapshot))
     }
 
@@ -698,12 +701,99 @@ struct TerminalContentSnapshotExportTests {
         #expect(original.rows[0].cells[5].text == "\u{0d4e}漢")
         #expect(original.rows[0].cells[5].width == 1)
         #expect(visibleExportContents(original)
-                == visible("\u{1b}[0;39;49m\u{1b}[5C\u{1b}[?7l\u{0d4e}漢\u{1b}[?7h\r\n\r\n"))
+                == visible("\u{1b}[0m\r\u{1b}[6G\u{1b}[?7l\u{0d4e}漢\u{1b}[?7h\r\n\r\n"))
         expectSameContents(original, replay(original))
 
         // A combining mark does not widen the cell it joins.
         let plain = Fixture(cols: 6, rows: 3)
         plain.feed("\u{1b}[1;6He\u{301}")
-        #expect(visibleExportContents(plain.snapshot()) == visible("\u{1b}[0;39;49m\u{1b}[5Ce\u{301}\r\n\r\n"))
+        #expect(visibleExportContents(plain.snapshot()) == visible("\u{1b}[0m\r\u{1b}[5Ce\u{301}\r\n\r\n"))
+    }
+
+    /// A cell dump that shows each scalar and the width.
+    private func cells(_ row: TerminalContentRowSnapshot) -> [String] {
+        row.cells.map { cell in
+            cell.text.unicodeScalars.map { String($0.value, radix: 16) }.joined(separator: "+") + "/\(cell.width)"
+        }
+    }
+
+    @Test func decrqssReportsSgrWithoutDefaultColors() {
+        let fixture = Fixture()
+        fixture.feed("\u{1b}[1m\u{1b}P$qm\u{1b}\\")
+        let reply = String(decoding: fixture.delegate.sentData.flatMap { $0 }, as: UTF8.self)
+        #expect(reply == "\u{1b}P1$r0;1m\u{1b}\\")
+    }
+
+    @Test func narrowCellThatWidensKeepsItsColumn() {
+        // DCH moves a narrow ❤️ that autowrap off left in the last column.
+        let moved = Fixture(cols: 6, rows: 3)
+        moved.feed("\u{1b}[?7l\u{1b}[1;6H\u{2764}\u{fe0f}\u{1b}[?7h\u{1b}[1;1H\u{1b}[2Pxyz")
+        let original = moved.snapshot()
+        #expect(original.rows[0].cells[3].width == 1)
+        let copy = replay(original)
+        #expect(cells(copy.rows[0]) == cells(original.rows[0]))
+        expectSameContents(original, copy)
+
+        // A right margin keeps it narrow before the margin.
+        let margin = Fixture(cols: 6, rows: 3)
+        margin.feed("\u{1b}[?69h\u{1b}[1;4s\u{1b}[?7l\u{1b}[1;4H\u{2764}\u{fe0f}\u{1b}[?69l\u{1b}[?7h\u{1b}[1;5Hz")
+        let marginOriginal = margin.snapshot()
+        #expect(cells(replay(marginOriginal).rows[0]) == cells(marginOriginal.rows[0]))
+        expectSameContents(marginOriginal, replay(marginOriginal))
+    }
+
+    @Test func narrowedWideCellStaysInTheLastColumn() {
+        let fixture = Fixture(cols: 6, rows: 3)
+        fixture.feed("ab\u{231a}\u{fe0e}\u{1b}[1;1H\u{1b}[3@")
+        let original = fixture.snapshot()
+        #expect(original.rows[0].cells[5].text == "\u{231a}\u{fe0e}")
+        #expect(original.rows[0].cells[5].width == 1)
+        let copy = replay(original)
+        #expect(cells(copy.rows[0]) == cells(original.rows[0]))
+        expectSameContents(original, copy)
+
+        // With a cell that widens in the same row.
+        let both = Fixture(cols: 6, rows: 3)
+        both.feed("\u{1b}[?7l\u{1b}[1;6H\u{2764}\u{fe0f}\u{1b}[?7h\u{1b}[1;1H\u{1b}[4P")
+        both.feed("\u{1b}[1;3H\u{231a}\u{fe0e}\u{1b}[1;3H\u{1b}[3@")
+        let bothOriginal = both.snapshot()
+        #expect(bothOriginal.rows[0].cells[1].width == 1)
+        #expect(bothOriginal.rows[0].cells[5].text == "\u{231a}\u{fe0e}")
+        #expect(cells(replay(bothOriginal).rows[0]) == cells(bothOriginal.rows[0]))
+    }
+
+    @Test func wideCellCutByAShrinkBecomesBlank() {
+        let fixture = Fixture(cols: 12, rows: 4)
+        fixture.feed("\u{1b}[?1049h\u{1b}[Habcd\u{754c}x\r\nnext")
+        fixture.terminal.terminalLock.withLock {
+            fixture.terminal.resize(cols: 5, rows: 4)
+        }
+        let original = fixture.snapshot()
+        #expect(original.rows[0].cells[4].width == 2)
+        let copy = replay(original)
+        #expect(copy.rows.map(\.text) == ["abcd", "next", "", ""])
+        #expect(copy.rows.map(\.isWrapped) == [false, false, false, false])
+    }
+
+    @Test func snapshotWithoutColorsLeavesTheReceiverColors() {
+        let snapshot = TerminalContentSnapshot(
+            inputState: TerminalInputStateSnapshot(
+                dimensions: TerminalDimensions(cols: 4, rows: 1), isAlternateBuffer: false,
+                applicationCursor: false, applicationKeypad: false, bracketedPasteMode: false,
+                mouseMode: .off, keyboardEnhancementFlags: [], focusReportingEnabled: false),
+            capturedRange: 0..<1, liveTopRow: 0,
+            rows: [TerminalContentRowSnapshot(absoluteRow: 0, cells: [
+                TerminalCellSnapshot(text: "a", width: 1, attribute: Attribute.empty)])])
+        #expect(visible(snapshot.ansiRepresentation()) == visible("\u{1b}[0m\ra"))
+    }
+
+    @Test func exportStartsAtColumnZero() {
+        let fixture = Fixture(cols: 6, rows: 3)
+        fixture.feed("abc\r\ndef")
+        let original = fixture.snapshot()
+        let receiver = Fixture(cols: 6, rows: 3)
+        receiver.feed("$ ")
+        receiver.feed(original.ansiRepresentation())
+        #expect(receiver.snapshot().rows.map(\.text) == ["abc", "def", ""])
     }
 }
