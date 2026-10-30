@@ -195,6 +195,15 @@ When a click/tap lands on an active link, ``TerminalView`` calls
 - On iOS/visionOS, implement `requestOpenLink` in your delegate to decide how
   to handle navigation (for example, with `UIApplication.open`).
 
+A macOS host that resolves links itself, for example a relative path against
+the shell's working directory, or a `file.swift:12` location it opens at that
+line, can implement
+``TerminalViewDelegate/openUncheckedLink(source:link:params:isExplicit:)`` and
+return `true`. The delegate then gets the link as the output gave it, the view
+skips its check, and ``TerminalViewDelegate/requestOpenLink(source:link:params:)``
+is not called; the host owns the safety of whatever it opens. The default returns
+`false`. `LocalProcessTerminalView` subclasses override the method of the same name.
+
 ### macOS behavior
 
 - Tracking is driven by AppKit mouse movement.

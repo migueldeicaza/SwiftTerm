@@ -428,6 +428,14 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     }
 
     /**
+     * Offers a link before the view checks it. Override and return `true` to handle it yourself.
+     */
+    open func openUncheckedLink (source: TerminalView, link: String, params: [String:String], isExplicit: Bool) -> Bool
+    {
+        false
+    }
+
+    /**
      * This method is invoked when input from the user needs to be sent to the client
      * Implementation of the TerminalViewDelegate method
      */

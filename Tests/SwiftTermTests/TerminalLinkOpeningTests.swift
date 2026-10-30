@@ -88,5 +88,102 @@ struct TerminalLinkOpeningTests {
         await waitUntil { alerts == 1 }
         #expect(delegate.links.isEmpty)
     }
+
+    /// Takes every link offered before the check, recording what it was given.
+    private final class TakingDelegate: TerminalViewDelegate {
+        var unchecked: [(link: String, params: [String: String], isExplicit: Bool)] = []
+        var links: [String] = []
+        func openUncheckedLink(source: TerminalView, link: String, params: [String: String], isExplicit: Bool) -> Bool {
+            unchecked.append((link, params, isExplicit))
+            return true
+        }
+        func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+            links.append(link)
+        }
+        func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+        func setTerminalTitle(source: TerminalView, title: String) {}
+        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+        func send(source: TerminalView, data: ArraySlice<UInt8>) {}
+        func scrolled(source: TerminalView, position: Double) {}
+        func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+    }
+
+    /// A relative path with a line, which the check would block, and a link it would
+    /// block as unsafe both reach a delegate that takes them, unchanged and without an alert.
+    @Test(arguments: [
+        ("Sources/App/main.swift:12", false),
+        ("file:///System/Applications/Calculator.app", true),
+    ])
+    func aDelegateCanTakeTheLinkBeforeTheCheck(link: String, isExplicit: Bool) async {
+        let view = TerminalView(frame: .zero)
+        let delegate = TakingDelegate()
+        view.terminalDelegate = delegate
+        var alerts = 0
+        view.activateLink(link, params: ["id": "x"], isExplicit: isExplicit) { _, _, completion in
+            alerts += 1
+            completion(.alertFirstButtonReturn)
+        }
+        // An alert is queued on the main queue; give it the chance to appear.
+        await Task.yield()
+        await Task.yield()
+        #expect(delegate.unchecked.map(\.link) == [link])
+        #expect(delegate.unchecked.map(\.params) == [["id": "x"]])
+        #expect(delegate.unchecked.map(\.isExplicit) == [isExplicit])
+        #expect(delegate.links.isEmpty)
+        #expect(alerts == 0)
+    }
+
+    @Test func anOsc8LinkIsNotOfferedWhileOsc8IsDisabled() {
+        let view = TerminalView(frame: .zero)
+        let delegate = TakingDelegate()
+        view.terminalDelegate = delegate
+        view.enableOsc8Hyperlinks = false
+        view.activateLink("https://example.com", params: [:], isExplicit: true)
+        #expect(delegate.unchecked.isEmpty)
+        #expect(delegate.links.isEmpty)
+    }
+
+    /// A delegate that leaves the link gets the checked one, as before.
+    @Test func aDelegateThatDeclinesGetsTheCheckedLink() {
+        final class DecliningDelegate: TerminalViewDelegate {
+            var offered = 0
+            var links: [String] = []
+            func openUncheckedLink(source: TerminalView, link: String, params: [String: String], isExplicit: Bool) -> Bool {
+                offered += 1
+                return false
+            }
+            func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+                links.append(link)
+            }
+            func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+            func setTerminalTitle(source: TerminalView, title: String) {}
+            func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+            func send(source: TerminalView, data: ArraySlice<UInt8>) {}
+            func scrolled(source: TerminalView, position: Double) {}
+            func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+        }
+        let view = TerminalView(frame: .zero)
+        let delegate = DecliningDelegate()
+        view.terminalDelegate = delegate
+        view.activateLink("https://example.com", params: [:], isExplicit: false)
+        #expect(delegate.offered == 1)
+        #expect(delegate.links == ["https://example.com"])
+    }
+
+    /// A `LocalProcessTerminalView` subclass takes links by overriding the method.
+    @Test func aLocalProcessTerminalViewSubclassCanTakeTheLink() {
+        final class Subclass: LocalProcessTerminalView {
+            var unchecked: [String] = []
+            override func openUncheckedLink(source: TerminalView, link: String, params: [String: String], isExplicit: Bool) -> Bool {
+                unchecked.append(link)
+                return true
+            }
+        }
+        let view = Subclass(frame: .zero)
+        view.activateLink("Sources/App/main.swift:12", params: [:], isExplicit: false) { _, _, _ in
+            Issue.record("The link was checked")
+        }
+        #expect(view.unchecked == ["Sources/App/main.swift:12"])
+    }
 }
 #endif
