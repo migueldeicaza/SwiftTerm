@@ -969,12 +969,12 @@ final class EscapeSequenceParser {
         }
     }
 
-    /// True when the tail of the accumulated OSC payload is an incomplete
+    /// True when the tail of an accumulated OSC or APC payload is an incomplete
     /// UTF-8 scalar, so the next byte is a continuation byte rather than a
     /// C1 string terminator.
-    static func oscExpectsUTF8Continuation(_ osc: [UInt8]) -> Bool {
+    static func stringExpectsUTF8Continuation(_ payload: [UInt8]) -> Bool {
         var continuationCount = 0
-        for byte in osc.reversed() {
+        for byte in payload.reversed() {
             if byte >= 0x80 && byte <= 0xbf {
                 continuationCount += 1
                 if continuationCount == 3 { return false }
@@ -1122,7 +1122,7 @@ final class EscapeSequenceParser {
                 appendOscBytes(appendedThrough..<j, data: data, to: &osc, &limitExceeded, terminal)
                 appendedThrough = j
                 guard (limitExceeded && !EscapeSequenceParser.isProgramStatusOsc(osc))
-                        || EscapeSequenceParser.oscExpectsUTF8Continuation(osc)
+                        || EscapeSequenceParser.stringExpectsUTF8Continuation(osc)
                 else {
                     c1Terminated = true
                     break
@@ -1246,17 +1246,18 @@ final class EscapeSequenceParser {
         // process input string
         var i = 0
         let end = data.count
-        // A read from the host can end in the middle of a UTF-8 scalar in an
-        // OSC payload, so this chunk starts with its continuation bytes. The
-        // table would take 0x80-0x9f for C1 controls, abort the sequence and
-        // print the rest of its payload on screen. Within a chunk the `oscPut`
-        // run already keeps them as payload, and 0x9c is routed there by the
-        // table, so the rest are kept here. This runs once per chunk rather
-        // than in the loop: a per-byte check slows ordinary ESC and CSI input.
+        // A read from the host can end in the middle of a UTF-8 scalar in an OSC or APC payload, so this chunk starts with its continuation bytes.
+        // The table would take 0x80-0x9f for C1 controls, abort the sequence and print the rest of its payload on screen.
+        // Within a chunk the `oscPut` run already keeps them as payload, and 0x9c is routed there by the table, so the remaining continuation bytes are kept here.
+        // These run once per chunk rather than in the loop: a per-byte check slows ordinary ESC and CSI input.
         if currentState == ParserState.oscString.rawValue {
-            while i < end, data[i] >= 0x80, data[i] < 0xa0, data[i] != 0x9c,
-                  oscLimitExceeded || EscapeSequenceParser.oscExpectsUTF8Continuation(osc) {
+            while i < end, data[i] >= 0x80, data[i] < 0xa0, data[i] != 0x9c, oscLimitExceeded || EscapeSequenceParser.stringExpectsUTF8Continuation(osc) {
                 appendOscBytes(i..<(i + 1), data: data, to: &osc, &oscLimitExceeded, terminal)
+                i += 1
+            }
+        } else if currentState == ParserState.apcString.rawValue {
+            while i < end, data[i] >= 0x80, data[i] < 0xa0, data[i] != 0x9c, apcLimitExceeded || EscapeSequenceParser.stringExpectsUTF8Continuation(apc) {
+                appendApcBytes(i..<(i + 1), to: &apc, &apcLimitExceeded)
                 i += 1
             }
         }

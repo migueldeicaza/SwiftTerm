@@ -103,6 +103,21 @@ final class SIMDParserTests {
         }
     }
 
+    /// A chunk that starts on a UTF-8 continuation byte must keep it in the APC payload. Emoji continuation bytes fall in 0x80-0x9f, which the transition table otherwise reads as C1 controls (#755).
+    @Test func apcPreservesEmojiContinuationBytesAcrossInputChunks() {
+        let payload = Array("q=2;Ü 🚀 deploy".utf8)
+        let input = [esc, 0x5f, 0x47] + payload
+
+        for split in 0...input.count {
+            let (parser, terminal) = makeParser()
+            parser.parse(data: input[..<split], terminal)
+            parser.parse(data: input[split...], terminal)
+
+            #expect(parser.currentState == .apcString)
+            #expect(parser._apc == [0x47] + payload)
+        }
+    }
+
     @Test func groundAndUtf8ResultsDoNotDependOnInputChunks() {
         let input = Array(repeating: UInt8(0x41), count: 31) +
             [0x00] +
