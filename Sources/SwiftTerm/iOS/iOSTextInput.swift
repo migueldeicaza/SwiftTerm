@@ -125,6 +125,7 @@ extension TerminalView: UITextInput {
     }
 
     func endTextInputEdit() {
+        restoreDeleteRepeatPlaceholder()
         inputDelegate?.textDidChange(self)
         inputDelegate?.selectionDidChange(self)
         uitiLog("endTextInputEdit \(textInputStateDescription())")

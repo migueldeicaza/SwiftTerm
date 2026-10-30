@@ -2415,6 +2415,39 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return !textInputStorage.isEmpty
     }
 
+    /// Keeps a held delete key repeating over text the terminal drew itself.
+    ///
+    /// The system keyboard only auto-repeats delete while it can see text before the cursor,
+    /// and the input document only holds what was typed in this keyboard session. So on a
+    /// line the far side drew, such as a shell history entry recalled with the up arrow,
+    /// holding delete removes a single character. When this is on, the document keeps one
+    /// invisible placeholder (U+200B) before the typed text, standing for the line beyond it:
+    /// the keyboard keeps repeating, and each delete that reaches the placeholder sends a
+    /// backspace to the terminal and leaves the placeholder in place. The placeholder is
+    /// never sent. Off by default.
+    public var keepsDeleteRepeatingOverTerminalText: Bool = false {
+        didSet {
+            if keepsDeleteRepeatingOverTerminalText != oldValue { resetInputBuffer() }
+        }
+    }
+
+    static let deleteRepeatPlaceholder = "\u{200B}"
+
+    /// Puts the placeholder back at the start of the input document after an edit removed it,
+    /// shifting the selection and marked ranges past it.
+    func restoreDeleteRepeatPlaceholder() {
+        guard keepsDeleteRepeatingOverTerminalText,
+              !textInputStorage.hasPrefix(TerminalView.deleteRepeatPlaceholder) else { return }
+        textInputStorage.insert(contentsOf: TerminalView.deleteRepeatPlaceholder, at: textInputStorage.startIndex)
+        let shift = TerminalView.deleteRepeatPlaceholder.utf16.count
+        func shifted(_ range: TextRange) -> TextRange {
+            TextRange(from: TextPosition(offset: range.startPosition.offset + shift),
+                      to: TextPosition(offset: range.endPosition.offset + shift))
+        }
+        _selectedTextRange = shifted(_selectedTextRange)
+        _markedTextRange = _markedTextRange.map(shifted)
+    }
+
     func isAutoPeriodReplacement(_ text: String) -> Bool {
         text == "." || text == ". "
     }
