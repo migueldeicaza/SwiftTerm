@@ -39,6 +39,15 @@ struct TerminalContentSnapshotExportTests {
             .replacingOccurrences(of: "\n", with: "<LF>")
     }
 
+    /// Removes the initial OSC color commands for exact content checks.
+    private func visibleExportContents(_ snapshot: TerminalContentSnapshot) -> String {
+        var output = snapshot.ansiRepresentation()[...]
+        while output.hasPrefix("\u{1b}]"), let end = output.firstIndex(of: "\u{7}") {
+            output = output[output.index(after: end)...]
+        }
+        return visible(String(output))
+    }
+
     /// The snapshot fed into a fresh terminal of the same size, copied back.
     private func replay(_ snapshot: TerminalContentSnapshot, scrollback: Int = 20) -> TerminalContentSnapshot {
         let copy = Fixture(cols: snapshot.inputState.dimensions.cols,
@@ -358,7 +367,7 @@ struct TerminalContentSnapshotExportTests {
         #expect(!plainCopy.rows[0].cells[5].attribute.paintsBackground)
         #expect(plainCopy.rows.map(\.isWrapped) == [false, true, false])
         expectSameContents(plain.snapshot(), plainCopy)
-        #expect(visible(plain.snapshot().ansiRepresentation())
+        #expect(visibleExportContents(plain.snapshot())
                 == visible("\u{1b}[0;39;49mabcde\u{1b}[6G\u{3000}\r\u{1b}[2Xg\r\n"))
     }
 
@@ -421,7 +430,7 @@ struct TerminalContentSnapshotExportTests {
         #expect(original.rows[0].cells[2].isBlank)
         #expect(original.rows[0].cells[2].attribute.fg == .ansi256(code: 1))
         #expect(original.rows[0].cells[3].attribute.fg == .defaultColor)
-        #expect(visible(original.ansiRepresentation())
+        #expect(visibleExportContents(original)
                 == visible("\u{1b}[0;39;49m\u{1b}[0;31;44mab\u{1b}[0;39;44m\u{1b}[4X\u{1b}[4C\u{1b}[0;39;49m\r\n"))
         expectSameContents(original, replay(original))
     }
@@ -581,6 +590,29 @@ struct TerminalContentSnapshotExportTests {
         expectSameContents(original, copy)
     }
 
+    @Test(arguments: [Ansi256PaletteStrategy.xterm, .base16Lab, .base16LabHarmonious], [false, true])
+    func exportReplacesReceiverColors(strategy: Ansi256PaletteStrategy, customSource: Bool) {
+        let source = Fixture(cols: 6, rows: 3)
+        if customSource {
+            source.feed("\u{1b}]10;rgb:11/22/33\u{7}\u{1b}]11;rgb:44/55/66\u{7}\u{1b}]4;1;rgb:ff/00/ff\u{7}")
+        }
+        source.feed("default\r\n\u{1b}[31mx\u{1b}[38;5;255my")
+        let original = source.snapshot()
+        let delegate = TerminalTestDelegate()
+        let receiver = Terminal(delegate: delegate, options: TerminalOptions(
+            cols: 6, rows: 3, ansi256PaletteStrategy: strategy))
+        receiver.terminalLock.withLock {
+            receiver.installPalette(colors: Array(repeating: Color(red: 65535, green: 0, blue: 65535), count: 16))
+            receiver.feed(text: "\u{1b}]10;rgb:ff/ff/ff\u{7}\u{1b}]11;rgb:00/00/ff\u{7}\u{1b}]4;255;rgb:00/ff/00\u{7}")
+            receiver.feed(text: original.ansiRepresentation())
+        }
+        let copy = receiver.contentSnapshot()
+        #expect(copy.palette == original.palette)
+        #expect(copy.foregroundColor == original.foregroundColor)
+        #expect(copy.backgroundColor == original.backgroundColor)
+        expectSameContents(original, copy)
+    }
+
     @Test func changedPaletteAndDefaultColorsTravelWithTheExport() throws {
         let source = Fixture(cols: 6, rows: 3)
         // Default colors first: a terminal deriving its palette from them
@@ -599,33 +631,36 @@ struct TerminalContentSnapshotExportTests {
         #expect(copy.backgroundColor == original.backgroundColor)
         #expect(copy.rows[0].cells[0].attribute.fg == .ansi256(code: 1))
         expectSameContents(original, copy)
-        #expect(visible(original.ansiRepresentation()).hasPrefix(visible(
-            "\u{1b}]10;rgb:0a0a/0b0b/0c0c\u{7}\u{1b}]11;rgb:1010/2020/3030\u{7}\u{1b}]4;1;rgb:ffff/0000/ffff\u{7}\u{1b}[0;39;49m")))
+        let colors = original.colorSequences()
+        #expect(colors.hasPrefix(
+            "\u{1b}]10;rgb:0a0a/0b0b/0c0c\u{7}\u{1b}]11;rgb:1010/2020/3030\u{7}"))
+        #expect(colors.contains("\u{1b}]4;1;rgb:ffff/0000/ffff\u{7}"))
+        #expect(colors.components(separatedBy: "\u{1b}]4;").count == 257)
 
-        // Stock colors do not travel: a plain terminal's export starts with the reset.
+        // The same content follows the color commands for stock colors.
         let stock = Fixture(cols: 6, rows: 3)
         stock.feed("x")
-        #expect(visible(stock.snapshot().ansiRepresentation()) == visible("\u{1b}[0;39;49mx\r\n\r\n"))
+        #expect(visibleExportContents(stock.snapshot()) == visible("\u{1b}[0;39;49mx\r\n\r\n"))
     }
 
     @Test func ansiRepresentationLeavesUnwrittenCellsAlone() {
         let fixture = Fixture(cols: 6, rows: 2)
         fixture.feed("ab\r\n")
-        #expect(visible(fixture.snapshot(.viewport).ansiRepresentation()) == visible("\u{1b}[0;39;49mab\r\n"))
+        #expect(visibleExportContents(fixture.snapshot(.viewport)) == visible("\u{1b}[0;39;49mab\r\n"))
 
         let gap = Fixture(cols: 6, rows: 2)
         gap.feed("a\u{1b}[2Cb")
-        #expect(visible(gap.snapshot(.viewport).ansiRepresentation()) == visible("\u{1b}[0;39;49ma\u{1b}[2Cb\r\n"))
+        #expect(visibleExportContents(gap.snapshot(.viewport)) == visible("\u{1b}[0;39;49ma\u{1b}[2Cb\r\n"))
 
         let wideWrap = Fixture(cols: 6, rows: 3)
         wideWrap.feed("12345界")
         #expect(wideWrap.snapshot(.viewport).rows[1].isWrapped)
-        #expect(visible(wideWrap.snapshot(.viewport).ansiRepresentation())
+        #expect(visibleExportContents(wideWrap.snapshot(.viewport))
                 == visible("\u{1b}[0;39;49m12345\u{1b}[6G\u{3000}\r\u{1b}[2X界\r\n"))
 
         let erased = Fixture(cols: 6, rows: 2)
         erased.feed("\u{1b}[42m\u{1b}[2K\u{1b}[0mab")
-        #expect(visible(erased.snapshot(.viewport).ansiRepresentation())
+        #expect(visibleExportContents(erased.snapshot(.viewport))
                 == visible("\u{1b}[0;39;49mab\u{1b}[0;39;42m\u{1b}[4X\u{1b}[4C\u{1b}[0;39;49m\r\n"))
     }
 
@@ -639,7 +674,7 @@ struct TerminalContentSnapshotExportTests {
         let original = fixture.snapshot()
         #expect(Array(original.rows[0].cells.map(\.text)[0...4]) == ["\u{0d4e}", "\u{0}", "x", "\u{0d4e}", "\u{0d4e}"])
         #expect(original.rows[0].cells[1].attribute.style.contains(.inverse))
-        #expect(visible(original.ansiRepresentation())
+        #expect(visibleExportContents(original)
                 == visible("\u{1b}[0;39;49m\u{1b}[0;7;39;49m\u{0d4e}\u{1b}[2G \u{1b}[0;39;49mx\u{0d4e}\u{1b}[5G\u{0d4e}\r\n\r\n"))
         expectSameContents(original, replay(original))
 
@@ -648,7 +683,7 @@ struct TerminalContentSnapshotExportTests {
         let wrapped = Fixture(cols: 6, rows: 3)
         wrapped.feed("abcdefg\u{1b}[1;5H\u{0d4e}\u{1b}[1;6H\u{1b}[X")
         let snapshot = wrapped.snapshot()
-        #expect(visible(snapshot.ansiRepresentation())
+        #expect(visibleExportContents(snapshot)
                 == visible("\u{1b}[0;39;49mabcd\u{0d4e}\u{1b}[6G\u{3000}\r\u{1b}[2Xg\r\n"))
         expectSameContents(snapshot, replay(snapshot))
     }
@@ -662,13 +697,13 @@ struct TerminalContentSnapshotExportTests {
         let original = joined.snapshot()
         #expect(original.rows[0].cells[5].text == "\u{0d4e}漢")
         #expect(original.rows[0].cells[5].width == 1)
-        #expect(visible(original.ansiRepresentation())
+        #expect(visibleExportContents(original)
                 == visible("\u{1b}[0;39;49m\u{1b}[5C\u{1b}[?7l\u{0d4e}漢\u{1b}[?7h\r\n\r\n"))
         expectSameContents(original, replay(original))
 
         // A combining mark does not widen the cell it joins.
         let plain = Fixture(cols: 6, rows: 3)
         plain.feed("\u{1b}[1;6He\u{301}")
-        #expect(visible(plain.snapshot().ansiRepresentation()) == visible("\u{1b}[0;39;49m\u{1b}[5Ce\u{301}\r\n\r\n"))
+        #expect(visibleExportContents(plain.snapshot()) == visible("\u{1b}[0;39;49m\u{1b}[5Ce\u{301}\r\n\r\n"))
     }
 }

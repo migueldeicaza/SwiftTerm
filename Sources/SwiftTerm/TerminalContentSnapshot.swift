@@ -169,10 +169,9 @@ extension TerminalContentSnapshot {
     /// The copied rows as text with SGR sequences, ready to feed into another
     /// terminal of the same width.
     ///
-    /// The output starts with the default colors, when they are not
-    /// SwiftTerm's stock ones, and palette entries that differ from a fresh
-    /// SwiftTerm terminal, as `OSC 10`, `OSC 11` and `OSC 4`, so indexed cells and the
-    /// default colors keep their appearance in the receiving terminal.
+    /// The output starts with both default colors and all captured palette
+    /// entries, as `OSC 10`, `OSC 11` and `OSC 4`. This keeps their appearance
+    /// even when the receiving terminal has different colors.
     /// Every attribute is re-encoded with ``Attribute/sgrParameters()``,
     /// including dim, italic, strikethrough, underline styles and underline
     /// colors. Wide characters are emitted once and their continuation cells
@@ -320,29 +319,13 @@ extension TerminalContentSnapshot {
         return pieces
     }
 
-    /// `OSC 10` and `OSC 11` when the default colors are not SwiftTerm's
-    /// stock ones, then `OSC 4` for entries that differ from a fresh SwiftTerm
-    /// terminal. This includes host-installed colors and generated colors.
-    /// The default colors go first because a terminal that derives
-    /// its palette from them rebuilds it when they change. A stock terminal
-    /// produces nothing, so its export starts with the SGR reset.
+    /// Writes both default colors, then every captured palette entry.
+    /// The default colors go first because they can rebuild the palette.
     func colorSequences() -> String {
-        var result = ""
-        if foregroundColor != Color.defaultForeground {
-            result += "\u{1b}]10;\(foregroundColor.formatAsXcolor())\u{7}"
-        }
-        if backgroundColor != Color.defaultBackground {
-            result += "\u{1b}]11;\(backgroundColor.formatAsXcolor())\u{7}"
-        }
+        var result = "\u{1b}]10;\(foregroundColor.formatAsXcolor())\u{7}"
+        result += "\u{1b}]11;\(backgroundColor.formatAsXcolor())\u{7}"
         if palette.count == 256 {
-            // Replay starts with the stock installed colors and palette strategy.
-            // OSC 10/11 above rebuild that palette before OSC 4 sets its entries.
-            let replayPalette = Color.setupDefaultAnsiColors(
-                initialColors: Color.terminalAppColors,
-                strategy: TerminalOptions.default.ansi256PaletteStrategy,
-                backgroundColor: backgroundColor,
-                foregroundColor: foregroundColor)
-            for (index, color) in palette.enumerated() where color != replayPalette[index] {
+            for (index, color) in palette.enumerated() {
                 result += "\u{1b}]4;\(index);\(color.formatAsXcolor())\u{7}"
             }
         }

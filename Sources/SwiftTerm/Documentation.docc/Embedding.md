@@ -115,9 +115,9 @@ text, widths, attributes, row-wrap flags, the 256-color palette, the palette
 the terminal started from and the default colors in one transaction.
 ``TerminalContentSnapshot/ansiRepresentation()`` re-encodes the copied rows as
 text with SGR sequences that another terminal of the same width can replay,
-preceded by the default colors and palette entries that differ from a fresh
-SwiftTerm terminal, including host-installed colors. It restores contents,
-not cursor or modes. Its
+preceded by both default colors and all captured palette entries. This also
+preserves colors when the receiving terminal has a different palette. It
+restores contents, not cursor or modes. Its
 `capturedRange` uses scroll-invariant absolute row numbers; it describes only
 the copied window, not all retained history. The computed row text is
 right-trimmed display text using the same conversion as
