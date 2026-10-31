@@ -8,6 +8,8 @@ on:
 
 env:
   DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+  # Debug builds skip the checks that walk a whole row unless this is set.
+  SWIFTTERM_EXPENSIVE_ASSERTS: "1"
 
 jobs:
   build:
