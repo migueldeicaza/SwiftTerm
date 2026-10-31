@@ -1116,10 +1116,13 @@ final class CellStoragePage {
         guard !source.isEmpty else { return }
         source.withUnsafeBufferPointer { sourceBuffer in
             let destination = cells.baseAddress!.advanced(by: destinationStart)
-            for offset in sourceBuffer.indices {
+            // Not a Range loop: that's a generic call per element unoptimized.
+            var offset = 0
+            while offset < sourceBuffer.count {
                 let rawValue = template |
                     (UInt64(sourceBuffer[offset]) << PackedCell.contentShift)
                 destination[offset] = PackedCell(rawValue: rawValue)
+                offset += 1
             }
         }
     }
