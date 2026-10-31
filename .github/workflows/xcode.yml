@@ -42,6 +42,10 @@ jobs:
     - name: Swift Package Build
       run: swift build -v
 
+    # Fails if a hot-path type gets a run-time field layout (see PERFORMANCE.md).
+    - name: Check fixed field layout
+      run: scripts/check-fixed-layout.sh
+
     - name: Check generated Unicode widths
       run: python3 scripts/regen_unicode_width_data.py --check
 

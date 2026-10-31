@@ -844,6 +844,36 @@ Removing the three existing `@exclusivity(unchecked)` attributes costs about
 3%, four runs out of four. Use that as the known change when you calibrate an
 instrument.
 
+### Keep a fixed field layout
+
+A stored field of a resilient type from another module (`URL`, `Date`,
+`UUID`, `Locale`, ...) gives the containing type a field layout that is known
+only at run time. The field can be in the type itself or in a struct that the
+type stores. Then each access to each field of the type loads the field offset
+first. One `URL` field in `KittyGraphicsConfiguration`, which `Terminal`
+stores, cost 8% more instructions on the scrolling benchmark. Commit 17e6c5e8
+put that field behind a final class box.
+
+The compiler emits a `type metadata completion function` for each type with a
+run-time layout. CI runs this check on the release build:
+
+```bash
+scripts/check-fixed-layout.sh
+```
+
+It fails if `Terminal`, `TerminalOptions`, `Buffer`, `BufferLine`,
+`CircularBufferLineList`, `CellStoragePage`, or `CellArena` has a run-time
+layout. To check other types, add them to `FIXED_TYPES` in the script. To
+see all the types that have a run-time layout:
+
+```bash
+nm .build/release/SwiftTerm.o | xcrun swift-demangle \
+    | grep 'type metadata completion function for SwiftTerm\.'
+```
+
+Generic types (`CircularList`) and the view classes are in that list. That is
+expected and does not change the parse path.
+
 Campaign history
 ----------------
 
