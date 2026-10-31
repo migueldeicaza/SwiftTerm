@@ -1727,6 +1727,14 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         return NSRect (x: 0, y: 0, width: cellDimension.width * CGFloat(size.cols) + reservedScrollerWidth, height: cellDimension.height * CGFloat(size.rows))
     }
 
+    /// The frame size that holds exactly `cols` × `rows` cells at the view's font, with the
+    /// scroller's room when it takes any: what to give the view to show a terminal of that size
+    /// whatever room its window has, as when another device mirrors it at its own size.
+    public func frameSize(cols: Int, rows: Int) -> CGSize
+    {
+        CGSize (width: cellDimension.width * CGFloat(max(cols, 1)) + reservedScrollerWidth, height: cellDimension.height * CGFloat(max(rows, 1)))
+    }
+
     func getEffectiveWidth (size: CGSize) -> CGFloat
     {
         max(0, size.width - reservedScrollerWidth)
