@@ -91,6 +91,41 @@ import Testing
         }
     }
 
+    /// Text that starts after column 0 sets the lower bound of the written part.
+    /// A line feed with no carriage return keeps the cursor in the last column,
+    /// so each row has text only in that column. The recycle must clear it.
+    @Test func textInTheLastColumnIsClearedOnRecycle() {
+        let terminal = makeTerminal(cols: 40, rows: 4, scrollback: 2)
+        terminal.feed(text: String(repeating: "-", count: 39))
+        for _ in 0..<12 { terminal.feed(text: "Y\n") }
+        terminal.feed(text: "\r\n")
+        for _ in 0..<12 { terminal.feed(text: "hi\r\n") }
+
+        for i in 0..<terminal.buffer.lines.count {
+            let text = row(terminal, i)
+            #expect(text.contains("Y") == false && text.contains("-") == false,
+                    "row \(i) kept text from the last column: \(text.debugDescription)")
+        }
+    }
+
+    /// Two writes on one row: the second one is to the left of the first one,
+    /// so it must lower the start of the written part.
+    @Test func laterWriteToTheLeftIsClearedOnRecycle() {
+        let terminal = makeTerminal(cols: 40, rows: 4, scrollback: 2)
+        for _ in 0..<10 {
+            terminal.feed(text: "\u{1b}[31GRIGHT\u{1b}[11GMID\u{1b}[3GL\r\n")
+        }
+        for _ in 0..<10 { terminal.feed(text: "q\r\n") }
+
+        for i in 0..<terminal.buffer.lines.count {
+            let text = row(terminal, i)
+            for word in ["RIGHT", "MID", "L"] {
+                #expect(text.contains(word) == false,
+                        "row \(i) kept \(word): \(text.debugDescription)")
+            }
+        }
+    }
+
     /// A partial clear is only valid while the blanks past the written region
     /// carry the same attribute being erased to. Changing the background colour
     /// between recycles must repaint the whole row, tail included.
