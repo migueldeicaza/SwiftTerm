@@ -260,7 +260,10 @@ it will run this one.   To run the test suite, select the 'SwiftTerm' target
 instead, and you can use 'SwiftTermFuzz' to run the fuzzer.
 
 You can use `swift build` to build the package, and `swift test` to
-run the test suite.  For better test coverage, fetch esctest, a
+run the test suite.  Debug builds skip the invariant checks that walk a
+whole row, which are too slow for everyday use; run the tests with
+`SWIFTTERM_EXPENSIVE_ASSERTS=1 swift test` to turn them on, as CI does.
+For better test coverage, fetch esctest, a
 conformance suite for terminal emulators:
 
 ```
