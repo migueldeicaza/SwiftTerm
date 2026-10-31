@@ -372,9 +372,63 @@ internal final class CircularBufferLineList {
 #endif
     }
 
+    /// Calls `body` with the line at `index` without a retain.
+    ///
+    /// The subscript getter copies the line out of the array. An inout access
+    /// to the slot is exclusive, so the line can be lent from the slot.
+    /// `body` must not access this list. Debug builds check this.
+    @inline(__always)
+    func withLine<R>(_ index: Int, _ body: (BufferLine) -> R) -> R
+    {
+        let idx = getCyclicIndex(index)
+        if array[idx] == nil {
+#if SWIFTTERM_EMBEDDED
+            array[idx] = owner!.makeEmptyLine(idx)
+#else
+            array[idx] = owner.makeEmptyLine(idx)
+#endif
+        }
+        return Self.borrowSlot(&array[idx], body)
+    }
+
+    @inline(__always)
+    private static func borrowSlot<R>(_ slot: inout BufferLine?,
+                                      _ body: (BufferLine) -> R) -> R
+    {
+        body(slot!)
+    }
+
     /// Recycles a row with state that already belongs to the owner's arena.
     func recycle(clearCell: PackedCell, isWrapped: Bool,
                  bidiState: BidiPresentationState)
+    {
+        let hadImages = recycleOldestLine(clearCell: clearCell, isWrapped: isWrapped,
+                                          bidiState: bidiState)
+#if SWIFTTERM_EMBEDDED
+        if isLive { owner?.lineWillRecycle(hadImages: hadImages) }
+#else
+        if isLive { owner.lineWillRecycle(hadImages: hadImages) }
+#endif
+    }
+
+    /// Recycles a row and notifies `owner`, which must be this list's owner.
+    ///
+    /// The scroll path already borrows its buffer. Passing it here avoids the
+    /// retain that a load of the stored `owner` property needs.
+    @inline(__always)
+    func recycle(owner: borrowing Buffer, clearCell: PackedCell, isWrapped: Bool,
+                 bidiState: BidiPresentationState)
+    {
+        let hadImages = recycleOldestLine(clearCell: clearCell, isWrapped: isWrapped,
+                                          bidiState: bidiState)
+        if isLive { owner.lineWillRecycle(hadImages: hadImages) }
+    }
+
+    /// Moves the start of the full ring forward and clears the former first
+    /// row. Returns `true` when that row had images.
+    @inline(__always)
+    private func recycleOldestLine(clearCell: PackedCell, isWrapped: Bool,
+                                   bidiState: BidiPresentationState) -> Bool
     {
         assert(startIndex < array.count)
         precondition(count == maxLength, "can only recycle when the buffer is full")
@@ -382,21 +436,13 @@ internal final class CircularBufferLineList {
         let index = startIndex
         let next = startIndex &+ 1
         startIndex = next == maxLength ? 0 : next
-        // The array owns the line until this function finishes using it.
-#if SWIFTTERM_EMBEDDED
-        let line = array[index]!
-#else
-        unowned(unsafe) let line = array[index]!
-#endif
+        // Borrow the line through its slot. A local binding or `array[index]!`
+        // copies the line and costs a retain and a release.
         // The line object is being destroyed for reuse. Clear its cells and
         // metadata with one generation change.
-        let hadImages = line.recycle(with: clearCell, isWrapped: isWrapped,
-                                     bidiState: bidiState)
-#if SWIFTTERM_EMBEDDED
-        if isLive { owner?.lineWillRecycle(hadImages: hadImages) }
-#else
-        if isLive { owner.lineWillRecycle(hadImages: hadImages) }
-#endif
+        return Self.borrowSlot(&array[index]) { line in
+            line.recycle(with: clearCell, isWrapped: isWrapped, bidiState: bidiState)
+        }
     }
 
     @discardableResult
@@ -511,9 +557,48 @@ internal final class CircularBufferLineList {
                            isWrapped: Bool,
                            bidiState: BidiPresentationState) -> Bool
     {
-        func dumpState (_ message: String) -> Bool {
-            print("Assertion at top=\(top) bottom=\(bottom): \(message)")
+        guard let hadImages = shiftUpAndRecycleLines(top: top, bottom: bottom,
+                                                     clearCell: clearCell,
+                                                     isWrapped: isWrapped,
+                                                     bidiState: bidiState) else {
             return false
+        }
+        if isLive {
+#if SWIFTTERM_EMBEDDED
+            owner?.lineWillRecycle(hadImages: hadImages)
+#else
+            owner.lineWillRecycle(hadImages: hadImages)
+#endif
+        }
+        return true
+    }
+
+    /// Shifts a region and notifies `owner`, which must be this list's owner.
+    /// See `recycle(owner:clearCell:isWrapped:bidiState:)`.
+    @inline(__always)
+    func shiftUpAndRecycle(owner: borrowing Buffer, top: Int, bottom: Int,
+                           clearCell: PackedCell, isWrapped: Bool,
+                           bidiState: BidiPresentationState) -> Bool
+    {
+        guard let hadImages = shiftUpAndRecycleLines(top: top, bottom: bottom,
+                                                     clearCell: clearCell,
+                                                     isWrapped: isWrapped,
+                                                     bidiState: bidiState) else {
+            return false
+        }
+        if isLive { owner.lineWillRecycle(hadImages: hadImages) }
+        return true
+    }
+
+    /// Returns whether the recycled row had images, or `nil` when the region
+    /// is not valid.
+    private func shiftUpAndRecycleLines(top: Int, bottom: Int, clearCell: PackedCell,
+                                        isWrapped: Bool,
+                                        bidiState: BidiPresentationState) -> Bool?
+    {
+        func dumpState (_ message: String) -> Bool? {
+            print("Assertion at top=\(top) bottom=\(bottom): \(message)")
+            return nil
         }
 
         if top < 0 {
@@ -526,20 +611,18 @@ internal final class CircularBufferLineList {
             return dumpState("bottom >= count")
         }
 
-        // Keep this reference alive while its array slot is overwritten.
-        let recycledLine = self[top]
-        let hadImages = recycledLine.images != nil
         let firstPhysicalIndex = startIndex
         let capacity = array.count
 
-        // The local reference must stay alive until its array ownership moves
-        // to the last slot.
-        withExtendedLifetime(recycledLine) {
+        do {
             array.withUnsafeMutableBufferPointer { lines in
                 lines.withMemoryRebound(to: UnsafeMutableRawPointer?.self) { slots in
                     // Each line keeps one array reference. A raw store moves that
                     // reference to the preceding slot without ARC work.
                     var destination = (firstPhysicalIndex &+ top) % capacity
+                    // Take the top slot's array reference. It moves to the
+                    // last slot below, so no retain or release is needed.
+                    let recycledSlot = slots[destination]
                     if top < bottom {
                         let moveCount = bottom - top
                         if destination + moveCount < capacity {
@@ -572,22 +655,18 @@ internal final class CircularBufferLineList {
                         }
                     }
                     // The former last line is already in the preceding slot. Do
-                    // not release it when recycledLine moves into this slot.
-                    slots[destination] = Unmanaged.passUnretained(recycledLine).toOpaque()
+                    // not release it when the recycled line moves into this slot.
+                    slots[destination] = recycledSlot
                 }
             }
         }
 
-        recycledLine.recycle(with: clearCell, isWrapped: isWrapped,
-                             bidiState: bidiState)
-        if isLive {
-#if SWIFTTERM_EMBEDDED
-            owner?.lineWillRecycle(hadImages: hadImages)
-#else
-            owner.lineWillRecycle(hadImages: hadImages)
-#endif
+        // The former top row is now the bottom row. Clear it after the move,
+        // as before: clearing it first put its cell stores in front of the
+        // slot moves, and cycles then changed from run to run.
+        return withLine(bottom) { line in
+            line.recycle(with: clearCell, isWrapped: isWrapped, bidiState: bidiState)
         }
-        return true
     }
 
     /// Empties the ring in place and gives it `newMaxLength` slots.

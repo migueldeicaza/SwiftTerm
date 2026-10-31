@@ -1182,6 +1182,8 @@ final class EscapeSequenceParser {
             }
         }
 #endif
+        // One reference for the parse call. Print and line feed borrow it.
+        var activeBuffer = terminal._buffer
         var code : UInt8 = 0
         var transition : UInt8 = 0
         var error = false
@@ -1298,10 +1300,15 @@ final class EscapeSequenceParser {
                 print = (~print != 0) ? print : i
             case .execute:
                 if ~print != 0 {
-                    terminal.handlePrintBorrowed(data.extracting(print..<i))
+                    terminal.handlePrintBorrowed(data.extracting(print..<i), activeBuffer: &activeBuffer)
                     print = -1
                 }
-                dispatchExecute(code: code, terminal)
+                if code >= 10 && code <= 12 {
+                    // LF, VT, and FF are all a basic line feed.
+                    terminal.cmdLineFeedBasic(activeBuffer: &activeBuffer)
+                } else {
+                    dispatchExecute(code: code, terminal)
+                }
             case .ignore:
                 if currentState == ParserState.oscString.rawValue {
                     // Keep these bytes and count them towards the status
@@ -1313,7 +1320,7 @@ final class EscapeSequenceParser {
                 }
                 // handle leftover print or dcs chars
                 if ~print != 0 {
-                    terminal.handlePrintBorrowed(data.extracting(print..<i))
+                    terminal.handlePrintBorrowed(data.extracting(print..<i), activeBuffer: &activeBuffer)
                     print = -1
                 } else if ~dcs != 0 {
                     dcsHandler?.put(data: ownedSlice(dcs..<i))
@@ -1394,7 +1401,7 @@ final class EscapeSequenceParser {
                 collect.append (code)
             case .clear:
                 if ~print != 0 {
-                    terminal.handlePrintBorrowed(data.extracting(print..<i))
+                    terminal.handlePrintBorrowed(data.extracting(print..<i), activeBuffer: &activeBuffer)
                     print = -1
                 }
                 EscapeSequenceParser.resetOsc (&osc, &oscLimitExceeded)
@@ -1463,7 +1470,7 @@ final class EscapeSequenceParser {
                 terminal.printStateReset()
             case .oscStart:
                 if ~print != 0 {
-                    terminal.handlePrintBorrowed(data.extracting(print..<i))
+                    terminal.handlePrintBorrowed(data.extracting(print..<i), activeBuffer: &activeBuffer)
                     print = -1
                 }
                 let nextState = transition & 15
@@ -1544,7 +1551,7 @@ final class EscapeSequenceParser {
         }
         // push leftover pushable buffers to terminal
         if currentState == ParserState.ground.rawValue && (~print != 0) {
-            terminal.handlePrintBorrowed(data.extracting(print..<end))
+            terminal.handlePrintBorrowed(data.extracting(print..<end), activeBuffer: &activeBuffer)
         } else if currentState == ParserState.dcsPassthrough.rawValue && (~dcs != 0) && dcsHandler != nil {
             dcsHandler!.put(data: ownedSlice(dcs..<end))
         }

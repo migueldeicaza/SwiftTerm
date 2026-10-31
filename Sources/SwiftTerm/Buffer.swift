@@ -1831,11 +1831,15 @@ public final class Buffer {
             }
             let available = right - _x + 1
             let runLength = min(available, bytes.count - consumed)
-            let row = _lines[_y + _yBase]
-            clearTextOverwrittenImagesFromLine(row)
-            row.setPackedAsciiRun(bytes, sourceStart: consumed, count: runLength,
-                                  at: _x, styleID: styleID, payloadCode: payloadCode,
-                                  semanticContentCode: semanticCode)
+            // Borrow the line from its slot. The subscript copies the line
+            // and costs a retain and a release for each run.
+            let x = _x
+            _lines.withLine(_y + _yBase) { row in
+                clearTextOverwrittenImagesFromLine(row)
+                row.setPackedAsciiRun(bytes, sourceStart: consumed, count: runLength,
+                                      at: x, styleID: styleID, payloadCode: payloadCode,
+                                      semanticContentCode: semanticCode)
+            }
             _x += runLength
             consumed += runLength
         }
