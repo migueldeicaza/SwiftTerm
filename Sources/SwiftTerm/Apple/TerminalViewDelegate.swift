@@ -87,7 +87,8 @@ public protocol TerminalViewDelegate: AnyObject {
      * On macOS, the view checks terminal links before this call. It blocks unsafe
      * local files and asks for confirmation before custom URL schemes. The link
      * is an absolute URL; local paths are canonicalized. The default handler opens
-     * the checked URL through `NSWorkspace.shared.open`.
+     * the checked URL through `NSWorkspace.shared.open`. To receive the link before
+     * the check, implement ``openUncheckedLink(source:link:params:isExplicit:)``.
      * On iOS/visionOS, implement this method to decide how to handle navigation.
      * - Parameter source: the terminalview that called this method
      * - Parameter link: the string that was encoded as a link by the client application, typically a url,
@@ -96,6 +97,21 @@ public protocol TerminalViewDelegate: AnyObject {
      * key and value pairs that were provided
      */
     func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+
+    /**
+     * Offers the delegate a link the user activated before the view checks it, on macOS.
+     *
+     * Return `true` to take the link as the terminal output gave it: a relative path or a
+     * `path:line` suffix arrives unchanged, the view shows no alert, and it does not call
+     * ``requestOpenLink(source:link:params:)``. The delegate then decides what is safe to open.
+     * Return `false`, the default, to let the view check the link and pass the result to
+     * ``requestOpenLink(source:link:params:)``.
+     *
+     * Not called for an OSC 8 link while ``TerminalView/enableOsc8Hyperlinks`` is `false`.
+     * - Parameter isExplicit: `true` for an OSC 8 hyperlink, `false` for a URL or path the view
+     * detected in the output
+     */
+    func openUncheckedLink (source: TerminalView, link: String, params: [String:String], isExplicit: Bool) -> Bool
     
     /**
      * This method will be invoked when the host beeps.
@@ -190,6 +206,7 @@ public protocol TerminalViewDelegate: AnyObject {
 
 public extension TerminalViewDelegate {
     func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {}
+    func openUncheckedLink(source: TerminalView, link: String, params: [String:String], isExplicit: Bool) -> Bool { false }
 }
 #endif
 

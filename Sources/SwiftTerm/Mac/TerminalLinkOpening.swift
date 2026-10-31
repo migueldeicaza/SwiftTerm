@@ -129,13 +129,18 @@ extension TerminalView {
         return UntrustedTerminalLink(url.absoluteString)
     }
 
-    /// Checks the target before calling a host delegate, including custom delegates.
+    /// Checks the target before calling a host delegate, including custom delegates,
+    /// unless the delegate takes the unchecked link first.
     func activateLink(
         _ link: String,
         params: [String: String],
         isExplicit: Bool,
         presentAlert: @escaping TerminalLinkOpening.Presentation = TerminalLinkOpening.present
     ) {
+        if !isExplicit || enableOsc8Hyperlinks,
+           terminalDelegate?.openUncheckedLink(source: self, link: link, params: params, isExplicit: isExplicit) == true {
+            return
+        }
         let target = Self.defaultLinkTarget(link, isExplicit: isExplicit)
         TerminalLinkOpening.request(target, window: window, presentAlert: presentAlert) { [weak self] url in
             guard let self, !isExplicit || enableOsc8Hyperlinks else { return }
