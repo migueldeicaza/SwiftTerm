@@ -1939,7 +1939,9 @@ open class Terminal {
         if charset == nil && readingBuffer.putbackBuffer.isEmpty {
             let end = ByteRunScanner.firstNonASCIIByte(in: pending, from: pending.startIndex)
             if end > pending.startIndex {
-                updateRange(borrowing: buffer, buffer.y)
+                let startY = buffer.y
+                let startYDisp = buffer._yDisp
+                updateRange(borrowing: buffer, startY)
                 let consumed = buffer.insertAsciiRun(pending[pending.startIndex..<end],
                                                      styleID: curStyleID,
                                                      payloadCode: resolveActiveHyperlinkPayloadCode())
@@ -1947,7 +1949,11 @@ open class Terminal {
                     cursorStartsNewGrapheme = false
                     previousScalar = UnicodeUtil.graphemeNeutralScalar
                 }
-                updateRange(borrowing: buffer, buffer.y)
+                // With the same row and viewport, the call above already
+                // marked this row. Only a wrap or a scroll needs a second call.
+                if buffer.y != startY || buffer._yDisp != startYDisp {
+                    updateRange(borrowing: buffer, buffer.y)
+                }
                 // A short consume means insertMode or character protection is
                 // active; the per-character path picks up the rest.
                 pending = pending[(pending.startIndex + consumed)...]
@@ -1992,7 +1998,9 @@ open class Terminal {
         if charset == nil && readingBuffer.putbackBuffer.isEmpty {
             let end = ByteRunScanner.firstNonASCIIByte(in: data, from: pendingStart)
             if end > pendingStart {
-                updateRange(borrowing: buffer, buffer.y)
+                let startY = buffer.y
+                let startYDisp = buffer._yDisp
+                updateRange(borrowing: buffer, startY)
                 let consumed = buffer.insertAsciiRun(
                     data.extracting(pendingStart..<end), styleID: curStyleID,
                     payloadCode: resolveActiveHyperlinkPayloadCode())
@@ -2000,7 +2008,10 @@ open class Terminal {
                     cursorStartsNewGrapheme = false
                     previousScalar = UnicodeUtil.graphemeNeutralScalar
                 }
-                updateRange(borrowing: buffer, buffer.y)
+                // See handlePrint: only a wrap or a scroll needs a second call.
+                if buffer.y != startY || buffer._yDisp != startYDisp {
+                    updateRange(borrowing: buffer, buffer.y)
+                }
                 pendingStart += consumed
                 if pendingStart == data.count {
                     return
