@@ -495,7 +495,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var markedSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
     private var markedTextOverlay: DictationOverlayTextView?
     private var progressBarView: TerminalProgressBarView?
-    private var progressReportTimer: Timer?
+    private(set) var progressReportTimer: Timer?
+    var schedulesProgressReportTimer = true
     private enum UIShutdownState {
         case active
         case stopping
@@ -1211,11 +1212,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         progressReportTimer?.invalidate()
         progressReportTimer = nil
         guard let progressReportTimeout else { return }
-        progressReportTimer = Timer.scheduledTimer(withTimeInterval: progressReportTimeout, repeats: false) { [weak self] _ in
+        let timer = Timer(timeInterval: progressReportTimeout, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.clearProgressReport()
             }
         }
+        if schedulesProgressReportTimer {
+            RunLoop.current.add(timer, forMode: .default)
+        }
+        progressReportTimer = timer
     }
 
     @MainActor
