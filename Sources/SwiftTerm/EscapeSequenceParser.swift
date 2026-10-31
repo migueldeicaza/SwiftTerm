@@ -1263,9 +1263,8 @@ final class EscapeSequenceParser {
                 i += 1
             }
         }
-        var input = data.extracting(droppingFirst: i)
-        while !input.isEmpty {
-            code = input[0]
+        while i < end {
+            code = data[i]
 
             // 1f..80 are printable ascii characters
             // c2..f3 are valid utf8 beginning of sequence elements, and most importantly,
@@ -1275,9 +1274,7 @@ final class EscapeSequenceParser {
             // we are in the middle of things (force a small reading buffer to see more easily)
             if currentState == ParserState.ground.rawValue && code > 0x1f  { // }(code > 0x1f && code < 0x80 || (code > 0xc2 && code < 0xf3)) {
                 print = (~print != 0) ? print : i
-                let next = ByteRunScanner.firstC0Byte(in: data, from: i)
-                input = input.extracting(droppingFirst: next - i)
-                i = next
+                i = ByteRunScanner.firstC0Byte(in: data, from: i + 1)
                 continue;
             }
             
@@ -1286,7 +1283,6 @@ final class EscapeSequenceParser {
                 if !parameterLimitExceeded {
                     pars.accumulateDigit(code)
                 }
-                input = input.extracting(droppingFirst: 1)
                 i += 1
                 continue
             }
@@ -1546,7 +1542,6 @@ final class EscapeSequenceParser {
                 break
             }
             currentState = transition & 15
-            input = input.extracting(droppingFirst: consumed)
             i += consumed
         }
         // push leftover pushable buffers to terminal

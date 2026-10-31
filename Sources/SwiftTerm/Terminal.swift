@@ -2845,6 +2845,11 @@ open class Terminal {
     /// after submission. The user's submission (R4) normally precedes the
     /// pty's echoed CRLF, so echoed-Enter and pre-`C` output rows (PS0, DEBUG
     /// traps) land in the `.submitted` state and are never stamped.
+    ///
+    /// Each line feed calls this. Keep the two guards inline: as one function,
+    /// the compiler saves six register pairs before the first guard, and the
+    /// common case returns without work.
+    @inline(__always)
     private func finishSemanticLineAdvance(buffer: borrowing Buffer, movedToNextLine: Bool) {
         guard movedToNextLine else { return }
         // E.4 / R1: stamp only, never write nil. An LF while submitted must not
@@ -2855,6 +2860,11 @@ open class Terminal {
         case .prompt, .armed: break
         case .idle, .submitted: return
         }
+        stampSemanticContinuation(buffer: buffer)
+    }
+
+    @inline(never)
+    private func stampSemanticContinuation(buffer: borrowing Buffer) {
         let row = buffer.yBase + buffer.y
         guard row >= 0, row < buffer.lines.count else { return }
         let line = buffer.lines[row]
