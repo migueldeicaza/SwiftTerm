@@ -1971,6 +1971,19 @@ open class Terminal {
         handlePrintBorrowed(data, buffer: _buffer)
     }
 
+    /// Prints with the parser's local copy of the active buffer.
+    ///
+    /// A load of the stored `_buffer` property costs a retain for each call,
+    /// because the callee could replace it. The parser keeps one reference for
+    /// the whole parse call and lends it here. The identity check picks up a
+    /// buffer switch from an earlier sequence.
+    @inline(__always)
+    final func handlePrintBorrowed(_ data: Span<UInt8>, activeBuffer: inout Buffer)
+    {
+        if _buffer !== activeBuffer { activeBuffer = _buffer }
+        handlePrintBorrowed(data, buffer: activeBuffer)
+    }
+
     private func handlePrintBorrowed(_ data: Span<UInt8>, buffer: borrowing Buffer)
     {
         var pendingStart = 0
@@ -2761,6 +2774,15 @@ open class Terminal {
         // Start the borrow from the stored property. The public `buffer`
         // getter returns an owned reference and adds ARC work to each line feed.
         cmdLineFeedBasic(buffer: _buffer)
+    }
+
+    /// Line feed with the parser's local copy of the active buffer. See
+    /// `handlePrintBorrowed(_:activeBuffer:)`.
+    @inline(__always)
+    final func cmdLineFeedBasic (activeBuffer: inout Buffer)
+    {
+        if _buffer !== activeBuffer { activeBuffer = _buffer }
+        cmdLineFeedBasic(buffer: activeBuffer)
     }
 
     private func cmdLineFeedBasic (buffer: borrowing Buffer)
@@ -8445,7 +8467,7 @@ open class Terminal {
             let newLineState = isWrapped
                 ? lines[lines.count - 1].bidiState
                 : currentBidiState
-            lines.recycle(clearCell: currentEraseBlankCell,
+            lines.recycle(owner: buffer, clearCell: currentEraseBlankCell,
                           isWrapped: isWrapped,
                           bidiState: newLineState)
             buffer.linesTop += 1
@@ -8554,7 +8576,7 @@ open class Terminal {
             // Insert the line using the fastest method
             if bottomRow == lines.count - 1 {
                 if willBufferBeTrimmed {
-                    lines.recycle(clearCell: eraseBlank, isWrapped: isWrapped,
+                    lines.recycle(owner: buffer, clearCell: eraseBlank, isWrapped: isWrapped,
                                   bidiState: newLineState)
                 } else {
                     lines.push(buffer.getBlankLine(packedBlank: eraseBlank,
@@ -8604,7 +8626,7 @@ open class Terminal {
                 return
             }
 
-            if !lines.shiftUpAndRecycle(top: topRow, bottom: bottomRow,
+            if !lines.shiftUpAndRecycle(owner: buffer, top: topRow, bottom: bottomRow,
                                         clearCell: eraseBlank,
                                         isWrapped: isWrapped,
                                         bidiState: newLineState) {
@@ -8667,7 +8689,7 @@ open class Terminal {
         let newLineState = isWrapped
             ? lines[bottomRow].bidiState
             : _currentBidiState
-        if !lines.shiftUpAndRecycle(top: topRow, bottom: bottomRow,
+        if !lines.shiftUpAndRecycle(owner: buffer, top: topRow, bottom: bottomRow,
                                     clearCell: currentEraseBlankCell,
                                     isWrapped: isWrapped,
                                     bidiState: newLineState) {
