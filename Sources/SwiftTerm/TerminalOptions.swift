@@ -119,7 +119,27 @@ public struct KittyGraphicsConfiguration: Sendable, Equatable {
     /// A trusted directory for `t=t` temporary files.
     ///
     /// Temporary-file transmission is rejected when this value is `nil`.
-    public var trustedTemporaryDirectory: TerminalTemporaryDirectory?
+    public var trustedTemporaryDirectory: TerminalTemporaryDirectory? {
+        get { trustedTemporaryDirectoryBox?.value }
+        set { trustedTemporaryDirectoryBox = newValue.map(TemporaryDirectoryBox.init) }
+    }
+
+    /// `URL` is a resilient Foundation type, so its size is known only at run
+    /// time. Stored inline, it gives this struct, `TerminalOptions`, and
+    /// `Terminal` a run-time layout, and each `Terminal` field read after
+    /// `_options` must first load its offset. A reference has a fixed size.
+    private var trustedTemporaryDirectoryBox: TemporaryDirectoryBox?
+
+    private final class TemporaryDirectoryBox: Sendable {
+        let value: TerminalTemporaryDirectory
+        init(_ value: TerminalTemporaryDirectory) { self.value = value }
+    }
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.storageLimitBytesPerScreen == rhs.storageLimitBytesPerScreen
+            && lhs.localMediaPolicy == rhs.localMediaPolicy
+            && lhs.trustedTemporaryDirectory == rhs.trustedTemporaryDirectory
+    }
 
     /// Creates a Kitty graphics configuration.
     ///
