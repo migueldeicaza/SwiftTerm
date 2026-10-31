@@ -586,6 +586,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// Resets a line object for reuse. This is one logical mutation, so it
     /// bypasses the individual metadata setters and changes `generation` once.
     @discardableResult
+    @inline(__always)
     func recycle(with empty: PackedCell, isWrapped: Bool,
                  bidiState: BidiPresentationState) -> Bool {
         let hadImages = imagesValue != nil
