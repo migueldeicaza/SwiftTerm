@@ -614,9 +614,9 @@ internal final class CircularBufferLineList {
         let firstPhysicalIndex = startIndex
         let capacity = array.count
 
-        do {
-            array.withUnsafeMutableBufferPointer { lines in
-                lines.withMemoryRebound(to: UnsafeMutableRawPointer?.self) { slots in
+        let hadImages: Bool? = array.withUnsafeMutableBufferPointer { lines in
+            let bottomSlot = lines.withMemoryRebound(to: UnsafeMutableRawPointer?.self) {
+                slots -> Int in
                     // Each line keeps one array reference. A raw store moves that
                     // reference to the preceding slot without ARC work.
                     var destination = (firstPhysicalIndex &+ top) % capacity
@@ -657,13 +657,24 @@ internal final class CircularBufferLineList {
                     // The former last line is already in the preceding slot. Do
                     // not release it when the recycled line moves into this slot.
                     slots[destination] = recycledSlot
+                    return destination
                 }
+            // The former top row is now the bottom row. Clear it after the
+            // move, as before: clearing it first put its cell stores in front
+            // of the slot moves, and cycles then changed from run to run.
+            //
+            // Borrow the slot through the buffer pointer. A borrow of
+            // `array[i]` checks that the array is unique on each call.
+            guard lines[bottomSlot] != nil else { return nil }
+            return Self.borrowSlot(&lines[bottomSlot]) { line in
+                line.recycle(with: clearCell, isWrapped: isWrapped, bidiState: bidiState)
             }
         }
+        if let hadImages {
+            return hadImages
+        }
 
-        // The former top row is now the bottom row. Clear it after the move,
-        // as before: clearing it first put its cell stores in front of the
-        // slot moves, and cycles then changed from run to run.
+        // The recycled row was never created. `withLine` creates it.
         return withLine(bottom) { line in
             line.recycle(with: clearCell, isWrapped: isWrapped, bidiState: bidiState)
         }
