@@ -1195,6 +1195,7 @@ open class Terminal {
         setupTabStops()
 
         setup()
+        lineChanges.record(_buffer, rows: _rows)
     }
 
     deinit {
@@ -1939,20 +1940,14 @@ open class Terminal {
         if charset == nil && readingBuffer.putbackBuffer.isEmpty {
             let end = ByteRunScanner.firstNonASCIIByte(in: pending, from: pending.startIndex)
             if end > pending.startIndex {
-                let startY = buffer.y
-                let startYDisp = buffer._yDisp
-                updateRange(borrowing: buffer, startY)
+                // No updateRange call: getUpdateRange finds the row from
+                // its line generation.
                 let consumed = buffer.insertAsciiRun(pending[pending.startIndex..<end],
                                                      styleID: curStyleID,
                                                      payloadCode: resolveActiveHyperlinkPayloadCode())
                 if consumed > 0 {
                     cursorStartsNewGrapheme = false
                     previousScalar = UnicodeUtil.graphemeNeutralScalar
-                }
-                // With the same row and viewport, the call above already
-                // marked this row. Only a wrap or a scroll needs a second call.
-                if buffer.y != startY || buffer._yDisp != startYDisp {
-                    updateRange(borrowing: buffer, buffer.y)
                 }
                 // A short consume means insertMode or character protection is
                 // active; the per-character path picks up the rest.
@@ -1998,19 +1993,13 @@ open class Terminal {
         if charset == nil && readingBuffer.putbackBuffer.isEmpty {
             let end = ByteRunScanner.firstNonASCIIByte(in: data, from: pendingStart)
             if end > pendingStart {
-                let startY = buffer.y
-                let startYDisp = buffer._yDisp
-                updateRange(borrowing: buffer, startY)
+                // See handlePrint: no updateRange call.
                 let consumed = buffer.insertAsciiRun(
                     data.extracting(pendingStart..<end), styleID: curStyleID,
                     payloadCode: resolveActiveHyperlinkPayloadCode())
                 if consumed > 0 {
                     cursorStartsNewGrapheme = false
                     previousScalar = UnicodeUtil.graphemeNeutralScalar
-                }
-                // See handlePrint: only a wrap or a scroll needs a second call.
-                if buffer.y != startY || buffer._yDisp != startYDisp {
-                    updateRange(borrowing: buffer, buffer.y)
                 }
                 pendingStart += consumed
                 if pendingStart == data.count {
@@ -8242,12 +8231,18 @@ open class Terminal {
      */
     public func getUpdateRange () -> (startY: Int, endY: Int)?
     {
-        if refreshEnd == -1 && refreshStart == Int.max {
-            //print ("Emtpy update range")
+        // The print and scroll paths do not mark their rows. The tracker
+        // finds them from the line generations and identities.
+        var start = refreshStart
+        var end = refreshEnd
+        if let changed = lineChanges.changedScreenRows(buffer, rows: rows) {
+            start = min(start, changed.startY)
+            end = max(end, changed.endY)
+        }
+        if end == -1 && start == Int.max {
             return nil
         }
-        //print ("Update: \(refreshStart) \(refreshEnd)")
-        return (refreshStart, refreshEnd)
+        return (start, end)
     }
 
     /**
@@ -8289,15 +8284,25 @@ open class Terminal {
      *
      * This is different from getUpdateRange() in that lines are from start of scroll back,
      * not what the terminal has visible right now.
+     *
+     * A row is in the range when its buffer row shows a different or changed
+     * line. A scroll that adds a line to the scrollback does not change the
+     * rows above the new line. A scroll in a scroll region, or a scroll that
+     * drops the first line of a full scrollback, moves the lines to different
+     * buffer rows, so these rows are in the range.
      */
     public func getScrollInvariantUpdateRange () -> (startY: Int, endY: Int)?
     {
-        if scrollInvariantRefreshEnd == -1 && scrollInvariantRefreshStart == Int.max {
-            //print ("Emtpy update range")
+        var start = scrollInvariantRefreshStart
+        var end = scrollInvariantRefreshEnd
+        if let changed = lineChanges.changedBufferRows(buffer, rows: rows) {
+            start = min(start, changed.startY)
+            end = max(end, changed.endY)
+        }
+        if end == -1 && start == Int.max {
             return nil
         }
-        //print ("Update: \(scrollInvariantRefreshStart) \(scrollInvariantRefreshEnd)")
-        return (scrollInvariantRefreshStart, scrollInvariantRefreshEnd)
+        return (start, end)
     }
     
     /**
@@ -8310,6 +8315,7 @@ open class Terminal {
         
         scrollInvariantRefreshStart = Int.max
         scrollInvariantRefreshEnd = -1
+        lineChanges.record(buffer, rows: rows)
     }
     
     /**
@@ -8679,15 +8685,8 @@ open class Terminal {
         }
 
         //buffer.dump ()
-        // A partial or non-blittable region needs ordinary dirty tracking.
-        // That tracking also includes the refresh range, so do not register
-        // the same endpoints first as scrolling-only updates.
-        if scrollTop != 0 || scrollBottom != _rows - 1 || !hasScrollback {
-            updateRange(borrowing: buffer, startLine: scrollTop, endLine: scrollBottom)
-        } else {
-            updateRange(borrowing: buffer, scrollTop, scrolling: true)
-            updateRange(borrowing: buffer, scrollBottom, scrolling: true)
-        }
+        // No updateRange call: the scroll moves other lines to the screen
+        // rows, and getUpdateRange finds these rows from the line identities.
 
         /**
          * This event is emitted whenever the terminal is scrolled.
@@ -8717,7 +8716,7 @@ open class Terminal {
             print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
         }
         buffer.yDisp = buffer.yBase
-        updateRange(borrowing: buffer, startLine: scrollTop, endLine: scrollBottom)
+        // See scroll: getUpdateRange finds the moved rows.
         recordScrollNotification()
     }
 
@@ -10414,6 +10413,11 @@ open class Terminal {
 
     /// The last complete pixel layout committed by the host. RIS preserves this value.
     public private(set) var pixelGeometry: TerminalPixelGeometry?
+
+    /// The screen rows at the last `clearUpdateRange()`. The update ranges
+    /// add the rows that changed after that call. This field is the last
+    /// one, so it does not move the offsets of the hot fields.
+    private let lineChanges = LineChangeTracker()
 
 #if !SWIFTTERM_EMBEDDED
     private var kittyClipboardProtocol: KittyClipboardProtocol?
