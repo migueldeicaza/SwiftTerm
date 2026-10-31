@@ -222,6 +222,22 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    /**
+     * Whether a one-finger drag scrolls a full-screen application: wheel reports while it tracks
+     * the mouse, or cursor keys in an alternate screen with Alternate Scroll Mode. While it does,
+     * local scrollback takes two fingers.
+     *
+     * Set this to `false` when the host handles one-finger drags itself. The drag then reaches
+     * UIKit's scroll view as for any scroll view, and mouse reporting for taps and clicks is
+     * unaffected (that is ``allowMouseReporting``).
+     */
+    public var allowProgramScrollGesture: Bool = true {
+        didSet {
+            guard allowProgramScrollGesture != oldValue, terminal != nil else { return }
+            refreshProgramScrollGesture()
+        }
+    }
+
     /// Controls how link tracking resolves hovered links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
     public var linkReporting: LinkReporting = .implicit
@@ -3806,7 +3822,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 mouseTracking: (mouseMode ?? terminal.mouseMode) != .off,
                 alternateBuffer: terminal.isDisplayBufferAlternate)
         }
-        if capturesProgramScroll {
+        if capturesProgramScroll && allowProgramScrollGesture {
             enableMousePanGesture()
         } else {
             disableMousePanGesture()
