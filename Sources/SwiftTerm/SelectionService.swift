@@ -21,8 +21,13 @@ public class SelectionService: CustomDebugStringConvertible {
     var terminal: Terminal
 
     struct SelectedContentSnapshot {
-        struct Row: Equatable {
-            let cells: [PackedCell]
+        struct Row {
+            let line: BufferLine
+            let contentGeneration: UInt64
+            let columns: Range<Int>
+            /// Keep cells for screen rows and partial history rows. A change
+            /// outside a partial selection must not clear that selection.
+            let cells: [PackedCell]?
             let isWrapped: Bool
             let bidiState: BidiPresentationState
         }
@@ -178,8 +183,27 @@ public class SelectionService: CustomDebugStringConvertible {
             return nil
         }
         let buffer = terminal.displayBuffer
-        guard let rows = selectedContentRows (in: buffer) else {
+        let firstRow = min (start.row, end.row)
+        let lastRow = max (start.row, end.row)
+        guard firstRow >= 0, lastRow < buffer.lines.count else {
             return nil
+        }
+
+        var rows: [SelectedContentSnapshot.Row] = []
+        rows.reserveCapacity (lastRow - firstRow + 1)
+        for row in firstRow...lastRow {
+            let line = buffer.lines [row]
+            guard let columns = selectedColumnsRange (row: row, cols: line.count) else {
+                continue
+            }
+            rows.append (SelectedContentSnapshot.Row (
+                line: line,
+                contentGeneration: line.contentGeneration,
+                columns: columns,
+                cells: row >= buffer.yBase || columns != 0..<line.count
+                    ? columns.map { line.packedCell (at: $0) } : nil,
+                isWrapped: line.isWrapped,
+                bidiState: line.bidiState))
         }
         return SelectedContentSnapshot (buffer: buffer, rows: rows)
     }
@@ -191,38 +215,61 @@ public class SelectionService: CustomDebugStringConvertible {
             return
         }
         let buffer = terminal.displayBuffer
-        guard buffer === snapshot.buffer,
-              selectedContentRows (in: buffer) == snapshot.rows else {
+        guard buffer === snapshot.buffer, selectedContentIsUnchanged (since: snapshot.rows, in: buffer) else {
             selectNone ()
             return
         }
     }
 
-    private func selectedContentRows (in buffer: Buffer) -> [SelectedContentSnapshot.Row]?
+    /// Whether the selected rows hold what they held at the snapshot. A row
+    /// whose line and content generation are the same is unchanged; any
+    /// other compares its cells, kept for screen rows and partial history rows.
+    private func selectedContentIsUnchanged (since rows: [SelectedContentSnapshot.Row], in buffer: Buffer) -> Bool
     {
         let firstRow = min (start.row, end.row)
         let lastRow = max (start.row, end.row)
         guard firstRow >= 0, lastRow < buffer.lines.count else {
-            return nil
+            return false
         }
 
-        var result: [SelectedContentSnapshot.Row] = []
-        result.reserveCapacity (lastRow - firstRow + 1)
+        var index = 0
         for row in firstRow...lastRow {
             let line = buffer.lines [row]
             guard let columns = selectedColumnsRange (row: row, cols: line.count) else {
                 continue
             }
-            let cells = columns.map { line.packedCell (at: $0) }
-            result.append (SelectedContentSnapshot.Row (
-                cells: cells,
-                isWrapped: line.isWrapped,
-                bidiState: line.bidiState))
+            guard index < rows.count, rows [index].columns == columns else {
+                return false
+            }
+            let before = rows [index]
+            index += 1
+            if line === before.line && line.contentGeneration == before.contentGeneration {
+                continue
+            }
+            guard let cells = before.cells, line.isWrapped == before.isWrapped,
+                  line.bidiState == before.bidiState,
+                  zip (columns, cells).allSatisfy ({ line.packedCell (at: $0) == $1 }) else {
+                return false
+            }
         }
-        return result
+        return index == rows.count
     }
 
     func selectedColumnsRange (row: Int, cols: Int) -> Range<Int>?
+    {
+        SelectionService.selectedColumns (row: row, cols: cols, start: start, end: end,
+                                          block: isBlock, exclusiveEnd: exclusiveEnd)
+    }
+
+    /// The columns a selection covers on one row, or nil when it covers none.
+    /// Both renderers and the portable spans get their columns here.
+    ///
+    /// A stream runs from `start` to `end` in reading order. A block covers
+    /// the same columns, between the two points, on every row between them.
+    /// Unless `exclusiveEnd` is set, an end in the last column includes that
+    /// column, since the pointer can't go past it.
+    static func selectedColumns (row: Int, cols: Int, start: Position, end: Position,
+                                 block: Bool, exclusiveEnd: Bool) -> Range<Int>?
     {
         let firstRow = min (start.row, end.row)
         let lastRow = max (start.row, end.row)
@@ -232,7 +279,14 @@ public class SelectionService: CustomDebugStringConvertible {
 
         let lowerColumn: Int
         let upperColumn: Int
-        if start.row == end.row, row == start.row {
+        if block {
+            guard start.col != end.col else {
+                return nil
+            }
+            let right = max (start.col, end.col)
+            lowerColumn = min (start.col, end.col)
+            upperColumn = right + (!exclusiveEnd && right == cols - 1 ? 1 : 0)
+        } else if start.row == end.row, row == start.row {
             if start.col < end.col {
                 lowerColumn = start.col
                 upperColumn = end.col + (!exclusiveEnd && end.col == cols - 1 ? 1 : 0)
@@ -360,7 +414,13 @@ public class SelectionService: CustomDebugStringConvertible {
     public var isMultiLine: Bool {
         return start.row != end.row
     }
-    
+
+    /// Whether the selection is a block: the columns between `start` and
+    /// `end`, on every row between them. Otherwise it runs from `start` to
+    /// `end` in reading order. ``startBlockSelection(bufferPosition:)`` makes
+    /// a block; every other way of starting a selection makes a stream.
+    public private(set) var isBlock: Bool = false
+
     /**
      * Starts the selection from the specific screen-relative location
      */
@@ -371,6 +431,24 @@ public class SelectionService: CustomDebugStringConvertible {
         selectionMode = .character
         wordSelectionAnchor = nil
         rowSelectionAnchor = nil
+        isBlock = false
+        setActiveAndNotify()
+    }
+
+    /// Starts a block selection at a buffer position. A drag from here
+    /// selects the columns between this point and the pointer, on every row
+    /// between them, as an Option-drag does in Terminal.app.
+    public func startBlockSelection (bufferPosition: Position)
+    {
+        let point = clamp (terminal.displayBuffer, bufferPosition)
+        start = point
+        end = point
+        pivot = nil
+        selectingRows = false
+        selectionMode = .character
+        wordSelectionAnchor = nil
+        rowSelectionAnchor = nil
+        isBlock = true
         setActiveAndNotify()
     }
         
@@ -389,10 +467,16 @@ public class SelectionService: CustomDebugStringConvertible {
         
         self.start = sclamped
         self.end = eclamped
-        
+        pivot = nil
+        selectingRows = false
+        selectionMode = .character
+        wordSelectionAnchor = nil
+        rowSelectionAnchor = nil
+        isBlock = false
+
         setActiveAndNotify()
     }
-    
+
     /**
      * Starts selection, the range is determined by the last start position
      */
@@ -403,6 +487,7 @@ public class SelectionService: CustomDebugStringConvertible {
         selectionMode = .character
         wordSelectionAnchor = nil
         rowSelectionAnchor = nil
+        isBlock = false
         setActiveAndNotify()
     }
     
@@ -457,6 +542,18 @@ public class SelectionService: CustomDebugStringConvertible {
      * The bufferPosition is buffer-relative
      */
     public func shiftExtend (bufferPosition newEnd: Position) {
+        if isBlock {
+            // The block keeps the corner farthest from the click, so the
+            // edges nearest the click move to it and the block stays a block.
+            let point = clamp (terminal.displayBuffer, newEnd)
+            let top = min (start.row, end.row), bottom = max (start.row, end.row)
+            let left = min (start.col, end.col), right = max (start.col, end.col)
+            start = Position (col: abs (point.col - left) >= abs (point.col - right) ? left : right,
+                              row: abs (point.row - top) >= abs (point.row - bottom) ? top : bottom)
+            end = point
+            setActiveAndNotify()
+            return
+        }
         if selectionMode == .row {
             extendRowSelection(through: newEnd.row)
             setActiveAndNotify()
@@ -558,6 +655,11 @@ public class SelectionService: CustomDebugStringConvertible {
      * The position is in buffer coordinates
      */
     public func dragExtend (bufferPosition: Position) {
+        if isBlock {
+            end = clamp (terminal.displayBuffer, bufferPosition)
+            setActiveAndNotify()
+            return
+        }
         if selectionMode == .row {
             extendRowSelection(through: bufferPosition.row)
             setActiveAndNotify()
@@ -607,6 +709,7 @@ public class SelectionService: CustomDebugStringConvertible {
         wordSelectionAnchor = nil
         rowSelectionAnchor = nil
         pivot = nil
+        isBlock = false
         start = Position(col: 0, row: 0)
         end = Position(col: exclusiveEnd ? terminal.cols : terminal.cols - 1,
                        row: terminal.displayBuffer.lines.count - 1)
@@ -624,17 +727,17 @@ public class SelectionService: CustomDebugStringConvertible {
     
     public var selectionMode: SelectionMode = .character
     
-    /**
-     * Selectss the specified row and triggers the selection
-     */
+    /// Selects the logical line through a buffer row: that row and the rows
+    /// soft-wrapped onto it, as a triple-click does. A drag from here selects
+    /// whole logical lines.
     public func select(row: Int)
     {
-        start = Position(col: 0, row: row)
-        end = Position(col: exclusiveEnd ? terminal.cols : terminal.cols - 1, row: row)
         selectingRows = true
         selectionMode = .row
         wordSelectionAnchor = nil
         rowSelectionAnchor = row
+        isBlock = false
+        setRowSelection(from: row, through: row)
         setActiveAndNotify()
     }
 
@@ -643,8 +746,28 @@ public class SelectionService: CustomDebugStringConvertible {
     }
 
     private func setRowSelection(from anchorRow: Int, through targetRow: Int) {
-        start = Position(col: 0, row: min(anchorRow, targetRow))
-        end = Position(col: exclusiveEnd ? terminal.cols : terminal.cols - 1, row: max(anchorRow, targetRow))
+        let first = logicalLineRows(through: min(anchorRow, targetRow)).lowerBound
+        let last = logicalLineRows(through: max(anchorRow, targetRow)).upperBound
+        start = Position(col: 0, row: first)
+        end = Position(col: exclusiveEnd ? terminal.cols : terminal.cols - 1, row: last)
+    }
+
+    /// The rows of the logical line through a buffer row: the row and the
+    /// rows soft-wrapped onto it.
+    func logicalLineRows(through row: Int) -> ClosedRange<Int> {
+        let lines = terminal.displayBuffer.lines
+        guard row >= 0, row < lines.count else {
+            return row...row
+        }
+        var first = row
+        while first > 0, lines [first].isWrapped {
+            first -= 1
+        }
+        var last = row
+        while last + 1 < lines.count, lines [last + 1].isWrapped {
+            last += 1
+        }
+        return first...last
     }
 
     private func character (at position: Position, in buffer: Buffer) -> Character
@@ -815,8 +938,17 @@ public class SelectionService: CustomDebugStringConvertible {
         return result
     }
     /**
-     * Implements the behavior to select the word at the specified position or an expression
-     * which is a balanced set parenthesis, braces or brackets
+     * Selects what a double-click at the position means, on its logical line
+     * (the row and the rows soft-wrapped onto it):
+     *
+     * - a URL (`scheme://…` or `www.…`), without trailing punctuation such as
+     *   `.,;:)` unless a bracket inside it balances it;
+     * - a file path: absolute, `~/`, `./`, `../`, or any word of path
+     *   characters with a `/` in it, with a `:line` or `:line:col` after it;
+     * - on a quote (`"`, `'` or `` ` ``), the quoted string through its
+     *   matching quote, quotes included;
+     * - on `(`, `[` or `{` and their closers, the balanced expression;
+     * - otherwise the word, the run of spaces, or the one character.
      */
     public func selectWordOrExpression (at uncheckedPosition: Position, in buffer: Buffer)
     {
@@ -825,6 +957,24 @@ public class SelectionService: CustomDebugStringConvertible {
 //            row: max (min (uncheckedPosition.row, buffer.rows-1+buffer.yDisp), buffer.yDisp))
         let position = Position (col: min(terminal.cols - 1, max(uncheckedPosition.col, 0)),
                                  row: min(buffer.lines.count - 1, max(uncheckedPosition.row, 0)))
+        isBlock = false
+        if let range = smartWordRange (at: position, in: buffer) {
+            start = range.start
+            end = range.end
+        } else {
+            selectPlainWordOrExpression (at: position, in: buffer)
+        }
+        selectionMode = .word
+        wordSelectionAnchor = (start, end)
+        rowSelectionAnchor = nil
+        selectingRows = false
+        setActiveAndNotify()
+    }
+
+    /// The word rules from before URLs, paths and quotes: a word, a run of
+    /// spaces, or a balanced expression.
+    private func selectPlainWordOrExpression (at position: Position, in buffer: Buffer)
+    {
         switch character (at: position, in: buffer) {
         case Character(UnicodeScalar(0)):
             simpleScanSelection (from: position, in: buffer) { ch in ch == nullChar }
@@ -850,11 +1000,6 @@ public class SelectionService: CustomDebugStringConvertible {
             start = position
             end = position
         }
-        selectionMode = .word
-        wordSelectionAnchor = (start, end)
-        rowSelectionAnchor = nil
-        selectingRows = false
-        setActiveAndNotify()
     }
 
     /// Returns the word at a buffer-relative position without changing the
@@ -903,17 +1048,62 @@ public class SelectionService: CustomDebugStringConvertible {
             wordSelectionAnchor = nil
             rowSelectionAnchor = nil
             selectingRows = false
+            isBlock = false
         }
     }
-    
+
+    /// The selected text. A stream comes out as it reads, with soft-wrapped
+    /// rows joined. A block gives each row's part, trailing spaces trimmed,
+    /// joined by "\n".
     public func getSelectedText () -> String {
-        let (min, max) = if Position.compare(start, end) == .before {
+        if isBlock {
+            return blockText ()
+        }
+        var (min, max) = if Position.compare(start, end) == .before {
             (start, end)
         } else {
             (end, start)
         }
+        // A row selection ends in the last column and covers it, so a full
+        // last row is copied whole.
+        if selectionMode == .row {
+            max.col = terminal.cols
+        }
         let r = terminal.getDisplayText(start: min, end: max)
         return r
+    }
+
+    private func blockText () -> String {
+        let buffer = terminal.displayBuffer
+        let firstRow = Swift.max (0, Swift.min (start.row, end.row))
+        let lastRow = Swift.min (buffer.lines.count - 1, Swift.max (start.row, end.row))
+        guard firstRow <= lastRow,
+              let columns = selectedColumnsRange (row: firstRow, cols: terminal.cols) else {
+            return ""
+        }
+        var rows: [String] = []
+        for row in firstRow...lastRow {
+            let line = buffer.lines [row]
+            var lower = columns.lowerBound
+            var upper = Swift.min (columns.upperBound, line.count)
+            // A wide character cut by an edge is drawn selected, so it is
+            // copied whole.
+            if lower > 0, lower < line.count,
+               line.packedWidth (at: lower) == 0, line.packedWidth (at: lower - 1) == 2 {
+                lower -= 1
+            }
+            if upper > 0, upper < line.count, line.packedWidth (at: upper - 1) == 2 {
+                upper += 1
+            }
+            var text = lower < upper
+                ? terminal.translateBufferLineToString (buffer: buffer, line: row, start: lower, end: upper)
+                : ""
+            while text.last == " " {
+                text.removeLast ()
+            }
+            rows.append (text)
+        }
+        return rows.joined (separator: "\n")
     }
     
     public var debugDescription: String {
@@ -997,5 +1187,282 @@ extension SelectionService {
            buffer.getChar(atBufferRelative: Position(col: end.col - 1, row: end.row)).width == 2 {
             end.col += 1
         }
+    }
+}
+
+// MARK: Smart double-click
+
+extension SelectionService {
+    /// How many rows above and below the clicked row a double-click reads
+    /// along a soft-wrapped line. A URL or path longer than this is cut.
+    static let smartSelectionRowLimit = 100
+
+    /// One character of a logical line and where it sits.
+    private struct LineCell {
+        let character: Character
+        let row: Int
+        let col: Int
+        let width: Int
+    }
+
+    /// The URL, path or quoted string a double-click at `position` selects,
+    /// as a stream from `start` to an exclusive `end`. Nil when the click
+    /// is on none of them.
+    func smartWordRange (at position: Position, in buffer: Buffer) -> (start: Position, end: Position)?
+    {
+        let cells = logicalLineCells (through: position, in: buffer)
+        guard let index = cells.firstIndex (where: {
+            $0.row == position.row && $0.col <= position.col && position.col < $0.col + $0.width
+        }) else {
+            return nil
+        }
+        let characters = cells.map { $0.character }
+        guard let range = SelectionService.urlRange (in: characters, containing: index)
+                ?? SelectionService.pathRange (in: characters, containing: index)
+                ?? SelectionService.quotedRange (in: characters, at: index) else {
+            return nil
+        }
+        let first = cells [range.lowerBound]
+        let last = cells [range.upperBound - 1]
+        return (Position (col: first.col, row: first.row),
+                Position (col: last.col + last.width, row: last.row))
+    }
+
+    /// The characters of the logical line through `position`, in order. A
+    /// wide character's second cell is left out, and so is an empty last
+    /// cell that a wide character skipped when it wrapped.
+    private func logicalLineCells (through position: Position, in buffer: Buffer) -> [LineCell]
+    {
+        let lines = buffer.lines
+        let limit = SelectionService.smartSelectionRowLimit
+        var first = position.row
+        while first > 0, position.row - first < limit, lines [first].isWrapped {
+            first -= 1
+        }
+        var last = position.row
+        while last + 1 < lines.count, last - position.row < limit, lines [last + 1].isWrapped {
+            last += 1
+        }
+        let cols = terminal.cols
+        var cells: [LineCell] = []
+        cells.reserveCapacity ((last - first + 1) * cols)
+        for row in first...last {
+            let line = lines [row]
+            let count = min (cols, line.count)
+            let continues = row < last
+            for col in 0..<count {
+                let cell = line [col]
+                let width = Int (cell.width)
+                if width == 0 {
+                    continue
+                }
+                let character = terminal.getCharacter (for: cell)
+                if continues, col == count - 1, character == nullChar {
+                    continue
+                }
+                cells.append (LineCell (character: character, row: row, col: col, width: width))
+            }
+        }
+        return cells
+    }
+
+    // MARK: URLs
+
+    private static func isURLCharacter (_ c: Character) -> Bool {
+        if c.isASCII {
+            guard let ascii = c.asciiValue, ascii > 0x20, ascii < 0x7f else {
+                return false
+            }
+            return !"<>\"'`{}|\\^".contains (c)
+        }
+        // International domain names and paths.
+        return c.isLetter || c.isNumber
+    }
+
+    private static func isSchemeCharacter (_ c: Character) -> Bool {
+        c.isASCII && (c.isLetter || c.isNumber || c == "+" || c == "." || c == "-")
+    }
+
+    /// The URL around `index`: a `scheme://` or `www.` start, then URL
+    /// characters, less trailing punctuation that no bracket in it balances.
+    static func urlRange (in chars: [Character], containing index: Int) -> Range<Int>?
+    {
+        guard isURLCharacter (chars [index]) else {
+            return nil
+        }
+        var lo = index
+        while lo > 0, isURLCharacter (chars [lo - 1]) {
+            lo -= 1
+        }
+        var hi = index + 1
+        while hi < chars.count, isURLCharacter (chars [hi]) {
+            hi += 1
+        }
+
+        // Where URLs start in this run, and where their bodies begin.
+        var starts: [(start: Int, body: Int)] = []
+        var k = lo
+        while k < hi {
+            if chars [k] == ":", k + 2 < hi, chars [k + 1] == "/", chars [k + 2] == "/" {
+                var s = k
+                while s > lo, isSchemeCharacter (chars [s - 1]) {
+                    s -= 1
+                }
+                // A scheme starts with a letter.
+                while s < k, !chars [s].isLetter {
+                    s += 1
+                }
+                if s < k {
+                    starts.append ((s, k + 3))
+                }
+                k += 3
+                continue
+            }
+            if k + 4 <= hi, chars [k] == "w" || chars [k] == "W",
+               chars [k + 1] == chars [k], chars [k + 2] == chars [k], chars [k + 3] == ".",
+               k == lo || !(isSchemeCharacter (chars [k - 1]) || chars [k - 1] == "/" || chars [k - 1] == "@") {
+                starts.append ((k, k + 4))
+                k += 4
+                continue
+            }
+            k += 1
+        }
+
+        // Another scheme or www. can be part of the URL's path or query.
+        // Keep the complete run when it contains the clicked character.
+        for url in starts {
+            let end = trimURLEnd (chars, from: url.start, to: hi)
+            guard end > url.body else {
+                continue
+            }
+            if url.start <= index && index < end {
+                return url.start..<end
+            }
+        }
+        return nil
+    }
+
+    /// Drops sentence punctuation from a URL's end, and a closing bracket
+    /// that has no opening one inside the URL.
+    private static func trimURLEnd (_ chars: [Character], from start: Int, to end: Int) -> Int
+    {
+        var end = end
+        while end > start {
+            let last = chars [end - 1]
+            if ".,;:!?".contains (last) {
+                end -= 1
+                continue
+            }
+            if last == ")" || last == "]" {
+                let open: Character = last == ")" ? "(" : "["
+                let body = chars [start..<end]
+                if body.filter ({ $0 == last }).count > body.filter ({ $0 == open }).count {
+                    end -= 1
+                    continue
+                }
+            }
+            break
+        }
+        return end
+    }
+
+    // MARK: Paths
+
+    private static func isPathCharacter (_ c: Character) -> Bool {
+        c.isLetter || c.isNumber || "/._-~+@".contains (c)
+    }
+
+    /// The path around `index`: a run of path characters with a `/` in it
+    /// and something besides slashes, then up to two `:number` parts.
+    static func pathRange (in chars: [Character], containing index: Int) -> Range<Int>?
+    {
+        let isTokenCharacter = { (c: Character) in isPathCharacter (c) || c == ":" }
+        guard isTokenCharacter (chars [index]) else {
+            return nil
+        }
+        var lo = index
+        while lo > 0, isTokenCharacter (chars [lo - 1]) {
+            lo -= 1
+        }
+        var hi = index + 1
+        while hi < chars.count, isTokenCharacter (chars [hi]) {
+            hi += 1
+        }
+        // A sentence's period is not part of the path.
+        while hi - lo > 1, chars [hi - 1] == ".", chars [hi - 2].isLetter || chars [hi - 2].isNumber {
+            hi -= 1
+        }
+
+        var parts: [Range<Int>] = []
+        var partStart = lo
+        for k in lo..<hi where chars [k] == ":" {
+            parts.append (partStart..<k)
+            partStart = k + 1
+        }
+        parts.append (partStart..<hi)
+
+        for (n, part) in parts.enumerated () {
+            let text = chars [part]
+            guard text.contains ("/"), text.contains (where: { $0 != "/" }) else {
+                continue
+            }
+            var end = part.upperBound
+            var next = n + 1
+            while next < parts.count, next - n <= 2, !parts [next].isEmpty,
+                  chars [parts [next]].allSatisfy ({ $0.isASCII && $0.isNumber }) {
+                end = parts [next].upperBound
+                next += 1
+            }
+            if part.lowerBound <= index && index < end {
+                return part.lowerBound..<end
+            }
+        }
+        return nil
+    }
+
+    // MARK: Quotes
+
+    private static let quoteCharacters: [Character] = ["\"", "'", "`"]
+
+    /// Whether the quote at `index` opens or closes a string: not escaped
+    /// with a backslash, and for `'`, not an apostrophe inside a word.
+    private static func isDelimitingQuote (_ chars: [Character], _ index: Int, _ quote: Character) -> Bool
+    {
+        guard chars [index] == quote else {
+            return false
+        }
+        var beforeBackslashes = index
+        while beforeBackslashes > 0, chars [beforeBackslashes - 1] == "\\" {
+            beforeBackslashes -= 1
+        }
+        if (index - beforeBackslashes) % 2 != 0 {
+            return false
+        }
+        if quote == "'", index > 0, index + 1 < chars.count,
+           chars [index - 1].isLetter, chars [index + 1].isLetter {
+            return false
+        }
+        return true
+    }
+
+    /// On a quote, the string through its matching quote, quotes included.
+    /// An even number of the same quotes before it makes it an opening one.
+    static func quotedRange (in chars: [Character], at index: Int) -> Range<Int>?
+    {
+        let quote = chars [index]
+        guard quoteCharacters.contains (quote), isDelimitingQuote (chars, index, quote) else {
+            return nil
+        }
+        let before = (0..<index).filter { isDelimitingQuote (chars, $0, quote) }.count
+        if before % 2 == 0 {
+            for k in (index + 1)..<chars.count where isDelimitingQuote (chars, k, quote) {
+                return index..<(k + 1)
+            }
+        } else {
+            for k in stride (from: index - 1, through: 0, by: -1) where isDelimitingQuote (chars, k, quote) {
+                return k..<(index + 1)
+            }
+        }
+        return nil
     }
 }

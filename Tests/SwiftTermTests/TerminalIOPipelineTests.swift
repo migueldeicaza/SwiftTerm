@@ -399,6 +399,8 @@ final class TerminalIOPipelineTests {
         #expect(capture.waitForBytes(payload.count, timeout: 5))
         #expect(!capture.didReachEOF)
         #expect(capture.receivedData() == payload)
+        // The first read after idle never waits to coalesce with more.
+        #expect(pipeline.coalescingNaps == 0)
 
         writer.closeFd()
         #expect(capture.waitForEOF(timeout: 5))
@@ -432,6 +434,220 @@ final class TerminalIOPipelineTests {
         #expect(largest > 2_048)
 #endif
         #expect(pipeline.waitUntilStopped(timeout: 1))
+    }
+
+    /// A line-buffered program: thousands of tiny writes back to back. Each
+    /// lands as its own small read unless the gather thread coalesces them.
+    @Test func sustainedTinyWritesCoalesceIntoFewerBatches() throws {
+        let chunk = 8
+        let writes = 100_000
+        let payload = Self.printablePattern(byteCount: chunk * writes)
+        let pty = try Self.makeRawPty()
+        let capture = PipelineCapture()
+        let pipeline = TerminalIOPipeline(fd: pty.master, delegate: capture)
+        pipeline.start()
+
+        let writer = PtyWriter(fd: pty.slave, payload: payload, chunkSizes: [chunk])
+        writer.start()
+
+        #expect(capture.waitForEOF(timeout: 30))
+        #expect(writer.waitUntilDone(timeout: 1))
+        #expect(capture.receivedData() == payload)
+        // How much coalescing gathers depends on scheduling, so the count is
+        // reported rather than asserted; that it happened at all is not.
+        print("tiny writes: \(capture.deliveryCount) batches for \(writes) writes, mean \(Int(capture.meanBatchSize)) bytes, \(pipeline.coalescingNaps) naps")
+        #expect(pipeline.coalescingNaps > 0)
+        #expect(pipeline.waitUntilStopped(timeout: 1))
+    }
+
+    // MARK: When the gather thread naps
+
+    private static let streamStart: UInt64 = 1_000_000_000_000
+
+    /// A coalescer whose input has flowed for `duration`: a batch every 10 µs,
+    /// each after a 2 µs wait. Returns it at the start of the next batch.
+    private static func streaming(for duration: UInt64) -> (coalescer: TerminalIOCoalescer, now: UInt64) {
+        var coalescer = TerminalIOCoalescer()
+        var now = streamStart
+        coalescer.beginBatch(at: now, afterIdle: .max)
+        while now - streamStart < duration {
+            now += 10_000
+            coalescer.beginBatch(at: now, afterIdle: 2_000)
+        }
+        return (coalescer, now)
+    }
+
+    @Test func firstReadAfterIdleIsNeverHeld() {
+        var fresh = TerminalIOCoalescer()
+        fresh.beginBatch(at: Self.streamStart, afterIdle: .max)
+        let heldFresh = fresh.shouldNap(total: 5, now: Self.streamStart + 5_000)
+        #expect(!heldFresh)
+
+        var coalescer = Self.streaming(for: 10_000_000).coalescer
+        let now = Self.streamStart + 60_000_000
+        coalescer.beginBatch(at: now, afterIdle: 50_000_000)
+        let heldAfterIdle = coalescer.shouldNap(total: 5, now: now + 5_000)
+        #expect(!heldAfterIdle)
+    }
+
+    /// An echo, or any burst shorter than the warm-up, goes out as before.
+    @Test func aStreamNapsOnlyOnceWarm() {
+        let young = Self.streaming(for: TerminalIOCoalescer.warmupNs - 100_000)
+        var youngCoalescer = young.coalescer
+        let heldYoung = youngCoalescer.shouldNap(total: 40, now: young.now + 5_000)
+        #expect(!heldYoung)
+
+        let warm = Self.streaming(for: TerminalIOCoalescer.warmupNs)
+        var warmCoalescer = warm.coalescer
+        let heldWarm = warmCoalescer.shouldNap(total: 40, now: warm.now + 5_000)
+        #expect(heldWarm)
+    }
+
+    /// Waiting for input, not the time between batches, ends a stream: a batch
+    /// that took long to fill, as a bridged one can, leaves the stream warm.
+    @Test func onlyAnIdleWaitEndsAStream() {
+        let stream = Self.streaming(for: 5_000_000)
+        var coalescer = stream.coalescer
+        let afterSlowBatch = stream.now + 3_000_000
+        coalescer.beginBatch(at: afterSlowBatch, afterIdle: 0)
+        let heldAfterSlowBatch = coalescer.shouldNap(total: 40, now: afterSlowBatch + 5_000)
+        #expect(heldAfterSlowBatch)
+
+        let afterPause = afterSlowBatch + 2_000_000
+        coalescer.beginBatch(at: afterPause, afterIdle: TerminalIOCoalescer.idleGapNs)
+        let heldAfterPause = coalescer.shouldNap(total: 40, now: afterPause + 5_000)
+        #expect(!heldAfterPause)
+    }
+
+    @Test func aNapThatBringsNothingEndsTheBatch() {
+        let stream = Self.streaming(for: 5_000_000)
+        var coalescer = stream.coalescer
+        let now = stream.now
+        let heldEmpty = coalescer.shouldNap(total: 0, now: now + 5_000)
+        #expect(!heldEmpty)
+        let heldFirst = coalescer.shouldNap(total: 40, now: now + 5_000)
+        #expect(heldFirst)
+        let heldGrown = coalescer.shouldNap(total: 300, now: now + 30_000)
+        #expect(heldGrown)
+        let heldUnchanged = coalescer.shouldNap(total: 300, now: now + 55_000)
+        #expect(!heldUnchanged)
+
+        coalescer.beginBatch(at: now + 60_000, afterIdle: 2_000)
+        let heldNext = coalescer.shouldNap(total: 40, now: now + 70_000)
+        #expect(heldNext)
+    }
+
+    @Test func aBatchIsHeldNoLongerThanItsBound() {
+        let stream = Self.streaming(for: 5_000_000)
+        var coalescer = stream.coalescer
+        let now = stream.now
+        let hold = TerminalIOCoalescer.holdNs
+        let heldInside = coalescer.shouldNap(total: 40, now: now + hold - 100_000)
+        #expect(heldInside)
+        let heldAtBound = coalescer.shouldNap(total: 80, now: now + hold)
+        #expect(!heldAtBound)
+    }
+
+    /// In a stream of large writes a small read is the tail of one of them:
+    /// holding it back would join it to the next, so it goes out as before.
+    @Test func aSmallReadAfterABridgedBatchIsNotHeld() {
+        let stream = Self.streaming(for: 5_000_000)
+        var coalescer = stream.coalescer
+        var now = stream.now
+        coalescer.published(bridged: true)
+        coalescer.beginBatch(at: now, afterIdle: 2_000)
+        let heldTail = coalescer.shouldNap(total: 300, now: now + 5_000)
+        #expect(!heldTail)
+
+        coalescer.published(bridged: false)
+        now += 30_000
+        coalescer.beginBatch(at: now, afterIdle: 2_000)
+        let heldAfterSmall = coalescer.shouldNap(total: 40, now: now + 5_000)
+        #expect(heldAfterSmall)
+    }
+
+    /// A batch gathered by napping ends at the bridge threshold rather than
+    /// bridging; one that never napped bridges as before.
+    @Test func aNappedBatchEndsAtTheBridge() {
+        let stream = Self.streaming(for: 5_000_000)
+        var coalescer = stream.coalescer
+        #expect(!coalescer.batchNapped)
+        let held = coalescer.shouldNap(total: 900, now: stream.now + 5_000)
+        #expect(held)
+        #expect(coalescer.batchNapped)
+
+        coalescer.beginBatch(at: stream.now + 30_000, afterIdle: 2_000)
+        #expect(!coalescer.batchNapped)
+    }
+
+    /// Ends a batch whose last nap, taken at `total` bytes, brought `yield`.
+    private static func nappedBatch(
+        _ coalescer: inout TerminalIOCoalescer, at now: UInt64, total: Int = 100, yield: Int
+    ) -> Bool {
+        coalescer.beginBatch(at: now, afterIdle: 2_000)
+        let held = coalescer.shouldNap(total: total, now: now + 5_000)
+        coalescer.endNappedBatch(total: total + yield, now: now + 30_000)
+        return held
+    }
+
+    /// A writer that fills the pty within every nap, like `cat`, or a machine
+    /// too busy to wake on time, stops the stream napping for a while.
+    @Test func twoSaturatingNapsInARowBackOff() {
+        let stream = Self.streaming(for: 5_000_000)
+        var coalescer = stream.coalescer
+        var now = stream.now
+        let full = TerminalIOCoalescer.saturatingNapBytes
+        let first = Self.nappedBatch(&coalescer, at: now, yield: full)
+        now += 40_000
+        let second = Self.nappedBatch(&coalescer, at: now, yield: full)
+        #expect(first && second)
+
+        now += 40_000
+        coalescer.beginBatch(at: now, afterIdle: 2_000)
+        let heldInBackoff = coalescer.shouldNap(total: 100, now: now + 5_000)
+        #expect(!heldInBackoff)
+
+        now += TerminalIOCoalescer.backoffNs
+        coalescer.beginBatch(at: now, afterIdle: 2_000)
+        let heldAfterBackoff = coalescer.shouldNap(total: 100, now: now + 5_000)
+        #expect(heldAfterBackoff)
+    }
+
+    /// `seq` sometimes fills the pty in one nap when it is preempted; one at a
+    /// time never stops the stream napping.
+    @Test func aLoneSaturatingNapIsForgiven() {
+        let stream = Self.streaming(for: 5_000_000)
+        var coalescer = stream.coalescer
+        var now = stream.now
+        let full = TerminalIOCoalescer.saturatingNapBytes
+        for _ in 0..<4 {
+            _ = Self.nappedBatch(&coalescer, at: now, yield: full)
+            now += 40_000
+            _ = Self.nappedBatch(&coalescer, at: now, yield: 200)
+            now += 40_000
+        }
+        coalescer.beginBatch(at: now, afterIdle: 2_000)
+        let held = coalescer.shouldNap(total: 100, now: now + 5_000)
+        #expect(held)
+    }
+
+    /// An idle terminal starts over: a new stream is not held to the backoff
+    /// of the one before it, only to the warm-up.
+    @Test func goingIdleClearsTheBackoff() {
+        let stream = Self.streaming(for: 5_000_000)
+        var coalescer = stream.coalescer
+        var now = stream.now
+        let full = TerminalIOCoalescer.saturatingNapBytes
+        _ = Self.nappedBatch(&coalescer, at: now, yield: full)
+        now += 40_000
+        _ = Self.nappedBatch(&coalescer, at: now, yield: full)
+
+        now += 2_000_000
+        coalescer.beginBatch(at: now, afterIdle: TerminalIOCoalescer.idleGapNs)
+        now += TerminalIOCoalescer.warmupNs
+        coalescer.beginBatch(at: now, afterIdle: 2_000)
+        let held = coalescer.shouldNap(total: 100, now: now + 5_000)
+        #expect(held)
     }
 
     private static func makeRawPty() throws -> (master: Int32, slave: Int32) {

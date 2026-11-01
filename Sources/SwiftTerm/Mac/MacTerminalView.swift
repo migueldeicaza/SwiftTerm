@@ -284,6 +284,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     var accessibility: AccessibilityService = AccessibilityService()
+    /// The selection VoiceOver last heard of.
+    var accessibilitySelection: SnapshotSelectionState = .empty
     var search: SearchService!
     private var findBar: TerminalFindBarView?
     private var findBarTerm: String = ""
@@ -960,6 +962,84 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 #endif
 
+    /// Draws a frame as part of being unhidden.
+    ///
+    /// The frame driver runs on `NSView.displayLink(target:selector:)`, which
+    /// does not fire while the view is hidden, so a hidden terminal draws
+    /// nothing; output that arrives meanwhile only marks the driver dirty.
+    /// Without this, the first frame after unhiding waits for the next
+    /// display-link tick, and until then the layer shows the content from
+    /// before the view was hidden. A host that hides inactive terminals and
+    /// unhides one as part of a busy main-thread update (switching tabs) shows
+    /// that old screen for as long as the update keeps the main thread.
+    ///
+    /// AppKit also sends this when the view or an ancestor is removed from a
+    /// hidden ancestor, and a view can be unhidden while it is in no window or
+    /// in an occluded one; nothing is drawn in those cases.
+    open override func viewDidUnhide() {
+        super.viewDidUnhide()
+        guard uiShutdownState == .active,
+              window != nil,
+              !hasHiddenAncestor,
+              frameDriver?.isVisibilitySuspended != true
+        else { return }
+        drawFrameOnUnhide()
+    }
+
+    /// Walks `isHidden` up the hierarchy instead of trusting the cached
+    /// `isHiddenOrHasHiddenAncestor`: when a container of this view is removed
+    /// from a hidden ancestor, AppKit has already cleared the container's
+    /// cached flag by the time this view gets `viewDidUnhide`, while the
+    /// container's superview is still the hidden one.
+    private var hasHiddenAncestor: Bool {
+        var ancestor = superview
+        while let view = ancestor {
+            if view.isHidden { return true }
+            ancestor = view.superview
+        }
+        return false
+    }
+
+    /// `frameTick` for `viewDidUnhide`. The frame is prepared and submitted
+    /// now, but its side effects, which include delegate callbacks such as
+    /// `scrolled` and `rangeChanged`, are delivered on a later main-actor
+    /// turn, the same contract the render loop has. Delivering them inside
+    /// `isHidden = false` would run host code in the middle of whatever update
+    /// is changing visibility.
+    func drawFrameOnUnhide ()
+    {
+        guard let viewState = captureFrameViewState() else { return }
+#if canImport(MetalKit)
+        if usesRenderLoop {
+            publishFrameViewState(viewState)
+            renderLoop?.signal()
+            return
+        }
+#endif
+        guard let prepared = prepareFrame(viewState: viewState) else { return }
+        updateCursorPosition(from: prepared.cursor, rowCount: prepared.cursorRowCount)
+        submitFrameDraw(prepared)
+        let effects = prepared.mainEffects
+        Task { @MainActor [weak self] in
+            guard let self, self.uiShutdownState == .active else { return }
+            var effects = effects
+            // Output can arrive, and a display-link frame can run, before this
+            // Task: report the current scroll position, and drop a size that a
+            // newer frame has already reported.
+            let (current, scrollPosition) = self.withTerminal {
+                (FrameTerminalSize(cols: $0.cols, rows: $0.rows), self.scrollPositionLocked())
+            }
+            effects.scrollPosition = scrollPosition
+            // Use the blink rows from the latest frame. The captured rows can
+            // stop a timer that a newer frame started, or start an old timer.
+            effects.blinkRows = self.publishedBlinkRows()
+            if let resized = effects.resizedTo, resized != current {
+                effects.resizedTo = nil
+            }
+            self.applyFrameSideEffects(effects)
+        }
+    }
+
     open override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard uiShutdownState == .active else { return }
@@ -1097,10 +1177,34 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         progressBarView.frame = CGRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
     }
 
+    /// The silence that clears a bar the application started and never
+    /// removed, when ``progressReportTimeout`` is left alone.
+    public static let defaultProgressReportTimeout: TimeInterval = 15
+
+    /// How long the view waits for the next OSC 9;4 report before it clears a
+    /// bar the application started and never removed. `nil` turns that clear
+    /// off and leaves the bar up until the application removes it.
+    ///
+    /// The wait is a safety net for a program that dies mid-report, and it
+    /// assumes reports keep arriving while the work runs. A program that
+    /// reports only at the start and the end of a long task looks silent in
+    /// between and loses its bar halfway through, so a host that trusts its
+    /// program to close every bar it opens can turn the net off. Setting this
+    /// while a bar is on screen restarts the wait from now, and `nil` cancels
+    /// a wait that is already running.
+    public var progressReportTimeout: TimeInterval? = TerminalView.defaultProgressReportTimeout {
+        didSet {
+            guard progressBarView?.isHidden == false else { return }
+            resetProgressReportTimer()
+        }
+    }
+
     @MainActor
     private func resetProgressReportTimer() {
         progressReportTimer?.invalidate()
-        progressReportTimer = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
+        progressReportTimer = nil
+        guard let progressReportTimeout else { return }
+        progressReportTimer = Timer.scheduledTimer(withTimeInterval: progressReportTimeout, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.clearProgressReport()
             }
@@ -1165,6 +1269,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     /// This controls whether the backspace should send ^? or ^H, the default is ^?
+    /// The backspace key also sends ^H while the application sets DECBKM (`CSI ? 67 h`).
     public var backspaceSendsControlH: Bool = false
     
     var _nativeFg, _nativeBg: TTColor!
@@ -1196,18 +1301,28 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// not show through before that surface obtains its first drawable. A
     /// translucent Metal background still needs a clear host layer; otherwise
     /// Core Animation would composite the same color and alpha twice.
+    ///
+    /// The Core Graphics path normally lets this layer paint the default
+    /// background. With `translucentCellBackgrounds` over a translucent
+    /// background the draw paints it instead, because explicit cell
+    /// backgrounds must replace it rather than composite over it; the layer
+    /// stays clear so the color is not painted twice.
     func updateBackingLayerBackground()
     {
         let background = effectiveNativeBackgroundColor
         let isOpaque = background.cgColor.alpha >= 1.0
         metalView?.layer?.isOpaque = isOpaque
-        layer?.backgroundColor = metalView == nil || isOpaque
+        let layerPaintsBackground = isOpaque || (metalView == nil && !translucentCellBackgrounds)
+        layer?.backgroundColor = layerPaintsBackground
             ? background.cgColor : NSColor.clear.cgColor
     }
 
     func setNativeForegroundColorFromTerminal (_ newValue: NSColor)
     {
         if settingFg { return }
+        // An asynchronous echo must not apply once the model has moved on to a different color.
+        // setupOptions broadcasts the defaults on every pass, and that echo can land on main after a host installed its own palette.
+        if let terminal, withTerminal({ $0.foregroundColor }) != newValue.getTerminalColor() { return }
         settingFg = true
         _nativeFg = newValue
         refreshCachedViewState()
@@ -1217,6 +1332,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     func setNativeBackgroundColorFromTerminal (_ newValue: NSColor)
     {
         if settingBg { return }
+        // Stale-echo guard, see setNativeForegroundColorFromTerminal.
+        // The setup-time default stamp used to echo a black background that overwrote a host background for one frame.
+        if let terminal, withTerminal({ $0.backgroundColor }) != newValue.getTerminalColor() { return }
         settingBg = true
         // The terminal model stores RGB only. Keep the host opacity when its
         // asynchronous color callback reconstructs an opaque native color.
@@ -1268,7 +1386,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
      * Values below 1 render the default background translucently, in the style of
      * Terminal.app's background opacity: only the default background is affected;
      * text, the caret, selections and cells with explicit background colors stay
-     * fully opaque. The opacity is carried in the alpha channel of
+     * fully opaque (see `translucentCellBackgrounds` to make explicit cell
+     * backgrounds translucent as well). The opacity is carried in the alpha channel of
      * `nativeBackgroundColor`, so assigning that property with an alpha-bearing
      * color is equivalent.
      *
@@ -1287,8 +1406,49 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
-    /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
-    public var useBrightColors: Bool = true
+    /**
+     * Whether cells with an explicit background color (ANSI, 256-color, truecolor)
+     * share the default background's `backgroundOpacity`.
+     *
+     * `false` (the default) keeps them fully opaque, the way Terminal.app draws
+     * them. `true` gives every cell background the default background's alpha, the
+     * way iTerm2 does by default, so colored rows (diffs, prompts, TUI chrome) read
+     * as part of one translucent surface instead of solid blocks over it. An
+     * explicit background replaces the default background beneath it rather than
+     * compositing over it, so it ends at exactly `backgroundOpacity`.
+     *
+     * Text keeps its opacity, and so does the same color used as a foreground.
+     * Reverse-video highlights stay opaque either way, and this has no effect
+     * while `backgroundOpacity` is 1. Kitty images placed below cell backgrounds
+     * are not visible through a translucent explicit background.
+     */
+    public var translucentCellBackgrounds: Bool = false {
+        didSet {
+            guard translucentCellBackgrounds != oldValue else { return }
+            colorsChanged ()
+        }
+    }
+
+    /// Promotes bold ANSI foreground text to bright colors. When disabled,
+    /// `collapseBrightColorsToBase` controls whether explicit bright indexes
+    /// are also collapsed and rendered with a bold font.
+    public var useBrightColors: Bool = true {
+        didSet {
+            guard useBrightColors != oldValue else { return }
+            colorsChanged ()
+        }
+    }
+
+    /// Preserves the historical foreground-index collapse when `useBrightColors`
+    /// is false. Set this to false to keep explicit ANSI indexes (including the
+    /// 256-color palette) while disabling automatic bright colors for bold text.
+    /// The default is true for compatibility.
+    public var collapseBrightColorsToBase: Bool = true {
+        didSet {
+            guard collapseBrightColorsToBase != oldValue else { return }
+            colorsChanged ()
+        }
+    }
 
     /// The least contrast, as a WCAG ratio from 1 to 21, that text keeps against its background. Text whose colors
     /// fall below it, such as colors a program picked for a background of the other brightness, is darkened or
@@ -1353,6 +1513,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             cursorTextColorIsDefault = newValue == nil
             caretView.caretTextColor = newValue
         }
+    }
+
+    /// Controls the color of the OSC 9;4 progress bar while it is running, if not set
+    /// the bar will render with the system accent color.
+    ///
+    /// The error and paused states keep their system colors (red and orange) either
+    /// way, so a host that themes the terminal can tint the bar without losing the
+    /// meaning those two states carry. Setting this recolors a bar that is already
+    /// on screen.
+    public var progressBarColor: NSColor? {
+        get { progressBarView?.tint }
+        set { progressBarView?.tint = newValue }
     }
 
     var _selectedTextBackgroundColor = NSColor(srgbRed: 0, green: 166.0 / 255.0, blue: 178.0 / 255.0, alpha: 1.0)
@@ -1572,6 +1744,30 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    /// The color used to draw link text and its underline, or `nil` (the
+    /// default) to draw each link in its cell's own foreground color.
+    ///
+    /// It applies to every cell drawn as a link, explicit (OSC 8) or implicit,
+    /// whenever ``linkHighlightMode`` highlights it.
+    public var linkColor: NSColor? {
+        didSet {
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
+    }
+
+    /// Overrides only the underline of highlighted OSC 8 and implicit links.
+    /// Text and strikethrough keep their existing colors. This takes precedence
+    /// over ``linkColor`` for the underline; `nil` (the default) preserves it.
+    /// Selection highlighting still takes precedence over link colors.
+    public var linkUnderlineColor: NSColor? {
+        didSet {
+            urlAttributes.removeAll()
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
+    }
+
     var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
 
     /**
@@ -1712,7 +1908,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     
     public override func cursorUpdate(with event: NSEvent)
     {
-        NSCursor.iBeam.set ()
+        // AppKit calls this on every mouse move over the view and on every display
+        // cycle that re-evaluates cursor rects. With a customized pointer (size or
+        // colour in Accessibility settings) each set() re-renders the cursor image,
+        // so setting the cursor that is already current is expensive. Skip it.
+        if NSCursor.current != NSCursor.iBeam {
+            NSCursor.iBeam.set ()
+        }
     }
     
     func makeFirstResponder ()
@@ -1960,11 +2162,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             if let hit = currentMouseHit() {
                 if let payload = payloadString(at: hit) {
                     previewUrl(payload: payload)
+                } else {
+                    removePreviewUrl()
                 }
                 reportLink(at: hit)
                 updateHoverLink(at: hit)
             } else if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
+            } else {
+                removePreviewUrl()
             }
             if linkHighlightMode == .alwaysWithModifier {
                 withTerminal { $0.updateFullScreen() }
@@ -2110,11 +2316,14 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             overlay = tv
         }
 
-        // Match the terminal's effective background so the overlay blends in
-        // with whatever the rest of the view is rendering. `nativeBackgroundColor`
-        // is typically `NSColor.windowBackgroundColor` (dynamic: adapts to
-        // light/dark) when the host has called `configureNativeColors()`.
-        overlay.overlayBackgroundColor = effectiveNativeBackgroundColor
+        // Match the background of the cell under the caret so the overlay blends
+        // in with the row it covers. TUIs such as Codex paint their input line
+        // with an explicit background; the terminal's default background would
+        // show up there as a dark band. Falls back to `effectiveNativeBackgroundColor`
+        // (typically `NSColor.windowBackgroundColor` when the host has called
+        // `configureNativeColors()`) when the cell carries no color of its own.
+        let caretColors = markedTextColorsAtCaret()
+        overlay.overlayBackgroundColor = caretColors.background
 
         // Match terminal line metrics so wrapped lines line up with terminal rows.
         let lineHeight = cellDimension.height
@@ -2137,7 +2346,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let fullRange = NSRange(location: 0, length: display.length)
         display.addAttributes([
             .font: font,
-            .foregroundColor: effectiveNativeForegroundColor,
+            .foregroundColor: caretColors.foreground,
             .paragraphStyle: para,
             .kern: kern,
         ], range: fullRange)
@@ -2170,6 +2379,36 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             width: overlayWidth,
             height: overlayHeight
         )
+    }
+
+    /// Colors for the marked-text overlay, taken from the cell under the caret.
+    ///
+    /// Only the cell's background is adopted. Its foreground usually belongs to
+    /// whatever the overlay is hiding — an empty prompt's dimmed placeholder,
+    /// say — so the text keeps the terminal's default foreground, except under
+    /// reverse video, where the default pair is swapped and the default
+    /// foreground would vanish into the background.
+    ///
+    /// The background is mapped the way the renderer fills cells: bold never
+    /// brightens it, only the foreground.
+    private func markedTextColorsAtCaret() -> (foreground: NSColor, background: NSColor) {
+        withTerminal { terminal in
+            let buffer = terminal.displayBuffer
+            let row = buffer.yBase + buffer.y
+            guard row >= 0, row < buffer.lines.count, buffer.x >= 0, buffer.x < buffer.cols else {
+                return (effectiveNativeForegroundColor, effectiveNativeBackgroundColor)
+            }
+            let attribute = buffer.lines[row][buffer.x].attribute
+            let isBold = attribute.style.contains(.bold)
+            guard attribute.style.contains(.inverse) else {
+                return (effectiveNativeForegroundColor,
+                        mapColor(color: attribute.bg, isFg: false, isBold: false, useBrightColors: useBrightColors))
+            }
+            let fg = attribute.bg == .defaultColor ? .defaultInvertedColor : attribute.bg
+            let bg = attribute.fg == .defaultColor ? .defaultInvertedColor : attribute.fg
+            return (mapColor(color: fg, isFg: true, isBold: isBold, useBrightColors: useBrightColors),
+                    mapColor(color: bg, isFg: false, isBold: false, useBrightColors: useBrightColors))
+        }
     }
 
     // NSTextInputClient protocol implementation
@@ -2587,13 +2826,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     
     private func sharedMouseEvent (with event: NSEvent)
     {
-        withTerminal { terminal in
-            let displayBuffer = terminal.displayBuffer
-            let hit = calculateMouseHitLocked(at: convert(event.locationInWindow, from: nil))
-            let buttonFlags = encodeMouseEventLocked(with: event)
-            let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
-            terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
+        withTerminal { _ in
+            sharedMouseEventLocked(with: event)
         }
+    }
+
+    private func sharedMouseEventLocked(with event: NSEvent) {
+        terminal.terminalLock.preconditionLocked()
+        let displayBuffer = terminal.displayBuffer
+        let hit = calculateMouseHitLocked(at: convert(event.locationInWindow, from: nil))
+        let buttonFlags = encodeMouseEventLocked(with: event)
+        let screenRow = max (0, min (displayBuffer.rows - 1, hit.grid.row - displayBuffer.yDisp))
+        terminal.sendEvent(buttonFlags: buttonFlags, x: hit.grid.col, y: screenRow, pixelX: hit.pixels.col, pixelY: hit.pixels.row)
     }
     
     private var autoScrollDelta = 0
@@ -2684,10 +2928,59 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var pointerPressGrid: Position?
     // Keep the viewport cell so output scrolling cannot look like pointer movement.
     private var pointerPressScreenGrid: Position?
+    /// Whether this press is a single click holding Option, so a drag from
+    /// it selects a block, as in Terminal.app.
+    private var pressSelectsBlock = false
+    /// An Option press that mouse reporting would have sent. It waits for
+    /// the button to come up, and then the application gets the press and
+    /// the release, or for the pointer to move, and then it becomes a block
+    /// selection and the application gets nothing.
+    private var heldOptionPress: NSEvent?
+    /// Set when an Option press left mouse reporting to select a block. The
+    /// rest of the press, the release too, stays in the view.
+    private var optionDragIsLocal = false
+
+    /// Starts the selection a drag makes: a block when the press held
+    /// Option, else a stream. Callers hold the terminal lock.
+    private func beginDragSelectionLocked(to hit: Position) {
+        terminal.terminalLock.preconditionLocked()
+        let anchor = pointerPressGrid ?? hit
+        if pressSelectsBlock {
+            selection.startBlockSelection(bufferPosition: anchor)
+        } else {
+            selection.setSoftStart(bufferPosition: anchor)
+            selection.startSelection()
+        }
+        selection.dragExtend(bufferPosition: hit)
+    }
+
+    /// Lets go of a held Option press once the pointer has moved past the
+    /// drag threshold: the application never hears of it, and the press
+    /// becomes a block selection. True when that happened.
+    private func releaseHeldOptionPressForDragLocked(to point: CGPoint, hit: Position) -> Bool {
+        terminal.terminalLock.preconditionLocked()
+        guard heldOptionPress != nil,
+              isSelectionDrag(to: point, hit: hit, yDisp: terminal.displayBuffer.yDisp) else {
+            return false
+        }
+        heldOptionPress = nil
+        optionDragIsLocal = true
+        return true
+    }
+
+    /// Whether mouse reports for this event go to the application.
+    private func reportsMouseLocked(for event: NSEvent) -> Bool {
+        terminal.terminalLock.preconditionLocked()
+        return allowMouseReporting && !optionDragIsLocal && !shiftBypassesMouseReportingLocked(for: event)
+    }
+
     open override func mouseDown(with event: NSEvent) {
         didSelectionDrag = false
         previousPressureStage = 0
         forceClickHandledForCurrentPress = false
+        heldOptionPress = nil
+        optionDragIsLocal = false
+        pressSelectsBlock = event.modifierFlags.contains(.option) && event.clickCount == 1
         let shouldSendButtonPress = withTerminal { terminal in
             pointerPressSnapshot = SemanticPromptPointerSnapshot(
                 selectionWasActive: selection.active,
@@ -2702,7 +2995,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 col: pressLocation.col,
                 row: pressLocation.row - terminal.displayBuffer.yDisp)
             terminal.beginPrimaryPointerPress(at: pressLocation)
-            if allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event) && terminal.mouseMode.sendButtonPress() {
+            if reportsMouseLocked(for: event) && terminal.mouseMode.sendButtonPress() {
+                if pressSelectsBlock {
+                    // Hold it: a drag selects a block without the application,
+                    // a click still reaches it.
+                    heldOptionPress = event
+                    return false
+                }
                 return true
             }
             pointerPressSnapshot.pressWasSemanticEligible = true
@@ -2827,6 +3126,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     {
         let hit = calculateMouseHit(with: event).grid
         return withTerminal { terminal in
+            guard terminal.enableOsc8Hyperlinks else { return nil }
             let displayBuffer = terminal.displayBuffer
             return displayBuffer.lines[hit.row].packedView(at: hit.col).getPayload()
         }
@@ -2853,6 +3153,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             pointerPressGrid = nil
             pointerPressScreenGrid = nil
             forceClickHandledForCurrentPress = false
+            heldOptionPress = nil
+            optionDragIsLocal = false
+            pressSelectsBlock = false
             withTerminal { terminal in
                 terminal.endPrimaryPointerPress()
             }
@@ -2863,20 +3166,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let releasePoint = convert(event.locationInWindow, from: nil)
         let (hit, startedDrag) = withTerminal { terminal -> (Position, Bool) in
             let hit = calculateMouseHitLocked(at: releasePoint).grid
+            let leftReporting = releaseHeldOptionPressForDragLocked(to: releasePoint, hit: hit)
             guard !didSelectionDrag, !forceClickHandledForCurrentPress,
-                  !(allowMouseReporting &&
-                    !shiftBypassesMouseReportingLocked(for: event) &&
-                    terminal.mouseMode != .off),
+                  heldOptionPress == nil,
+                  !(reportsMouseLocked(for: event) && terminal.mouseMode != .off),
                   isSelectionDrag(to: releasePoint, hit: hit,
                                   yDisp: terminal.displayBuffer.yDisp) else {
                 return (hit, false)
             }
-            if selection.active {
+            if selection.active && !leftReporting {
                 selection.dragExtend(bufferPosition: hit)
-            } else if let pressGrid = pointerPressGrid {
-                selection.setSoftStart(bufferPosition: pressGrid)
-                selection.startSelection()
-                selection.dragExtend(bufferPosition: hit)
+            } else if pointerPressGrid != nil {
+                beginDragSelectionLocked(to: hit)
             }
             return (hit, true)
         }
@@ -2884,26 +3185,52 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             didSelectionDrag = true
             setNeedsDisplay(bounds)
         }
+        // Send the held press only if the current mode and release policy
+        // still permit mouse reports.
+        withTerminal { terminal in
+            guard let press = heldOptionPress else { return }
+            heldOptionPress = nil
+            guard reportsMouseLocked(for: event), terminal.mouseMode.sendButtonPress() else { return }
+            sharedMouseEventLocked(with: press)
+        }
         updateHoverLink(at: hit, commandOverride: commandActive || event.modifierFlags.contains(.command))
+        // A click holding the modifiers the prompt policy asks for, such as
+        // Option, goes to the prompt before a link can take it.
+        let modifiers = semanticPromptModifiers(for: event)
+        if !modifiers.isEmpty, routeSemanticPromptClick(at: hit, modifiers: modifiers) {
+            return
+        }
         if !forceClickHandledForCurrentPress,
            !didSelectionDrag,
            let result = linkForClick(at: hit, hasCommandModifier: event.modifierFlags.contains(.command)) {
-            terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
+            activateLink(result.link, params: result.params, isExplicit: result.isExplicit)
             return
         }
-        if withTerminal({ terminal in allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event) && terminal.mouseMode.sendButtonRelease() }) {
+        if withTerminal({ terminal in reportsMouseLocked(for: event) && terminal.mouseMode.sendButtonRelease() }) {
             sharedMouseEvent(with: event)
             return
         }
+        if modifiers.isEmpty {
+            routeSemanticPromptClick(at: hit, modifiers: modifiers)
+        }
 
-        guard !forceClickHandledForCurrentPress else { return }
+        #if DEBUG
+        // let hit = calculateMouseHit(with: event)
+        //print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
+        #endif
 
-        // Route a single click on release. Later presses still select words
-        // or rows according to their click count.
+    }
+
+    /// Routes a finished single click to the OSC 133 prompt, when the press
+    /// was the view's own and the terminal's policy takes these modifiers.
+    /// Later presses still select words or rows by their click count. True
+    /// when the click moved the cursor.
+    @discardableResult
+    private func routeSemanticPromptClick(at hit: Position, modifiers: SemanticPromptClickModifiers) -> Bool {
+        guard !forceClickHandledForCurrentPress else { return false }
         var snapshot = pointerPressSnapshot
         snapshot.didDrag = didSelectionDrag
-        guard snapshot.clickCount == 1 else { return }
-        let modifiers = semanticPromptModifiers(for: event)
+        guard snapshot.clickCount == 1 else { return false }
         let handled = withTerminal { terminal -> Bool in
             snapshot.selectionIsActiveAtRelease = selection.active
             guard terminal.mightRouteSemanticPromptClick(modifiers: modifiers,
@@ -2914,12 +3241,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 at: hit, modifiers: modifiers, snapshot: snapshot)
         }
         if handled { setNeedsDisplay(bounds) }
-
-        #if DEBUG
-        // let hit = calculateMouseHit(with: event)
-        //print ("Up at col=\(hit.col) row=\(hit.row) count=\(event.clickCount) selection.active=\(selection.active) didSelectionDrag=\(didSelectionDrag) ")
-        #endif
-
+        return handled
     }
     
     open override func mouseDragged(with event: NSEvent) {
@@ -2928,7 +3250,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             let displayBuffer = terminal.displayBuffer
             let mouseHit = calculateMouseHitLocked(at: point)
             let hit = mouseHit.grid
-            if allowMouseReporting && !shiftBypassesMouseReportingLocked(for: event) {
+            // A held Option press sends nothing while it may still be a click.
+            let leftReporting = releaseHeldOptionPressForDragLocked(to: point, hit: hit)
+            if heldOptionPress != nil {
+                return (hit, displayBuffer.yDisp, displayBuffer.rows, true)
+            }
+            if reportsMouseLocked(for: event) {
                 if terminal.mouseMode.sendButtonTracking() {
                     let flags = encodeMouseEventLocked(with: event)
                     let screenRow = max (0, min (displayBuffer.rows - 1, hit.row - displayBuffer.yDisp))
@@ -2945,12 +3272,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 return (hit, displayBuffer.yDisp, displayBuffer.rows, true)
             }
 
-            if selection.active {
+            if selection.active && !leftReporting {
                 selection.dragExtend(bufferPosition: Position(col: hit.col, row: hit.row))
             } else {
-                selection.setSoftStart(bufferPosition: pointerPressGrid ?? hit)
-                selection.startSelection()
-                selection.dragExtend(bufferPosition: hit)
+                beginDragSelectionLocked(to: hit)
             }
             return (hit, displayBuffer.yDisp, displayBuffer.rows, false)
         }
@@ -3045,7 +3370,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var lastReportedLink: String?
     func previewUrl (payload: String)
     {
-        if let (url, _) = urlAndParamsFrom(payload: payload) {
+        guard enableOsc8Hyperlinks else {
+            removePreviewUrl()
+            return
+        }
+        if let (target, _) = urlAndParamsFrom(payload: payload) {
+            let url = UntrustedTerminalLink(target).displayString
             if let up = urlPreview {
                 up.stringValue = url
                 up.sizeToFit()
@@ -3146,6 +3476,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         if commandActive {
             if let payload = getPayload(for: event) as? String {
                 previewUrl (payload: payload)
+            } else {
+                removePreviewUrl()
             }
             reportLink(at: hit.grid)
         }
@@ -3476,15 +3808,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     nonisolated open func cursorStyleChanged (source: Terminal, newStyle: CursorStyle) {
-        let style = newStyle
-        onMain { [weak self] in
-            guard let self else { return }
-            self.caretView?.style = style
-            self.updateCaretView()
-#if canImport(MetalKit)
-            self.frameDriver.markDirty()
-#endif
-        }
+        // Applied by applyPendingViewUpdates at the frame driver's next tick.
+        crossThreadState.withLock { $0.pendingCursorStyle = newStyle }
+        frameSignal.requestViewUpdate()
     }
 
     /// Controls how this view responds to the bell character; `.sound`
@@ -3805,6 +4131,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// Decides what each key sends; persistent and remote views use the
     /// same router (``TerminalKeyboardRouter``).
     private lazy var keyboardRouter = TerminalKeyboardRouter(host: self)
+
+    // Set only while a checked link is sent to the delegate.
+    var approvedLinkForDelegate: URL?
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}
@@ -3814,7 +4143,8 @@ extension TerminalView: TerminalKeyboardHost {
         withTerminal { terminal in
             TerminalKeyboardModes(kittyFlags: terminal.keyboardEnhancementFlags,
                                   applicationCursor: terminal.applicationCursor,
-                                  applicationKeypad: terminal.applicationKeypad)
+                                  applicationKeypad: terminal.applicationKeypad,
+                                  backarrowKeyMode: terminal.backarrowKeyMode)
         }
     }
 
@@ -3858,13 +4188,13 @@ extension TerminalView: TerminalKeyboardHost {
 
 
 extension TerminalView {
-    /// Opens an explicit URL or an implicit filesystem path with its default handler.
+    /// Checks a terminal link before opening it with its default handler.
+    /// Custom URL schemes require confirmation. Unsafe local files are blocked.
     public static func openDefaultLink (_ link: String)
     {
-        guard let url = defaultLinkURL(link) else {
-            return
+        TerminalLinkOpening.request(defaultLinkTarget(link, isExplicit: false), window: nil) {
+            NSWorkspace.shared.open($0)
         }
-        NSWorkspace.shared.open(url)
     }
 
     /// Converts a link to the URL that the default handler must open.
@@ -3910,7 +4240,7 @@ extension TerminalViewDelegate {
 
     public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
     {
-        openLink (link)
+        source.openLinkFromDelegate(link)
     }
 
     public func bell (source: TerminalView)

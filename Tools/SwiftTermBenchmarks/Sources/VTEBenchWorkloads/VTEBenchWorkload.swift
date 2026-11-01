@@ -11,13 +11,19 @@ public struct VTEBenchWorkload: Sendable {
     ///
     /// A chunk size tests parser state that continues across feed calls.
     public let inputChunkSize: Int?
+    /// The URI of the last OSC 8 link that the payload prints.
+    ///
+    /// A benchmark checks outside the timed region that this link still
+    /// resolves after the run. `nil` means the payload prints no link text.
+    public let lastHyperlink: String?
 
     public init(
         name: String,
         setup: [UInt8] = [],
         payload: [UInt8],
         maximumOscBytes: Int? = nil,
-        inputChunkSize: Int? = nil
+        inputChunkSize: Int? = nil,
+        lastHyperlink: String? = nil
     ) {
         precondition(!payload.isEmpty, "A benchmark payload must not be empty")
         precondition(maximumOscBytes == nil || maximumOscBytes! >= 0,
@@ -29,6 +35,7 @@ public struct VTEBenchWorkload: Sendable {
         self.payload = payload
         self.maximumOscBytes = maximumOscBytes
         self.inputChunkSize = inputChunkSize
+        self.lastHyperlink = lastHyperlink
     }
 
     /// Repeats the complete payload until the sample is at least the requested size.
@@ -168,8 +175,110 @@ public enum VTEBenchWorkloads {
             VTEBenchWorkload(
                 name: "hardening_osc_short_chunked",
                 payload: bytes("\u{1b}]2;title\u{07}"),
-                inputChunkSize: 1)
+                inputChunkSize: 1),
+            VTEBenchWorkload(
+                name: "hardening_block_color_cells",
+                setup: alternateScreen,
+                payload: blockColorCells(columns: columns, rows: rows))
         ]
+    }
+
+    /// Creates OSC 8 hyperlink workloads.
+    ///
+    /// The `osc8_parse_*`, `osc8_stream*`, and `osc8_cell_churn` cases follow
+    /// the OSC parser, terminal stream, and churn cases in Ghostty's benchmark
+    /// guide. The other cases model link reuse and link release. All payloads
+    /// close the active link at the end.
+    public static func makeHyperlink(
+        columns: Int = defaultColumns,
+        rows: Int = defaultRows
+    ) -> [VTEBenchWorkload] {
+        precondition(columns > 0 && rows > 0, "Terminal dimensions must be positive")
+
+        let benchmarkURI = "https://example.com/benchmark"
+        let longURI = "https://example.com/" + String(repeating: "a", count: 1_000)
+        // Scrollback holds 500 lines by default. 60,000 links with one cell
+        // each is more than the cells that the screen and scrollback can keep,
+        // so a repeated sample never finds its links still in use.
+        let denseLinkCount = 60_000
+        let distinctLineCount = 10_000
+
+        return [
+            VTEBenchWorkload(
+                name: "osc8_parse_implicit",
+                payload: oscPair(start: "8;;\(benchmarkURI)")),
+            VTEBenchWorkload(
+                name: "osc8_parse_explicit",
+                payload: oscPair(start: "8;id=bench;\(benchmarkURI)")),
+            VTEBenchWorkload(
+                name: "osc8_parse_long_uri",
+                payload: oscPair(start: "8;;\(longURI)")),
+            VTEBenchWorkload(
+                name: "osc8_stream",
+                payload: bytes(hyperlink(benchmarkURI, "linked text") + "\r\n"),
+                lastHyperlink: benchmarkURI),
+            VTEBenchWorkload(
+                name: "osc8_stream_plain",
+                payload: bytes("linked text\r\n")),
+            VTEBenchWorkload(
+                name: "osc8_cell_churn",
+                payload: bytes("\u{1b}[H\u{1b}]8;;\(benchmarkURI)\u{1b}\\"
+                    + String(repeating: "x", count: columns * rows)
+                    + "\u{1b}]8;;\u{1b}\\"),
+                lastHyperlink: benchmarkURI),
+            VTEBenchWorkload(
+                name: "osc8_redraw_same",
+                payload: redrawSameLinks(rows: rows),
+                lastHyperlink: "https://example.com/file/\((rows - 1) % 10)"),
+            VTEBenchWorkload(
+                name: "osc8_distinct_lines",
+                payload: distinctLinkLines(count: distinctLineCount),
+                lastHyperlink: "https://example.com/commit/\(distinctLineCount - 1)"),
+            VTEBenchWorkload(
+                name: "osc8_dense",
+                payload: denseLinks(count: denseLinkCount),
+                lastHyperlink: "u\(denseLinkCount - 1)")
+        ]
+    }
+
+    private static func hyperlink(_ uri: String, _ text: String) -> String {
+        "\u{1b}]8;;\(uri)\u{1b}\\\(text)\u{1b}]8;;\u{1b}\\"
+    }
+
+    /// A link start and a link end with `BEL` terminators and no text.
+    private static func oscPair(start: String) -> [UInt8] {
+        bytes("\u{1b}]\(start)\u{07}\u{1b}]8;;\u{07}")
+    }
+
+    /// A full-screen redraw, as tmux sends it, with the same 10 links.
+    private static func redrawSameLinks(rows: Int) -> [UInt8] {
+        var result = "\u{1b}[H"
+        for row in 0..<rows {
+            result += "\u{1b}[\(row + 1);1H"
+            result += hyperlink("https://example.com/file/\(row % 10)", "file-\(row % 10).swift")
+            result += " text that fills the row\u{1b}[K"
+        }
+        return bytes(result)
+    }
+
+    /// One line for each new link. The lines scroll into scrollback.
+    private static func distinctLinkLines(count: Int) -> [UInt8] {
+        var result: [UInt8] = []
+        for index in 0..<count {
+            result.append(contentsOf: bytes(
+                hyperlink("https://example.com/commit/\(index)", "commit \(index)")
+                + " message text for this line\r\n"))
+        }
+        return result
+    }
+
+    /// One cell for each new link.
+    private static func denseLinks(count: Int) -> [UInt8] {
+        var result: [UInt8] = []
+        for index in 0..<count {
+            result.append(contentsOf: bytes(hyperlink("u\(index)", "x")))
+        }
+        return result
     }
 
     private static let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ".utf8)
@@ -234,6 +343,26 @@ public enum VTEBenchWorkloads {
                     result.append(contentsOf: bytes(
                         "\u{1b}[38;5;\(foreground);48;5;\(background);1;3;4m"))
                     result.append(character)
+                }
+            }
+        }
+        return result
+    }
+
+    /// A half-block image, as a terminal image viewer or a DOOM-fire demo
+    /// draws one: every cell sets a 256-color foreground and background, then
+    /// prints U+2580, so each print run is a single non-ASCII scalar.
+    private static func blockColorCells(columns: Int, rows: Int) -> [UInt8] {
+        var result: [UInt8] = []
+        result.reserveCapacity(columns * rows * 8 * 22)
+        for frame in 0..<8 {
+            result.append(contentsOf: bytes("\u{1b}[H"))
+            for row in 1...rows {
+                for column in 1...columns {
+                    let index = row * 7 + column * 3 + frame * 11
+                    let foreground = 16 + index % 216
+                    let background = 16 + (index + 36) % 216
+                    result.append(contentsOf: bytes("\u{1b}[38;5;\(foreground);48;5;\(background)m\u{2580}"))
                 }
             }
         }

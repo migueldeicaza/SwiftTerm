@@ -134,6 +134,12 @@ final class TerminalIOPipeline: Sendable {
     func waitUntilStopped(timeout: TimeInterval) -> Bool {
         worker.waitUntilStopped(timeout: timeout)
     }
+
+    /// Testing hook: naps the gather thread took to coalesce tiny writes, as
+    /// of the last published batch.
+    var coalescingNaps: Int {
+        worker.coalescingNaps
+    }
 }
 
 /// Converts a timeout into a saturating uptime deadline in nanoseconds.
@@ -148,6 +154,110 @@ private func uptimeDeadline(after timeout: TimeInterval) -> UInt64 {
         return UInt64.max
     }
     return now + UInt64(nanoseconds)
+}
+
+/// Decides when the gather thread naps to coalesce a stream of tiny writes.
+///
+/// A line-buffered program writes each line on its own, and each write lands
+/// as one small read: the writer pays a reader wakeup per line, and every line
+/// becomes a batch (`seq 1 5000000` made over a million, under 50 bytes each).
+/// Once such a stream has run a while, a small read naps and reads again
+/// instead, so the writes during the nap wake nobody and land in one batch.
+/// Only a small read after a small batch naps: in a stream of large writes,
+/// such as `cat` or a TUI repainting in full, a small read is the tail of
+/// one write, and holding it back joins it to the next.
+///
+/// A stream is input that never left the gather thread waiting for more: an
+/// idle wait of `idleGapNs` or longer ends it. Owned by the gather thread;
+/// times are uptime nanoseconds.
+struct TerminalIOCoalescer {
+    /// Darwin's pty holds about 1.2 KB, which `seq` refills in well under
+    /// 100 µs: a nap long enough to fill it blocks the writer, and that is
+    /// slower than not napping at all (100 µs made `seq` half as fast).
+    static let napNs = 20_000
+    /// Only a stream this old naps, so an interactive echo, or any burst
+    /// shorter than this, is delivered exactly as before.
+    static let warmupNs: UInt64 = 2_000_000
+    /// Waiting this long for input ends a stream. Keys come tens of
+    /// milliseconds apart, so each echo starts a new one; a writer preempted
+    /// for a millisecond or two on a busy machine does not.
+    static let idleGapNs: UInt64 = 5_000_000
+    /// The longest a small batch waits for more input.
+    static let holdNs: UInt64 = 1_000_000
+    /// A nap that brings this much found the pty about full (Darwin blocks a
+    /// writer at 1216 bytes): the writer outran the nap and sat blocked for
+    /// the rest of it. One now and then is a preemption; `seq` has a few.
+    static let saturatingNapBytes = 1024
+    /// Two saturating naps in a row mean a writer that outruns every nap,
+    /// such as `cat`, or a machine too busy to wake on time: the stream stops
+    /// napping for this long, or until it next goes idle. Short, because
+    /// every batch in a backoff is a small one again; long enough that `cat`
+    /// loses two naps in ten milliseconds.
+    static let backoffNs: UInt64 = 10_000_000
+
+    private var streamStartNs: UInt64 = 0
+    private var batchStartNs: UInt64 = 0
+    private var bytesBeforeNap = 0
+    private var saturatingNaps = 0
+    private var napAllowedNs: UInt64 = 0
+    private var previousBatchBridged = false
+    /// Naps taken so far.
+    private(set) var naps = 0
+
+    /// Whether the current batch was gathered by napping. Such a batch is done
+    /// at the bridge threshold: the bridge would poll and spin on every tiny
+    /// write, the cost napping exists to avoid.
+    var batchNapped: Bool {
+        bytesBeforeNap > 0
+    }
+
+    /// Starts a batch at `now`, after the gather thread waited `idleNs` for
+    /// input since the last one.
+    mutating func beginBatch(at now: UInt64, afterIdle idleNs: UInt64) {
+        if idleNs >= Self.idleGapNs {
+            streamStartNs = now
+            saturatingNaps = 0
+            napAllowedNs = 0
+        }
+        batchStartNs = now
+        bytesBeforeNap = 0
+    }
+
+    /// Whether a batch holding `total` bytes, below the bridge threshold, at
+    /// the first EAGAIN since its last read, should nap and read again.
+    mutating func shouldNap(total: Int, now: UInt64) -> Bool {
+        // Below the bridge threshold, the last nap cannot have saturated.
+        if bytesBeforeNap > 0 {
+            saturatingNaps = 0
+        }
+        // Nothing new since the last nap means the stream paused: deliver.
+        guard total > bytesBeforeNap, !previousBatchBridged, now >= napAllowedNs,
+              now &- batchStartNs < Self.holdNs,
+              now &- streamStartNs >= Self.warmupNs else { return false }
+        bytesBeforeNap = total
+        naps += 1
+        return true
+    }
+
+    /// Records how the batch just published ended: `bridged` when it reached
+    /// the bridge threshold without napping, as a large write's reads do.
+    mutating func published(bridged: Bool) {
+        previousBatchBridged = bridged
+    }
+
+    /// Ends a batch gathered by napping that reached the bridge threshold
+    /// with `total` bytes at `now`.
+    mutating func endNappedBatch(total: Int, now: UInt64) {
+        guard total - bytesBeforeNap >= Self.saturatingNapBytes else {
+            saturatingNaps = 0
+            return
+        }
+        saturatingNaps += 1
+        if saturatingNaps >= 2 {
+            saturatingNaps = 0
+            napAllowedNs = now &+ Self.backoffNs
+        }
+    }
 }
 
 /// Owns raw storage, file descriptors, and the condition-protected ring.
@@ -200,6 +310,7 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
     private var descriptorsClosed = false
     private var started = false
     private var wakePipesReady = false
+    private var naps = 0
 #if DEBUG
     private enum SlotState {
         case free
@@ -342,6 +453,12 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
         return true
     }
 
+    var coalescingNaps: Int {
+        condition.lock()
+        defer { condition.unlock() }
+        return naps
+    }
+
     private var isCurrentWorker: Bool {
         Thread.current.threadDictionary[Self.workerMarkerKey] as? String == workerMarker
     }
@@ -452,6 +569,10 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
             pollfd(fd: controlReadFd, events: Self.pollIn, revents: 0),
             pollfd(fd: idleReadFd, events: Self.pollIn, revents: 0)
         ]
+        var coalescer = TerminalIOCoalescer()
+        // How long the gather thread waited for input before this batch. The
+        // first batch follows an idle terminal.
+        var idleNs = UInt64.max
 
         while true {
             let slot: Int
@@ -499,6 +620,8 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
             var bridgeStart: UInt64?
             var spins = 0
             var fatal = false
+            coalescer.beginBatch(at: DispatchTime.now().uptimeNanoseconds, afterIdle: idleNs)
+            idleNs = 0
 
             while total < TerminalIOPipeline.bufferCapacity {
                 let n = Self.readFd(fd, into: buffer.advanced(by: total), count: TerminalIOPipeline.bufferCapacity - total)
@@ -530,6 +653,16 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
                         break
                     }
                     if total < Self.bridgeThreshold {
+                        if coalescer.shouldNap(
+                            total: total, now: DispatchTime.now().uptimeNanoseconds) {
+                            Self.nap(nanoseconds: TerminalIOCoalescer.napNs)
+                            continue
+                        }
+                        break
+                    }
+                    if coalescer.batchNapped {
+                        coalescer.endNappedBatch(
+                            total: total, now: DispatchTime.now().uptimeNanoseconds)
                         break
                     }
                     if spins < Self.bridgeSpinMax {
@@ -600,6 +733,8 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
             }
 
             if total > 0 {
+                coalescer.published(
+                    bridged: total >= Self.bridgeThreshold && !coalescer.batchNapped)
                 condition.lock()
 #if DEBUG
                 precondition(slot == head, "Gather thread published a different slot")
@@ -609,6 +744,7 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
                 lens[head] = total
                 head = (head + 1) % TerminalIOPipeline.bufferCount
                 count += 1
+                naps = coalescer.naps
                 signalRingTransition()
                 condition.unlock()
             }
@@ -620,6 +756,7 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
                 continue
             }
 
+            let waitStart = DispatchTime.now().uptimeNanoseconds
             waitForInput: while true {
                 let pollResult = Self.pollFds(&pollFds, count: 2, timeout: -1)
                 if pollResult < 0 && errno == EINTR {
@@ -646,6 +783,7 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
                 }
                 break
             }
+            idleNs = DispatchTime.now().uptimeNanoseconds &- waitStart
         }
     }
 
@@ -763,6 +901,11 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
 
     private static func readFd(_ fd: Int32, into buffer: UnsafeMutableRawPointer, count: Int) -> Int {
         read(fd, buffer, count)
+    }
+
+    private static func nap(nanoseconds: Int) {
+        var interval = timespec(tv_sec: 0, tv_nsec: nanoseconds)
+        _ = nanosleep(&interval, nil)
     }
 
     private static func writeWakeByte(_ fd: Int32) {

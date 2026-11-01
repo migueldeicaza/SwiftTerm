@@ -20,12 +20,15 @@ public struct TerminalKeyboardModes: Equatable, Sendable {
     public var applicationCursor: Bool
     /// DECKPAM: the keypad sends application sequences.
     public var applicationKeypad: Bool
+    /// DECBKM: Backspace sends BS (Control-H) and not DEL.
+    public var backarrowKeyMode: Bool
 
     public init (kittyFlags: KittyKeyboardFlags = [], applicationCursor: Bool = false,
-                 applicationKeypad: Bool = false) {
+                 applicationKeypad: Bool = false, backarrowKeyMode: Bool = false) {
         self.kittyFlags = kittyFlags
         self.applicationCursor = applicationCursor
         self.applicationKeypad = applicationKeypad
+        self.backarrowKeyMode = backarrowKeyMode
     }
 
     /// The modes in a `Terminal.hostInputModes` value.
@@ -33,6 +36,7 @@ public struct TerminalKeyboardModes: Equatable, Sendable {
         kittyFlags = KittyKeyboardFlags(rawValue: Int((hostInputModes >> 8) & 0x1f))
         applicationCursor = hostInputModes & 1 != 0
         applicationKeypad = hostInputModes & 2 != 0
+        backarrowKeyMode = hostInputModes & 0x10000 != 0
     }
 }
 
@@ -443,7 +447,7 @@ public final class TerminalKeyboardRouter {
                    let scalar = singleControlScalar(in: characters) {
                     if scalar.value == 0x7f {
                         // Control-Backspace follows the same setting as Backspace.
-                        controlBytes = [host.backspaceSendsControlH ? 8 : 0x7f]
+                        controlBytes = [backspaceKeySendsControlH ? 8 : 0x7f]
                     } else {
                         controlBytes = [UInt8(scalar.value)]
                     }
@@ -638,7 +642,7 @@ public final class TerminalKeyboardRouter {
         case #selector(NSResponder.cancelOperation(_:)):
             host.keyboardRouter(send: EscapeSequences.cmdEsc)
         case #selector(NSResponder.deleteBackward(_:)):
-            host.keyboardRouter(send: [host.backspaceSendsControlH ? 8 : 0x7f])
+            host.keyboardRouter(send: [backspaceKeySendsControlH ? 8 : 0x7f])
         case #selector(NSResponder.moveUp(_:)):
             sendCursorKey(.up)
         case #selector(NSResponder.moveDown(_:)):
@@ -759,6 +763,12 @@ public final class TerminalKeyboardRouter {
 
     // MARK: Sending
 
+    /// Backspace sends BS when the host setting or DECBKM asks for it.
+    private var backspaceKeySendsControlH: Bool {
+        guard let host else { return false }
+        return host.backspaceSendsControlH || host.keyboardModes.backarrowKeyMode
+    }
+
     /// Sends the legacy bytes of a text key (Control or Option as Meta),
     /// with the key. A host whose terminal runs somewhere else can then
     /// encode the key again when the program enabled the kitty protocol
@@ -780,7 +790,7 @@ public final class TerminalKeyboardRouter {
         let encoder = KittyKeyboardEncoder(flags: modes.kittyFlags,
                                            applicationCursor: modes.applicationCursor,
                                            applicationKeypad: modes.applicationKeypad,
-                                           backspaceSendsControlH: host.backspaceSendsControlH)
+                                           backspaceSendsControlH: host.backspaceSendsControlH || modes.backarrowKeyMode)
         guard let bytes = encoder.encode(event) else { return false }
         host.keyboardRouter(send: TerminalKeyEvent(event: event, backspaceSendsControlH: host.backspaceSendsControlH),
                             bytes: bytes)

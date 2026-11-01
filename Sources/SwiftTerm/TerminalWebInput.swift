@@ -7,10 +7,12 @@ public extension Terminal {
 
     /// Bit 0: application cursor; bit 1: application keypad; bit 2: bracketed
     /// paste; bit 3: Kitty paste. Bits 8...12 contain Kitty keyboard flags.
+    /// Bit 16: DECBKM (Backspace sends BS).
     var hostInputModes: UInt32 {
         (applicationCursor ? 1 : 0) | (applicationKeypad ? 2 : 0)
             | (bracketedPasteMode ? 4 : 0) | (kittyPasteEventsEnabled ? 8 : 0)
             | (UInt32(keyboardEnhancementFlags.rawValue) << 8)
+            | (backarrowKeyMode ? 0x10000 : 0)
     }
 
     /// Send committed typing text on the terminal processing executor.
@@ -68,7 +70,7 @@ public extension Terminal {
             eventType: type, text: text, shiftedKey: shiftedKey == 0 ? nil : UnicodeScalar(shiftedKey),
             baseLayoutKey: baseLayoutKey == 0 ? nil : UnicodeScalar(baseLayoutKey), composing: composing)
         let encoder = KittyKeyboardEncoder(flags: flags, applicationCursor: applicationCursor,
-            applicationKeypad: applicationKeypad, backspaceSendsControlH: backspaceSendsControlH)
+            applicationKeypad: applicationKeypad, backspaceSendsControlH: backspaceSendsControlH || backarrowKeyMode)
         guard let bytes = encoder.encode(event) else { return 2 }
         sendUserInput(bytes[...])
         return 1

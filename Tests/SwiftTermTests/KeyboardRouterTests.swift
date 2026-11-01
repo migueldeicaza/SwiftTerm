@@ -110,6 +110,22 @@ struct KeyboardRouterTests {
         #expect(host.keys.allSatisfy { !$0.event.isText && $0.event.eventType == 1 })
     }
 
+    /// DECBKM makes Backspace send BS, as the host setting does, and the
+    /// mode reaches a remote host through `hostInputModes`.
+    @Test func backarrowKeyModeSendsControlH() {
+        let host = RecordingHost(frame: .zero)
+        let router = TerminalKeyboardRouter(host: host)
+        router.doCommand(#selector(NSResponder.deleteBackward(_:)))
+        host.keyboardModes = TerminalKeyboardModes(backarrowKeyMode: true)
+        router.doCommand(#selector(NSResponder.deleteBackward(_:)))
+        #expect(host.keys.map(\.bytes) + host.bytes == [[0x7f], [8]])
+
+        let (view, capture) = view(feed: "\u{1b}[?67h")
+        #expect(view.withTerminal { TerminalKeyboardModes(hostInputModes: $0.hostInputModes).backarrowKeyMode })
+        view.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
+        #expect(capture.sent == [8])
+    }
+
     private func view(feed text: String) -> (TerminalView, ViewCapture) {
         let view = TerminalView(frame: NSRect(x: 0, y: 0, width: 480, height: 200))
         let capture = ViewCapture()

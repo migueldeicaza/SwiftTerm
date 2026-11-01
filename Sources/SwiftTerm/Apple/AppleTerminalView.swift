@@ -228,6 +228,10 @@ struct FrameAppearance: Sendable, Equatable {
     let selectedTextForegroundColor: FrameColor
     let caretColor: FrameColor
     let caretTextColor: FrameColor
+    /// The host's link color, or `nil` when links keep their own colors.
+    let linkColor: FrameColor?
+    /// Overrides only the underline of highlighted links.
+    let linkUnderlineColor: FrameColor?
 }
 
 /// Caches main-actor font copies and dynamic-color resolution for frame input.
@@ -240,6 +244,8 @@ final class FrameCaptureCache {
     private var sourceFonts: [TTFont] = []
     private var cachedFonts: FrameFontSet?
     private var sourceColors: [TTColor] = []
+    private var sourceLinkColor: TTColor?
+    private var sourceLinkUnderlineColor: TTColor?
     private var appearanceSignature = 0
     private var cachedAppearance: FrameAppearance?
 
@@ -275,6 +281,8 @@ final class FrameCaptureCache {
             view.effectiveCaretColor,
             view.effectiveCaretTextColor
         ]
+        let linkColor = view.linkColor
+        let linkUnderlineColor = view.linkUnderlineColor
 #if os(macOS)
         let signature = view.effectiveAppearance.name.rawValue.hashValue
 #else
@@ -283,7 +291,9 @@ final class FrameCaptureCache {
         if let cachedAppearance,
            appearanceSignature == signature,
            sourceColors.count == current.count,
-           zip(sourceColors, current).allSatisfy({ $0.0.isEqual($0.1) }) {
+           zip(sourceColors, current).allSatisfy({ $0.0.isEqual($0.1) }),
+           sourceLinkColor?.isEqual(linkColor) ?? (linkColor == nil),
+           sourceLinkUnderlineColor?.isEqual(linkUnderlineColor) ?? (linkUnderlineColor == nil) {
             return cachedAppearance
         }
 
@@ -293,8 +303,12 @@ final class FrameCaptureCache {
             selectedTextBackgroundColor: FrameColor(current[2], view: view),
             selectedTextForegroundColor: FrameColor(current[3], view: view),
             caretColor: FrameColor(current[4], view: view),
-            caretTextColor: FrameColor(current[5], view: view))
+            caretTextColor: FrameColor(current[5], view: view),
+            linkColor: linkColor.map { FrameColor($0, view: view) },
+            linkUnderlineColor: linkUnderlineColor.map { FrameColor($0, view: view) })
         sourceColors = current
+        sourceLinkColor = linkColor
+        sourceLinkUnderlineColor = linkUnderlineColor
         appearanceSignature = signature
         cachedAppearance = result
 #if DEBUG
@@ -493,42 +507,9 @@ struct SnapshotSelectionResolver {
 
     func columns (forRow row: Int) -> Range<Int>? {
         guard style.selectionActive else { return nil }
-        let start = style.selectionStart
-        let end = style.selectionEnd
-        var lower = 0
-        var upper = 0
-
-        if start.row == end.row, row == start.row {
-            if start.col < end.col {
-                lower = start.col
-                upper = end.col + (end.col == cols - 1 ? 1 : 0)
-            } else if start.col > end.col {
-                lower = end.col
-                upper = start.col
-            }
-        } else if end.row > start.row {
-            if row == start.row {
-                lower = start.col
-                upper = cols
-            } else if row > start.row, row < end.row {
-                upper = cols
-            } else if row == end.row {
-                upper = end.col + (end.col == cols - 1 ? 1 : 0)
-            }
-        } else if start.row > end.row {
-            if row == end.row {
-                lower = end.col
-                upper = cols
-            } else if row > end.row, row < start.row {
-                upper = cols
-            } else if row == start.row {
-                upper = start.col + (start.col == cols - 1 ? 1 : 0)
-            }
-        }
-
-        lower = max(0, min(lower, cols))
-        upper = max(lower, min(upper, cols))
-        return lower < upper ? lower..<upper : nil
+        return SelectionService.selectedColumns(
+            row: row, cols: cols, start: style.selectionStart, end: style.selectionEnd,
+            block: style.selectionIsBlock, exclusiveEnd: false)
     }
 }
 
@@ -567,7 +548,9 @@ struct FrameViewState: Sendable {
     let appearance: FrameAppearance
     let customBlockGlyphs: Bool
     let useBrightColors: Bool
+    let collapseBrightColorsToBase: Bool
     let minimumContrastRatio: CGFloat
+    let translucentCellBackgrounds: Bool
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
 
@@ -577,6 +560,8 @@ struct FrameViewState: Sendable {
     var selectedTextForegroundColor: FrameColor { appearance.selectedTextForegroundColor }
     var caretColor: FrameColor { appearance.caretColor }
     var caretTextColor: FrameColor { appearance.caretTextColor }
+    var linkColor: FrameColor? { appearance.linkColor }
+    var linkUnderlineColor: FrameColor? { appearance.linkUnderlineColor }
 
     @MainActor
     init (view: TerminalView) {
@@ -608,7 +593,13 @@ struct FrameViewState: Sendable {
         appearance = view.frameCaptureCache.appearance(for: view)
         customBlockGlyphs = view.customBlockGlyphs
         useBrightColors = view.useBrightColors
+        collapseBrightColorsToBase = view.collapseBrightColorsToBase
         minimumContrastRatio = view.minimumContrastRatio
+#if os(macOS)
+        translucentCellBackgrounds = view.translucentCellBackgrounds
+#else
+        translucentCellBackgrounds = false
+#endif
         bidiHostPolicy = view.bidiHostPolicy
         glyphFallbackProvider = view.glyphFallbackProvider
     }
@@ -636,6 +627,9 @@ struct MainFrameEffects: Sendable {
     var resizedTo: FrameTerminalSize? = nil
 #if os(macOS)
     var scroller: TerminalView.ScrollerState? = nil
+    /// The selection the frame shows, so VoiceOver hears of a change to it
+    /// rather than of every frame.
+    var selection: SnapshotSelectionState = .empty
 #endif
 }
 
@@ -647,6 +641,8 @@ struct SnapshotNativeColors {
     let selectedTextForegroundColor: TTColor
     let caretColor: TTColor
     let caretTextColor: TTColor
+    let linkColor: TTColor?
+    let linkUnderlineColor: TTColor?
     let ansiColors: [TTColor]
 }
 
@@ -666,6 +662,10 @@ struct SnapshotRenderContext {
     let selectedTextForegroundColor: TTColor
     let caretColor: TTColor
     let caretTextColor: TTColor
+    /// Replaces the foreground and underline color of highlighted link cells;
+    /// `nil` keeps the cell's own colors.
+    let linkColor: TTColor?
+    let linkUnderlineColor: TTColor?
     let ansiColors: [TTColor]
     let selection: SnapshotSelectionResolver
     let textBlinkVisible: Bool
@@ -673,8 +673,25 @@ struct SnapshotRenderContext {
     let linkHighlightMode: LinkHighlightMode
     let commandActive: Bool
     let customBlockGlyphs: Bool
+    let enableOsc8Hyperlinks: Bool
     let useBrightColors: Bool
+    let collapseBrightColorsToBase: Bool
     let minimumContrastRatio: CGFloat
+    /// The alpha explicit cell backgrounds are drawn with, or nil when they
+    /// stay opaque. Set when `translucentCellBackgrounds` is on and the
+    /// default background is translucent; it is the default background's own
+    /// alpha, so colored rows read as part of the same surface.
+    ///
+    /// While it is set, both renderers paint background fills by *replacing*
+    /// the default background beneath them instead of compositing over it,
+    /// so an explicit cell ends at exactly this alpha (a source-over fill at
+    /// 0.4 over a 0.4 underlay would end at 0.64).
+    let translucentCellBackgroundAlpha: CGFloat?
+    /// The selection highlight as it is painted. While
+    /// `translucentCellBackgroundAlpha` is set, background fills replace the
+    /// default background, so the selection color arrives already composited
+    /// over it; the pixels match the highlight drawn over the default background.
+    let selectionFillColor: TTColor
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
     let cols: Int
@@ -704,6 +721,8 @@ struct SnapshotRenderContext {
                 selectedTextForegroundColor: appearance.selectedTextForegroundColor.nativeColor,
                 caretColor: appearance.caretColor.nativeColor,
                 caretTextColor: appearance.caretTextColor.nativeColor,
+                linkColor: appearance.linkColor?.nativeColor,
+                linkUnderlineColor: appearance.linkUnderlineColor?.nativeColor,
                 ansiColors: ansiColors.map(TTColor.make(color:))),
             cols: cols)
     }
@@ -725,15 +744,28 @@ struct SnapshotRenderContext {
         selectedTextForegroundColor = nativeColors.selectedTextForegroundColor
         caretColor = nativeColors.caretColor
         caretTextColor = nativeColors.caretTextColor
+        linkColor = nativeColors.linkColor
+        linkUnderlineColor = nativeColors.linkUnderlineColor
         ansiColors = nativeColors.ansiColors
         selection = SnapshotSelectionResolver(style: style, cols: cols)
         textBlinkVisible = style.textBlinkVisible
         linkHighlightRange = style.linkHighlightRange
         linkHighlightMode = style.linkHighlightMode
         commandActive = style.commandActive
+        enableOsc8Hyperlinks = style.enableOsc8Hyperlinks
         customBlockGlyphs = viewState.customBlockGlyphs
         useBrightColors = viewState.useBrightColors
+        collapseBrightColorsToBase = viewState.collapseBrightColorsToBase
         minimumContrastRatio = viewState.minimumContrastRatio
+        let defaultBackgroundAlpha = effectiveBackgroundColor.cgColor.alpha
+        if viewState.translucentCellBackgrounds && defaultBackgroundAlpha < 1 {
+            translucentCellBackgroundAlpha = defaultBackgroundAlpha
+            selectionFillColor = compositedColor(selectedTextBackgroundColor,
+                                                 over: effectiveBackgroundColor)
+        } else {
+            translucentCellBackgroundAlpha = nil
+            selectionFillColor = selectedTextBackgroundColor
+        }
         bidiHostPolicy = viewState.bidiHostPolicy
         glyphFallbackProvider = viewState.glyphFallbackProvider
         self.cols = cols
@@ -750,11 +782,15 @@ struct SnapshotRenderContext {
         identityHasher.combine(selectedTextForegroundColor.hash)
         identityHasher.combine(caretColor.hash)
         identityHasher.combine(caretTextColor.hash)
+        identityHasher.combine(linkColor?.hash)
+        identityHasher.combine(linkUnderlineColor?.hash)
         for color in self.ansiColors {
             identityHasher.combine(color.hash)
         }
         identityHasher.combine(useBrightColors)
+        identityHasher.combine(collapseBrightColorsToBase)
         identityHasher.combine(minimumContrastRatio)
+        identityHasher.combine(translucentCellBackgroundAlpha)
         identity = UInt64(bitPattern: Int64(identityHasher.finalize()))
     }
 
@@ -776,6 +812,13 @@ struct SnapshotRenderContext {
 /// the snapshot renderers do this arithmetic on their own threads, from the
 /// fonts and cell dimensions captured for the frame.
 enum CellGeometry {
+    /// Snap after the full drawing transform: a caret's local origin and a
+    /// double-height row can both carry a fractional device-pixel translation.
+    static func pixelAlignedGlyphOrigin(_ point: CGPoint, in context: CGContext) -> CGPoint {
+        let device = context.convertToDeviceSpace(point)
+        return context.convertToUserSpace(CGPoint(x: device.x.rounded(), y: device.y.rounded()))
+    }
+
     /// Distance from the bottom of a cell to the glyph baseline.
     ///
     /// ``TerminalView/lineSpacing`` makes the cell taller than the font's
@@ -1286,6 +1329,12 @@ struct TerminalViewCrossThreadState: Sendable {
     var cachedCellPixelSize: (width: Int, height: Int)?
     var cachedNativeColors: (foreground: Color, background: Color)?
     var scrolledDirty = false
+    /// The scroll position at the last end of synchronized output, waiting
+    /// for `applyPendingViewUpdates`.
+    var pendingSyncEndScrollPosition: Double?
+    /// The last cursor style the terminal set, waiting for
+    /// `applyPendingViewUpdates`.
+    var pendingCursorStyle: CursorStyle?
 }
 
 final class AppleKittyClipboardBridge: Sendable {
@@ -1673,6 +1722,12 @@ extension TerminalView {
         #endif
     }
 
+    /// Whether the backspace key sends BS (^H) instead of DEL: the host set
+    /// `backspaceSendsControlH`, or the application set DECBKM.
+    var backspaceKeySendsControlH: Bool {
+        backspaceSendsControlH || withTerminal { $0.backarrowKeyMode }
+    }
+
     /// Runs `body` while holding the terminal lock.
     ///
     /// The closure must not call another API that synchronously acquires the
@@ -1691,6 +1746,21 @@ extension TerminalView {
     /// Returns the current terminal grid size as a copied value.
     public nonisolated var terminalDimensions: TerminalDimensions {
         renderOwner.dimensions()
+    }
+
+    /// Accept OSC 8 hyperlinks. The default is true.
+    /// Changes also apply to links already in the terminal buffer.
+    /// Implicit URL and path detection remain available when this is false.
+    public var enableOsc8Hyperlinks: Bool {
+        get { withTerminal { $0.enableOsc8Hyperlinks } }
+        set {
+            withTerminal { $0.enableOsc8Hyperlinks = newValue }
+            linkHighlightRange = nil
+#if os(macOS)
+            removePreviewUrl()
+#endif
+            frameDriver.markDirty()
+        }
     }
 
     /// The kitty keyboard protocol flags the running application has enabled, as a copied value.
@@ -1737,14 +1807,17 @@ extension TerminalView {
         renderOwner.inputStateSnapshot()
     }
 
-    /// Copies a bounded region and its input state in one transaction.
+    /// Copies a region of a buffer, with its palette and the input state, in
+    /// one transaction.
     ///
     /// Safe to call from any thread, but not from a terminal delegate callback
     /// that already holds the terminal lock.
     ///
-    /// The snapshot is useful for inspection and bounded text capture. It does
-    /// not include images, hyperlinks, or palette values, and is not sufficient
-    /// to reproduce the full display.
+    /// `region` selects the rows; ``TerminalContentRegion/all`` copies every
+    /// retained row. `buffer` selects the normal or alternate buffer
+    /// regardless of which one is displayed. The snapshot is useful for inspection, text capture and
+    /// re-encoding as ANSI through ``TerminalContentSnapshot/ansiRepresentation()``.
+    /// It does not include images or hyperlinks.
     /// Returns nil when no terminal session is attached. The returned values
     /// remain valid after later feeds, resizes, scrolls, and history trimming.
     public nonisolated func terminalContentSnapshot(
@@ -2155,7 +2228,7 @@ extension TerminalView {
             if useBrightColors {
                 midx = ansi < 7 ? (Int (ansi) + (isBold ? 8 : 0)) : Int (ansi)
             } else {
-                midx = ansi > 7 ? (Int (ansi) - 8) : Int(ansi)
+                midx = collapseBrightColorsToBase && ansi > 7 ? (Int (ansi) - 8) : Int(ansi)
             }
             if let c = colors [midx] {
                 return c
@@ -2475,11 +2548,30 @@ extension TerminalView {
                 ? 1
                 : Double(displayBuffer.yDisp) / Double(maxScrollback)
         }
-        onMain { [weak self] in
-            guard let self else { return }
-            self.updateScroller()
-            self.frameDriver.markDirty()
-            self.terminalDelegate?.scrolled(source: self, position: position)
+        // A program that wraps each frame in 2026 ends it thousands of times
+        // a second. Record only the latest position: the frame driver applies
+        // it once, at its next tick (applyPendingViewUpdates).
+        crossThreadState.withLock { $0.pendingSyncEndScrollPosition = position }
+        frameSignal.requestViewUpdate()
+    }
+
+    /// Applies the changes the parse thread recorded for the main actor since
+    /// the last call. The frame driver calls this before it draws.
+    func applyPendingViewUpdates ()
+    {
+        let (position, cursorStyle) = crossThreadState.withLock { state in
+            let pending = (state.pendingSyncEndScrollPosition, state.pendingCursorStyle)
+            state.pendingSyncEndScrollPosition = nil
+            state.pendingCursorStyle = nil
+            return pending
+        }
+        if let cursorStyle {
+            caretView?.style = cursorStyle
+            updateCaretView()
+        }
+        if let position {
+            updateScroller()
+            terminalDelegate?.scrolled(source: self, position: position)
         }
     }
 
@@ -2582,7 +2674,7 @@ extension TerminalView {
         
         var useBoldForBrightColor: Bool = false
         // if high - bright colors are disabled in settings we will use bold font instead
-        if case .ansi256(let code) = fg, code > 7, !useBrightColors {
+        if case .ansi256(let code) = fg, code > 7, !useBrightColors, collapseBrightColorsToBase {
             useBoldForBrightColor = true
         }
         var tf: TTFont
@@ -2628,7 +2720,7 @@ extension TerminalView {
 
         if withUrl {
             nsattr [.underlineStyle] = NSUnderlineStyle.single.rawValue
-            nsattr [.underlineColor] = fgColor
+            nsattr [.underlineColor] = linkUnderlineColor ?? fgColor
             nsattr [SwiftTermUnderlineStyleKey] = Int(UnderlineStyle.dashed.rawValue)
 
             // Add to cache; truecolor attributes are unbounded, so cap it
@@ -2733,6 +2825,7 @@ extension TerminalView {
             selectionActive: selection?.active == true,
             selectionStart: selection?.start ?? Position(col: 0, row: 0),
             selectionEnd: selection?.end ?? Position(col: 0, row: 0),
+            selectionIsBlock: selection?.isBlock == true,
             linkHighlightRange: linkHighlightRange,
             linkHighlightMode: linkHighlightMode,
             commandActive: commandActive,
@@ -2774,6 +2867,7 @@ extension TerminalView {
     func payloadStringLocked(at position: Position) -> String?
     {
         terminal.terminalLock.preconditionLocked()
+        guard terminal.enableOsc8Hyperlinks else { return nil }
         let buffer = terminal.displayBuffer
         guard position.row >= 0 && position.row < buffer.lines.count else {
             return nil
@@ -2853,14 +2947,14 @@ extension TerminalView {
         }
     }
 
-    func linkForClick(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String])?
+    func linkForClick(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String], isExplicit: Bool)?
     {
         withTerminal { _ in
             linkForClickLocked(at: position, hasCommandModifier: hasCommandModifier)
         }
     }
 
-    func linkForClickLocked(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String])?
+    func linkForClickLocked(at position: Position, hasCommandModifier: Bool) -> (link: String, params: [String:String], isExplicit: Bool)?
     {
         terminal.terminalLock.preconditionLocked()
         let mode: Terminal.LinkLookupMode = implicitLinkCouldBeVisible(hasCommandModifier: hasCommandModifier)
@@ -2875,9 +2969,9 @@ extension TerminalView {
         if match.isExplicit,
            let payload = payloadStringLocked(at: position),
            let (url, params) = urlAndParamsFrom(payload: payload) {
-            return (url, params)
+            return (url, params, true)
         }
-        return (match.text, [:])
+        return (match.text, [:], match.isExplicit)
     }
     
     /// Returns the selection range for the specified row, if any.
@@ -3229,6 +3323,9 @@ extension CoreGraphicsPaintHost {
         case .doubledDown, .doubledTop: scaleY = scale * 2
         case .single, .doubleWidth: scaleY = scale
         }
+        let minThicknessPx = max(1, Int(round(scale)))
+        let lineWidthPx = max(minThicknessPx,
+                              Int(round(scale * fontSet.underlineThickness() * 1.35)))
         for item in items {
             let cellRect = CGRect(x: lineOrigin.x + CGFloat(item.column) * cellDimension.width,
                                   y: lineOrigin.y,
@@ -3239,7 +3336,8 @@ extension CoreGraphicsPaintHost {
                                    cellRect: cellRect,
                                    scaleX: scaleX,
                                    scaleY: scaleY,
-                                   color: item.foregroundColor.cgColor)
+                                   color: item.foregroundColor.cgColor,
+                                   lineWidthPx: lineWidthPx * (renderMode == .doubledDown || renderMode == .doubledTop ? 2 : 1))
         }
     }
 
@@ -3395,6 +3493,13 @@ extension CoreGraphicsPaintHost {
         // scroll region, line insert/delete) otherwise keeps stale glyphs/backgrounds.
         // Clear to transparent — not fill — so a translucent background is preserved.
         context.clear(dirtyRect)
+        if renderContext.translucentCellBackgroundAlpha != nil {
+            // Translucent cell backgrounds: the layer stays clear (see
+            // updateBackingLayerBackground) and the default background is
+            // painted here, so the explicit fills below can replace it.
+            context.setFillColor(coreGraphicsRenderCache.cgColor(for: renderContext.effectiveBackgroundColor))
+            context.fill(dirtyRect)
+        }
         #endif
 
         for row in firstRow...lastRow {
@@ -3521,6 +3626,13 @@ extension CoreGraphicsPaintHost {
             context.setShouldAntialias(false)
             context.setLineCap(.square)
             context.setLineWidth(0)
+            if renderContext.translucentCellBackgroundAlpha != nil {
+                // Translucent cell backgrounds replace the default background
+                // painted above instead of compositing over it, so a cell ends
+                // at the alpha it carries. Selection fills arrive already
+                // composited over the default background.
+                context.setBlendMode(.copy)
+            }
 
             for prepared in preparedSegments {
                 for preparedRun in prepared.runs {
@@ -3696,6 +3808,13 @@ extension CoreGraphicsPaintHost {
                         if anyScaled { scaledFits = computed }
                     }
 
+                    // Slot fitting and fractional view heights can place an
+                    // otherwise cell-aligned glyph between device pixels.
+                    // Rasterize at an integral origin, matching the Metal atlas.
+                    for i in glyphPositions.indices {
+                        glyphPositions[i] = CellGeometry.pixelAlignedGlyphOrigin(glyphPositions[i], in: context)
+                    }
+
                     if let scaledFits {
                         // Rare path: at least one glyph is scaled and is drawn
                         // individually — uniform scales via a resized font,
@@ -3816,9 +3935,12 @@ extension CoreGraphicsPaintHost {
         }
         
 #if os(macOS)
-        // Fills gaps at the end with the default terminal background
+        // Fills gaps at the end with the default terminal background. A
+        // translucent background is already there: the layer paints it (or,
+        // with translucent cell backgrounds, the fill at the top of this
+        // draw), and filling it again would composite it twice.
         let box = CGRect (x: 0, y: 0, width: bounds.width, height: bounds.height.truncatingRemainder(dividingBy: cellHeight))
-        if dirtyRect.intersects(box) {
+        if dirtyRect.intersects(box) && renderContext.effectiveBackgroundColor.cgColor.alpha >= 1 {
             renderContext.effectiveBackgroundColor.setFill()
             context.fill ([box])
         }
@@ -3971,6 +4093,11 @@ extension TerminalView {
     func captureFrameViewState () -> FrameViewState?
     {
         guard terminal != nil else { return nil }
+#if os(macOS)
+        if urlPreview != nil && !enableOsc8Hyperlinks {
+            removePreviewUrl()
+        }
+#endif
         return FrameViewState(view: self)
     }
 
@@ -4027,9 +4154,16 @@ extension TerminalView {
 #endif
 #if os(macOS)
             NSAccessibility.post(element: self, notification: .valueChanged)
-            NSAccessibility.post(element: self, notification: .selectedTextChanged)
 #endif
         }
+#if os(macOS)
+        // On a change to the selection, not on each frame of output:
+        // VoiceOver reads the whole selection each time it hears this.
+        if effects.selection != accessibilitySelection {
+            accessibilitySelection = effects.selection
+            NSAccessibility.post(element: self, notification: .selectedTextChanged)
+        }
+#endif
 
         if consumeScrolledDirty() {
             updateScroller()
@@ -4127,6 +4261,7 @@ extension TerminalView {
             y: lineOrigin.y)
         caretView.frame.size.width = cellDimension.width * doublePosition *
             CGFloat(cursor.columnWidth)
+        caretView.powerlineRenderMode = cursor.renderMode
         caretView.setText(cursor.renderData)
     }
     
@@ -4363,6 +4498,9 @@ extension TerminalView {
         let driver = FrameDriver(signal: frameSignal)
         driver.onTick = { [weak self] in
             self?.frameTick()
+        }
+        driver.onViewUpdate = { [weak self] in
+            self?.applyPendingViewUpdates()
         }
         driver.onVisibilityChanged = { [weak self] visible in
             self?.renderOwner.setTerminalVisibility(
@@ -4751,18 +4889,29 @@ extension TerminalView {
     /// Cell coordinates are zero-based. Pixel coordinates default to the cell
     /// coordinates, matching Terminal.sendEvent. Buttons 0, 1, 2 and 4...7
     /// are supported; other buttons and negative or overflowing cell coordinates
-    /// are ignored. The host decides when to report an event;
+    /// are ignored. `motion` reports the pointer moving with `button` held, as
+    /// Terminal.sendMotion does (a drag); it is ignored on a release. The host
+    /// decides when to report an event;
     /// this method does not consult allowMouseReporting or suppress off-mode
     /// reports. Unlike keyboard input, mouse responses do not register an
     /// OSC 133 semantic submission. Delivery is synchronous on the main actor,
     /// after releasing the terminal lock.
+    ///
+    /// Use one handler to report each gesture. If both the host and the view
+    /// report the same gesture, the program receives duplicate mouse events.
+    /// Disable the view's matching gesture handler when the host reports it.
+    ///
+    /// For a drag, send a press before motion. If the mouse mode requires a
+    /// release, send it when the gesture ends or is cancelled. A host that
+    /// stops a reported drag must still send that release. Without it, the
+    /// program can keep the button in the pressed state.
     @MainActor
-    public func sendMouseEvent(button: Int, release: Bool,
+    public func sendMouseEvent(button: Int, release: Bool, motion: Bool = false,
                                shift: Bool = false, meta: Bool = false,
                                control: Bool = false, col: Int, row: Int,
                                pixelX: Int? = nil, pixelY: Int? = nil) {
         guard let bytes = renderOwner.mouseEventBytes(
-            button: button, release: release, shift: shift, meta: meta,
+            button: button, release: release, motion: motion, shift: shift, meta: meta,
             control: control, col: col, row: row, pixelX: pixelX, pixelY: pixelY)
         else { return }
         terminalDelegate?.send(source: self, data: bytes[...])
@@ -5000,6 +5149,15 @@ extension TerminalView {
         }
     }
     
+    /// Which clicks at an OSC 133 shell prompt move the cursor to the click.
+    /// The default, `.enabled`, takes a click with no modifiers held.
+    /// `.requireModifier([.option])` takes only an Option-click, as
+    /// Terminal.app does, and leaves plain clicks to select and open links.
+    public var semanticPromptClickBehavior: SemanticPromptClickBehavior {
+        get { withTerminal { $0.semanticPromptClickBehavior } }
+        set { withTerminal { $0.semanticPromptClickBehavior = newValue } }
+    }
+
     /// Set to true if the selection is active, false otherwise
     public var selectionActive: Bool {
         get {

@@ -57,7 +57,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         set {
             guard newValue != renderModeValue else { return }
             renderModeValue = newValue
-            bump()
+            bumpRenderOnly()
         }
     }
 #if DEBUG
@@ -72,7 +72,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         set {
             guard newValue != semanticMarksValue else { return }
             semanticMarksValue = newValue
-            bump()
+            bumpRenderOnly()
         }
     }
     /// The prompt-group epoch of a line created by a hard line feed inside a
@@ -91,7 +91,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         set {
             guard newValue != semanticHardContinuationGroupValue else { return }
             semanticHardContinuationGroupValue = newValue
-            bump()
+            bumpRenderOnly()
         }
     }
     /// Link to the owning buffer, used only so `copyFrom` can ask which of two
@@ -125,8 +125,8 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// Upper bound on the cells that can contain data other than a blank cell
     /// with ``tailBlankCell``.
     ///
-    /// **Invariant:** Each cell in `usedLength ..< storage.count` is
-    /// `tailBlankCell`.
+    /// **Invariant:** Each cell in `0 ..< usedStart` and in
+    /// `usedLength ..< storage.count` is `tailBlankCell`.
     ///
     /// This value lets ``clear(with:)`` clear only the written part of a row.
     /// Terminal rows are usually shorter than `cols`, so the tail often does
@@ -137,24 +137,54 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// The `storage` property is private, so this file contains all updates.
     private var usedLength: Int
 
+    /// Lower bound on the cells that can contain data other than a blank cell
+    /// with ``tailBlankCell``. The written part is `usedStart ..< usedLength`,
+    /// and it is empty when `usedStart >= usedLength`.
+    ///
+    /// Text that starts after column 0, such as a right-aligned prompt or a
+    /// cursor that stays in the last column, then needs a clear of only the
+    /// cells that it wrote.
+    private var usedStart: Int
+
     /// The packed blank stored after ``usedLength``.
     /// This value is valid only when `usedLength < storage.count`.
     private var tailBlankCell = PackedCell()
 
     /// Marks the full row as potentially dirty.
     @inline(__always)
-    private func invalidateUsedLength () { usedLength = storage.count }
+    private func invalidateUsedLength () {
+        usedStart = 0
+        usedLength = storage.count
+    }
 
-    /// Records that cells before `end` can contain written data.
+    /// Records that cells in `start ..< end` can contain written data.
     @inline(__always)
-    private func noteWritten (upTo end: Int) {
+    private func noteWritten (from start: Int, upTo end: Int) {
+        if start < usedStart { usedStart = max(start, 0) }
         if end > usedLength { usedLength = min(end, storage.count) }
     }
+
+#if DEBUG
+    /// Row-walking checks on every recycle; too slow for debug hosts, so opt-in (CI sets it).
+    static let expensiveAssertsEnabled: Bool = {
+#if SWIFTTERM_EMBEDDED
+        return false
+#else
+        return ProcessInfo.processInfo.environment["SWIFTTERM_EXPENSIVE_ASSERTS"] == "1"
+#endif
+    }()
+#endif
 
     /// Checks the ``usedLength`` invariant against the stored cells.
     @inline(__always)
     private func assertTailIsBlank () {
         #if DEBUG
+        guard BufferLine.expensiveAssertsEnabled else { return }
+        for i in 0..<min(usedStart, storage.count) {
+            assert(storage.rawCell(at: i) == tailBlankCell,
+                   "BufferLine.usedStart invariant failed at cell \(i) of \(storage.count) " +
+                   "(usedStart=\(usedStart)). A writer changed a cell before usedStart.")
+        }
         guard usedLength < storage.count else { return }
         for i in usedLength..<storage.count {
             assert(storage.rawCell(at: i) == tailBlankCell,
@@ -171,19 +201,35 @@ public final class BufferLine: CustomDebugStringConvertible {
             // The common recycle and snapshot path writes nil to an empty row.
             guard newValue != nil || imagesValue != nil else { return }
             imagesValue = newValue
-            bump()
+            bumpRenderOnly()
         }
     }
 
-    /// Monotonically increasing counter incremented on every mutation of this line's
-    /// contents (cells, isWrapped, renderMode, images). Renderers that cache per-line
+    /// Counter that changes on every mutation of this line's contents (cells,
+    /// isWrapped, renderMode, images). Renderers that cache per-line
     /// draw state can compare this counter against a cached value to detect in-place
     /// changes without diffing individual cells.
     public var generation: UInt64 { _generation }
     private(set) var _generation: UInt64 = 0
+    /// A change that a selection of this line does not see adds this step
+    /// to `_generation` instead of 1. The low bits then count only the
+    /// changes a selection sees, so ``contentGeneration`` needs no counter
+    /// of its own and a cell write still costs one increment. The carry out
+    /// of the high bits only wraps `_generation`, which readers compare for
+    /// equality.
+    private static let renderOnlyStep: UInt64 = 1 << 40
+    /// Changes with what a selection of this line holds: the cells,
+    /// `isWrapped` and `bidiState`, and not the prompt marks, images,
+    /// render mode or blank cells a resize adds or drops at the end. A feed
+    /// compares it to keep a selection whose rows it didn't touch without
+    /// copying their cells.
+    var contentGeneration: UInt64 { _generation & (BufferLine.renderOnlyStep - 1) }
 
     @inline(__always)
     private func bump() { _generation &+= 1 }
+
+    @inline(__always)
+    private func bumpRenderOnly() { _generation &+= BufferLine.renderOnlyStep }
 
     public convenience init (cols: Int, fillData: CharData? = nil, isWrapped: Bool = false,
                              bidiState: BidiPresentationState = .default)
@@ -212,6 +258,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         bidiStateValue = bidiState
         storage = CellStoragePage(count: cols, repeating: packedFill, arena: arena)
         usedLength = blankTailCell == nil ? cols : 0
+        usedStart = blankTailCell == nil ? 0 : cols
         tailBlankCell = blankTailCell ?? PackedCell()
     }
 
@@ -228,6 +275,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         imagesValue = other.imagesValue
         storage = CellStoragePage(copying: other.storage)
         usedLength = other.usedLength
+        usedStart = other.usedStart
         tailBlankCell = other.tailBlankCell
     }
 
@@ -258,6 +306,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         let target = min(index, storage.count - 1)
         storage.setRawCell(cell, at: target)
         if target >= usedLength { usedLength = target &+ 1 }
+        if target < usedStart { usedStart = target }
         bump()
     }
 
@@ -369,13 +418,8 @@ public final class BufferLine: CustomDebugStringConvertible {
         let source = bytes.span
             .extracting(droppingFirst: sourceStart - bytes.startIndex)
             .extracting(first: count)
-        for offset in source.indices {
-            let rawValue = template |
-                (UInt64(source[offset]) << PackedCell.contentShift)
-            storage.setRawCell(PackedCell(rawValue: rawValue),
-                               at: destinationStart + offset)
-        }
-        noteWritten(upTo: destinationEnd)
+        storage.setPackedAsciiRun(source, template: template, at: destinationStart)
+        noteWritten(from: destinationStart, upTo: destinationEnd)
         bump()
     }
 
@@ -406,7 +450,7 @@ public final class BufferLine: CustomDebugStringConvertible {
                                                 semanticContentCode: semanticContentCode).rawValue
         let source = bytes.extracting(sourceStart..<(sourceStart + count))
         storage.setPackedAsciiRun(source, template: template, at: destinationStart)
-        noteWritten(upTo: destinationEnd)
+        noteWritten(from: destinationStart, upTo: destinationEnd)
         bump()
     }
 
@@ -462,7 +506,7 @@ public final class BufferLine: CustomDebugStringConvertible {
                                    at: destinationStart + offset)
             }
         }
-        noteWritten(upTo: destinationEnd)
+        noteWritten(from: destinationStart, upTo: destinationEnd)
         bump()
     }
 
@@ -504,6 +548,11 @@ public final class BufferLine: CustomDebugStringConvertible {
         (0..<storage.count).map { storage.cell(at: $0) }
     }
 
+    /// Calls `body` with the payload code of each cell that holds one, without unpacking cells.
+    func forEachPayloadCode(_ body: (UInt16) -> Void) {
+        storage.forEachPayloadCode(body)
+    }
+
     /// Accesses the CharIndex at the specified position
     public subscript (index : Int /*, callingMethod: String = #function */) -> CharData {
         get {
@@ -523,9 +572,11 @@ public final class BufferLine: CustomDebugStringConvertible {
                 print("BufferLine: You passed an index out of range, adjusting to prevent crash, but you should debug")
                 storage.setCell(value, at: storage.count - 1)
                 usedLength = storage.count
+                usedStart = min(usedStart, storage.count - 1)
             } else {
                 storage.setCell(value, at: index)
                 if index >= usedLength { usedLength = index &+ 1 }
+                if index < usedStart { usedStart = index }
             }
             bump()
         }
@@ -541,13 +592,14 @@ public final class BufferLine: CustomDebugStringConvertible {
     @inline(__always)
     private func clearCellState(with empty: PackedCell) {
         assertTailIsBlank()
-        if usedLength == storage.count || empty != tailBlankCell {
+        if empty != tailBlankCell || (usedStart == 0 && usedLength == storage.count) {
             storage.fill(with: empty)
-        } else if usedLength > 0 {
-            storage.fill(with: empty, in: 0..<usedLength)
+        } else if usedStart < usedLength {
+            storage.fill(with: empty, in: usedStart..<usedLength)
         }
         tailBlankCell = empty
         usedLength = 0
+        usedStart = storage.count
         // Most recycled lines have no images. Do not call ARC for an
         // optional array that is already nil.
         if imagesValue != nil {
@@ -565,6 +617,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// Resets a line object for reuse. This is one logical mutation, so it
     /// bypasses the individual metadata setters and changes `generation` once.
     @discardableResult
+    @inline(__always)
     func recycle(with empty: PackedCell, isWrapped: Bool,
                  bidiState: BidiPresentationState) -> Bool {
         let hadImages = imagesValue != nil
@@ -591,7 +644,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             semanticMarksValue.removeAll(keepingCapacity: true)
         }
         semanticHardContinuationGroupValue = nil
-        bump()
+        bumpRenderOnly()
     }
     /// Test whether contains any chars.
     public func hasContent (index: Int) -> Bool {
@@ -728,7 +781,7 @@ public final class BufferLine: CustomDebugStringConvertible {
         if start < idx {
             storage.fill(with: fill, in: start..<idx)
         }
-        noteWritten(upTo: idx)
+        noteWritten(from: start, upTo: idx)
         bump()
     }
 
@@ -746,7 +799,14 @@ public final class BufferLine: CustomDebugStringConvertible {
         if len == cols {
             return
         }
-        defer { bump() }
+        // The selection check compares a row's columns, which stop at the
+        // line's end, so a resize matters to a selection only through a cell
+        // it drops and a later resize adds back. That cell keeps its value
+        // when both are blank.
+        let changesContent = cols < len
+            ? (cols..<len).contains { storage.rawCell(at: $0) != PackedCell() }
+            : fill != PackedCell()
+        defer { changesContent ? bump() : bumpRenderOnly() }
 
         storage = storage.resized(to: cols, fill: fill)
         if cols < len {
@@ -780,7 +840,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     func fill(with packed: PackedCell, atCol: Int, len: Int)
     {
         storage.fill(with: packed, in: atCol..<(atCol + len))
-        noteWritten(upTo: atCol + len)
+        noteWritten(from: atCol, upTo: atCol + len)
         bump()
     }
 
@@ -797,6 +857,7 @@ public final class BufferLine: CustomDebugStringConvertible {
                     : line.storage.rehomed(to: storage.arena)
             }
             usedLength = line.usedLength
+            usedStart = line.usedStart
             if line.storage.arena === storage.arena {
                 tailBlankCell = line.tailBlankCell
             } else {
@@ -828,6 +889,7 @@ public final class BufferLine: CustomDebugStringConvertible {
                                           arena: snapshotArena)
             }
             usedLength = line.usedLength
+            usedStart = line.usedStart
             // Snapshot arenas preserve terminal identifiers exactly.
             tailBlankCell = line.tailBlankCell
         }
@@ -861,7 +923,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     ///  - len: the number of elements to copy
     public func copyFrom (_ src: BufferLine, srcCol: Int, dstCol: Int, len: Int)
     {
-        defer { noteWritten(upTo: dstCol + len) }
+        defer { noteWritten(from: dstCol, upTo: dstCol + len) }
         let movesSemanticHardContinuation = srcCol == 0 && dstCol == 0 && len >= count
         let movedSemanticHardContinuationGroup = src.semanticHardContinuationGroup
         if len > 0 {

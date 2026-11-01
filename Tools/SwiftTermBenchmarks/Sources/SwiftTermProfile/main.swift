@@ -37,7 +37,8 @@ private struct Options {
 }
 
 private func usage() -> Never {
-    let names = try! (VTEBenchWorkloads.makeDefault() + VTEBenchWorkloads.makeHardening())
+    let names = try! (VTEBenchWorkloads.makeDefault() + VTEBenchWorkloads.makeHardening()
+        + VTEBenchWorkloads.makeHyperlink())
         .map(\.name).joined(separator: ", ")
     FileHandle.standardError.write(Data("""
     usage: SwiftTermProfile WORKLOAD [--iterations N] [--warmup N] [--minimum-bytes N]
@@ -51,6 +52,7 @@ guard let options = Options.parse(Array(CommandLine.arguments.dropFirst())) else
     usage()
 }
 let workloads = try VTEBenchWorkloads.makeDefault() + VTEBenchWorkloads.makeHardening()
+    + VTEBenchWorkloads.makeHyperlink()
 guard let workload = workloads.first(where: { $0.name == options.workloadName }) else {
     usage()
 }
@@ -104,6 +106,22 @@ if let sampleChunks {
     }
 }
 let elapsed = start.duration(to: clock.now)
+
+// A terminal that runs out of link codes prints text without its link, and
+// is faster. Stop before the result is reported.
+if let uri = workload.lastHyperlink {
+    let found = (0..<rows).contains { row in
+        (0..<columns).contains { column in
+            // The payload has the form `params;uri`.
+            (terminal.getCharData(col: column, row: row)?.getPayload() as? String)?
+                .split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false).last == Substring(uri)
+        }
+    }
+    if !found {
+        FileHandle.standardError.write(Data("\(workload.name): the link \(uri) does not resolve\n".utf8))
+        exit(1)
+    }
+}
 let seconds = Double(elapsed.components.seconds)
     + Double(elapsed.components.attoseconds) / 1_000_000_000_000_000_000
 let byteCount = sample.count * options.iterations

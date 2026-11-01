@@ -989,6 +989,17 @@ final class CellStoragePage {
 
     var count: Int { cells.count }
 
+    /// Calls `body` with the payload code of each cell that holds one.
+    @inline(__always)
+    func forEachPayloadCode(_ body: (UInt16) -> Void) {
+        for cell in cells {
+            let code = cell.payloadCode
+            if code != 0 {
+                body(code)
+            }
+        }
+    }
+
     init(count: Int, repeating value: CharData = CharData.Null,
          arena: CellArena? = nil, styleCapacity: Int = Int(UInt16.max))
     {
@@ -1110,10 +1121,13 @@ final class CellStoragePage {
         guard !source.isEmpty else { return }
         source.withUnsafeBufferPointer { sourceBuffer in
             let destination = cells.baseAddress!.advanced(by: destinationStart)
-            for offset in sourceBuffer.indices {
+            // Not a Range loop: that's a generic call per element unoptimized.
+            var offset = 0
+            while offset < sourceBuffer.count {
                 let rawValue = template |
                     (UInt64(sourceBuffer[offset]) << PackedCell.contentShift)
                 destination[offset] = PackedCell(rawValue: rawValue)
+                offset += 1
             }
         }
     }

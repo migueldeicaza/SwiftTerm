@@ -516,6 +516,40 @@ struct UnicodeUtil {
         return incomingWidth == 0 ? .undecided : .breaks
     }
 
+    /// Classifies the boundary between `previous` and any `incoming` scalar:
+    /// the UTS #51 emoji-modifier rule, then
+    /// ``graphemeJoinNonEmojiModifier(previous:previousProperties:incoming:incomingProperties:incomingWidth:)``.
+    ///
+    /// UTS #51 defines an emoji modifier sequence as an emoji modifier base
+    /// followed immediately by an emoji modifier. A standalone modifier must
+    /// remain visible.
+    @inline(__always)
+    static func graphemeJoin(
+        previous: UInt32, incoming: UInt32, incomingProperties: UInt8,
+        incomingWidth: Int
+    ) -> GraphemeJoin
+    {
+        if isEmojiModifier(incoming) {
+            return isEmojiModifierBase(previous) ? .joins : .breaks
+        }
+        return graphemeJoinNonEmojiModifier(
+            previous: previous,
+            previousProperties: graphemeProperties(previous),
+            incoming: incoming, incomingProperties: incomingProperties,
+            incomingWidth: incomingWidth)
+    }
+
+    /// True when the terminal makes a narrow cell wide after `incoming`
+    /// joins it: a scalar with a column width, or a spacing mark that is not
+    /// an Indic linker or a virama. The variation selectors and narrow
+    /// regional indicators have rules of their own.
+    @inline(__always)
+    static func widensJoinedCell(incoming: UInt32, properties: UInt8, width: Int) -> Bool {
+        width > 0 || (isSpacingMarkWidth(incoming) &&
+                      indicConjunctBreak(properties: properties) != .linker &&
+                      !isVirama(incoming))
+    }
+
     /**
      * True for a lone symbol whose Unicode default presentation is text (Emoji=Yes,
      * Emoji_Presentation=No) and that carries no explicit variation selector.

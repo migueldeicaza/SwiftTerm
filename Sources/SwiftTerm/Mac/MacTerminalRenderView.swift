@@ -56,6 +56,23 @@ open class TerminalRenderView: NSView, CaretHost {
     public var antiAliasCustomBlockGlyphs: Bool = false { didSet { invalidateAll() } }
     public var customBlockGlyphs: Bool = true { didSet { invalidateAll() } }
     public var useBrightColors: Bool = true { didSet { invalidateAll() } }
+    /// Draws explicit bright ANSI indexes as base colors with a bold font
+    /// while `useBrightColors` is false; see
+    /// ``TerminalView/collapseBrightColorsToBase``.
+    public var collapseBrightColorsToBase: Bool = true {
+        didSet {
+            guard collapseBrightColorsToBase != oldValue else { return }
+            colorsChanged()
+        }
+    }
+    /// Explicit cell backgrounds share the opacity of the background color;
+    /// see ``TerminalView/translucentCellBackgrounds``.
+    public var translucentCellBackgrounds: Bool = false {
+        didSet {
+            guard translucentCellBackgrounds != oldValue else { return }
+            colorsChanged()
+        }
+    }
     /// The least contrast, as a WCAG ratio from 1 to 21, that text keeps
     /// against its background; see ``TerminalView/minimumContrastRatio``.
     public var minimumContrastRatio: CGFloat = 1 {
@@ -81,6 +98,12 @@ open class TerminalRenderView: NSView, CaretHost {
     public var caretColor: NSColor? { didSet { colorsChanged() } }
     /// The color of the text under a block caret; nil uses the background color.
     public var caretTextColor: NSColor? { didSet { colorsChanged() } }
+    /// The color of highlighted links, as in `TerminalView.linkColor`; nil
+    /// keeps the colors of the links.
+    public var linkColor: NSColor? { didSet { colorsChanged() } }
+    /// The underline color of highlighted links, as in
+    /// `TerminalView.linkUnderlineColor`; nil keeps the underline color.
+    public var linkUnderlineColor: NSColor? { didSet { colorsChanged() } }
 
     /// Whether the view shows a focused (filled, blinking) caret.
     public var hasFocus: Bool = false {
@@ -337,7 +360,9 @@ open class TerminalRenderView: NSView, CaretHost {
             selectedTextBackgroundColor: FrameColor(key[2], appearance: appearance),
             selectedTextForegroundColor: FrameColor(key[3], appearance: appearance),
             caretColor: FrameColor(key[4], appearance: appearance),
-            caretTextColor: FrameColor(key[5], appearance: appearance))
+            caretTextColor: FrameColor(key[5], appearance: appearance),
+            linkColor: linkColor.map { FrameColor($0, appearance: appearance) },
+            linkUnderlineColor: linkUnderlineColor.map { FrameColor($0, appearance: appearance) })
         cachedAppearance = (key, name, value)
         return value
     }
@@ -561,7 +586,9 @@ extension FrameViewState {
         appearance = view.frameAppearance()
         customBlockGlyphs = view.customBlockGlyphs
         useBrightColors = view.useBrightColors
+        collapseBrightColorsToBase = view.collapseBrightColorsToBase
         minimumContrastRatio = view.minimumContrastRatio
+        translucentCellBackgrounds = view.translucentCellBackgrounds
         bidiHostPolicy = view.bidiHostPolicy
         glyphFallbackProvider = view.glyphFallbackProvider
     }

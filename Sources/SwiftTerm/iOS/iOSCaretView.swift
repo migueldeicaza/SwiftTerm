@@ -20,6 +20,7 @@ class CaretView: UIView {
     /// Cell width of the character currently under the caret (2 for full-width
     /// CJK). Used to center its glyph within the caret, matching the text.
     var glyphColumnWidth: Int = 1
+    var powerlineRenderMode: BufferLine.RenderLineMode = .single
     var powerlineCodePoint: UInt32?
     var renderCursorColor = UIColor.gray
     var renderTextColor = UIColor.black

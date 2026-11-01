@@ -35,8 +35,10 @@ public final class Color: Hashable, Sendable {
     /// Blue component 0..65535
     public let blue: UInt16
         
-    static let defaultForeground = Color (red: 35389, green: 35389, blue: 35389)
-    static let defaultBackground = Color (red: 0, green: 0, blue: 0)
+    /// The foreground a terminal uses until the host installs its own colors.
+    public static let defaultForeground = Color (red: 35389, green: 35389, blue: 35389)
+    /// The background a terminal uses until the host installs its own colors.
+    public static let defaultBackground = Color (red: 0, green: 0, blue: 0)
     
     public static func == (lhs: Color, rhs: Color) -> Bool {
         lhs.red == rhs.red && lhs.blue == rhs.blue && lhs.green == rhs.green

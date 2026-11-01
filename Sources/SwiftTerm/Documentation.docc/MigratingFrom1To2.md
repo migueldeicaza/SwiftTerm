@@ -100,7 +100,7 @@ Use the narrowest read API that gives the data you need:
 | Status or visible screen | ``TerminalView/terminalStateSnapshot()`` | A copied ``TerminalViewStateSnapshot``. It includes dimensions, cursor state, viewport row, palette state, and visible rows. |
 | Text from the active, normal, or alternate buffer | ``TerminalView/getBufferAsData(kind:encoding:)`` | A copied `Data` value. Select the required ``Terminal/BufferKind``. |
 | The text of a few visible rows | ``TerminalView/visibleRowsText(_:)`` | Copied `String`s for the rows asked for, using the same NUL-free display-text conversion as ``TerminalContentRowSnapshot/text`` and ``TerminalVisibleRowSnapshot/text``. Cheaper than a content snapshot when a host polls the bottom of the screen or reads the row under a click. |
-| Bounded viewport or history contents | ``TerminalView/terminalContentSnapshot(region:)`` | A copied ``TerminalContentSnapshot`` with input state, row coordinates, cell text, widths, attributes, wrap flags, and row text using the same conversion as ``TerminalView/visibleRowsText(_:)``. |
+| Scrollback and screen contents with attributes | ``TerminalView/terminalContentSnapshot(region:kind:)`` | A copied ``TerminalContentSnapshot`` of the whole retained buffer, the viewport, a bounded history window or a row range, from the normal or alternate buffer, with input state, row coordinates, cell text, widths, attributes, wrap flags, palette, default colors, and row text using the same conversion as ``TerminalView/visibleRowsText(_:)``. ``TerminalContentSnapshot/ansiRepresentation()`` re-encodes it for another terminal of the same width. |
 | Whether the application enabled the kitty keyboard protocol | ``TerminalView/keyboardEnhancementFlags`` | A copied `KittyKeyboardFlags`. Read it before a host event monitor rebinds a key the view would otherwise encode itself. |
 | A terminal event outside the displayed content | `TerminalView.observeOscEvents(codes:_:)` | A copied ``TerminalOscEvent`` goes to an `@Sendable` handler. Retain its ``TerminalOscObservation`` token for the required lifetime. |
 
@@ -191,6 +191,16 @@ let process = makeProcess(delegate, queue, false)
 You can also use a wrapper function that passes `directDelivery: false`. If you
 distribute a compiled framework that links to SwiftTerm, rebuild the framework
 against SwiftTerm 2.0.
+
+In SwiftTerm 1.0, ``LocalProcessTerminalView`` was its own process delegate, so
+a subclass could override `dataReceived(slice:)` to see process output. In
+SwiftTerm 2.0 the view parses output on the I/O thread and never calls that
+method, so it is unavailable. To be notified after each output batch, use
+``LocalProcessTerminalView/setProcessOutputHandler(_:)``. To handle the bytes
+yourself, subclass ``TerminalView`` and run your own ``LocalProcess`` with a
+``LocalProcessDelegate``. A delegate on `DispatchQueue.main` with
+`directDelivery: false` receives each batch on the main thread, in order, and
+the I/O thread waits until it returns.
 
 ## Update HeadlessTerminal initializer references
 

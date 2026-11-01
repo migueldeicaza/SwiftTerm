@@ -4,6 +4,18 @@ import Testing
 
 @testable import SwiftTerm
 
+private final class ScrollRecordingDelegate: TerminalViewDelegate {
+    var positions: [Double] = []
+
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+    func setTerminalTitle(source: TerminalView, title: String) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func send(source: TerminalView, data: ArraySlice<UInt8>) {}
+    func scrolled(source: TerminalView, position: Double) { positions.append(position) }
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+    func requestOpenLink(source: TerminalView, link: String, params: [String : String]) {}
+}
+
 @MainActor
 struct FrameDriverTests {
     private func requireSendable<T: Sendable>(_ type: T.Type) {}
@@ -205,6 +217,259 @@ struct FrameDriverTests {
         #expect(tickCount == 1)
 
         source.tick()
+        #expect(tickCount == 2)
+        driver.shutdown()
+    }
+
+    /// A running tick source consumes pending events at its next tick, so a
+    /// dirty mark then publishes no main-actor task. Stopping it delivers a
+    /// mark recorded since its last tick, and only then.
+    @Test func dirtyMarksWhileTheLinkRunsPublishNoTask() async {
+        let signal = FrameDriverSignal()
+        let deliveries = Locked(0)
+        signal.configure { deliveries.withLock { $0 += 1 } }
+
+        signal.setLinkRunning(true)
+        signal.setLinkRunning(false)
+        await drainMainQueue()
+        #expect(deliveries.withLock { $0 } == 0)
+
+        signal.setLinkRunning(true)
+        await Task.detached {
+            for _ in 0..<1_000 {
+                signal.markDirty()
+            }
+        }.value
+        await drainMainQueue()
+        #expect(deliveries.withLock { $0 } == 0)
+
+        signal.setLinkRunning(false)
+        await drainMainQueue()
+        #expect(deliveries.withLock { $0 } == 1)
+    }
+
+    /// Only a dirty mark can wait for the running source's tick: an immediate
+    /// tick and shutdown still publish their delivery.
+    @Test func immediateTicksAndShutdownStillPublishWhileTheLinkRuns() async {
+        let immediateSignal = FrameDriverSignal()
+        let shutdownSignal = FrameDriverSignal()
+        let immediateDeliveries = Locked(0)
+        let shutdownDeliveries = Locked(0)
+        immediateSignal.configure { immediateDeliveries.withLock { $0 += 1 } }
+        shutdownSignal.configure { shutdownDeliveries.withLock { $0 += 1 } }
+        immediateSignal.setLinkRunning(true)
+        shutdownSignal.setLinkRunning(true)
+
+        await Task.detached {
+            immediateSignal.requestImmediateTick()
+            shutdownSignal.requestShutdown()
+        }.value
+        await drainMainQueue()
+
+        #expect(immediateDeliveries.withLock { $0 } == 1)
+        #expect(shutdownDeliveries.withLock { $0 } == 1)
+    }
+
+    /// A pty flood into a running driver costs the main actor no task per
+    /// batch: the tick draws what the marks recorded. Once the source idles
+    /// out, the next mark hops to main again to resume it.
+    @Test func runningSourceConsumesAFloodWithoutDeliveries() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        let signal = driver.signal
+        var tickCount = 0
+        var now: UInt64 = 1_000_000_000
+        driver.nowUptimeNs = { now }
+        driver.onTick = { tickCount += 1 }
+
+        driver.markDirty()
+        await drainMainQueue()
+        #expect(tickCount == 1)
+        #expect(source.isRunning)
+        let deliveriesWhileIdle = driver.currentCounters.deliveries
+
+        await Task.detached {
+            for _ in 0..<1_000 {
+                signal.markDirty()
+            }
+        }.value
+        await drainMainQueue()
+        #expect(driver.currentCounters.deliveries == deliveriesWhileIdle)
+        #expect(tickCount == 1)
+
+        source.tick()
+        #expect(tickCount == 2)
+
+        // An immediate tick does not wait for the source.
+        await Task.detached { signal.requestImmediateTick() }.value
+        await drainMainQueue()
+        #expect(tickCount == 3)
+        #expect(driver.currentCounters.deliveries == deliveriesWhileIdle + 1)
+
+        for _ in 0..<FrameDriver.idleTickLimit { source.tick() }
+        #expect(!source.isRunning)
+
+        now += 20_000_000
+        await Task.detached { signal.markDirty() }.value
+        await drainMainQueue()
+        #expect(driver.currentCounters.deliveries == deliveriesWhileIdle + 2)
+        #expect(source.isRunning)
+        #expect(tickCount == 4)
+        driver.shutdown()
+    }
+
+    /// A view update waits for the running source like a dirty mark: a flood
+    /// of them publishes no task, and stopping the source delivers them once.
+    @Test func viewUpdatesWhileTheLinkRunsPublishNoTask() async {
+        let signal = FrameDriverSignal()
+        let deliveries = Locked(0)
+        signal.configure { deliveries.withLock { $0 += 1 } }
+
+        signal.setLinkRunning(true)
+        await Task.detached {
+            for _ in 0..<1_000 {
+                signal.requestViewUpdate()
+            }
+        }.value
+        await drainMainQueue()
+        #expect(deliveries.withLock { $0 } == 0)
+
+        signal.setLinkRunning(false)
+        await drainMainQueue()
+        #expect(deliveries.withLock { $0 } == 1)
+    }
+
+    /// The tick that consumes a view update applies it once, before it draws.
+    @Test func runningSourceAppliesViewUpdatesBeforeItDraws() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        let signal = driver.signal
+        var calls: [String] = []
+        driver.onViewUpdate = { calls.append("update") }
+        driver.onTick = { calls.append("tick") }
+
+        driver.markDirty()
+        await drainMainQueue()
+        #expect(calls == ["tick"])
+        #expect(source.isRunning)
+        let deliveries = driver.currentCounters.deliveries
+
+        await Task.detached {
+            for _ in 0..<1_000 {
+                signal.requestViewUpdate()
+            }
+        }.value
+        await drainMainQueue()
+        #expect(driver.currentCounters.deliveries == deliveries)
+        #expect(calls == ["tick"])
+
+        source.tick()
+        #expect(calls == ["tick", "update", "tick"])
+        driver.shutdown()
+    }
+
+    /// A suspended driver draws nothing, but still applies view updates: the
+    /// delegate learns of a scroll while its terminal is hidden.
+    @Test func suspendedDriverStillAppliesViewUpdates() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var updates = 0
+        var tickCount = 0
+        driver.onViewUpdate = { updates += 1 }
+        driver.onTick = { tickCount += 1 }
+
+        driver.setVisibilityOnMain(visible: false)
+        await Task.detached { [signal = driver.signal] in
+            signal.requestViewUpdate()
+        }.value
+        await drainMainQueue()
+        #expect(updates == 1)
+        #expect(tickCount == 0)
+        #expect(!source.isRunning)
+        driver.shutdown()
+    }
+
+    /// A program that wraps every frame in synchronized output ends it
+    /// thousands of times a second. Each end, and each cursor style change,
+    /// used to queue its own main-queue block; with the main thread asleep
+    /// each block cost a run-loop wakeup inside the parse lock. They now
+    /// reach the view through the frame signal, once, with the latest values.
+    @Test func synchronizedOutputEndsAndCursorStylesHopToMainOnce() async {
+        let view = TerminalView(
+            frame: .zero,
+            font: nil,
+            options: TerminalOptions(cols: 20, rows: 4, scrollback: 20))
+        let delegate = ScrollRecordingDelegate()
+        view.terminalDelegate = delegate
+        await drainMainQueue()
+        let hops = view.diagnostics.mainHops
+        delegate.positions = []
+
+        var text = ""
+        for line in 0..<100 {
+            text += "\u{1b}[?2026h\u{1b}[\(line % 2 == 0 ? 2 : 6) qline \(line)\r\n\u{1b}[?2026l"
+        }
+        text += "\u{1b}[4 q"
+        view.feed(text: text)
+        await drainMainQueue()
+
+        #expect(view.diagnostics.mainHops == hops)
+        #expect(delegate.positions == [1])
+        #expect(view.caretView.style == .steadyUnderline)
+        view.frameDriver.shutdown()
+    }
+
+    /// A mark recorded while the source ran, and not yet ticked, must survive
+    /// the source stopping for any reason. Hiding the terminal stops it without
+    /// a tick; becoming visible again must draw that mark.
+    @Test func markRecordedWhileRunningSurvivesSuspension() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var tickCount = 0
+        var now: UInt64 = 1_000_000_000
+        driver.nowUptimeNs = { now }
+        driver.onTick = { tickCount += 1 }
+
+        driver.markDirty()
+        await drainMainQueue()
+        #expect(tickCount == 1)
+        #expect(source.isRunning)
+
+        driver.markDirty()
+        driver.setVisibilityOnMain(visible: false)
+        #expect(!source.isRunning)
+        await drainMainQueue()
+        #expect(tickCount == 1)
+
+        now += 20_000_000
+        driver.setVisibilityOnMain(visible: true)
+        #expect(source.isRunning)
+        #expect(tickCount == 2)
+        driver.shutdown()
+    }
+
+    /// The same for a view leaving its window, which is how a mobile view
+    /// stops its source.
+    @Test func markRecordedWhileRunningSurvivesWindowDetach() async {
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        var tickCount = 0
+        var now: UInt64 = 1_000_000_000
+        driver.nowUptimeNs = { now }
+        driver.onTick = { tickCount += 1 }
+
+        driver.markDirty()
+        await drainMainQueue()
+        #expect(tickCount == 1)
+
+        driver.markDirty()
+        driver.setWindowAttachedOnMain(false)
+        #expect(!source.isRunning)
+        await drainMainQueue()
+
+        now += 20_000_000
+        driver.setWindowAttachedOnMain(true)
+        #expect(source.isRunning)
         #expect(tickCount == 2)
         driver.shutdown()
     }

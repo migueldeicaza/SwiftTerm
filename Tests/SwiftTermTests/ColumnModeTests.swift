@@ -40,7 +40,7 @@ struct ColumnModeTests {
         terminal.feed(text: "history\r\nline2\r\nline3\r\nline4\r\nline5\r\npage")
         let historyCount = terminal.buffer.yBase
         let history = terminal.buffer.lines[0].translateToString(trimRight: true)
-        terminal.feed(text: "\(esc)[62;0\"p\(esc) G\(esc)]7;file://host/tmp\(esc)\\")
+        terminal.feed(text: "\(esc)[64;0\"p\(esc) G\(esc)]7;file://host/tmp\(esc)\\")
         terminal.feed(text: "\(esc)[?1003;1006;2004;40;69h\(esc)[2;4r\(esc)[3;50s\(esc)[?6h\(esc)[2;4H")
         terminal.feed(text: "\(esc)_Ga=T,f=24,s=1,v=1,t=d,c=1,r=1,i=1;AQID\(esc)\\")
         #expect(terminal.kittyGraphicsState.imagesById[1] != nil)
@@ -55,7 +55,7 @@ struct ColumnModeTests {
         #expect(delegate.sent.last == [0x9b] + Array("?1006;1$y".utf8))
         #expect(terminal.bracketedPasteMode)
         #expect(terminal.originMode)
-        #expect(terminal.conformance == .vt200)
+        #expect(terminal.conformance == .vt400)
         #expect(terminal.cc.send8bit)
         #expect(terminal.hostCurrentDirectory == "file://host/tmp")
         #expect(terminal.allow80To132)
@@ -124,5 +124,20 @@ struct ColumnModeTests {
         #expect(TerminalTestHarness.visibleLinesText(buffer: terminal.buffer, terminal: terminal).allSatisfy { $0.isEmpty })
         terminal.feed(text: "\(esc)[?95h\(esc)c")
         #expect(!terminal.noClearOnColumnChange)
+    }
+
+    @Test func noClearModeNeedsConformanceLevelFive() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(rows: 5)
+        terminal.feed(text: "\(esc)[64;1\"p\(esc)[?40;95h1\(esc)[?3h")
+        #expect(TerminalTestHarness.visibleLinesText(buffer: terminal.buffer, terminal: terminal).allSatisfy { $0.isEmpty })
+
+        terminal.feed(text: "\(esc)[65;1\"p\(esc)[?95h2\(esc)[?3l")
+        #expect(TerminalTestHarness.lineText(buffer: terminal.buffer, terminal: terminal, row: 0) == "2")
+    }
+
+    @Test func softResetTurnsOffLeftRightMarginMode() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(rows: 5)
+        terminal.feed(text: "\(esc)[?69h\(esc)[!p")
+        #expect(!terminal.marginMode)
     }
 }

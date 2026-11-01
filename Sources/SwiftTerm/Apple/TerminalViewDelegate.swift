@@ -84,7 +84,10 @@ public protocol TerminalViewDelegate: AnyObject {
      * Explicit OSC 8 links can provide key/value metadata in `params`. Implicit URL
      * detection uses an empty `params` dictionary.
      *
-     * On macOS, a default implementation opens the URL via `NSWorkspace.shared.open`.
+     * On macOS, the view checks terminal links before this call. It blocks unsafe
+     * local files and asks for confirmation before custom URL schemes. The link
+     * is an absolute URL; local paths are canonicalized. The default handler opens
+     * the checked URL through `NSWorkspace.shared.open`.
      * On iOS/visionOS, implement this method to decide how to handle navigation.
      * - Parameter source: the terminalview that called this method
      * - Parameter link: the string that was encoded as a link by the client application, typically a url,

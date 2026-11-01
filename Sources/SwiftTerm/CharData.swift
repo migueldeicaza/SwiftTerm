@@ -131,54 +131,106 @@ public struct Attribute: Equatable, Hashable, Sendable {
         Attribute (fg: fg, bg: bg, style: .none, underlineStyle: .none, underlineColor: underlineColor)
     }
     
-    // Temporary, longer term in Attribute we will add a proper encoding
+    /// The SGR parameters that reproduce this attribute from a reset state,
+    /// without the `CSI` prefix or the final `m`: for example `0;1;38;5;16`.
+    ///
+    /// The list always starts with `0`, so the receiving terminal does not
+    /// inherit anything from its current attribute. Every style, both colors,
+    /// the underline style (as a `4:n` subparameter) and the underline color
+    /// are included; feeding the result back into a ``Terminal`` restores an
+    /// equal attribute.
+    public func sgrParameters () -> String
+    {
+        var params = ["0"]
+
+        if style.contains(.bold) { params.append("1") }
+        if style.contains(.dim) { params.append("2") }
+        if style.contains(.italic) { params.append("3") }
+        if style.contains(.underline) || underlineStyle != .none {
+            switch underlineStyle {
+            case .none, .single: params.append("4")
+            case .double: params.append("4:2")
+            case .curly: params.append("4:3")
+            case .dotted: params.append("4:4")
+            case .dashed: params.append("4:5")
+            }
+        }
+        if style.contains(.blink) { params.append("5") }
+        if style.contains(.inverse) { params.append("7") }
+        if style.contains(.invisible) { params.append("8") }
+        if style.contains(.crossedOut) { params.append("9") }
+
+        if let color = Attribute.sgrColorParameters(fg, base: 30) { params.append(color) }
+        if let color = Attribute.sgrColorParameters(bg, base: 40) { params.append(color) }
+        if let underlineColor {
+            switch underlineColor {
+            case .ansi256(let code):
+                params.append("58;5;\(code)")
+            case .trueColor(let r, let g, let b):
+                params.append("58;2;\(r);\(g);\(b)")
+            case .defaultColor, .defaultInvertedColor:
+                params.append("59")
+            }
+        }
+        return params.joined(separator: ";")
+    }
+
+    /// The complete escape sequence that selects this attribute: `CSI`,
+    /// ``sgrParameters()`` and `m`.
+    public var sgrSequence: String {
+        "\u{1b}[" + sgrParameters() + "m"
+    }
+
+    /// Foreground (`base` 30) or background (`base` 40) color parameters.
+    /// Only the first 16 palette entries have the compact 30-37/90-97 forms;
+    /// every other index, 16 included, needs `38;5;n`. The default colors
+    /// return nil: the leading `0` already selects them, and DECRQSS replies
+    /// leave them out, as xterm does.
+    private static func sgrColorParameters (_ color: Color, base: Int) -> String?
+    {
+        switch color {
+        case .ansi256(let code):
+            if code < 8 {
+                return "\(base + Int(code))"
+            } else if code < 16 {
+                return "\(base + 60 + Int(code) - 8)"
+            } else {
+                return "\(base + 8);5;\(code)"
+            }
+        case .trueColor(let r, let g, let b):
+            return "\(base + 8);2;\(r);\(g);\(b)"
+        case .defaultColor, .defaultInvertedColor:
+            return nil
+        }
+    }
+
+    // The DECRQSS "m" report: parameters plus the final character.
     func toSgr () -> String
     {
-        var result = "0"
-        
-        if style.contains(.bold) {
-            result += ";1"
-        }
-        if style.contains (.underline) {
-            result += ";4"
-        }
-        if style.contains (.blink) {
-            result += ";5"
-        }
-        if style.contains (.inverse) {
-            result += ";7"
-        }
-        if style.contains (.invisible) {
-            result += ";8"
-        }
-        
-        switch fg {
-        case .ansi256(let c):
-            if c > 16 {
-                result += ";38;5;\(c)"
-            } else {
-                result += ";\(c >= 8 ? 9 : 3)\(c >= 8 ? c - 8 : c);"
-            }
-        case .trueColor(let r, let g, let b):
-            result += ";38;2;\(r);\(g);\(b)"
-        default:
-            break
-        }
+        sgrParameters() + "m"
+    }
+}
 
-        switch bg {
-        case .ansi256(let c):
-            if c > 16 {
-                result += ";48;5;\(c)"
-            } else {
-                result += ";\(c >= 8 ? 10 : 4)\(c >= 8 ? c - 8 : c);"
-            }
-        case .trueColor(let r, let g, let b):
-            result += ";48;2;\(r);\(g);\(b)"
-        default:
-            break
+/// Released atom codes, handed out oldest first so a code is reissued as late as possible.
+struct FreeAtomCodes {
+    private var codes: [UInt16] = []
+    private var head = 0
+
+    mutating func put(_ code: UInt16) {
+        codes.append(code)
+    }
+
+    mutating func take() -> UInt16? {
+        guard head < codes.count else {
+            return nil
         }
-        result += "m"
-        return result
+        let code = codes[head]
+        head += 1
+        if head > 64 && head * 2 > codes.count {
+            codes.removeFirst(head)
+            head = 0
+        }
+        return code
     }
 }
 
@@ -192,12 +244,19 @@ public struct Attribute: Equatable, Hashable, Sendable {
 public struct TinyAtom: Sendable {
     var code: UInt16
 #if SWIFTTERM_EMBEDDED
-    nonisolated(unsafe) private static var map: [UInt16: String] = [:]
+    /// Indexed by code; code 0 is never handed out.
+    nonisolated(unsafe) private static var map: [String?] = [nil]
     nonisolated(unsafe) private static var lastUsed: UInt16 = 0
+    /// Released codes, handed out again before a new one is taken (see `State.free`).
+    nonisolated(unsafe) private static var free = FreeAtomCodes()
 #else
     private struct State {
-        var map: [UInt16: any Sendable] = [:]
+        /// Indexed by code, so a lookup or a release costs no hashing; code 0 is never handed out.
+        var map: [(any Sendable)?] = [nil]
         var lastUsed: UInt16 = 0
+        /// Released codes, handed out again before a new one is taken: without them the
+        /// 16-bit space is spent once and every later lookup fails for the life of the process.
+        var free = FreeAtomCodes()
     }
     private static let state = Locked(State())
 #endif
@@ -222,21 +281,29 @@ public struct TinyAtom: Sendable {
     /// ``Terminal/makePayload(value:)`` for an atom whose lifetime is managed by a terminal.
 #if SWIFTTERM_EMBEDDED
     public static func lookup(value: String) -> TinyAtom? {
+        if let code = free.take() {
+            map[Int(code)] = value
+            return TinyAtom(code: code)
+        }
         guard lastUsed < UInt16.max - 1 else { return nil }
         lastUsed += 1
-        map[lastUsed] = value
+        map.append(value)
         return TinyAtom(code: lastUsed)
     }
 #else
     public static func lookup<Value: Sendable>(value: Value) -> TinyAtom? {
         state.withLock { state in
+            if let code = state.free.take() {
+                state.map [Int(code)] = value
+                return TinyAtom (code: code)
+            }
             guard state.lastUsed < UInt16.max - 1 else {
                 return nil
             }
             state.lastUsed += 1
             let code = state.lastUsed
 
-            state.map [code] = value
+            state.map.append(value)
             return TinyAtom (code: code)
         }
     }
@@ -248,18 +315,23 @@ public struct TinyAtom: Sendable {
 
     /// Releases a caller-owned atom.
     ///
-    /// After this call, ``target`` returns nil for this atom and for all copies of it.
+    /// After this call, ``target`` returns nil for this atom and for all copies of it, until
+    /// ``lookup(value:)`` hands its code out again: release a code only once nothing still holds it.
     public func release() {
         TinyAtom.release(code: code)
     }
 
     static func release<S: Sequence>(codes: S) where S.Element == UInt16 {
 #if SWIFTTERM_EMBEDDED
-        for code in codes where code != 0 { map.removeValue(forKey: code) }
+        for code in codes where Int(code) < map.count && map[Int(code)] != nil {
+            map[Int(code)] = nil
+            free.put(code)
+        }
 #else
         state.withLock { state in
-            for code in codes where code != 0 {
-                state.map.removeValue(forKey: code)
+            for code in codes where Int(code) < state.map.count && state.map[Int(code)] != nil {
+                state.map[Int(code)] = nil
+                state.free.put(code)
             }
         }
 #endif
@@ -268,7 +340,7 @@ public struct TinyAtom: Sendable {
     /// Returns the target for the TinyAtom
 #if SWIFTTERM_EMBEDDED
     public var target: String? {
-        code == 0 ? nil : TinyAtom.map[code]
+        Int(code) < TinyAtom.map.count ? TinyAtom.map[Int(code)] : nil
     }
 #else
     public var target: (any Sendable)? {
@@ -277,7 +349,7 @@ public struct TinyAtom: Sendable {
                 return nil
             }
             return TinyAtom.state.withLock { state in
-                state.map [code]
+                Int(code) < state.map.count ? state.map [Int(code)] : nil
             }
         }
     }

@@ -19,6 +19,9 @@ private enum SwiftTermBenchmarks {
     static let hardeningWorkloads = VTEBenchWorkloads.makeHardening(
         columns: columns,
         rows: rows)
+    static let hyperlinkWorkloads = VTEBenchWorkloads.makeHyperlink(
+        columns: columns,
+        rows: rows)
 }
 
 private func feed(_ benchmark: Benchmark, workload: VTEBenchWorkload) {
@@ -52,6 +55,73 @@ private func feed(_ benchmark: Benchmark, workload: VTEBenchWorkload) {
         }
         benchmark.stopMeasurement()
     }
+    checkHyperlinks(terminal, workload: workload)
+}
+
+/// Stops the run when the links that a workload prints do not resolve.
+///
+/// A terminal that runs out of link codes prints the text without its link,
+/// and is faster. The check runs after measurement, so it costs no time.
+private func checkHyperlinks(_ terminal: Terminal, workload: VTEBenchWorkload) {
+    if let uri = workload.lastHyperlink {
+        let found = (0..<terminal.rows).contains { row in
+            (0..<terminal.cols).contains { column in
+                linkURI(terminal.getCharData(col: column, row: row)?.getPayload()) == uri
+            }
+        }
+        precondition(found, "\(workload.name): the link \(uri) does not resolve")
+    }
+    // All payloads end the active link, so new text must have no link.
+    terminal.feed(byteArray: [UInt8]("\u{1b}[HZ".utf8))
+    precondition(terminal.getCharData(col: 0, row: 0)?.getPayload() == nil,
+                 "\(workload.name): the link was not closed")
+}
+
+/// Returns the URI of a cell's OSC 8 payload, which has the form `params;uri`.
+private func linkURI(_ payload: Any?) -> String? {
+    guard let payload = payload as? String, let separator = payload.firstIndex(of: ";") else {
+        return nil
+    }
+    return String(payload[payload.index(after: separator)...])
+}
+
+/// Measures link lookup for each cell of a screen that shows one link.
+///
+/// This is the nearest SwiftTerm match to the lookup mode of Ghostty's
+/// `hyperlink-map` benchmark. SwiftTerm keeps the link code in the cell, so
+/// there is no separate map to measure. One iteration reads every cell once.
+private func hyperlinkLookup(_ benchmark: Benchmark) {
+    let columns = SwiftTermBenchmarks.columns
+    let rows = SwiftTermBenchmarks.rows
+    let uri = "https://example.com/benchmark"
+    let headlessTerminal = HeadlessTerminal(queue: SwiftTermBenchmarks.queue) { _ in }
+    let terminal = headlessTerminal.terminal!
+    terminal.resize(cols: columns, rows: rows)
+    terminal.feed(byteArray: SwiftTermBenchmarks.reset)
+    terminal.feed(byteArray: [UInt8](
+        "\u{1b}[H\u{1b}]8;;\(uri)\u{1b}\\\(String(repeating: "x", count: columns * rows))\u{1b}]8;;\u{1b}\\".utf8))
+    for row in 0..<rows {
+        for column in 0..<columns {
+            precondition(linkURI(terminal.getCharData(col: column, row: row)?.getPayload()) == uri,
+                         "cell \(column),\(row) does not resolve to the link")
+        }
+    }
+
+    var missing = 0
+    benchmark.startMeasurement()
+    for _ in benchmark.scaledIterations {
+        for row in 0..<rows {
+            for column in 0..<columns {
+                let payload = terminal.getCharData(col: column, row: row)?.getPayload()
+                if payload == nil {
+                    missing += 1
+                }
+                blackHole(payload)
+            }
+        }
+    }
+    benchmark.stopMeasurement()
+    precondition(missing == 0, "\(missing) lookups did not find the link")
 }
 
 /// A deterministic RGBA payload. Content does not matter to the snapshot cost,
@@ -124,16 +194,36 @@ let benchmarks: @Sendable () -> Void = {
         }
     }
 
+    if ProcessInfo.processInfo.environment["SWIFTTERM_OSC8_BENCHMARKS"] == "1" {
+        for workload in SwiftTermBenchmarks.hyperlinkWorkloads {
+            Benchmark(
+                workload.name,
+                configuration: .init(metrics: [.wallClock], maxDuration: .seconds(10))
+            ) { benchmark in
+                feed(benchmark, workload: workload)
+            }
+        }
+
+        Benchmark(
+            "osc8_lookup",
+            // Each scaled iteration reads all 2,000 cells once.
+            configuration: .init(metrics: [.wallClock], scalingFactor: .kilo, maxDuration: .seconds(10))
+        ) { benchmark in
+            hyperlinkLookup(benchmark)
+        }
+    }
+
     Benchmark(
         "kitty_snapshot_empty",
-        configuration: .init(metrics: [.wallClock], maxDuration: .seconds(10))
+        // Batch short snapshot calls to reduce timer quantization error.
+        configuration: .init(metrics: [.wallClock], scalingFactor: .kilo, maxDuration: .seconds(10))
     ) { benchmark in
         snapshot(benchmark, imageSize: nil)
     }
 
     Benchmark(
         "kitty_snapshot_3mb",
-        configuration: .init(metrics: [.wallClock], maxDuration: .seconds(10))
+        configuration: .init(metrics: [.wallClock], scalingFactor: .kilo, maxDuration: .seconds(10))
     ) { benchmark in
         snapshot(benchmark, imageSize: (width: 1024, height: 768))
     }

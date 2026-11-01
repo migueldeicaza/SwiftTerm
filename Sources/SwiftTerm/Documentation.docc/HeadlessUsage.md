@@ -70,9 +70,9 @@ terminal.terminalLock.withLock {
 }
 ```
 
-For bounded text inspection rather than renderer input, use
+For content inspection rather than renderer input, use
 ``HeadlessTerminal/terminalInputStateSnapshot()`` and
-``HeadlessTerminal/terminalContentSnapshot(region:)``. These methods take the
+``HeadlessTerminal/terminalContentSnapshot(region:buffer:)``. These methods take the
 terminal lock themselves; do not call them while already holding
 ``Terminal/terminalLock`` or from a terminal delegate callback.
 

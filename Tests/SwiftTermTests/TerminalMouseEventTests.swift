@@ -52,6 +52,38 @@ struct TerminalMouseEventTests {
         }
     }
 
+    @Test(arguments: [0, 1005, 1006, 1015, 1016])
+    func motionMatchesTerminalSendMotion(protocolMode: Int) {
+        let view = TerminalView(frame: .zero)
+        let delegate = Delegate()
+        view.terminalDelegate = delegate
+        let (terminal, rawDelegate) = TerminalTestHarness.makeTerminal()
+        let modes = "\u{1b}[?1002h" + (protocolMode == 0 ? "" : "\u{1b}[?\(protocolMode)h")
+        view.feed(text: modes)
+        terminal.feed(text: modes)
+        for button in [0, 1, 2] {
+            let flags = terminal.encodeButton(button: button, release: false,
+                                               shift: false, meta: false, control: true)
+            terminal.sendMotion(buttonFlags: flags, x: 12, y: 3, pixelX: 12, pixelY: 3)
+            view.sendMouseEvent(button: button, release: false, motion: true,
+                                control: true, col: 12, row: 3)
+        }
+        #expect(delegate.writes == rawDelegate.sentData)
+        if protocolMode == 1006 {
+            #expect(delegate.writes.first == Array("\u{1b}[<48;13;4M".utf8))
+        }
+    }
+
+    @Test func motionIsIgnoredOnARelease() {
+        let view = TerminalView(frame: .zero)
+        let delegate = Delegate()
+        view.terminalDelegate = delegate
+        view.feed(text: "\u{1b}[?1002h\u{1b}[?1006h")
+        view.sendMouseEvent(button: 0, release: true, motion: true, col: 4, row: 8)
+        view.sendMouseEvent(button: 0, release: true, col: 4, row: 8)
+        #expect(delegate.writes == [Array("\u{1b}[<0;5;9m".utf8), Array("\u{1b}[<0;5;9m".utf8)])
+    }
+
     /// Mode 1005 sends values below 128 as one byte, like xterm, and larger
     /// values as two-byte UTF-8.
     @Test func utf8ModeSendsValuesBelow128AsOneByte() {

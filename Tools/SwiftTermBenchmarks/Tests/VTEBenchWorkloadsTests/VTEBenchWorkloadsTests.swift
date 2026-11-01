@@ -35,7 +35,8 @@ struct VTEBenchWorkloadsTests {
             "hardening_osc_bounded_over_limit",
             "hardening_osc_bounded_chunked",
             "hardening_osc_short_normal",
-            "hardening_osc_short_chunked"
+            "hardening_osc_short_chunked",
+            "hardening_block_color_cells"
         ])
 
         let byName = Dictionary(uniqueKeysWithValues: workloads.map { ($0.name, $0) })
@@ -48,7 +49,40 @@ struct VTEBenchWorkloadsTests {
         #expect(byName["hardening_osc_bounded_chunked"]?.inputChunkSize == 127)
         #expect(byName["hardening_osc_short_normal"]?.payload == Array("\u{1b}]2;title\u{07}".utf8))
         #expect(byName["hardening_osc_short_chunked"]?.payload == byName["hardening_osc_short_normal"]?.payload)
+        let blocks = String(decoding: byName["hardening_block_color_cells"]!.payload, as: UTF8.self)
+        #expect(blocks.unicodeScalars.filter { $0 == "\u{2580}" }.count == 8 * 80 * 25)
         #expect(byName["hardening_osc_short_chunked"]?.inputChunkSize == 1)
+    }
+
+    @Test("Keeps OSC 8 workloads separate and deterministic")
+    func hyperlinkCases() {
+        let workloads = VTEBenchWorkloads.makeHyperlink()
+        #expect(workloads.map(\.name) == [
+            "osc8_parse_implicit",
+            "osc8_parse_explicit",
+            "osc8_parse_long_uri",
+            "osc8_stream",
+            "osc8_stream_plain",
+            "osc8_cell_churn",
+            "osc8_redraw_same",
+            "osc8_distinct_lines",
+            "osc8_dense"
+        ])
+
+        let byName = Dictionary(uniqueKeysWithValues: workloads.map { ($0.name, $0) })
+        #expect(byName["osc8_parse_implicit"]?.payload ==
+                Array("\u{1b}]8;;https://example.com/benchmark\u{07}\u{1b}]8;;\u{07}".utf8))
+        #expect(byName["osc8_parse_explicit"]?.payload ==
+                Array("\u{1b}]8;id=bench;https://example.com/benchmark\u{07}\u{1b}]8;;\u{07}".utf8))
+        #expect(byName["osc8_parse_long_uri"]?.payload.count == 1_032)
+        #expect(byName["osc8_stream"]?.payload ==
+                Array("\u{1b}]8;;https://example.com/benchmark\u{1b}\\linked text\u{1b}]8;;\u{1b}\\\r\n".utf8))
+        #expect(byName["osc8_stream_plain"]?.payload == Array("linked text\r\n".utf8))
+        #expect(byName["osc8_cell_churn"]?.payload.count == 2_046)
+        #expect(byName["osc8_redraw_same"]?.lastHyperlink == "https://example.com/file/4")
+        #expect(byName["osc8_distinct_lines"]?.lastHyperlink == "https://example.com/commit/9999")
+        #expect(byName["osc8_dense"]?.lastHyperlink == "u59999")
+        #expect(workloads.allSatisfy { $0.maximumOscBytes == nil && $0.inputChunkSize == nil })
     }
 
     @Test("Preserves captured byte streams")

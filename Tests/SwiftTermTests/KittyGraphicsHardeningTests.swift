@@ -55,12 +55,12 @@ struct KittyGraphicsHardeningTests {
     /// region in place and answers the absolute row the placement ends on.
     private func rowAfterInPlaceScroll(marginModeActive: Bool) -> Int? {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24)
-        // DECLRMM plus DECSLRM, then DECLRMM off. Turning the mode off does not
-        // restore the margins, so buffer.marginLeft stays at 19.
-        terminal.feed(text: "\u{1b}[?69h\u{1b}[20;60s")
-        if !marginModeActive {
-            terminal.feed(text: "\u{1b}[?69l")
-        }
+        // DECLRMM plus DECSLRM. Without margin mode, DECSC first saved the mode
+        // as off and DECRC turns it off again. DECRC does not restore the
+        // margins, so buffer.marginLeft stays at 19.
+        let enable = "\u{1b}[?69h\u{1b}[20;60s"
+        terminal.feed(text: marginModeActive ? enable : "\u{1b}7" + enable + "\u{1b}8")
+        #expect(terminal.marginMode == marginModeActive)
         #expect(terminal.buffer.marginLeft == 19)
 
         terminal.feed(text: "\u{1b}[2;10r")
