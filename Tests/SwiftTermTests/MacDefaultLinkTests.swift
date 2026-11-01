@@ -22,6 +22,33 @@ struct MacDefaultLinkTests {
         }
     }
 
+    @Test func nameWithALocationIsAPathAndNotAScheme() throws {
+        #expect(!TerminalView.hasURLScheme("main.swift:12"))
+        #expect(!TerminalView.hasURLScheme("README.md:3:4"))
+        #expect(TerminalView.hasURLScheme("https://example.com:443"))
+        #expect(TerminalView.hasURLScheme("tel:5551234") == false)
+        #expect(TerminalView.defaultLinkTarget("main.swift:12", isExplicit: true).decision == .deny(.malformedURL))
+        #expect(TerminalView.defaultLinkTarget("missing-\(UUID()).swift:12", isExplicit: false).decision
+                == .deny(.malformedURL))
+        #expect(TerminalView.defaultLinkTarget("tel:5551234", isExplicit: false).decision
+                == .confirm(URL(string: "tel:5551234")!))
+        try withTemporaryFile(named: "main.swift") { url in
+            let base = TerminalView.LinkPathBase.directory(url.deletingLastPathComponent().path)
+            #expect(TerminalView.defaultLinkTarget("main.swift:12", isExplicit: false, pathBase: base).decision
+                    == .allow(url.standardizedFileURL.resolvingSymlinksInPath()))
+        }
+    }
+
+    @Test func osc7DirectoryIsTheBaseForRelativePaths() {
+        #expect(TerminalView.linkPathBase(hostCurrentDirectory: nil) == .processDirectory)
+        #expect(TerminalView.linkPathBase(hostCurrentDirectory: "/Users/me") == .directory("/Users/me"))
+        #expect(TerminalView.linkPathBase(hostCurrentDirectory: "file:///Users/me") == .directory("/Users/me"))
+        #expect(TerminalView.linkPathBase(hostCurrentDirectory: "file://localhost/Users/my%20dir")
+                == .directory("/Users/my dir"))
+        #expect(TerminalView.linkPathBase(hostCurrentDirectory: "file://remote.example.com/Users/me") == .remote)
+        #expect(TerminalView.defaultLinkURL("/etc/hosts", pathBase: .remote) == nil)
+    }
+
     @Test func rawPathControlsAreCheckedBeforeURLConversion() {
         let target = TerminalView.defaultLinkTarget("/tmp/document\u{202E}.txt", isExplicit: false)
         #expect(target.decision == .deny(.unsafeCharacters))

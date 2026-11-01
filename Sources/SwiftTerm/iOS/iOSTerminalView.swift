@@ -1035,7 +1035,8 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         let tapHit = calculateTapHit(gesture: gestureRecognizer).grid
         if let result = linkForClick(at: tapHit, hasCommandModifier: commandActive) {
-            terminalDelegate?.requestOpenLink(source: self, link: result.link, params: result.params)
+            let request = TerminalLinkRequest(link: result.link, params: result.params, isExplicit: result.isExplicit)
+            terminalDelegate?.requestOpenLink(source: self, request: request)
             return
         }
 
@@ -3951,6 +3952,15 @@ private final class PointerScrollGestureDelegate: NSObject, UIGestureRecognizerD
 // Default implementations for TerminalViewDelegate
 
 extension TerminalViewDelegate {    
+    public func requestOpenLink (source: TerminalView, request: TerminalLinkRequest)
+    {
+        requestOpenLinkWithoutDeprecationWarning(source: source, link: request.link, params: request.params)
+    }
+
+    public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+    {
+    }
+
     public func bell (source: TerminalView)
     {
         #if os(iOS)
