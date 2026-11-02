@@ -45,8 +45,11 @@ The highlights stay where they were put until the next search call or `clearSear
 output arrives, `findNext`/`findPrevious` or a `searchMatchSummary` recount recomputes them (the
 counter and the highlights share one match list, so the second call is cheap).
 
-To mark the matches outside the text — a tick per match beside the scrollbar — read their
-positions:
+On macOS the view also marks every match beside its scroller while the highlights are on —
+a short bar per match at its place in the scrollback, the current one in the selection color —
+so where the hits are reads at a glance. `searchMarkFractions` exposes what is drawn.
+
+To mark the matches yourself (another platform, another control), read their positions:
 
 ```swift
 let (matches, lines) = terminalView.searchMatchPositions("term")

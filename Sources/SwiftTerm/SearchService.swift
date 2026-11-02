@@ -160,22 +160,36 @@ public struct SearchMatchPosition: Equatable, Sendable {
 
 /// The cells every search match covers, by buffer row, as the renderer reads
 /// them: a row's ranges are sorted by column and do not overlap. A match that
-/// wraps contributes a range to each row it touches.
+/// wraps contributes a range to each row it touches. Beside the cells, where
+/// the matches sit in the whole buffer, for marks on a scrollbar.
 struct SearchHighlights: Equatable, Sendable {
-    static let none = SearchHighlights(rows: [:])
+    static let none = SearchHighlights(rows: [:], matchRows: [], currentRow: nil, lines: 0)
 
     private let rows: [Int: [Range<Int>]]
+    /// The row each match starts in, in buffer order.
+    let matchRows: [Int]
+    /// The row the current match (the selection) starts in, if there is one.
+    let currentRow: Int?
+    /// The number of lines the buffer held, scrollback included: a match's row
+    /// out of this is its place along a scrollbar.
+    let lines: Int
 
     var isEmpty: Bool { rows.isEmpty }
 
-    private init (rows: [Int: [Range<Int>]]) {
+    private init (rows: [Int: [Range<Int>]], matchRows: [Int], currentRow: Int?, lines: Int) {
         self.rows = rows
+        self.matchRows = matchRows
+        self.currentRow = currentRow
+        self.lines = lines
     }
 
-    init (results: [SearchResult], cols: Int) {
+    init (results: [SearchResult], cols: Int, current: SearchResult? = nil, lines: Int = 0) {
         let cols = max(cols, 1)
         var rows: [Int: [Range<Int>]] = [:]
+        var matchRows: [Int] = []
+        matchRows.reserveCapacity(results.count)
         for result in results where result.size > 0 {
+            matchRows.append(result.row)
             var row = result.row
             var col = result.col
             var remaining = result.size
@@ -188,6 +202,9 @@ struct SearchHighlights: Equatable, Sendable {
             }
         }
         self.rows = rows
+        self.matchRows = matchRows
+        self.currentRow = current?.row
+        self.lines = lines
     }
 
     /// The highlighted column ranges of `row`, or nil when it has none.

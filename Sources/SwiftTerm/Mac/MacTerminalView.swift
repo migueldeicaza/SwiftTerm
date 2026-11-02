@@ -76,6 +76,66 @@ private final class OverlayScrollerIndicator: NSView {
     }
 }
 
+/// One mark per search match along the scroller track, at the match's place
+/// in the buffer, while ``TerminalView/highlightAllSearchMatches`` has
+/// matches to show — iTerm2's find marks. The current match is marked in the
+/// selection color, the rest in the match color. It sits above the scroller
+/// and below the overlay knob, and takes no pointer events.
+private final class SearchMarkStrip: NSView {
+    var highlights = SearchHighlights.none {
+        didSet { needsDisplay = true }
+    }
+    var matchColor = NSColor.yellow {
+        didSet { needsDisplay = true }
+    }
+    var currentColor = NSColor.cyan {
+        didSet { needsDisplay = true }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        identifier = NSUserInterfaceItemIdentifier("SwiftTermSearchMarkStrip")
+        wantsLayer = true
+        layer?.isOpaque = false
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isOpaque: Bool { false }
+    override var isFlipped: Bool { true }
+
+    /// The rect of the mark for buffer row `row`: `lines` rows span the
+    /// strip's height, so a mark's top is its row's fraction of the track.
+    func markRect (row: Int) -> NSRect {
+        let height: CGFloat = 2
+        let inset: CGFloat = 3
+        let track = max(bounds.height - height, 0)
+        let fraction = highlights.lines > 1 ? CGFloat(row) / CGFloat(highlights.lines - 1) : 0
+        return NSRect(x: inset, y: (track * min(max(fraction, 0), 1)).rounded(),
+                      width: max(bounds.width - inset * 2, 1), height: height)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSGraphicsContext.current?.cgContext.clear(bounds)
+        guard !highlights.isEmpty else { return }
+        matchColor.setFill()
+        for row in highlights.matchRows where row != highlights.currentRow {
+            markRect(row: row).fill()
+        }
+        if let current = highlights.currentRow {
+            currentColor.setFill()
+            markRect(row: current).fill()
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
 /**
  * TerminalView provides an AppKit front-end to the `Terminal` termininal emulator.
  * It is up to a subclass to either wire the terminal emulator to a remote terminal
@@ -508,6 +568,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     var selection: SelectionService!
     private var scroller: NSScroller!
     private var overlayScrollerIndicator: OverlayScrollerIndicator!
+    private var searchMarkStrip: SearchMarkStrip!
     private var overlayScrollerHideTimer: Timer?
     private var overlayScrollerFadeGeneration = 0
     private var overlayScrollerIsTracking = false
@@ -844,7 +905,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         caretView?.isHidden = true
         if let scroller = scroller {
             addSubview(scroller, positioned: .above, relativeTo: newView)
-            addSubview(overlayScrollerIndicator, positioned: .above, relativeTo: scroller)
+            addSubview(searchMarkStrip, positioned: .above, relativeTo: scroller)
+            addSubview(overlayScrollerIndicator, positioned: .above, relativeTo: searchMarkStrip)
         }
         // The Metal surface is opaque and covers the whole view, so the
         // progress bar has to be lifted back to the top of the stack.
@@ -1542,6 +1604,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         set {
             _selectedTextBackgroundColor = newValue
+            searchMarkStrip?.currentColor = newValue
             withTerminal { $0.updateFullScreen() }
             frameDriver.markDirty()
         }
@@ -1570,6 +1633,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         set {
             _searchMatchBackgroundColor = newValue
+            searchMarkStrip?.matchColor = newValue
             withTerminal { $0.updateFullScreen() }
             frameDriver.markDirty()
         }
@@ -1665,6 +1729,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             overlayScrollerIndicator.alphaValue = 0
             addSubview(overlayScrollerIndicator, positioned: .above, relativeTo: scroller)
 
+            searchMarkStrip = SearchMarkStrip(frame: .zero)
+            searchMarkStrip.translatesAutoresizingMaskIntoConstraints = false
+            searchMarkStrip.isHidden = true
+            searchMarkStrip.matchColor = searchMatchBackgroundColor
+            searchMarkStrip.currentColor = selectedTextBackgroundColor
+            addSubview(searchMarkStrip, positioned: .below, relativeTo: overlayScrollerIndicator)
+
             // Use Auto Layout to position the scroller. This ensures correct layout
             // whether the parent view uses frame-based or constraint-based layout.
             NSLayoutConstraint.activate([
@@ -1675,7 +1746,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 overlayScrollerIndicator.trailingAnchor.constraint(equalTo: scroller.trailingAnchor),
                 overlayScrollerIndicator.topAnchor.constraint(equalTo: scroller.topAnchor),
                 overlayScrollerIndicator.bottomAnchor.constraint(equalTo: scroller.bottomAnchor),
-                overlayScrollerIndicator.widthAnchor.constraint(equalTo: scroller.widthAnchor)
+                overlayScrollerIndicator.widthAnchor.constraint(equalTo: scroller.widthAnchor),
+                searchMarkStrip.trailingAnchor.constraint(equalTo: scroller.trailingAnchor),
+                searchMarkStrip.topAnchor.constraint(equalTo: scroller.topAnchor),
+                searchMarkStrip.bottomAnchor.constraint(equalTo: scroller.bottomAnchor),
+                searchMarkStrip.widthAnchor.constraint(equalTo: scroller.widthAnchor)
             ])
         }
         scroller.scrollerStyle = scrollerStyle
@@ -1820,6 +1895,23 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     /// Every match of the active search, kept where the frame capture reads it.
     var searchHighlights = SearchHighlights.none
+
+    /// The strip of marks beside the scroller follows the highlight set: one
+    /// per match while there are any, none otherwise.
+    func searchHighlightsChanged () {
+        guard let searchMarkStrip else { return }
+        searchMarkStrip.highlights = searchHighlights
+        searchMarkStrip.isHidden = searchHighlights.isEmpty
+    }
+
+    /// The marks beside the scroller: row fractions of every match and of the
+    /// current one, as drawn, for a host or test that reads them.
+    public var searchMarkFractions: (matches: [Double], current: Double?) {
+        let highlights = searchHighlights
+        guard !highlights.isEmpty, highlights.lines > 1 else { return ([], nil) }
+        func fraction (_ row: Int) -> Double { Double(row) / Double(highlights.lines - 1) }
+        return (highlights.matchRows.map(fraction), highlights.currentRow.map(fraction))
+    }
 
     /**
      * If set to true, this will call the TerminalViewDelegate's rangeChanged method

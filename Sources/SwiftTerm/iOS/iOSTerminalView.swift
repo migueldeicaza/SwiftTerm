@@ -288,6 +288,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     /// Every match of the active search, kept where the frame capture reads it.
     var searchHighlights = SearchHighlights.none
+
+    /// The Mac view marks the matches beside its scroller; there is no
+    /// scroller here, so a change needs nothing beyond the repaint.
+    func searchHighlightsChanged () {}
     private var lastPointerLocation: CGPoint?
     
     /**

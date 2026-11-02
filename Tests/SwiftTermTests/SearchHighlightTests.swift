@@ -193,6 +193,29 @@ struct SearchHighlightTests {
         #expect(!before.style.hasSameValue(as: after.style))
         #expect(after.style.searchHighlights == view.searchHighlights)
     }
+
+    /// The marks beside the scroller: a fraction per match of the buffer's
+    /// length, the current one named; gone with the highlights.
+    @Test func scrollerMarksFollowTheMatches() throws {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 240, height: 64),
+                                font: nil, options: TerminalOptions(cols: 20, rows: 4, scrollback: 100))
+        view.highlightAllSearchMatches = true
+        // 11 lines: "foo" on rows 0, 5 and 10, so the marks sit at 0, 1/2 and 1.
+        view.feed(text: (0..<11).map { $0 % 5 == 0 ? "foo" : "bar" }.joined(separator: "\r\n"))
+        #expect(view.searchMarkFractions.matches.isEmpty)
+        #expect(view.findPrevious("foo"))
+        let marks = view.searchMarkFractions
+        #expect(marks.matches == [0, 0.5, 1])
+        #expect(marks.current == 1)
+        let strip = try #require(view.subviews.first {
+            $0.identifier?.rawValue == "SwiftTermSearchMarkStrip" })
+        #expect(!strip.isHidden)
+        #expect(view.findPrevious("foo"))
+        #expect(view.searchMarkFractions.current == 0.5)
+        view.clearSearch()
+        #expect(view.searchMarkFractions.matches.isEmpty)
+        #expect(strip.isHidden)
+    }
 }
 
 /// The pixels the renderers paint: the second match's cell in the match

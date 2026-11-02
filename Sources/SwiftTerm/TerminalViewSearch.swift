@@ -145,8 +145,12 @@ extension TerminalView {
             guard let search else {
                 return .none
             }
-            return SearchHighlights(results: search.findAll(term: term, options: options, limit: limit),
-                                    cols: terminal.cols)
+            let results = search.findAll(term: term, options: options, limit: limit)
+            guard !results.isEmpty else {
+                return .none
+            }
+            return SearchHighlights(results: results, cols: terminal.cols, current: search.lastResult,
+                                    lines: terminal.displayBuffer.lines.count)
         }
         setSearchHighlights(highlights)
     }
@@ -156,6 +160,7 @@ extension TerminalView {
             return
         }
         searchHighlights = highlights
+        searchHighlightsChanged()
         invalidateTerminalContents()
     }
 
