@@ -1846,22 +1846,26 @@ public final class Buffer {
         return consumed
     }
 
-    /// Bulk-inserts validated scalars of one width class.
-    /// Returns the number of scalars consumed.
-    func insertScalarRun(_ scalars: UnsafeBufferPointer<UInt32>, width: Int,
-                         styleID: UInt16, payloadCode: UInt16) -> Int {
+    /// Inserts scalars of width 1 or 2 (`widths`) and wraps as
+    /// `insertCharacter` does. `columns` is the sum of `widths`. Returns how
+    /// many scalars it inserted; the caller inserts the rest with the scalar
+    /// path.
+    func insertScalarRun(_ scalars: UnsafeBufferPointer<UInt32>, widths: UnsafeBufferPointer<UInt8>,
+                         columns: Int, styleID: UInt16, payloadCode: UInt16) -> Int {
         guard allowsBulkInsert else { return 0 }
-        precondition(width == 1 || width == 2)
+        precondition(widths.count == scalars.count)
+        var remainingColumns = columns
         let semanticCode = CellArena.semanticContentCode(for: semanticContent)
-        let widthState: PackedCell.WidthState = width == 2 ? .wide : .narrow
         let left = marginMode ? _marginLeft : 0
         let right = marginMode ? _marginRight : _cols - 1
-        // The scalar fallback owns the behavior when the complete region
-        // cannot hold one glyph. Do not change the cursor before the fallback.
-        guard right - left + 1 >= width else { return 0 }
         var consumed = 0
 
         while consumed < scalars.count {
+            let width = Int(widths[consumed])
+            precondition(width == 1 || width == 2)
+            // The scalar fallback owns the behavior when the complete region
+            // cannot hold one glyph. Do not change the cursor before the fallback.
+            guard right - left + 1 >= width else { break }
             if _x + width - 1 > right {
                 guard wraparound else { break }
                 _x = left
@@ -1874,17 +1878,33 @@ public final class Buffer {
                     _lines[_y + _yBase].bidiState = paragraphBidiState
                 }
             }
-            let available = (right - _x + 1) / width
-            let runLength = min(available, scalars.count - consumed)
-            guard runLength > 0 else { break }
+            // The scalars that fit on this row from the cursor. A remainder of
+            // one width needs no pass over `widths`.
+            let remaining = scalars.count - consumed
+            var end: Int
+            var column: Int
+            if remainingColumns == remaining || remainingColumns == remaining * 2 {
+                let fit = min(remaining, (right - _x + 1) / width)
+                end = consumed + fit
+                column = _x + fit * width
+            } else {
+                end = consumed
+                column = _x
+                while end < scalars.count && column + Int(widths[end]) - 1 <= right {
+                    column += Int(widths[end])
+                    end += 1
+                }
+            }
+            guard end > consumed else { break }
+            remainingColumns -= column - _x
             let row = _lines[_y + _yBase]
             clearTextOverwrittenImagesFromLine(row)
             row.setPackedScalarRun(
-                scalars, sourceStart: consumed, count: runLength, at: _x,
-                widthState: widthState, styleID: styleID,
+                scalars, widths: widths, sourceStart: consumed, count: end - consumed,
+                columns: column - _x, at: _x, styleID: styleID,
                 payloadCode: payloadCode, semanticContentCode: semanticCode)
-            _x += runLength * width
-            consumed += runLength
+            _x = column
+            consumed = end
         }
         return consumed
     }
