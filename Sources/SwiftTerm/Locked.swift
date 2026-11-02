@@ -138,4 +138,69 @@ final class LockedVoidCallback: Sendable {
     }
 }
 
+private protocol CountStorage: Sendable {
+    func load() -> Int
+    func store(_ value: Int)
+}
+
+private final class NSLockedCountStorage: CountStorage, @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func load() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func store(_ value: Int) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
+}
+
+#if canImport(Synchronization)
+@available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *)
+private final class AtomicCountStorage: CountStorage, Sendable {
+    private let value = Atomic<Int>(0)
+
+    func load() -> Int {
+        value.load(ordering: .relaxed)
+    }
+
+    func store(_ value: Int) {
+        self.value.store(value, ordering: .relaxed)
+    }
+}
+#endif
+
+/// Stores a count that a hot path reads to skip work when it is zero. Uses
+/// a relaxed `Atomic` when the build and runtime support it, and falls back
+/// to `NSLock` on older systems. The count gives no ordering: a reader that
+/// sees a nonzero count must still take the lock that guards the data.
+final class LockedCount: Sendable {
+    private let storage: any CountStorage
+
+    init() {
+#if canImport(Synchronization)
+        if #available(macOS 15.0, iOS 18.0, tvOS 18.0, watchOS 11.0, visionOS 2.0, *) {
+            storage = AtomicCountStorage()
+        } else {
+            storage = NSLockedCountStorage()
+        }
+#else
+        storage = NSLockedCountStorage()
+#endif
+    }
+
+    var value: Int {
+        storage.load()
+    }
+
+    func store(_ value: Int) {
+        storage.store(value)
+    }
+}
+
 #endif // !SWIFTTERM_EMBEDDED
