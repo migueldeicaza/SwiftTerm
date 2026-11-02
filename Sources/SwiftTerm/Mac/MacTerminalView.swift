@@ -1560,6 +1560,34 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    var _searchMatchBackgroundColor = NSColor(srgbRed: 1.0, green: 0.9, blue: 0.3, alpha: 1.0)
+    /// The background color of every search match other than the current one
+    /// while ``highlightAllSearchMatches`` is on. The current match is the
+    /// selection, drawn in ``selectedTextBackgroundColor``.
+    public var searchMatchBackgroundColor: NSColor {
+        get {
+            return _searchMatchBackgroundColor
+        }
+        set {
+            _searchMatchBackgroundColor = newValue
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
+    }
+
+    var _searchMatchForegroundColor = NSColor.black
+    /// The text color of a search match drawn in ``searchMatchBackgroundColor``.
+    public var searchMatchForegroundColor: NSColor {
+        get {
+            return _searchMatchForegroundColor
+        }
+        set {
+            _searchMatchForegroundColor = newValue
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
+    }
+
     func backingScaleFactor () -> CGFloat
     {
         window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
@@ -1776,6 +1804,22 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
+
+    /// Whether ``findNext(_:options:scrollToResult:)`` and
+    /// ``findPrevious(_:options:scrollToResult:)`` also highlight every other
+    /// match of the term, in ``searchMatchBackgroundColor``, the way a
+    /// terminal's find bar marks all hits while the selection walks them.
+    /// ``clearSearch()`` removes the highlights. Off by default.
+    public var highlightAllSearchMatches = false {
+        didSet {
+            if highlightAllSearchMatches != oldValue {
+                refreshSearchHighlights()
+            }
+        }
+    }
+
+    /// Every match of the active search, kept where the frame capture reads it.
+    var searchHighlights = SearchHighlights.none
 
     /**
      * If set to true, this will call the TerminalViewDelegate's rangeChanged method

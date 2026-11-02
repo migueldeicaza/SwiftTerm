@@ -25,3 +25,32 @@ terminalView.clearSearch()
 ```
 
 You can enable regular expressions and whole-word matching via `SearchOptions`.
+
+`searchMatchSummary` gives the current match's position among all matches (`2/14`) for a counter.
+
+## Highlighting every match
+
+By default only the current match is shown: it becomes the selection. With
+`highlightAllSearchMatches` on, `findNext` and `findPrevious` also paint every other match of
+the term in `searchMatchBackgroundColor` / `searchMatchForegroundColor` (yellow and black by
+default), the way a find bar marks all hits while the selection walks them. `clearSearch`
+removes the highlights.
+
+```swift
+terminalView.highlightAllSearchMatches = true
+terminalView.searchMatchBackgroundColor = .systemYellow
+```
+
+The highlights stay where they were put until the next search call or `clearSearch`; after
+output arrives, `findNext`/`findPrevious` or a `searchMatchSummary` recount recomputes them (the
+counter and the highlights share one match list, so the second call is cheap).
+
+To mark the matches outside the text — a tick per match beside the scrollbar — read their
+positions:
+
+```swift
+let (matches, lines) = terminalView.searchMatchPositions("term")
+for match in matches {
+    let fraction = Double(match.row) / Double(lines)   // 0 = oldest scrollback line
+}
+```
