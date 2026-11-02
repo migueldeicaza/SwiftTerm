@@ -427,7 +427,9 @@ threads only. Such a capture cannot measure blocked time or lock contention.
 ---------------------
 
 For end-to-end numbers over a real PTY, build the sample app in Release
-(Debug builds SwiftTerm at `-Onone` and exaggerates Swift-level costs):
+(Debug builds SwiftTerm at `-Onone` and exaggerates Swift-level costs, and
+skips the row-walking invariant checks unless `SWIFTTERM_EXPENSIVE_ASSERTS=1`
+is set):
 
 ```bash
 cd TerminalApp
