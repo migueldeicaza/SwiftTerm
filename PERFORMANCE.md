@@ -45,6 +45,68 @@ The suite contains these vtebench cases:
 - `scrolling` and four scrolling-region variants
 - `scrolling_fullscreen`, `sync_medium_cells`, and `unicode`
 
+### Ghostty terminal-stream workloads
+
+An opt-in group covers the input classes reported in Ghostty commit
+`54d162da5bea1d95399574495bde4ddb91df0784`. Ghostty used its full
+terminal-stream benchmark at 120 by 80 cells and read input in 64 KiB blocks.
+The commit found its largest change on a stream with three attributes in each
+SGR sequence. Run the SwiftTerm cases with:
+
+```bash
+cd Tools/SwiftTermBenchmarks
+SWIFTTERM_GHOSTTY_STREAM_BENCHMARKS=1 \
+swift package benchmark --target SwiftTermBenchmarks --filter 'ghostty_.*'
+```
+
+The cases are `ghostty_ascii`, `ghostty_utf8`, `ghostty_osc`,
+`ghostty_styled_plain`, `ghostty_styled_single`, `ghostty_styled_heavy`,
+`ghostty_styled_multi`, and `ghostty_styled_mixed`. The single and multi cases
+print the same text at the same run boundaries. The single case sends three
+one-attribute SGR sequences; the multi case sends one three-attribute
+sequence. Both apply the same final style at each boundary. This pair helps
+isolate the cost of multi-attribute SGR handling. The plain, ASCII, and UTF-8
+cases give controls without SGR; the mixed case also includes OSC 8 links and
+combining marks.
+
+These streams are deterministic Swift adaptations of Ghostty's generators.
+They are not byte-for-byte copies of Ghostty's benchmark files. The exact
+commands and corpus files behind the commit's timings are not in the Ghostty
+repository. Its 2.6 GB `out.txt` recording is also unavailable here. Each
+SwiftTerm sample has at least 1 MiB, uses a 120-by-80 terminal, and feeds
+prebuilt 64 KiB chunks. File I/O and corpus generation are outside the timed
+region. Compare SwiftTerm revisions with the same case; do not compare the
+absolute times with Ghostty's published times.
+
+The direct profiler also accepts these names, for example:
+
+```bash
+swift build -c release --product SwiftTermProfile
+.build/release/SwiftTermProfile ghostty_styled_multi --iterations 40
+```
+
+### OSC 9 dispatch — 2026-11-01
+
+Ghostty PRs [#13220](https://github.com/ghostty-org/ghostty/pull/13220) and
+[#13826](https://github.com/ghostty-org/ghostty/pull/13826) prompted a review
+of the stream path. SwiftTerm already batches ASCII and Unicode print runs,
+parses ordinary CSI sequences in one pass, and skips unchanged SGR styles.
+Ghostty's projected page growth in #13826 does not match SwiftTerm's fixed
+cell arena, so it was not copied.
+
+A Time Profiler run of `ghostty_osc` showed that unrelated OSC 9 messages
+spent about 27% of feed time in the progress-report parser. That parser made a
+String and split fields before it checked the `4;` command prefix. It now
+rejects other OSC 9 messages with a two-byte check. Valid progress reports
+still use the existing parser.
+
+In an A-B-B-A Release check on this machine, each process fed 150 samples
+with four warmups. `ghostty_osc` took 1.792 / 1.768 seconds before and
+1.321 / 1.308 seconds after, about 26% less time. `ghostty_utf8`,
+`ghostty_styled_multi`, and `ghostty_styled_mixed` were within run-to-run
+variation. These results apply to this synthetic OSC mix; they do not predict
+the same gain for all OSC input. All 113 focused OSC tests passed.
+
 Nine opt-in hardening cases cover ASCII and wide-cell seams, horizontal
 margins, bounded OSC input, short title OSC commands, and a half-block image
 that changes color around every cell (`hardening_block_color_cells`). Enable them without changing the default

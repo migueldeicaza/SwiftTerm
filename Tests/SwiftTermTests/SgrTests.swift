@@ -16,6 +16,33 @@ final class SgrTests {
         #expect(cell.attribute.style.contains(.underline))
     }
 
+    @Test func testCombinedSgrKeepsFinalStyleAndResetOrder() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 8, rows: 1)
+        let combined = "\(esc)[0;1;3;4;38;2;10;20;30;48;5;200m"
+        terminal.feed(text: "\(esc)[31mA\(combined)BC\(combined)D\(esc)[1;0mE\(esc)[1m\(esc)[mF")
+
+        let original = TerminalTestHarness.charData(buffer: terminal.buffer, row: 0, col: 0)
+        let styled = TerminalTestHarness.charData(buffer: terminal.buffer, row: 0, col: 1)
+        let repeated = TerminalTestHarness.charData(buffer: terminal.buffer, row: 0, col: 3)
+        let reset = TerminalTestHarness.charData(buffer: terminal.buffer, row: 0, col: 4)
+        let emptyReset = TerminalTestHarness.charData(buffer: terminal.buffer, row: 0, col: 5)
+        #expect(original?.attribute.fg == .ansi256(code: 1))
+        #expect(styled?.attribute == TerminalTestHarness.charData(buffer: terminal.buffer, row: 0, col: 2)?.attribute)
+        #expect(styled?.attribute == repeated?.attribute)
+        #expect(styled?.attribute.style.contains([.bold, .italic, .underline]) == true)
+        #expect(styled?.attribute.fg == .trueColor(red: 10, green: 20, blue: 30))
+        #expect(styled?.attribute.bg == .ansi256(code: 200))
+        #expect(reset?.attribute == CharData.defaultAttr)
+        #expect(emptyReset?.attribute == CharData.defaultAttr)
+    }
+
+    @Test func testLongCombinedSgrUsesLastReset() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1)
+        terminal.feed(text: "\(esc)[4:3;38;2;51;51;51;48;2;170;170;170;58;2;255;97;136;0mX")
+        let cell = TerminalTestHarness.charData(buffer: terminal.buffer, row: 0, col: 0)
+        #expect(cell?.attribute == CharData.defaultAttr)
+    }
+
     @Test func testResetBold() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 1)
         terminal.feed(text: "\(esc)[1mX\(esc)[22mY")

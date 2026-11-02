@@ -4024,6 +4024,13 @@ open class Terminal {
     }
 
     private func parseProgressReport(_ data: ArraySlice<UInt8>) -> ProgressReport? {
+        // Most OSC 9 messages are notifications. Reject them before making a
+        // String and splitting it into fields.
+        guard data.count >= 2,
+              data[data.startIndex] == UInt8(ascii: "4"),
+              data[data.startIndex + 1] == UInt8(ascii: ";") else {
+            return nil
+        }
         guard let text = terminalStringASCII(data) else {
             return nil
         }

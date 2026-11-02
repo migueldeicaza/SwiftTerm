@@ -1,5 +1,7 @@
 import CryptoKit
+import Dispatch
 import Foundation
+import SwiftTerm
 import Testing
 @testable import VTEBenchWorkloads
 
@@ -22,6 +24,8 @@ struct VTEBenchWorkloadsTests {
             "sync_medium_cells",
             "unicode"
         ])
+        #expect(try VTEBenchWorkloads.makeDefault(columns: 120, rows: 80)
+            .allSatisfy { $0.columns == 120 && $0.rows == 80 })
     }
 
     @Test("Keeps hardening workloads separate and deterministic")
@@ -83,6 +87,49 @@ struct VTEBenchWorkloadsTests {
         #expect(byName["osc8_distinct_lines"]?.lastHyperlink == "https://example.com/commit/9999")
         #expect(byName["osc8_dense"]?.lastHyperlink == "u59999")
         #expect(workloads.allSatisfy { $0.maximumOscBytes == nil && $0.inputChunkSize == nil })
+    }
+
+    @Test("Ghostty stream cases keep paired screen state and 64 KiB input chunks")
+    func ghosttyStreamCases() {
+        let workloads = VTEBenchWorkloads.makeGhosttyStream()
+        #expect(workloads.map(\.name) == [
+            "ghostty_ascii", "ghostty_utf8", "ghostty_osc", "ghostty_styled_plain",
+            "ghostty_styled_single", "ghostty_styled_heavy", "ghostty_styled_multi",
+            "ghostty_styled_mixed"
+        ])
+        #expect(workloads.allSatisfy {
+            $0.columns == 120 && $0.rows == 80 && $0.inputChunkSize == 65_536
+                && $0.payload.count >= 65_536
+        }, "\(workloads.map { "\($0.name):\($0.payload.count)" })")
+
+        let byName = Dictionary(uniqueKeysWithValues: workloads.map { ($0.name, $0) })
+        let single = String(decoding: byName["ghostty_styled_single"]!.payload, as: UTF8.self)
+        let multi = String(decoding: byName["ghostty_styled_multi"]!.payload, as: UTF8.self)
+        let sgrPattern = "\u{1b}\\[[0-9;]*m"
+        #expect(single.replacingOccurrences(of: sgrPattern, with: "", options: .regularExpression)
+                == multi.replacingOccurrences(of: sgrPattern, with: "", options: .regularExpression))
+        #expect(multi.contains("\u{1b}[38;"))
+        #expect(multi.contains("\u{1b}[0;"))
+        #expect(!String(decoding: byName["ghostty_styled_plain"]!.payload,
+                       as: UTF8.self).contains("\u{1b}"))
+        #expect(String(decoding: byName["ghostty_styled_mixed"]!.payload,
+                       as: UTF8.self).contains("\u{1b}]8;;"))
+
+        let queue = DispatchQueue(label: "GhosttyStreamWorkloadTests")
+        let singleTerminal = HeadlessTerminal(queue: queue,
+            options: TerminalOptions(cols: 120, rows: 80)) { _ in }.terminal!
+        let multiTerminal = HeadlessTerminal(queue: queue,
+            options: TerminalOptions(cols: 120, rows: 80)) { _ in }.terminal!
+        singleTerminal.feed(byteArray: byName["ghostty_styled_single"]!.payload)
+        multiTerminal.feed(byteArray: byName["ghostty_styled_multi"]!.payload)
+        for row in 0..<80 {
+            for column in 0..<120 {
+                let singleCell = singleTerminal.getCharData(col: column, row: row)
+                let multiCell = multiTerminal.getCharData(col: column, row: row)
+                #expect(singleCell?.getText() == multiCell?.getText())
+                #expect(singleCell?.attribute == multiCell?.attribute)
+            }
+        }
     }
 
     @Test("Preserves captured byte streams")

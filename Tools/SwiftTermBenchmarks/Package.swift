@@ -42,7 +42,7 @@ let package = Package(
             ]),
         .testTarget(
             name: "VTEBenchWorkloadsTests",
-            dependencies: ["VTEBenchWorkloads"])
+            dependencies: ["VTEBenchWorkloads", .product(name: "SwiftTerm", package: "SwiftTerm")])
     ],
     swiftLanguageModes: [.v6]
 )

@@ -152,6 +152,9 @@ final class SwiftTermOsc {
         terminal.feed(text: "\u{1b}]9;4;1;999\u{07}")
         #expect(delegate.reports.last?.state == .set)
         #expect(delegate.reports.last?.progress == 100)
+
+        terminal.feed(text: "\u{1b}]9;ignored notification\u{07}")
+        #expect(delegate.reports.count == 2)
     }
 
     @Test func testOscProgressReportMissingProgressDefaults() {
