@@ -27,6 +27,29 @@ Run the workload-port tests:
 swift test
 ```
 
+## Ghostty terminal-stream workloads
+
+The opt-in `ghostty_*` cases adapt the input classes from Ghostty commit
+`54d162da5bea1d95399574495bde4ddb91df0784`. They measure real terminal
+state updates at 120 by 80 cells. Each sample is at least 1 MiB and is fed in
+64 KiB chunks. Input generation runs before measurement.
+
+```bash
+SWIFTTERM_GHOSTTY_STREAM_BENCHMARKS=1 \
+swift package benchmark --target SwiftTermBenchmarks --filter 'ghostty_.*'
+```
+
+`ghostty_styled_single` and `ghostty_styled_multi` print the same text at the
+same style boundaries and apply the same final style. The single case sends
+three one-attribute SGR sequences; the multi case sends one three-attribute
+sequence. The other cases cover continuous ASCII, UTF-8, OSC, plain lines,
+heavily styled lines, and mixed style, Unicode, and OSC 8 input. `SwiftTermProfile` accepts
+each case name.
+
+The streams are deterministic Swift adaptations. Ghostty's exact benchmark
+files and its 2.6 GB `out.txt` recording are not in its repository. Compare
+results only with SwiftTerm runs of the same case and configuration.
+
 ## Kitty image snapshots
 
 The `kitty_snapshot_empty` and `kitty_snapshot_3mb` cases measure snapshot

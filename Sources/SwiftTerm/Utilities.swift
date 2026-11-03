@@ -18,53 +18,29 @@ struct UnicodeUtil {
         case extend
     }
     /**
-     * Returns the number of expected bytes on a well-formed UTF8 string based on the first byte of the sequence
+     * Returns the number of expected bytes on a well-formed UTF8 string based on the first byte of the sequence,
+     * or -1 for a byte that cannot start a sequence (a continuation byte, an overlong lead byte C0 or C1,
+     * or a lead byte above F4).
      */
+    @inline(__always)
     static func expectedSizeFromFirstByte (_ b: UInt8) -> Int
     {
-        let x = first [Int (b)];
-
-        // Invalid unicode codepoints, just return 1 for byte, and let higher level pass to print
-        if x == xx {
-            return -1
-        }
-        if x == a1 {
+        // Comparisons, not a table: a static array costs an access check and
+        // a bounds check for each character on the print path.
+        if b < 0x80 {
             return 1
         }
-        return Int(x & 0xf)
+        if b < 0xC2 {
+            return -1
+        }
+        if b < 0xE0 {
+            return 2
+        }
+        if b < 0xF0 {
+            return 3
+        }
+        return b < 0xF5 ? 4 : -1
     }
-
-    static let xx: UInt8 = 0xF1 // invalid: size 1
-    static let a1: UInt8 = 0xF0 // a1CII: size 1
-    static let s1: UInt8 = 0x02 // accept 0, size 2
-    static let s2: UInt8 = 0x13 // accept 1, size 3
-    static let s3: UInt8 = 0x03 // accept 0, size 3
-    static let s4: UInt8 = 0x23 // accept 2, size 3
-    static let s5: UInt8 = 0x34 // accept 3, size 4
-    static let s6: UInt8 = 0x04 // accept 0, size 4
-    static let s7: UInt8 = 0x44 // accept 4, size 4
-
-    private static let first : [UInt8] =  [
-        //   1   2   3   4   5   6   7   8   9   A   B   C   D   E   F
-        a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, // 0x00-0x0F
-        a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, // 0x10-0x1F
-        a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, // 0x20-0x2F
-        a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, // 0x30-0x3F
-        a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, // 0x40-0x4F
-        a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, // 0x50-0x5F
-        a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, // 0x60-0x6F
-        a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, a1, // 0x70-0x7F
-
-        //   1   2   3   4   5   6   7   8   9   A   B   C   D   E   F
-        xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0x80-0x8F
-        xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0x90-0x9F
-        xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0xA0-0xAF
-        xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0xB0-0xBF
-        xx, xx, s1, s1, s1, s1, s1, s1, s1, s1, s1, s1, s1, s1, s1, s1, // 0xC0-0xCF
-        s1, s1, s1, s1, s1, s1, s1, s1, s1, s1, s1, s1, s1, s1, s1, s1, // 0xD0-0xDF
-        s2, s3, s3, s3, s3, s3, s3, s3, s3, s3, s3, s3, s3, s4, s3, s3, // 0xE0-0xEF
-        s5, s6, s6, s6, s7, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, xx, // 0xF0-0xFF
-    ]
     
     struct LH {
         var lo: UInt32
@@ -311,12 +287,13 @@ struct UnicodeUtil {
     /// Mongolian free variation selectors, VS1-16, and VS17-256.
     @inline(__always)
     static func isVariationSelector (_ value: UInt32) -> Bool {
-        switch value {
-        case 0xFE00...0xFE0F, 0x180B...0x180D, 0x180F, 0xE0100...0xE01EF:
-            return true
-        default:
+        // Plain comparisons: range patterns call the generic `~=` on the print path.
+        if value < 0x180B {
             return false
         }
+        return (value >= 0xFE00 && value <= 0xFE0F)
+            || (value <= 0x180F && value != 0x180E)
+            || (value >= 0xE0100 && value <= 0xE01EF)
     }
 
     /// Same result as Unicode.Scalar.Properties.isEmojiModifier without the

@@ -9,7 +9,22 @@ public typealias TerminalTemporaryDirectory = URL
 public typealias TerminalTemporaryDirectory = String
 #endif
 
+/// Returns true when all bytes are ASCII. OSC titles, URLs and fields are
+/// almost always ASCII, and ASCII is valid UTF-8, so `String(decoding:)`
+/// makes the same string as the Foundation conversion at a lower cost.
+@inline(__always)
+private func terminalIsASCII(_ bytes: ArraySlice<UInt8>) -> Bool {
+    var bits: UInt8 = 0
+    for byte in bytes {
+        bits |= byte
+    }
+    return bits < 0x80
+}
+
 func terminalStringUTF8(_ bytes: ArraySlice<UInt8>) -> String? {
+    if terminalIsASCII(bytes) {
+        return String(decoding: bytes, as: UTF8.self)
+    }
 #if SWIFTTERM_EMBEDDED
     var decoder = UTF8()
     var iterator = bytes.makeIterator()
@@ -26,9 +41,11 @@ func terminalStringUTF8(_ bytes: ArraySlice<UInt8>) -> String? {
 }
 
 func terminalStringASCII(_ bytes: ArraySlice<UInt8>) -> String? {
+    if terminalIsASCII(bytes) {
+        return String(decoding: bytes, as: UTF8.self)
+    }
 #if SWIFTTERM_EMBEDDED
-    guard !bytes.contains(where: { $0 > 0x7f }) else { return nil }
-    return String(decoding: bytes, as: UTF8.self)
+    return nil
 #else
     return String(bytes: bytes, encoding: .ascii)
 #endif

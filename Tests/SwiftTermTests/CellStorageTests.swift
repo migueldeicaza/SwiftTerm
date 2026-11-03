@@ -47,11 +47,14 @@ struct CellStorageTests {
     @Test func packedScalarRunsWriteNarrowAndWideCells() {
         let narrowLine = BufferLine(cols: 4)
         let narrowScalars: [UInt32] = [0x03B1, 0x0416, 0x0645]
+        let narrowWidths: [UInt8] = [1, 1, 1]
         narrowScalars.withUnsafeBufferPointer { scalars in
-            narrowLine.setPackedScalarRun(
-                scalars, sourceStart: 0, count: scalars.count, at: 1,
-                widthState: .narrow, styleID: 0, payloadCode: 17,
-                semanticContentCode: 5)
+            narrowWidths.withUnsafeBufferPointer { widths in
+                narrowLine.setPackedScalarRun(
+                    scalars, widths: widths, sourceStart: 0, count: scalars.count,
+                    columns: 3, at: 1, styleID: 0, payloadCode: 17,
+                    semanticContentCode: 5)
+            }
         }
 
         #expect((1...3).map { narrowLine.packedCell(at: $0).content } == narrowScalars)
@@ -63,10 +66,13 @@ struct CellStorageTests {
 
         let wideLine = BufferLine(cols: 4)
         let wideScalars: [UInt32] = [0x4E2D, 0x754C]
+        let wideWidths: [UInt8] = [2, 2]
         wideScalars.withUnsafeBufferPointer { scalars in
-            wideLine.setPackedScalarRun(
-                scalars, sourceStart: 0, count: scalars.count, at: 0,
-                widthState: .wide, styleID: 0, semanticContentCode: 6)
+            wideWidths.withUnsafeBufferPointer { widths in
+                wideLine.setPackedScalarRun(
+                    scalars, widths: widths, sourceStart: 0, count: scalars.count,
+                    columns: 4, at: 0, styleID: 0, semanticContentCode: 6)
+            }
         }
 
         #expect(wideLine.packedCell(at: 0).content == wideScalars[0])
@@ -78,6 +84,21 @@ struct CellStorageTests {
         #expect((0..<4).allSatisfy {
             wideLine.packedCell(at: $0).semanticContentCode == 6
         })
+
+        let mixedLine = BufferLine(cols: 6)
+        let mixedScalars: [UInt32] = [0x41, 0x4E2D, 0x00E9, 0x1F600]
+        let mixedWidths: [UInt8] = [1, 2, 1, 2]
+        mixedScalars.withUnsafeBufferPointer { scalars in
+            mixedWidths.withUnsafeBufferPointer { widths in
+                mixedLine.setPackedScalarRun(
+                    scalars, widths: widths, sourceStart: 0, count: scalars.count,
+                    columns: 6, at: 0, styleID: 0, semanticContentCode: 0)
+            }
+        }
+
+        #expect((0..<6).map { mixedLine.packedCell(at: $0).widthState }
+                == [.narrow, .wide, .spacerTail, .narrow, .wide, .spacerTail])
+        #expect([0, 1, 3, 4].map { mixedLine.packedCell(at: $0).content } == mixedScalars)
     }
 
     @Test func zeroIsTheEmptyCell() {

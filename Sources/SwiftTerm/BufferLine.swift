@@ -454,20 +454,22 @@ public final class BufferLine: CustomDebugStringConvertible {
         bump()
     }
 
-    /// Writes validated Unicode scalars that all have the same cell width.
+    /// Writes validated Unicode scalars. `widths` gives the cell width of
+    /// each scalar, 1 or 2, and `columns` is the sum of those widths in the
+    /// written range.
     func setPackedScalarRun(_ scalars: UnsafeBufferPointer<UInt32>,
-                            sourceStart: Int, count: Int,
+                            widths: UnsafeBufferPointer<UInt8>,
+                            sourceStart: Int, count: Int, columns: Int,
                             at destinationStart: Int,
-                            widthState: PackedCell.WidthState,
                             styleID: UInt16, payloadCode: UInt16 = 0,
                             semanticContentCode: UInt8)
     {
         guard count > 0 else { return }
-        precondition(widthState == .narrow || widthState == .wide)
+        precondition(widths.count == scalars.count)
         precondition(sourceStart >= 0 && sourceStart <= scalars.count)
         precondition(count <= scalars.count - sourceStart)
-        let cellWidth = widthState == .wide ? 2 : 1
-        let destinationEnd = destinationStart + count * cellWidth
+        let destinationEnd = destinationStart + columns
+        precondition(destinationStart >= 0 && destinationEnd <= storage.count)
         if destinationStart > 0, destinationStart < storage.count,
            storage.rawCell(at: destinationStart).widthState == .spacerTail {
             let headIndex = destinationStart - 1
@@ -480,31 +482,49 @@ public final class BufferLine: CustomDebugStringConvertible {
                 storage.setRawCell(tail.demotedToNarrowBlank(), at: destinationEnd)
             }
         }
-        let headTemplate = PackedCell.makeUnchecked(
+        let narrowTemplate = PackedCell.makeUnchecked(
             contentTag: .codepoint, content: 0, styleID: styleID,
-            widthState: widthState, isProtected: false,
+            widthState: .narrow, isProtected: false,
             payloadCode: payloadCode,
             semanticContentCode: semanticContentCode).rawValue
-        if widthState == .wide {
-            let tail = PackedCell.makeUnchecked(
-                contentTag: .codepoint, content: 0, styleID: styleID,
-                widthState: .spacerTail, isProtected: false,
-                payloadCode: payloadCode,
-                semanticContentCode: semanticContentCode)
+        let wideTemplate = PackedCell.makeUnchecked(
+            contentTag: .codepoint, content: 0, styleID: styleID,
+            widthState: .wide, isProtected: false,
+            payloadCode: payloadCode,
+            semanticContentCode: semanticContentCode).rawValue
+        let tail = PackedCell.makeUnchecked(
+            contentTag: .codepoint, content: 0, styleID: styleID,
+            widthState: .spacerTail, isProtected: false,
+            payloadCode: payloadCode,
+            semanticContentCode: semanticContentCode)
+        // Most runs have one width; `columns` shows it without a pass over `widths`.
+        if columns == count {
+            for offset in 0..<count {
+                let content = UInt64(scalars[sourceStart + offset]) << PackedCell.contentShift
+                storage.setRawCell(PackedCell(rawValue: narrowTemplate | content),
+                                   at: destinationStart + offset)
+            }
+        } else if columns == count * 2 {
             for offset in 0..<count {
                 let destination = destinationStart + offset * 2
-                let rawValue = headTemplate |
-                    (UInt64(scalars[sourceStart + offset]) << PackedCell.contentShift)
-                storage.setRawCell(PackedCell(rawValue: rawValue), at: destination)
+                let content = UInt64(scalars[sourceStart + offset]) << PackedCell.contentShift
+                storage.setRawCell(PackedCell(rawValue: wideTemplate | content), at: destination)
                 storage.setRawCell(tail, at: destination + 1)
             }
         } else {
-            for offset in 0..<count {
-                let rawValue = headTemplate |
-                    (UInt64(scalars[sourceStart + offset]) << PackedCell.contentShift)
-                storage.setRawCell(PackedCell(rawValue: rawValue),
-                                   at: destinationStart + offset)
+            var destination = destinationStart
+            for index in sourceStart ..< (sourceStart + count) {
+                let content = UInt64(scalars[index]) << PackedCell.contentShift
+                if widths[index] == 2 {
+                    storage.setRawCell(PackedCell(rawValue: wideTemplate | content), at: destination)
+                    storage.setRawCell(tail, at: destination + 1)
+                    destination += 2
+                } else {
+                    storage.setRawCell(PackedCell(rawValue: narrowTemplate | content), at: destination)
+                    destination += 1
+                }
             }
+            precondition(destination == destinationEnd)
         }
         noteWritten(from: destinationStart, upTo: destinationEnd)
         bump()
