@@ -173,6 +173,7 @@ extension FrameViewState {
         useBrightColors = view.useBrightColors
         collapseBrightColorsToBase = view.collapseBrightColorsToBase
         minimumContrastRatio = view.minimumContrastRatio
+        foregroundBrightness = 1
         bidiHostPolicy = view.bidiHostPolicy
         glyphFallbackProvider = view.glyphFallbackProvider
     }

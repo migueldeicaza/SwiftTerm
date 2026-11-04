@@ -19,6 +19,13 @@ import UIKit
 let SwiftTermShapeColorKey = NSAttributedString.Key("SwiftTermShapeColor")
 
 extension TTColor {
+    func withBrightness(_ factor: CGFloat) -> TTColor {
+        guard factor < 1, let (rgb, alpha) = contrastComponents else { return self }
+        return TTColor.make(red: CGFloat(rgb.red) * factor,
+                            green: CGFloat(rgb.green) * factor,
+                            blue: CGFloat(rgb.blue) * factor, alpha: alpha)
+    }
+
     /// This color, darkened or lightened as little as possible to reach `minimumRatio` against `background`.
     func withContrast(atLeast minimumRatio: CGFloat, against background: TTColor) -> TTColor {
         guard minimumRatio > 1,

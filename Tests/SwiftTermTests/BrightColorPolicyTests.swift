@@ -107,6 +107,35 @@ struct BrightColorPolicyTests {
         #expect((caret[.underlineColor] as? NSColor) == expected)
     }
 
+    @Test func foregroundBrightnessPreservesTheExplicitUnderlinePaletteIndex() throws {
+        let view = makeView()
+        view.feed(text: "\u{1b}[1;4;37;44;58;5;1mX")
+        let original = try renderedAttributes(view)
+        let originalForeground = try #require(original[.foregroundColor] as? NSColor)
+        let originalUnderline = try #require(original[.underlineColor] as? NSColor)
+        let originalBackground = try #require(original[.backgroundColor] as? NSColor)
+
+        view.foregroundBrightness = 0.5
+        let dimmed = try renderedAttributes(view)
+        #expect((dimmed[.foregroundColor] as? NSColor) == originalForeground.withBrightness(0.5))
+        #expect((dimmed[.underlineColor] as? NSColor) == originalUnderline.withBrightness(0.5))
+        #expect((dimmed[.backgroundColor] as? NSColor) == originalBackground)
+
+        let frame = snapshot(view)
+        let context = SnapshotRenderContext(viewState: FrameViewState(view: view), snapshot: frame)
+        let row = try #require(frame.rows.first)
+        let plain = try #require(view.textBuilder.plainRow(row: row, absoluteRow: frame.firstRow,
+                                                         context: context))
+        let run = try #require(plain.runs.first)
+        let underline = try #require(run.style.underline)
+        #expect(view.textBuilder.platformColor(run.style.foreground, context: context)
+                == originalForeground.withBrightness(0.5))
+        #expect(view.textBuilder.platformColor(underline.color, context: context)
+                == originalUnderline.withBrightness(0.5))
+        #expect(view.textBuilder.platformColor(run.style.background, context: context)
+                == originalBackground)
+    }
+
     @Test func preservingIndexesDoesNotChangeBackgrounds() {
         let view = makeView()
         view.useBrightColors = false
