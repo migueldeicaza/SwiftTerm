@@ -1237,10 +1237,13 @@ final class MetalTerminalRenderer {
             throw MetalError.commandQueueUnavailable
         }
         self.commandQueue = commandQueue
+        // Color glyphs (emoji) are rare on a terminal screen, so the color
+        // atlas starts at the smallest size and grows when they come.
         guard let grayscaleAtlas = GlyphAtlas(device: device,
                                               maxSize: GlyphAtlas.recommendedMaxSize(device: device, format: .grayscale),
                                               format: .grayscale),
               let colorAtlas = GlyphAtlas(device: device,
+                                          size: 256,
                                           maxSize: GlyphAtlas.recommendedMaxSize(device: device, format: .bgra),
                                           format: .bgra) else {
             throw MetalError.atlasUnavailable
