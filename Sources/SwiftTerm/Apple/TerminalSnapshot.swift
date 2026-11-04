@@ -401,7 +401,7 @@ final class TerminalSnapshot {
             commandActive: viewState.commandActive,
             textBlinkVisible: viewState.textBlinkVisible,
             enableOsc8Hyperlinks: terminal.enableOsc8Hyperlinks,
-            searchHighlights: viewState.searchHighlights)
+            searchHighlights: viewState.searchHighlights.validForGrid(cols: terminal.cols, rows: terminal.rows))
         let styleChanged = previousStyle?.hasSameValue(as: newStyle) != true ||
             previousAnsiColors != terminal.ansiColors
         appearanceChanged = styleChanged

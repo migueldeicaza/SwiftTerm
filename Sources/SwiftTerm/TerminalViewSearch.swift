@@ -94,7 +94,7 @@ extension TerminalView {
             }
             return (i + 1, all.count)
         }
-        updateSearchHighlights(term: term, options: options, limit: limit)
+        updateSearchHighlights(term: term, options: options, onlyIfCurrentSearch: true)
         return summary
     }
 
@@ -119,6 +119,11 @@ extension TerminalView {
         setSearchHighlights(.none)
     }
 
+    /// A resize can move matches to different rows and columns.
+    func clearSearchHighlightsForResize () {
+        setSearchHighlights(.none)
+    }
+
     /// Recomputes the highlights for the last search after
     /// ``highlightAllSearchMatches`` changes: on, the matches of the term the
     /// last `findNext`/`findPrevious` used; off, none.
@@ -136,22 +141,27 @@ extension TerminalView {
         updateSearchHighlights(term: last.term, options: last.options)
     }
 
-    private func updateSearchHighlights (term: String, options: SearchOptions, limit: Int = 1000) {
+    private func updateSearchHighlights (term: String, options: SearchOptions, limit: Int = 1000,
+                                         onlyIfCurrentSearch: Bool = false) {
         guard highlightAllSearchMatches else {
             setSearchHighlights(.none)
             return
         }
-        let highlights: SearchHighlights = withTerminal { terminal in
+        let highlights: SearchHighlights? = withTerminal { terminal in
             guard let search else {
-                return .none
+                return SearchHighlights.none
+            }
+            if onlyIfCurrentSearch && (search.currentTerm != term || search.currentOptions != options) {
+                return nil
             }
             let results = search.findAll(term: term, options: options, limit: limit)
             guard !results.isEmpty else {
-                return .none
+                return SearchHighlights.none
             }
-            return SearchHighlights(results: results, cols: terminal.cols, current: search.lastResult,
-                                    lines: terminal.displayBuffer.lines.count)
+            return SearchHighlights(results: results, cols: terminal.cols, gridRows: terminal.rows,
+                                    current: search.lastResult, lines: terminal.displayBuffer.lines.count)
         }
+        guard let highlights else { return }
         setSearchHighlights(highlights)
     }
 

@@ -2030,6 +2030,7 @@ extension TerminalView {
             }
         }
         if didResize {
+            clearSearchHighlightsForResize()
             accessibility.invalidate ()
             terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
             updateScroller()
@@ -2935,7 +2936,7 @@ extension TerminalView {
             linkHighlightMode: linkHighlightMode,
             commandActive: commandActive,
             textBlinkVisible: textBlinkVisible,
-            searchHighlights: searchHighlights)
+            searchHighlights: searchHighlights.validForGrid(cols: terminal.cols, rows: terminal.rows))
         let context = SnapshotRenderContext(viewState: FrameViewState(view: self),
                                             style: liveStyle,
                                             ansiColors: terminal.ansiColors, cols: cols)
@@ -4132,6 +4133,7 @@ extension TerminalView {
     func applyFrameSideEffects (_ effects: MainFrameEffects)
     {
         if let resized = effects.resizedTo {
+            clearSearchHighlightsForResize()
             // The delegate call is what reaches the pty ioctl, so it runs once
             // per frame now rather than once per drag step.
             accessibility.invalidate()
@@ -4803,7 +4805,9 @@ extension TerminalView {
                 cellWidth: cellPixels.width,
                 cellHeight: cellPixels.height)
             terminal.softReset()
+            search.invalidate()
         }
+        clearSearchHighlightsForResize()
         terminalDelegate?.sizeChanged(source: self, newCols: cols, newRows: rows)
         updateScroller()
     }

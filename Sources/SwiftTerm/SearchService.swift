@@ -163,7 +163,8 @@ public struct SearchMatchPosition: Equatable, Sendable {
 /// wraps contributes a range to each row it touches. Beside the cells, where
 /// the matches sit in the whole buffer, for marks on a scrollbar.
 struct SearchHighlights: Equatable, Sendable {
-    static let none = SearchHighlights(rows: [:], matchRows: [], currentRow: nil, lines: 0)
+    static let none = SearchHighlights(rows: [:], matchRows: [], currentRow: nil, lines: 0,
+                                       cols: 0, gridRows: 0)
 
     private let rows: [Int: [Range<Int>]]
     /// The row each match starts in, in buffer order.
@@ -173,17 +174,24 @@ struct SearchHighlights: Equatable, Sendable {
     /// The number of lines the buffer held, scrollback included: a match's row
     /// out of this is its place along a scrollbar.
     let lines: Int
+    /// The grid size used to map matches to row and column ranges.
+    let cols: Int
+    let gridRows: Int
 
     var isEmpty: Bool { rows.isEmpty }
 
-    private init (rows: [Int: [Range<Int>]], matchRows: [Int], currentRow: Int?, lines: Int) {
+    private init (rows: [Int: [Range<Int>]], matchRows: [Int], currentRow: Int?, lines: Int,
+                  cols: Int, gridRows: Int) {
         self.rows = rows
         self.matchRows = matchRows
         self.currentRow = currentRow
         self.lines = lines
+        self.cols = cols
+        self.gridRows = gridRows
     }
 
-    init (results: [SearchResult], cols: Int, current: SearchResult? = nil, lines: Int = 0) {
+    init (results: [SearchResult], cols: Int, gridRows: Int, current: SearchResult? = nil,
+          lines: Int = 0) {
         let cols = max(cols, 1)
         var rows: [Int: [Range<Int>]] = [:]
         var matchRows: [Int] = []
@@ -201,10 +209,22 @@ struct SearchHighlights: Equatable, Sendable {
                 col = 0
             }
         }
+        if rows.isEmpty {
+            self = .none
+            return
+        }
         self.rows = rows
         self.matchRows = matchRows
         self.currentRow = current?.row
         self.lines = lines
+        self.cols = cols
+        self.gridRows = gridRows
+    }
+
+    /// Discard ranges captured for a different grid size.
+    func validForGrid (cols: Int, rows: Int) -> SearchHighlights {
+        guard !isEmpty, self.cols == cols, gridRows == rows else { return .none }
+        return self
     }
 
     /// The highlighted column ranges of `row`, or nil when it has none.

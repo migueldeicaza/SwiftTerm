@@ -170,6 +170,59 @@ struct SearchHighlightTests {
         #expect(view.searchHighlights.ranges(forRow: 1) == [0..<3])
     }
 
+    @Test func summaryForAnotherTermKeepsTheActiveHighlights() {
+        let view = makeView()
+        view.highlightAllSearchMatches = true
+        #expect(view.findNext("foo"))
+        let activeHighlights = view.searchHighlights
+
+        #expect(view.searchMatchSummary("bar").total == 1)
+        #expect(view.searchHighlights == activeHighlights)
+        #expect(view.searchMatchSummary("foo", options: SearchOptions(caseSensitive: true)).total == 3)
+        #expect(view.searchHighlights == activeHighlights)
+        #expect(view.searchMatchSummary("foo", limit: 1).total == 1)
+        #expect(view.searchHighlights == activeHighlights)
+    }
+
+    @Test func resizingClearsRangesFromTheOldGrid() {
+        let view = makeView(text: String(repeating: "x", count: 18) + "abcd")
+        view.highlightAllSearchMatches = true
+        #expect(view.findNext("abcd"))
+        #expect(view.searchHighlights.ranges(forRow: 1) == [0..<2])
+
+        let newSize = CGSize(width: view.cellDimension.width * 35,
+                             height: view.cellDimension.height * 4)
+        #expect(view.processSizeChange(newSize: newSize))
+        #expect(view.searchHighlights == .none)
+        #expect(view.searchMarkFractions.matches.isEmpty)
+    }
+
+    @Test func aFrameCapturedBeforeResizeDoesNotPaintOldRanges() {
+        let view = makeView(text: String(repeating: "x", count: 18) + "abcd")
+        view.highlightAllSearchMatches = true
+        #expect(view.findNext("abcd"))
+
+        // Model a queued resize that finishes after the view captures its state.
+        let captured = FrameViewState(view: view)
+        view.withTerminal { $0.resize(cols: 35, rows: 4) }
+        let frame = TerminalSnapshot()
+        view.withTerminal { terminal in
+            _ = frame.refresh(terminal: terminal, viewState: captured,
+                              selection: SnapshotSelectionState(selection: view.selection))
+        }
+        #expect(frame.style.searchHighlights == .none)
+    }
+
+    @Test func explicitResizeClearsOldHighlights() {
+        let view = makeView()
+        view.highlightAllSearchMatches = true
+        #expect(view.findNext("foo"))
+
+        view.resize(cols: 35, rows: 4)
+        #expect(view.searchHighlights == .none)
+        #expect(view.searchMarkFractions.matches.isEmpty)
+    }
+
     @Test func matchPositionsListEveryMatchAndTheBufferLength() throws {
         let view = makeView()
         let positions = view.searchMatchPositions("foo")

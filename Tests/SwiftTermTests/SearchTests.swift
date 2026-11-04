@@ -423,7 +423,7 @@ final class SearchTests {
                        SearchResult(term: "xy", col: 0, row: 5, size: 2),
                        SearchResult(term: "xy", col: 6, row: 5, size: 2),
                        SearchResult(term: "", col: 1, row: 7, size: 0)]
-        let highlights = SearchHighlights(results: results, cols: 10)
+        let highlights = SearchHighlights(results: results, cols: 10, gridRows: 10)
 
         #expect(highlights.ranges(forRow: 3) == [8..<10])
         #expect(highlights.ranges(forRow: 4) == [0..<6])
@@ -432,7 +432,7 @@ final class SearchTests {
         #expect(highlights.ranges(forRow: 0) == nil)
         #expect(!highlights.isEmpty)
         #expect(SearchHighlights.none.isEmpty)
-        #expect(SearchHighlights(results: [], cols: 10) == .none)
+        #expect(SearchHighlights(results: [], cols: 10, gridRows: 10) == .none)
     }
 
     @Test func testSearchHighlightsCoverChecksCellSpans() {
