@@ -127,6 +127,44 @@ final class ByteRunScannerTests {
         }
     }
 
+    @Test func wordAndVectorScansAgreeWithScalarSearches() {
+        var generator = DeterministicByteGenerator(state: 0x574f_5244_5343_414e)
+        let targets: [UInt8] = [0x00, 0x07, 0x1b, 0x3b, 0x7f, 0x80, 0x9c, 0xff]
+
+        for iteration in 0..<2_000 {
+            let length = (iteration * 37) % 200
+            var storage = (0..<length).map { _ in 0x20 + generator.next() % 0x5f }
+            for _ in 0..<(iteration % 3) where length > 0 {
+                storage[Int(generator.next()) % length] = generator.next()
+            }
+            let bytes = storage[...]
+            let start = length == 0 ? 0 : Int(generator.next()) % (length + 1)
+            let target = targets[iteration % targets.count]
+            let span = bytes.span
+
+            let c0 = scalarFirstC0Byte(in: bytes, from: start)
+            #expect(finish(ByteRunScanner.wordScanC0(in: span, from: start), bytes) { $0 < 0x20 } == c0)
+            #expect(finish(ByteRunScanner.vectorScanC0(in: span, from: start), bytes) { $0 < 0x20 } == c0)
+
+            let nonASCII = scalarFirstNonASCIIByte(in: bytes, from: start)
+            #expect(finish(ByteRunScanner.wordScanNonASCII(in: span, from: start), bytes) { $0 >= 0x80 } == nonASCII)
+            #expect(finish(ByteRunScanner.vectorScanNonASCII(in: span, from: start), bytes) { $0 >= 0x80 } == nonASCII)
+
+            let either = scalarFirstC0OrByte(target, in: bytes, from: start)
+            let matches: (UInt8) -> Bool = { $0 < 0x20 || $0 == target }
+            #expect(finish(ByteRunScanner.wordScanC0OrByte(target, in: span, from: start), bytes, matches) == either)
+            #expect(finish(ByteRunScanner.vectorScanC0OrByte(target, in: span, from: start), bytes, matches) == either)
+        }
+    }
+
+    private func finish(_ index: Int, _ bytes: ArraySlice<UInt8>, _ matches: (UInt8) -> Bool) -> Int {
+        var index = index
+        while index < bytes.count && !matches(bytes[index]) {
+            index += 1
+        }
+        return index
+    }
+
     private func scalarFirstC0OrByte(_ value: UInt8, in bytes: ArraySlice<UInt8>, from start: Int) -> Int {
         for index in start..<bytes.endIndex where bytes[index] < 0x20 || bytes[index] == value {
             return index
