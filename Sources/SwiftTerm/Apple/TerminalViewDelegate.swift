@@ -89,6 +89,9 @@ public protocol TerminalViewDelegate: AnyObject {
      * confirmation before custom URL schemes. OSC 8 targets must have a scheme.
      * You can call it later, for example after an async step, and with a rewrite
      * of the link, for example a relative path that you resolved.
+     * A later call uses the shell's current directory at that time. Resolve a
+     * relative path first if it must refer to the file at click time. If your
+     * app opens the link itself, it must check the untrusted target.
      *
      * The default implementation calls ``requestOpenLink(source:link:params:)``.
      * On macOS, it checks the link first and gives that method the approved URL.

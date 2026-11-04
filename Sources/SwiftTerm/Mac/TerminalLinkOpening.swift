@@ -229,8 +229,9 @@ extension TerminalLinkRequest {
     /// reports one. Alerts show as a sheet on the window of the view.
     ///
     /// You can call this method after `requestOpenLink(source:request:)` returns,
-    /// for example after an async step. Nothing opens if the view is gone or if
-    /// OSC 8 links were disabled.
+    /// for example after an async step. A relative path then resolves against
+    /// the shell's directory at the time of that call. Nothing opens if the
+    /// view is gone or if OSC 8 links were disabled.
     /// - Parameter link: the link to open. Nil opens ``link``. Give a rewrite of
     ///   ``link`` to open a different target.
     @MainActor

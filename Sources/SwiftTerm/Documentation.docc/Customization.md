@@ -205,9 +205,42 @@ When a click/tap lands on an active link, ``TerminalView`` calls
   target, a rewrite must be a URL with a scheme, such as a `file://` URL.
   It can call `openDefault` later, for example after an async step. Nothing
   opens if the view is gone or if OSC 8 links were disabled.
+- `openDefault` resolves a relative path when you call it. If you keep a request
+  and the shell changes directory before that call, the path can resolve to a
+  different file. Resolve it first and pass an absolute path to `openDefault`
+  when it must refer to the file at click time.
 - On iOS/visionOS, implement `requestOpenLink(source:request:)` to handle link
   taps (for example, with `UIApplication.open`). Without an implementation, a
   tap on a link does nothing. Check the scheme before you open the link.
+
+### Migrate a macOS link delegate
+
+An existing `requestOpenLink(source:link:params:)` implementation still runs
+through the default implementation of the new method. On macOS, the old method
+receives a checked, absolute URL. It does not receive the original text or
+`isExplicit`. For example, `main.swift:12` can arrive as a `file://` URL without
+the line number. Move to `requestOpenLink(source:request:)` if your app must
+resolve a path or open a file at a line number.
+
+For a `LocalProcessTerminalView` subclass, handle only the links that need your
+app's own opener. Send other links to SwiftTerm's default opener:
+
+```swift
+override func requestOpenLink(source: TerminalView, request: TerminalLinkRequest) {
+    if !request.isExplicit, handleSourceLocation(request.link) {
+        return
+    }
+    request.openDefault()
+}
+```
+
+Here, `handleSourceLocation(_:)` is a method supplied by your app. It must check
+the path before it opens a file. A terminal program can print a path or set an
+OSC 8 target that points to an unexpected file or application. If your code
+opens a link itself, SwiftTerm's default check does not run. Calling
+`openDefault()` checks and opens the link; it does not return a checked URL for
+another opener. An override that neither opens the link nor calls
+`openDefault()` leaves the click without an action.
 
 ``TerminalViewDelegate/requestOpenLink(source:link:params:)`` is deprecated.
 The default implementation of the new method calls it. On macOS, it gets the
