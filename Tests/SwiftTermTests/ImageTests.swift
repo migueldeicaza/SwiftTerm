@@ -82,6 +82,24 @@ final class ImageTrackingTests: TerminalDelegate {
         #expect(buffer.hasAnyImages == false)
     }
 
+    @Test(arguments: [
+        ("K", 2, 3), ("1K", 2, 3), ("2K", 2, 3), ("3X", 2, 3),
+        ("J", 2, 1), ("J", 4, 1), ("1J", 2, 3), ("1J", 0, 3),
+    ])
+    func testEraseClearsInlineImageOnErasedLine(csi: String, erasedRow: Int, keptRow: Int) {
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 25))
+        let buffer = terminal.buffer
+        buffer.attachImage(MockTerminalImage(), toLineAt: erasedRow)
+        buffer.attachImage(MockTerminalImage(), toLineAt: keptRow)
+
+        terminal.feed(text: "\u{1b}[3;6H\u{1b}[" + csi)
+
+        #expect(buffer.lines[erasedRow].images == nil)
+        #expect(buffer.lines[keptRow].images != nil)
+        buffer.clearImagesFromLine(at: keptRow)
+        #expect(buffer.hasAnyImages == false)
+    }
+
     /// Test that attaching multiple images to the same line doesn't double-count
     @Test func testMultipleImagesOnSameLineNotDoubleCounted() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 25))

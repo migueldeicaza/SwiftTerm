@@ -4786,7 +4786,7 @@ open class Terminal {
         updateRange (j - 1)
         while (j != 0) {
             j -= 1
-            resetBufferLine (y: j, clearImages: true, bidiState: currentBidiState)
+            resetBufferLine (y: j, bidiState: currentBidiState)
         }
         updateRange (0)
     }
@@ -4798,12 +4798,10 @@ open class Terminal {
     // - Parameter start: first cell index to be erased
     // - Parameter end:   end - 1 is last erased cell
     //
-    func eraseInBufferLine (y: Int, start: Int, end: Int, clearWrap: Bool = false, clearRenderMode: Bool = false, clearImages: Bool = false)
+    func eraseInBufferLine (y: Int, start: Int, end: Int, clearWrap: Bool = false, clearRenderMode: Bool = false)
     {
         let line = buffer.lines [buffer.yBase + y]
-        if clearImages {
-            buffer.clearImagesFromLine(at: buffer.yBase + y)
-        }
+        buffer.clearTextOverwrittenImagesFromLine(line)
         line.repairWideSeam(at: start)
         line.repairWideSeam(at: end)
         line.replacePackedCells(start: start, end: end,
@@ -7517,6 +7515,7 @@ open class Terminal {
         }
 
         let line = buffer.lines[buffer.y + buffer.yBase]
+        buffer.clearTextOverwrittenImagesFromLine(line)
         line.repairWideSeam(at: buffer.x)
         line.repairWideSeam(at: buffer.x + p)
         line.replacePackedCells(
@@ -7824,10 +7823,9 @@ open class Terminal {
     // The cell gets replaced with the eraseChar of the terminal and the isWrapped property is set to false.
     // @param y row index
     //
-    func resetBufferLine (y: Int, clearImages: Bool = false,
-                          bidiState: BidiPresentationState? = nil)
+    func resetBufferLine (y: Int, bidiState: BidiPresentationState? = nil)
     {
-        eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true, clearRenderMode: true, clearImages: clearImages)
+        eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true, clearRenderMode: true)
         if let bidiState {
             buffer.lines[buffer.yBase + y].bidiState = bidiState
         }
