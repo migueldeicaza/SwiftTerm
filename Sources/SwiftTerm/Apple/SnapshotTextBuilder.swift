@@ -364,7 +364,7 @@ final class SnapshotTextBuilder {
         }
         if flags.contains(.underline) {
             let color = attribute.underlineColor.map {
-                mapColor(color: $0, isFg: true, isBold: isBold, context: context)
+                mapColor(color: $0, isFg: true, isBold: false, context: context)
             } ?? foregroundColor
             let variant = attribute.underlineStyle == .none ? UnderlineStyle.single : attribute.underlineStyle
             result[.underlineColor] = color
@@ -880,7 +880,7 @@ final class SnapshotTextBuilder {
         }
         if flags.contains(.underline) {
             let color = attribute.underlineColor.map {
-                plainColor($0, isFg: true, isBold: isBold, context: context)
+                plainColor($0, isFg: true, isBold: false, context: context)
             } ?? foregroundColor
             let variant = attribute.underlineStyle == .none ? UnderlineStyle.single : attribute.underlineStyle
             style.underline = PlainUnderline(color: color,
@@ -1132,7 +1132,7 @@ func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool,
     case .ansi256(let ansi):
         let index: Int
         if context.useBrightColors {
-            index = ansi < 7 ? Int(ansi) + (isBold ? 8 : 0) : Int(ansi)
+            index = ansi < 8 ? Int(ansi) + (isBold ? 8 : 0) : Int(ansi)
         } else {
             index = context.collapseBrightColorsToBase && ansi > 7 ? Int(ansi) - 8 : Int(ansi)
         }
@@ -1177,7 +1177,7 @@ func attributedValue (for attribute: Attribute, usingFg: TTColor, andBg: TTColor
     ]
     if flags.contains(.underline) {
         let color = attribute.underlineColor.map {
-            mapColor(color: $0, isFg: true, isBold: flags.contains(.bold), context: context)
+            mapColor(color: $0, isFg: true, isBold: false, context: context)
         } ?? foreground
         let variant = attribute.underlineStyle == .none ? UnderlineStyle.single : attribute.underlineStyle
         result[.underlineColor] = color
