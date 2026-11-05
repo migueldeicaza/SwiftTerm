@@ -1132,7 +1132,7 @@ func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool,
     case .ansi256(let ansi):
         let index: Int
         if context.useBrightColors {
-            index = ansi < 7 ? Int(ansi) + (isBold ? 8 : 0) : Int(ansi)
+            index = ansi < 8 ? Int(ansi) + (isBold ? 8 : 0) : Int(ansi)
         } else {
             index = context.collapseBrightColorsToBase && ansi > 7 ? Int(ansi) - 8 : Int(ansi)
         }

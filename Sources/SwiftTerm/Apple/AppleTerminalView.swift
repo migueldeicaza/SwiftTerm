@@ -2267,7 +2267,7 @@ extension TerminalView {
             // if high - bright colors are enabled we will represent bold text by using more intense colors
             // otherwise we will reduce colors but use bold fonts
             if useBrightColors {
-                midx = ansi < 7 ? (Int (ansi) + (isBold ? 8 : 0)) : Int (ansi)
+                midx = ansi < 8 ? (Int (ansi) + (isBold ? 8 : 0)) : Int (ansi)
             } else {
                 midx = collapseBrightColorsToBase && ansi > 7 ? (Int (ansi) - 8) : Int(ansi)
             }

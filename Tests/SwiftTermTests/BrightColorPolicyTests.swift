@@ -44,9 +44,9 @@ struct BrightColorPolicyTests {
         view.withTerminal { terminal in
             for bold in [false, true] {
                 for code in UInt8(0)...UInt8(255) {
-                    // Preserve the existing promotion boundary (indexes below 7).
+                    // Bold promotes all eight base ANSI colors, white (7) included.
                     let index = useBright
-                        ? Int(code) + (code < 7 && bold ? 8 : 0)
+                        ? Int(code) + (code < 8 && bold ? 8 : 0)
                         : Int(code) - (collapse && code > 7 ? 8 : 0)
                     let live = view.mapColor(color: .ansi256(code: code), isFg: true,
                                              isBold: bold, useBrightColors: useBright)
@@ -56,6 +56,14 @@ struct BrightColorPolicyTests {
                     #expect(captured == live)
                 }
             }
+        }
+    }
+
+    @Test func boldWhitePromotesToBrightWhite() {
+        let view = makeView()
+        view.withTerminal { terminal in
+            let color = view.mapColor(color: .ansi256(code: 7), isFg: true, isBold: true)
+            #expect(color == NSColor.make(color: terminal.ansiColors[15]))
         }
     }
 
