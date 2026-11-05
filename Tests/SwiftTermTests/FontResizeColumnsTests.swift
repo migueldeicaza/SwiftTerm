@@ -14,6 +14,23 @@ import AppKit
 @MainActor
 @Suite(.serialized)
 struct FontResizeColumnsTests {
+    @Test func testFontChangeKeepsTheProgramsTerminalModes() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        view.feed(text: "\u{1b}[?1h\u{1b}[?7l\u{1b}[?6h\u{1b}[1;31m")
+        let colsBefore = view.withTerminal { $0.cols }
+
+        view.font = NSFont.monospacedSystemFont(ofSize: 24, weight: .regular)
+
+        view.feed(text: "X")
+        view.withTerminal { terminal in
+            #expect(terminal.cols < colsBefore)
+            #expect(terminal.applicationCursor)
+            #expect(!terminal.wraparound)
+            #expect(terminal.originMode)
+            #expect(terminal.getCharData(col: 0, row: 0)?.attribute.style.contains(.bold) == true)
+        }
+    }
+
     @Test func testOverlayScrollerDoesNotRemoveColumns() {
         let frame = CGRect(x: 0, y: 0, width: 400, height: 200)
         let view = TerminalView(frame: frame)
