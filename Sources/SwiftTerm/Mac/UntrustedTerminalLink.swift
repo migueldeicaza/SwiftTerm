@@ -77,6 +77,12 @@ struct UntrustedTerminalLink: Equatable {
             return .deny(.malformedURL)
         }
 
+        // Foundation parses "main.swift:12" as a URL with the scheme "main.swift".
+        if scheme.contains("."),
+           string.range(of: #"^[^:]+:[0-9]+(?::[0-9]+)?$"#, options: .regularExpression) != nil {
+            return .deny(.malformedURL)
+        }
+
         switch scheme {
         case "http", "https":
             guard let host = url.host, !host.isEmpty else {

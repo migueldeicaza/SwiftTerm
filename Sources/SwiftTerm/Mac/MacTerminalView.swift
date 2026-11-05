@@ -5202,7 +5202,19 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var kittyKeyDownCode: UInt16?
 
     // Set only while a checked link is sent to the delegate.
-    var approvedLinkForDelegate: URL?
+    var approvedLinkForDelegate: ApprovedLink?
+
+    /// Set to true when the terminal shows a session on this Mac. Then a
+    /// detected relative path resolves against the shell's directory from OSC 7.
+    ///
+    /// OSC 7 is terminal output, so it cannot prove that the session is local:
+    /// a remote program can report a "file://localhost/..." directory. Keep
+    /// this false for a remote session. The default is false, and relative
+    /// paths resolve against the directory of the application. When OSC 7
+    /// names another host, detected paths do not open, with either value.
+    /// `LocalProcessTerminalView` sets it to true. A local shell can still
+    /// start a remote session, for example with ssh; SwiftTerm cannot see that.
+    public var resolvesLinksAgainstShellDirectory = false
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}
@@ -5211,6 +5223,8 @@ extension TerminalView: @MainActor NSTextInputClient {}
 extension TerminalView {
     /// Checks a terminal link before opening it with its default handler.
     /// Custom URL schemes require confirmation. Unsafe local files are blocked.
+    /// The link is checked as a detected link. In `requestOpenLink(source:request:)`,
+    /// call `request.openDefault(_:)` to also apply the OSC 8 rules.
     public static func openDefaultLink (_ link: String)
     {
         TerminalLinkOpening.request(defaultLinkTarget(link, isExplicit: false), window: nil) {
@@ -5219,13 +5233,29 @@ extension TerminalView {
     }
 
     /// Converts a link to the URL that the default handler must open.
-    nonisolated static func defaultLinkURL (_ link: String, fileManager: FileManager = .default) -> URL?
+    /// A relative path resolves against `pathBase`.
+    nonisolated static func defaultLinkURL (
+        _ link: String,
+        pathBase: LinkPathBase = .processDirectory,
+        fileManager: FileManager = .default
+    ) -> URL?
     {
-        if let url = URL(string: link), url.scheme != nil {
+        if hasURLScheme(link), let url = URL(string: link) {
             return url
         }
 
-        let path = NSString(string: link).expandingTildeInPath
+        var path = NSString(string: link).expandingTildeInPath
+        switch pathBase {
+        case .processDirectory:
+            break
+        case .directory(let directory):
+            if !path.hasPrefix("/") {
+                path = NSString(string: directory).appendingPathComponent(path)
+            }
+        case .remote:
+            // The path names a file on the remote host.
+            return nil
+        }
         if fileManager.fileExists(atPath: path) {
             return URL(fileURLWithPath: path)
         }
@@ -5245,18 +5275,73 @@ extension TerminalView {
         }
         return URL(fileURLWithPath: pathWithoutLocation)
     }
+
+    /// True when the link is a URL. Foundation parses "main.swift:12" as a URL
+    /// with the scheme "main.swift", so a name with a location suffix is a path.
+    /// A known scheme with a numeric target, such as "tel:5551234", stays a URL.
+    nonisolated static func hasURLScheme (_ link: String) -> Bool
+    {
+        guard let scheme = URL(string: link)?.scheme else { return false }
+        if numericURLSchemes.contains(scheme.lowercased()) {
+            return true
+        }
+        return link.range(of: #"^[^:/]+:[0-9]+(?::[0-9]+)?$"#, options: .regularExpression) == nil
+    }
+
+    /// Schemes whose target can be only digits. A file with the same name as
+    /// the scheme must not take the link.
+    nonisolated static let numericURLSchemes: Set<String> = [
+        "tel", "sms", "facetime", "facetime-audio", "callto", "fax",
+    ]
+
+    /// The directory that relative paths in the terminal output resolve against.
+    enum LinkPathBase: Equatable {
+        /// No OSC 7 directory: use the directory of this process.
+        case processDirectory
+        /// The local directory from OSC 7.
+        case directory(String)
+        /// OSC 7 names another host, so paths are not local files.
+        case remote
+    }
+
+    /// Reads the OSC 7 value, such as "file://host/Users/me/project".
+    nonisolated static func linkPathBase (hostCurrentDirectory: String?) -> LinkPathBase
+    {
+        guard let value = hostCurrentDirectory, !value.isEmpty else { return .processDirectory }
+        if value.hasPrefix("/") {
+            return .directory(value)
+        }
+        guard let url = URL(string: value), url.scheme != nil, !url.path.isEmpty else {
+            return .processDirectory
+        }
+        if let host = url.host, !isLocalHost(host) {
+            return .remote
+        }
+        return .directory(url.path)
+    }
+
+    nonisolated static func isLocalHost (_ host: String) -> Bool
+    {
+        func shortName(_ name: String) -> String {
+            let name = name.lowercased()
+            return name.hasSuffix(".local") ? String(name.dropLast(6)) : name
+        }
+        if host.isEmpty || host.caseInsensitiveCompare("localhost") == .orderedSame {
+            return true
+        }
+        var buffer = [CChar](repeating: 0, count: Int(MAXHOSTNAMELEN) + 1)
+        guard gethostname(&buffer, buffer.count - 1) == 0 else { return false }
+        return shortName(host) == shortName(String(cString: buffer))
+    }
 }
 
 
 // Default implementations for TerminalViewDelegate
 
 extension TerminalViewDelegate {
-    /**
-     * Opens the link with the default handler for its scheme
-     */
-    func openLink (_ link: String)
+    public func requestOpenLink (source: TerminalView, request: TerminalLinkRequest)
     {
-        TerminalView.openDefaultLink(link)
+        source.requestOpenLinkWithCheckedURL(request, delegate: self)
     }
 
     public func requestOpenLink (source: TerminalView, link: String, params: [String:String])

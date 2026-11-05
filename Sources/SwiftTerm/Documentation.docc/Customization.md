@@ -179,21 +179,80 @@ terminal runs. The setting also hides links already in the buffer. Implicit URL
 and path detection remain available.
 
 When a click/tap lands on an active link, ``TerminalView`` calls
-``TerminalViewDelegate/requestOpenLink(source:link:params:)``.
+``TerminalViewDelegate/requestOpenLink(source:request:)`` with a
+``TerminalLinkRequest``.
 
-- For explicit OSC 8 hyperlinks, `link` is the hyperlink target and `params`
-  contains parsed key/value pairs from the OSC 8 payload (when present).
-- For implicit URL detection, `link` is the detected URL text and `params` is
-  empty.
-- On macOS, the view checks the target before it calls the delegate. HTTP and
-  HTTPS links need a host. Mail links need an address. Custom URL schemes require
-  confirmation, with Cancel as the default. Local files must exist and must not
-  be executable files, scripts, applications, or other active content. The check
-  resolves symbolic links and rejects remote file hosts. These checks apply to
-  OSC 8 links and detected links. The delegate receives an absolute URL with a
-  canonical path for local files. The default delegate opens the checked URL.
-- On iOS/visionOS, implement `requestOpenLink` in your delegate to decide how
-  to handle navigation (for example, with `UIApplication.open`).
+- `request.link` is the text from the terminal output, unchanged. It can be a
+  relative path, a path with a `:line` or `:line:column` suffix, or a URL with
+  any scheme. Treat it as untrusted data.
+- `request.isExplicit` is true for an OSC 8 hyperlink. The program chose its
+  target, and the target can be different from the visible text. It is false
+  for a link that SwiftTerm detected in the visible text.
+- `request.params` contains the key/value pairs of an OSC 8 hyperlink. It is
+  empty for detected links.
+- On macOS, `request.openDefault(_:)` checks the link before it opens it with
+  `NSWorkspace`. HTTP and HTTPS links need a host. Mail links need an address.
+  Custom URL schemes require confirmation, with Cancel as the default. Local
+  files must exist and must not be executable files, scripts, applications, or
+  other active content. The check resolves symbolic links and rejects remote
+  file hosts. OSC 8 targets must have a scheme; detected paths can become file
+  URLs. Alerts show as a sheet on the window of the view.
+- When `resolvesLinksAgainstShellDirectory` is true, a detected relative path
+  resolves against the shell's directory, when the shell reports it with OSC 7.
+  Without OSC 7, or when the property is false, a relative path resolves
+  against the directory of the application. When OSC 7 names a different host,
+  detected paths are remote files, and SwiftTerm does not open them, with
+  either value of the property.
+- OSC 7 is terminal output, so it cannot prove that the session is local. A
+  remote program can report a `file://localhost/...` directory. The property is
+  false by default. `LocalProcessTerminalView` sets it to true. Keep it false
+  for a view that shows a remote session. A local shell can still start a
+  remote session, for example with ssh; SwiftTerm cannot see that.
+- A custom delegate can give `openDefault` a rewrite of the link. For an OSC 8
+  target, a rewrite must be a URL with a scheme, such as a `file://` URL.
+  It can call `openDefault` later, for example after an async step. Nothing
+  opens if the view is gone or if OSC 8 links were disabled.
+- `openDefault` resolves a relative path when you call it. If you keep a request
+  and the shell changes directory before that call, the path can resolve to a
+  different file. Resolve it first and pass an absolute path to `openDefault`
+  when it must refer to the file at click time.
+- On iOS/visionOS, implement `requestOpenLink(source:request:)` to handle link
+  taps (for example, with `UIApplication.open`). Without an implementation, a
+  tap on a link does nothing. Check the scheme before you open the link.
+
+### Migrate a macOS link delegate
+
+An existing `requestOpenLink(source:link:params:)` implementation still runs
+through the default implementation of the new method. On macOS, the old method
+receives a checked, absolute URL. It does not receive the original text or
+`isExplicit`. For example, `main.swift:12` can arrive as a `file://` URL without
+the line number. Move to `requestOpenLink(source:request:)` if your app must
+resolve a path or open a file at a line number.
+
+For a `LocalProcessTerminalView` subclass, handle only the links that need your
+app's own opener. Send other links to SwiftTerm's default opener:
+
+```swift
+override func requestOpenLink(source: TerminalView, request: TerminalLinkRequest) {
+    if !request.isExplicit, handleSourceLocation(request.link) {
+        return
+    }
+    request.openDefault()
+}
+```
+
+Here, `handleSourceLocation(_:)` is a method supplied by your app. It must check
+the path before it opens a file. A terminal program can print a path or set an
+OSC 8 target that points to an unexpected file or application. If your code
+opens a link itself, SwiftTerm's default check does not run. Calling
+`openDefault()` checks and opens the link; it does not return a checked URL for
+another opener. An override that neither opens the link nor calls
+`openDefault()` leaves the click without an action.
+
+``TerminalViewDelegate/requestOpenLink(source:link:params:)`` is deprecated.
+The default implementation of the new method calls it. On macOS, it gets the
+link only after the check, as an absolute URL with a canonical path for local
+files. On iOS/visionOS, it gets the original link.
 
 ### macOS behavior
 

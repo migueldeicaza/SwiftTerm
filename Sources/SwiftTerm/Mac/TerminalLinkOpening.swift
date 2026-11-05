@@ -118,41 +118,132 @@ extension TerminalView {
     nonisolated static func defaultLinkTarget(
         _ link: String,
         isExplicit: Bool,
+        pathBase: LinkPathBase = .processDirectory,
         fileManager: FileManager = .default
     ) -> UntrustedTerminalLink {
         guard !isExplicit,
               !UntrustedTerminalLink.containsUnsafeCharacters(link),
-              URL(string: link)?.scheme == nil,
-              let url = defaultLinkURL(link, fileManager: fileManager) else {
+              !hasURLScheme(link),
+              let url = defaultLinkURL(link, pathBase: pathBase, fileManager: fileManager) else {
             return UntrustedTerminalLink(link)
         }
         return UntrustedTerminalLink(url.absoluteString)
     }
 
-    /// Checks the target before calling a host delegate, including custom delegates.
+    /// Gives the link to the delegate as the terminal output has it.
     func activateLink(
         _ link: String,
         params: [String: String],
         isExplicit: Bool,
-        presentAlert: @escaping TerminalLinkOpening.Presentation = TerminalLinkOpening.present
+        presentAlert: @escaping TerminalLinkOpening.Presentation = TerminalLinkOpening.present,
+        open: @escaping @MainActor (URL) -> Void = { NSWorkspace.shared.open($0) }
     ) {
-        let target = Self.defaultLinkTarget(link, isExplicit: isExplicit)
+        guard allowsLink(isExplicit: isExplicit) else { return }
+        let policy = TerminalLinkPolicy(check: { [weak self] link, approved in
+            self?.checkLink(link, isExplicit: isExplicit, presentAlert: presentAlert, approved: approved)
+        }, open: open)
+        let request = TerminalLinkRequest(link: link, params: params, isExplicit: isExplicit, policy: policy)
+        terminalDelegate?.requestOpenLink(source: self, request: request)
+    }
+
+    /// OSC 8 links work only while they are enabled.
+    func allowsLink(isExplicit: Bool) -> Bool {
+        !isExplicit || enableOsc8Hyperlinks
+    }
+
+    /// Checks a link with SwiftTerm's policy and gives the approved URL to `approved`.
+    func checkLink(
+        _ link: String,
+        isExplicit: Bool,
+        presentAlert: @escaping TerminalLinkOpening.Presentation,
+        approved: @escaping @MainActor (URL) -> Void
+    ) {
+        // A host can open a kept request from a callback that holds the terminal lock.
+        if terminal.terminalLock.isLockedByCurrentThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.checkLink(link, isExplicit: isExplicit, presentAlert: presentAlert, approved: approved)
+            }
+            return
+        }
+        guard allowsLink(isExplicit: isExplicit) else { return }
+        var pathBase = Self.linkPathBase(hostCurrentDirectory: withTerminal { $0.hostCurrentDirectory })
+        // Only the host can tell that the session is local. A remote host in
+        // OSC 7 still blocks local paths.
+        if !resolvesLinksAgainstShellDirectory, pathBase != .remote {
+            pathBase = .processDirectory
+        }
+        let target = Self.defaultLinkTarget(link, isExplicit: isExplicit, pathBase: pathBase)
         TerminalLinkOpening.request(target, window: window, presentAlert: presentAlert) { [weak self] url in
-            guard let self, !isExplicit || enableOsc8Hyperlinks else { return }
+            guard let self, allowsLink(isExplicit: isExplicit) else { return }
+            approved(url)
+        }
+    }
+
+    /// A checked URL, and how to open it, for the deprecated delegate method.
+    struct ApprovedLink {
+        let url: URL
+        let open: @MainActor (URL) -> Void
+    }
+
+    /// Checks the link, then calls the deprecated delegate method with the approved URL.
+    func requestOpenLinkWithCheckedURL(_ request: TerminalLinkRequest, delegate: TerminalViewDelegate) {
+        let policy = request.effectivePolicy
+        // An approval goes only to the delegate that the view still uses.
+        let isViewDelegate = terminalDelegate === delegate
+        policy.check(request.link) { [weak self, weak delegate] url in
+            guard let self, let delegate, !isViewDelegate || terminalDelegate === delegate else { return }
             let previous = approvedLinkForDelegate
-            approvedLinkForDelegate = url
+            approvedLinkForDelegate = ApprovedLink(url: url, open: policy.open)
             defer { approvedLinkForDelegate = previous }
-            terminalDelegate?.requestOpenLink(source: self, link: url.absoluteString, params: params)
+            delegate.requestOpenLinkWithoutDeprecationWarning(
+                source: self, link: url.absoluteString, params: request.params)
         }
     }
 
     /// The default delegate consumes the checked target without a second prompt.
     func openLinkFromDelegate(_ link: String) {
-        if let url = approvedLinkForDelegate, url.absoluteString == link {
-            NSWorkspace.shared.open(url)
+        if let approved = approvedLinkForDelegate, approved.url.absoluteString == link {
+            approved.open(approved.url)
         } else {
             Self.openDefaultLink(link)
         }
+    }
+}
+
+extension TerminalLinkRequest {
+    /// The policy of the view that made the request. A request from the public
+    /// initializer uses the OSC 8 rules of `isExplicit`, shows alerts for the
+    /// application, and opens links with `NSWorkspace`.
+    @MainActor
+    var effectivePolicy: TerminalLinkPolicy {
+        if let policy {
+            return policy
+        }
+        let isExplicit = isExplicit
+        return TerminalLinkPolicy(check: { link, approved in
+            let target = TerminalView.defaultLinkTarget(link, isExplicit: isExplicit)
+            TerminalLinkOpening.request(target, window: nil, open: approved)
+        }, open: { NSWorkspace.shared.open($0) })
+    }
+
+    /// Checks a link with SwiftTerm's policy, then opens it with its default handler.
+    ///
+    /// Unsafe local files are blocked, and custom URL schemes need confirmation.
+    /// For an OSC 8 link, the target must have a scheme. A detected relative
+    /// path resolves against the shell's directory from OSC 7, when the shell
+    /// reports one and the view's `resolvesLinksAgainstShellDirectory` is true.
+    /// Alerts show as a sheet on the window of the view.
+    ///
+    /// You can call this method after `requestOpenLink(source:request:)` returns,
+    /// for example after an async step. A relative path then resolves against
+    /// the shell's directory at the time of that call. Nothing opens if the
+    /// view is gone or if OSC 8 links were disabled.
+    /// - Parameter link: the link to open. Nil opens ``link``. Give a rewrite of
+    ///   ``link`` to open a different target.
+    @MainActor
+    public func openDefault(_ link: String? = nil) {
+        let policy = effectivePolicy
+        policy.check(link ?? self.link, policy.open)
     }
 }
 #endif
