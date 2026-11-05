@@ -4030,7 +4030,8 @@ final class MetalTerminalRenderer {
         }
 
         let caretTextColor = renderData.textColor
-        if !snapshot.style.textBlinkVisible && renderData.cellAttribute.style.contains(.blink) {
+        if renderData.cellAttribute.style.contains(.invisible)
+            || (!snapshot.style.textBlinkVisible && renderData.cellAttribute.style.contains(.blink)) {
             return (colorVertices, [], [])
         }
         if PowerlineRenderer.shouldRender(codePoint: UInt32(renderData.code),
