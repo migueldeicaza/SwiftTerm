@@ -216,6 +216,9 @@ struct FrameAppearance: Sendable, Equatable {
     let selectedTextForegroundColor: FrameColor
     let caretColor: FrameColor
     let caretTextColor: FrameColor
+    /// The fill and text of a search match that is not the selection.
+    let searchMatchBackgroundColor: FrameColor
+    let searchMatchForegroundColor: FrameColor
     /// The host's link color, or `nil` when links keep their own colors.
     let linkColor: FrameColor?
     /// Overrides only the underline of highlighted links.
@@ -267,7 +270,9 @@ final class FrameCaptureCache {
             view.selectedTextBackgroundColor,
             view.selectedTextForegroundColor,
             view.effectiveCaretColor,
-            view.effectiveCaretTextColor
+            view.effectiveCaretTextColor,
+            view.searchMatchBackgroundColor,
+            view.searchMatchForegroundColor
         ]
         let linkColor = view.linkColor
         let linkUnderlineColor = view.linkUnderlineColor
@@ -292,6 +297,8 @@ final class FrameCaptureCache {
             selectedTextForegroundColor: FrameColor(current[3], view: view),
             caretColor: FrameColor(current[4], view: view),
             caretTextColor: FrameColor(current[5], view: view),
+            searchMatchBackgroundColor: FrameColor(current[6], view: view),
+            searchMatchForegroundColor: FrameColor(current[7], view: view),
             linkColor: linkColor.map { FrameColor($0, view: view) },
             linkUnderlineColor: linkUnderlineColor.map { FrameColor($0, view: view) })
         sourceColors = current
@@ -515,6 +522,7 @@ struct FrameViewState: Sendable {
     // What TerminalSnapshot.refresh reads.
     let linkHighlightRange: [Terminal.LinkMatch.RowRange]?
     let linkHighlightMode: LinkHighlightMode
+    let searchHighlights: SearchHighlights
     let commandActive: Bool
     let textBlinkVisible: Bool
     let notifyUpdateChanges: Bool
@@ -555,6 +563,7 @@ struct FrameViewState: Sendable {
     init (view: TerminalView) {
         linkHighlightRange = view.linkHighlightRange
         linkHighlightMode = view.linkHighlightMode
+        searchHighlights = view.searchHighlights
         commandActive = view.commandActive
         textBlinkVisible = view.textBlinkVisible
         notifyUpdateChanges = view.notifyUpdateChanges
@@ -629,6 +638,8 @@ struct SnapshotNativeColors {
     let selectedTextForegroundColor: TTColor
     let caretColor: TTColor
     let caretTextColor: TTColor
+    let searchMatchBackgroundColor: TTColor
+    let searchMatchForegroundColor: TTColor
     let linkColor: TTColor?
     let linkUnderlineColor: TTColor?
     let ansiColors: [TTColor]
@@ -650,6 +661,9 @@ struct SnapshotRenderContext {
     let selectedTextForegroundColor: TTColor
     let caretColor: TTColor
     let caretTextColor: TTColor
+    /// The text color of a search match that is not the selection; the fill
+    /// is `searchMatchFillColor`.
+    let searchMatchForegroundColor: TTColor
     /// Replaces the foreground and underline color of highlighted link cells;
     /// `nil` keeps the cell's own colors.
     let linkColor: TTColor?
@@ -659,6 +673,7 @@ struct SnapshotRenderContext {
     let textBlinkVisible: Bool
     let linkHighlightRange: [Terminal.LinkMatch.RowRange]?
     let linkHighlightMode: LinkHighlightMode
+    let searchHighlights: SearchHighlights
     let commandActive: Bool
     let customBlockGlyphs: Bool
     let enableOsc8Hyperlinks: Bool
@@ -680,6 +695,9 @@ struct SnapshotRenderContext {
     /// default background, so the selection color arrives already composited
     /// over it; the pixels match the highlight drawn over the default background.
     let selectionFillColor: TTColor
+    /// The search match highlight as it is painted, composited like
+    /// `selectionFillColor`.
+    let searchMatchFillColor: TTColor
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
     let cols: Int
@@ -709,6 +727,8 @@ struct SnapshotRenderContext {
                 selectedTextForegroundColor: appearance.selectedTextForegroundColor.nativeColor,
                 caretColor: appearance.caretColor.nativeColor,
                 caretTextColor: appearance.caretTextColor.nativeColor,
+                searchMatchBackgroundColor: appearance.searchMatchBackgroundColor.nativeColor,
+                searchMatchForegroundColor: appearance.searchMatchForegroundColor.nativeColor,
                 linkColor: appearance.linkColor?.nativeColor,
                 linkUnderlineColor: appearance.linkUnderlineColor?.nativeColor,
                 ansiColors: ansiColors.map(TTColor.make(color:))),
@@ -732,6 +752,7 @@ struct SnapshotRenderContext {
         selectedTextForegroundColor = nativeColors.selectedTextForegroundColor
         caretColor = nativeColors.caretColor
         caretTextColor = nativeColors.caretTextColor
+        searchMatchForegroundColor = nativeColors.searchMatchForegroundColor
         linkColor = nativeColors.linkColor
         linkUnderlineColor = nativeColors.linkUnderlineColor
         ansiColors = nativeColors.ansiColors
@@ -739,6 +760,7 @@ struct SnapshotRenderContext {
         textBlinkVisible = style.textBlinkVisible
         linkHighlightRange = style.linkHighlightRange
         linkHighlightMode = style.linkHighlightMode
+        searchHighlights = style.searchHighlights
         commandActive = style.commandActive
         enableOsc8Hyperlinks = style.enableOsc8Hyperlinks
         customBlockGlyphs = viewState.customBlockGlyphs
@@ -750,9 +772,12 @@ struct SnapshotRenderContext {
             translucentCellBackgroundAlpha = defaultBackgroundAlpha
             selectionFillColor = compositedColor(selectedTextBackgroundColor,
                                                  over: effectiveBackgroundColor)
+            searchMatchFillColor = compositedColor(nativeColors.searchMatchBackgroundColor,
+                                                   over: effectiveBackgroundColor)
         } else {
             translucentCellBackgroundAlpha = nil
             selectionFillColor = selectedTextBackgroundColor
+            searchMatchFillColor = nativeColors.searchMatchBackgroundColor
         }
         bidiHostPolicy = viewState.bidiHostPolicy
         glyphFallbackProvider = viewState.glyphFallbackProvider
@@ -770,6 +795,8 @@ struct SnapshotRenderContext {
         identityHasher.combine(selectedTextForegroundColor.hash)
         identityHasher.combine(caretColor.hash)
         identityHasher.combine(caretTextColor.hash)
+        identityHasher.combine(searchMatchFillColor.hash)
+        identityHasher.combine(searchMatchForegroundColor.hash)
         identityHasher.combine(linkColor?.hash)
         identityHasher.combine(linkUnderlineColor?.hash)
         for color in self.ansiColors {
@@ -2907,7 +2934,8 @@ extension TerminalView {
             linkHighlightRange: linkHighlightRange,
             linkHighlightMode: linkHighlightMode,
             commandActive: commandActive,
-            textBlinkVisible: textBlinkVisible)
+            textBlinkVisible: textBlinkVisible,
+            searchHighlights: searchHighlights)
         let context = SnapshotRenderContext(viewState: FrameViewState(view: self),
                                             style: liveStyle,
                                             ansiColors: terminal.ansiColors, cols: cols)

@@ -453,6 +453,7 @@ final class SnapshotTextBuilder {
         let line = snapshotRow.line
         let cols = context.cols
         let selectionColumns = context.selection.columns(forRow: absoluteRow)
+        let searchColumns = context.searchHighlights.ranges(forRow: absoluteRow)
         var col = 0
         var builder: TerminalView.ViewLineSegmentBuilder?
 
@@ -472,7 +473,7 @@ final class SnapshotTextBuilder {
         var pendingAttrs: SnapshotTextAttributes? = nil
         var lastStyleKey: PackedAttributeKey?
         var lastHasUrl = false
-        var lastIsSelected = false
+        var lastHighlight = CellHighlight.none
         var lastBlinkHidden = false
         var lastUsesShapeColor = false
         var lastGlyphFallbackFont: TTFont?
@@ -549,7 +550,7 @@ final class SnapshotTextBuilder {
                 builder = TerminalView.ViewLineSegmentBuilder(column: visualCol, columnWidth: width)
             }
 
-            let isSelected = isColumnSelected(selectionColumns, column: col, width: width)
+            let highlight = cellHighlight(selectionColumns, searchColumns, column: col, width: width)
             let blinkHidden = !context.textBlinkVisible && attr.style.contains(.blink)
 
             let text: String
@@ -585,7 +586,7 @@ final class SnapshotTextBuilder {
             // Flush batch when attributes change; the batch dictionary is only
             // rebuilt at these boundaries, so unchanged cells append without
             // copying it.
-            if styleKey != lastStyleKey || hasUrl != lastHasUrl || isSelected != lastIsSelected
+            if styleKey != lastStyleKey || hasUrl != lastHasUrl || highlight != lastHighlight
                 || blinkHidden != lastBlinkHidden
                 || usesShapeColor != lastUsesShapeColor
                 || glyphFallback?.font !== lastGlyphFallbackFont
@@ -594,25 +595,26 @@ final class SnapshotTextBuilder {
                 flushPending()
                 lastStyleKey = styleKey
                 lastHasUrl = hasUrl
-                lastIsSelected = isSelected
+                lastHighlight = highlight
                 lastBlinkHidden = blinkHidden
                 lastUsesShapeColor = usesShapeColor
                 lastGlyphFallbackFont = glyphFallback?.font
                 lastGlyphFallbackPolicy = glyphFallback?.policy
-                if isSelected || blinkHidden || usesShapeColor || glyphFallback != nil {
+                if highlight != .none || blinkHidden || usesShapeColor || glyphFallback != nil {
                     var batchAttributes = attributes.values
                     if usesShapeColor {
                         batchAttributes[.foregroundColor] = shapeColor(of: attributes, context: context)
                     }
-                    if isSelected {
-                        batchAttributes[.selectionBackgroundColor] = context.selectionFillColor
-                        batchAttributes[.foregroundColor] = context.selectedTextForegroundColor
-                        batchAttributes[SwiftTermShapeColorKey] = context.selectedTextForegroundColor
+                    if let fill = highlight.fill(context) {
+                        let text = highlight.text(context)
+                        batchAttributes[.selectionBackgroundColor] = fill
+                        batchAttributes[.foregroundColor] = text
+                        batchAttributes[SwiftTermShapeColorKey] = text
                         if batchAttributes[.underlineColor] != nil {
-                            batchAttributes[.underlineColor] = context.selectedTextForegroundColor
+                            batchAttributes[.underlineColor] = text
                         }
                         if batchAttributes[.strikethroughColor] != nil {
-                            batchAttributes[.strikethroughColor] = context.selectedTextForegroundColor
+                            batchAttributes[.strikethroughColor] = text
                         }
                     }
                     if blinkHidden {
@@ -774,6 +776,7 @@ final class SnapshotTextBuilder {
         let line = snapshotRow.line
         let cols = context.cols
         let selectionColumns = context.selection.columns(forRow: absoluteRow)
+        let searchColumns = context.searchHighlights.ranges(forRow: absoluteRow)
         var codes: [UInt8] = []
         codes.reserveCapacity(cols)
         var runs: [PlainRun] = []
@@ -781,7 +784,7 @@ final class SnapshotTextBuilder {
         var decodedAttribute = CharData.defaultAttr
         var lastStyleKey: PackedAttributeKey?
         var lastHasUrl = false
-        var lastIsSelected = false
+        var lastHighlight = CellHighlight.none
         var lastBlinkHidden = false
         for col in 0..<cols {
             let cell = line.packedView(at: col)
@@ -799,27 +802,28 @@ final class SnapshotTextBuilder {
             }
             let hasUrl = shouldUnderlineLink(row: absoluteRow, column: col, width: 1,
                                              cell: cell, context: context)
-            let isSelected = isColumnSelected(selectionColumns, column: col, width: 1)
+            let highlight = cellHighlight(selectionColumns, searchColumns, column: col, width: 1)
             let blinkHidden = !context.textBlinkVisible && attribute.style.contains(.blink)
             codes.append(blinkHidden || code == 0 ? 0x20 : UInt8(code))
             if let last = runs.indices.last, styleKey == lastStyleKey, hasUrl == lastHasUrl,
-               isSelected == lastIsSelected, blinkHidden == lastBlinkHidden {
+               highlight == lastHighlight, blinkHidden == lastBlinkHidden {
                 runs[last].end = col + 1
                 continue
             }
             lastStyleKey = styleKey
             lastHasUrl = hasUrl
-            lastIsSelected = isSelected
+            lastHighlight = highlight
             lastBlinkHidden = blinkHidden
             var style = plainStyle(attribute, withUrl: hasUrl, context: context)
             // The same adjustments `buildAttributedString` makes to a batch.
-            if isSelected {
-                style.selectionBackground = context.selectionFillColor
-                style.foreground = .color(context.selectedTextForegroundColor)
-                style.shapeColor = .color(context.selectedTextForegroundColor)
-                style.underline?.color = .color(context.selectedTextForegroundColor)
+            if let fill = highlight.fill(context) {
+                let text = PlainColor.color(highlight.text(context))
+                style.selectionBackground = fill
+                style.foreground = text
+                style.shapeColor = text
+                style.underline?.color = text
                 if style.strikethrough != nil {
-                    style.strikethrough = .color(context.selectedTextForegroundColor)
+                    style.strikethrough = text
                 }
             }
             if blinkHidden {
@@ -1064,12 +1068,47 @@ final class SnapshotTextBuilder {
         }
     }
 
-    func isColumnSelected(_ selectionRange: Range<Int>?, column: Int, width: Int) -> Bool {
-        guard let selectionRange else {
-            return false
+    /// How the cells `[column, column + width)` are highlighted. The selection
+    /// wins over a search match beneath it: the current match of a search is
+    /// the selection, and that is what sets it apart from the other matches.
+    func cellHighlight(_ selectionRange: Range<Int>?, _ searchRanges: [Range<Int>]?,
+                       column: Int, width: Int) -> CellHighlight
+    {
+        if let selectionRange {
+            let endColumn = column + width
+            if selectionRange.lowerBound < endColumn && column < selectionRange.upperBound {
+                return .selected
+            }
         }
-        let endColumn = column + width
-        return selectionRange.lowerBound < endColumn && column < selectionRange.upperBound
+        if SearchHighlights.covers(searchRanges, column: column, width: width) {
+            return .searchMatch
+        }
+        return .none
+    }
+}
+
+/// The background a cell is painted beneath its own style: none, the search
+/// match fill, or the selection.
+enum CellHighlight: Equatable {
+    case none
+    case searchMatch
+    case selected
+
+    /// The fill painted over the cell's background, or nil for `.none`.
+    func fill(_ context: SnapshotRenderContext) -> TTColor? {
+        switch self {
+        case .none: return nil
+        case .searchMatch: return context.searchMatchFillColor
+        case .selected: return context.selectionFillColor
+        }
+    }
+
+    /// The text color that goes with `fill`; meaningless for `.none`.
+    func text(_ context: SnapshotRenderContext) -> TTColor {
+        switch self {
+        case .none, .selected: return context.selectedTextForegroundColor
+        case .searchMatch: return context.searchMatchForegroundColor
+        }
     }
 }
 

@@ -25,7 +25,7 @@ final class MarkedTextOverlayColorTests {
                            replacementRange: NSRange(location: NSNotFound, length: 0))
     }
 
-    private func overlay(in view: TerminalView) -> DictationOverlayTextView? {
+    private func overlayView(in view: TerminalView) -> DictationOverlayTextView? {
         view.subviews.lazy.compactMap { $0 as? DictationOverlayTextView }.first
     }
 
@@ -58,7 +58,7 @@ final class MarkedTextOverlayColorTests {
     @Test func testOverlayUsesTheDefaultColorsOnAnUncoloredCell() throws {
         let view = makeView()
         mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        let overlay = try #require(overlayView(in: view))
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(view.effectiveNativeBackgroundColor))
         #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeForegroundColor))
     }
@@ -69,7 +69,7 @@ final class MarkedTextOverlayColorTests {
         let view = makeView()
         view.feed(text: "\u{1b}[48;2;64;64;64m          \u{1b}[0m\r")
         mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        let overlay = try #require(overlayView(in: view))
         #expect(rgb(overlay.overlayBackgroundColor) == [64, 64, 64])
     }
 
@@ -79,7 +79,7 @@ final class MarkedTextOverlayColorTests {
         let view = makeView()
         view.feed(text: "\u{1b}[38;2;100;100;100;48;2;64;64;64mplaceholder\u{1b}[0m\r")
         mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        let overlay = try #require(overlayView(in: view))
         #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeForegroundColor))
     }
 
@@ -89,7 +89,7 @@ final class MarkedTextOverlayColorTests {
         let view = makeView()
         view.feed(text: "\u{1b}[7m          \u{1b}[0m\r")
         mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        let overlay = try #require(overlayView(in: view))
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(view.effectiveNativeForegroundColor))
         #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeBackgroundColor))
     }
@@ -99,7 +99,7 @@ final class MarkedTextOverlayColorTests {
         let view = makeView()
         view.feed(text: "\u{1b}[1;41m          \u{1b}[0m\r")
         mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        let overlay = try #require(overlayView(in: view))
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(try #require(renderedBackgroundAtCaret(in: view))))
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(ansiColor(1, in: view)))
     }
@@ -110,7 +110,7 @@ final class MarkedTextOverlayColorTests {
         let view = makeView()
         view.feed(text: "\u{1b}[1;7;31m          \u{1b}[0m\r")
         mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        let overlay = try #require(overlayView(in: view))
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(try #require(renderedBackgroundAtCaret(in: view))))
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(ansiColor(1, in: view)))
     }
@@ -122,7 +122,7 @@ final class MarkedTextOverlayColorTests {
         view.useBrightColors = false
         view.feed(text: "\u{1b}[101m          \u{1b}[0m\r")
         mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        let overlay = try #require(overlayView(in: view))
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(try #require(renderedBackgroundAtCaret(in: view))))
     }
 }

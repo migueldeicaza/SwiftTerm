@@ -396,4 +396,52 @@ final class SearchTests {
         _ = service.findNext(term: "")
         #expect(service.lastResult == nil)
     }
+
+    /// `findAll` is asked for the same list by the counter and the highlight
+    /// set after every step; the answer is kept until the buffer changes.
+    @Test func testSearchServiceFindAllIsCachedUntilTheBufferChanges() {
+        let terminal = makeTerminal()
+        let service = SearchService(terminal: terminal)
+
+        terminal.feed(text: "Hello Hello")
+        #expect(service.findAll(term: "Hello").count == 2)
+
+        terminal.feed(text: " Hello")
+        // Nothing told the service about the feed yet: the stale list stands.
+        #expect(service.findAll(term: "Hello").count == 2)
+        service.invalidate()
+        #expect(service.findAll(term: "Hello").count == 3)
+        // A different term or option is not served from the cache.
+        #expect(service.findAll(term: "hello", options: SearchOptions(caseSensitive: true)).isEmpty)
+        #expect(service.findAll(term: "Hello", limit: 1).count == 1)
+    }
+
+    // MARK: - SearchHighlights
+
+    @Test func testSearchHighlightsSplitAWrappedMatchAcrossRows() {
+        let results = [SearchResult(term: "abcdefgh", col: 8, row: 3, size: 8),
+                       SearchResult(term: "xy", col: 0, row: 5, size: 2),
+                       SearchResult(term: "xy", col: 6, row: 5, size: 2),
+                       SearchResult(term: "", col: 1, row: 7, size: 0)]
+        let highlights = SearchHighlights(results: results, cols: 10)
+
+        #expect(highlights.ranges(forRow: 3) == [8..<10])
+        #expect(highlights.ranges(forRow: 4) == [0..<6])
+        #expect(highlights.ranges(forRow: 5) == [0..<2, 6..<8])
+        #expect(highlights.ranges(forRow: 7) == nil)
+        #expect(highlights.ranges(forRow: 0) == nil)
+        #expect(!highlights.isEmpty)
+        #expect(SearchHighlights.none.isEmpty)
+        #expect(SearchHighlights(results: [], cols: 10) == .none)
+    }
+
+    @Test func testSearchHighlightsCoverChecksCellSpans() {
+        let ranges: [Range<Int>]? = [0..<2, 6..<8]
+        #expect(SearchHighlights.covers(ranges, column: 1, width: 1))
+        #expect(!SearchHighlights.covers(ranges, column: 2, width: 1))
+        // A wide cell starting before a range that reaches into it is covered.
+        #expect(SearchHighlights.covers(ranges, column: 5, width: 2))
+        #expect(!SearchHighlights.covers(ranges, column: 8, width: 1))
+        #expect(!SearchHighlights.covers(nil, column: 0, width: 1))
+    }
 }

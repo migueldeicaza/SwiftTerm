@@ -272,6 +272,26 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
     private var uiShutdownState = UIShutdownState.active
     var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
+
+    /// Whether ``findNext(_:options:scrollToResult:)`` and
+    /// ``findPrevious(_:options:scrollToResult:)`` also highlight every other
+    /// match of the term, in ``searchMatchBackgroundColor``, the way a
+    /// terminal's find bar marks all hits while the selection walks them.
+    /// ``clearSearch()`` removes the highlights. Off by default.
+    public var highlightAllSearchMatches = false {
+        didSet {
+            if highlightAllSearchMatches != oldValue {
+                refreshSearchHighlights()
+            }
+        }
+    }
+
+    /// Every match of the active search, kept where the frame capture reads it.
+    var searchHighlights = SearchHighlights.none
+
+    /// The Mac view marks the matches beside its scroller; there is no
+    /// scroller here, so a change needs nothing beyond the repaint.
+    func searchHighlightsChanged () {}
     private var lastPointerLocation: CGPoint?
     
     /**
@@ -1940,6 +1960,34 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
         set {
             _selectedTextForegroundColor = newValue
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
+    }
+
+    var _searchMatchBackgroundColor = UIColor(red: 1.0, green: 0.9, blue: 0.3, alpha: 1.0)
+    /// The background color of every search match other than the current one
+    /// while ``highlightAllSearchMatches`` is on. The current match is the
+    /// selection, drawn in ``selectedTextBackgroundColor``.
+    public var searchMatchBackgroundColor: UIColor {
+        get {
+            return _searchMatchBackgroundColor
+        }
+        set {
+            _searchMatchBackgroundColor = newValue
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
+    }
+
+    var _searchMatchForegroundColor = UIColor.black
+    /// The text color of a search match drawn in ``searchMatchBackgroundColor``.
+    public var searchMatchForegroundColor: UIColor {
+        get {
+            return _searchMatchForegroundColor
+        }
+        set {
+            _searchMatchForegroundColor = newValue
             withTerminal { $0.updateFullScreen() }
             frameDriver.markDirty()
         }

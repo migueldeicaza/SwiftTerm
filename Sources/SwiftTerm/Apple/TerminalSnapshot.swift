@@ -40,6 +40,8 @@ struct SnapshotStyle {
     var commandActive: Bool
     var textBlinkVisible: Bool
     var enableOsc8Hyperlinks: Bool = true
+    /// Every match of the active search, drawn beneath the selection.
+    var searchHighlights: SearchHighlights = .none
 
     static let empty = SnapshotStyle(selectionActive: false,
                                      selectionStart: Position(col: 0, row: 0),
@@ -56,7 +58,8 @@ struct SnapshotStyle {
             linkHighlightRange == other.linkHighlightRange &&
             linkHighlightMode.tag == other.linkHighlightMode.tag &&
             commandActive == other.commandActive && textBlinkVisible == other.textBlinkVisible &&
-            enableOsc8Hyperlinks == other.enableOsc8Hyperlinks
+            enableOsc8Hyperlinks == other.enableOsc8Hyperlinks &&
+            searchHighlights == other.searchHighlights
     }
 }
 
@@ -250,6 +253,8 @@ final class TerminalSnapshot {
             selectedTextForegroundColor: appearance.selectedTextForegroundColor.nativeColor,
             caretColor: appearance.caretColor.nativeColor,
             caretTextColor: appearance.caretTextColor.nativeColor,
+            searchMatchBackgroundColor: appearance.searchMatchBackgroundColor.nativeColor,
+            searchMatchForegroundColor: appearance.searchMatchForegroundColor.nativeColor,
             linkColor: appearance.linkColor?.nativeColor,
             linkUnderlineColor: appearance.linkUnderlineColor?.nativeColor,
             ansiColors: ansiColors.map(TTColor.make(color:)))
@@ -395,7 +400,8 @@ final class TerminalSnapshot {
             linkHighlightMode: viewState.linkHighlightMode,
             commandActive: viewState.commandActive,
             textBlinkVisible: viewState.textBlinkVisible,
-            enableOsc8Hyperlinks: terminal.enableOsc8Hyperlinks)
+            enableOsc8Hyperlinks: terminal.enableOsc8Hyperlinks,
+            searchHighlights: viewState.searchHighlights)
         let styleChanged = previousStyle?.hasSameValue(as: newStyle) != true ||
             previousAnsiColors != terminal.ansiColors
         appearanceChanged = styleChanged
