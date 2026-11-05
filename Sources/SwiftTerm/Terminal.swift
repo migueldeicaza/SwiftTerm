@@ -1560,6 +1560,50 @@ open class Terminal {
         }
     }
     
+    /// Collects the payload of one DCS request, up to a fixed size.
+    ///
+    /// When the payload is more than the limit, the accumulator discards all
+    /// of it. It never truncates the payload, so a handler cannot answer a
+    /// request from a prefix of it.
+    struct BoundedDcsPayload {
+        /// Largest payload that the accumulator keeps.
+        let limit: Int
+
+        /// The collected bytes, or `nil` when the payload is more than ``limit``.
+        private(set) var bytes: [UInt8]? = []
+
+        init (limit: Int)
+        {
+            self.limit = limit
+        }
+
+        /// Starts a new, empty payload.
+        mutating func reset ()
+        {
+            bytes = []
+        }
+
+        mutating func append (_ data: ArraySlice<UInt8>)
+        {
+            guard let count = bytes?.count else {
+                return
+            }
+            if count + data.count > limit {
+                bytes = nil
+                return
+            }
+            bytes?.append (contentsOf: data)
+        }
+
+        /// Returns the payload, or `nil` when it was discarded, and starts a
+        /// new, empty payload.
+        mutating func take () -> [UInt8]?
+        {
+            defer { bytes = [] }
+            return bytes
+        }
+    }
+
     // DCS + q Pt ST
     // XTGETTCAP - request terminfo capabilities.
     //   The payload is a list of semicolon-separated, hex-encoded capability
@@ -1573,14 +1617,12 @@ open class Terminal {
         /// The hex encoding of `TN`, the key that names the terminfo entry.
         static let terminalNameKey = "544E"
 
-        /// Longest `TERM` value that gets a `TN` reply. This limit matches Ghostty.
+        /// Longest `TERM` value that receives a `TN` reply. This limit matches Ghostty.
         static let maximumTerminalNameBytes = 128
 
-        private var data: [UInt8] = []
-
-        /// Set when the payload passes ``maximumRequestBytes``. The whole
-        /// request is then dropped rather than answered from a prefix.
-        private var isDiscarded = false
+        /// The request payload. A payload that is more than
+        /// ``maximumRequestBytes`` is dropped and receives no reply.
+        private(set) var payload = BoundedDcsPayload (limit: maximumRequestBytes)
 
         // Nested lifetime: this handler is created per XTGETTCAP sequence and
         // held in the parser's `activeDcsHandler` for the duration of that one
@@ -1598,30 +1640,17 @@ open class Terminal {
 
         func hook (collect: cstring, parameters: CsiParameters, flag: UInt8)
         {
-            data = []
-            isDiscarded = false
+            payload.reset ()
         }
 
         func put (data: ArraySlice<UInt8>)
         {
-            if isDiscarded {
-                return
-            }
-            if self.data.count + data.count > Self.maximumRequestBytes {
-                isDiscarded = true
-                self.data = []
-                return
-            }
-            self.data.append (contentsOf: data)
+            payload.append (data)
         }
 
         func unhook ()
         {
-            let payload = data
-            let wasDiscarded = isDiscarded
-            data = []
-            isDiscarded = false
-            if wasDiscarded {
+            guard let payload = payload.take () else {
                 return
             }
 
@@ -1706,7 +1735,22 @@ open class Terminal {
     //   Request Status String (DECRQSS), VT420 and up.
     // Response: DECRPSS (https://vt100.net/docs/vt510-rm/DECRPSS.html)
     class DECRQSS : DcsHandler {
-        var data: [UInt8]
+        /// The requests that receive a valid reply. Each one has a case in
+        /// the switch in ``unhook()``.
+        static let knownRequests = ["\"q", "\"p", "r", "m", "s", " q", "*x", "t", "*|", "$~", "$}"]
+
+        /// Largest payload kept for one request. This is the length of the
+        /// longest item in ``knownRequests``, and a test makes sure that the two
+        /// values agree.
+        ///
+        /// A payload that is more than this limit receives the invalid reply
+        /// `DCS 0 $ r ST`, as xterm sends for an unknown request. Ghostty
+        /// also keeps 2 bytes, but it sends no reply for a longer payload.
+        static let maximumRequestBytes = 2
+
+        /// The request payload.
+        private(set) var payload = BoundedDcsPayload (limit: maximumRequestBytes)
+
         // Nested lifetime: this handler is created per DECRQSS sequence and
         // held in the parser's `activeDcsHandler` for the duration of that one
         // sequence, well inside the terminal's life.
@@ -1719,25 +1763,28 @@ open class Terminal {
         public init (terminal: Terminal)
         {
             self.terminal = terminal
-            data = []
         }
 
         func hook (collect: cstring, parameters: CsiParameters,  flag: UInt8)
         {
-            data = []
+            payload.reset ()
         }
         
         func put (data : ArraySlice<UInt8>)
         {
-            for x in data {
-                self.data.append(x)
-            }
+            payload.append (data)
         }
         
         func unhook ()
         {
-            let newData = terminalStringASCII(data[...])
-            var ok = 1 // 0 means the request is valid according to docs, but tests expect 0?
+            guard let payload = payload.take () else {
+                // Do not report the payload, see the comment in the default case below.
+                terminal.log ("DECRQSS request is more than \(Self.maximumRequestBytes) bytes")
+                terminal.sendResponse (terminal.cc.DCS, "0$r", terminal.cc.ST)
+                return
+            }
+            let newData = terminalStringASCII(payload[...])
+            var ok = 1 // As in xterm, 1 means a valid request and 0 means an invalid request. The VT510 manual uses the opposite values.
             var result: String
             switch (newData) {
             case "\"q": // DECSCA - Select Character Protection Attribute
@@ -1764,6 +1811,7 @@ open class Terminal {
             case "$}": // DECSASD - output always goes to the main display
                 result = "0$}"
             default:
+                assert (!Self.knownRequests.contains (newData ?? ""), "DECRQSS.knownRequests has a request with no case")
                 ok = 0 // this means the request is not valid, report that to the host.
                 // invalid: DCS 0 $ r Pt ST (xterm)
                 terminal.log ("Unknown DCS + \(newData ?? "")")
