@@ -538,6 +538,7 @@ struct FrameViewState: Sendable {
     let useBrightColors: Bool
     let collapseBrightColorsToBase: Bool
     let minimumContrastRatio: CGFloat
+    let foregroundBrightness: CGFloat
     let translucentCellBackgrounds: Bool
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
@@ -583,6 +584,11 @@ struct FrameViewState: Sendable {
         useBrightColors = view.useBrightColors
         collapseBrightColorsToBase = view.collapseBrightColorsToBase
         minimumContrastRatio = view.minimumContrastRatio
+#if os(macOS)
+        foregroundBrightness = view.foregroundBrightness
+#else
+        foregroundBrightness = 1
+#endif
 #if os(macOS)
         translucentCellBackgrounds = view.translucentCellBackgrounds
 #else
@@ -665,6 +671,7 @@ struct SnapshotRenderContext {
     let useBrightColors: Bool
     let collapseBrightColorsToBase: Bool
     let minimumContrastRatio: CGFloat
+    let foregroundBrightness: CGFloat
     /// The alpha explicit cell backgrounds are drawn with, or nil when they
     /// stay opaque. Set when `translucentCellBackgrounds` is on and the
     /// default background is translucent; it is the default background's own
@@ -729,11 +736,11 @@ struct SnapshotRenderContext {
         effectiveForegroundColor = nativeColors.effectiveForegroundColor
         effectiveBackgroundColor = nativeColors.effectiveBackgroundColor
         selectedTextBackgroundColor = nativeColors.selectedTextBackgroundColor
-        selectedTextForegroundColor = nativeColors.selectedTextForegroundColor
+        selectedTextForegroundColor = nativeColors.selectedTextForegroundColor.withBrightness(viewState.foregroundBrightness)
         caretColor = nativeColors.caretColor
         caretTextColor = nativeColors.caretTextColor
         linkColor = nativeColors.linkColor
-        linkUnderlineColor = nativeColors.linkUnderlineColor
+        linkUnderlineColor = nativeColors.linkUnderlineColor?.withBrightness(viewState.foregroundBrightness)
         ansiColors = nativeColors.ansiColors
         selection = SnapshotSelectionResolver(style: style, cols: cols)
         textBlinkVisible = style.textBlinkVisible
@@ -745,6 +752,7 @@ struct SnapshotRenderContext {
         useBrightColors = viewState.useBrightColors
         collapseBrightColorsToBase = viewState.collapseBrightColorsToBase
         minimumContrastRatio = viewState.minimumContrastRatio
+        foregroundBrightness = viewState.foregroundBrightness
         let defaultBackgroundAlpha = effectiveBackgroundColor.cgColor.alpha
         if viewState.translucentCellBackgrounds && defaultBackgroundAlpha < 1 {
             translucentCellBackgroundAlpha = defaultBackgroundAlpha
@@ -778,6 +786,7 @@ struct SnapshotRenderContext {
         identityHasher.combine(useBrightColors)
         identityHasher.combine(collapseBrightColorsToBase)
         identityHasher.combine(minimumContrastRatio)
+        identityHasher.combine(foregroundBrightness)
         identityHasher.combine(translucentCellBackgroundAlpha)
         identity = UInt64(bitPattern: Int64(identityHasher.finalize()))
     }
@@ -2740,6 +2749,9 @@ extension TerminalView {
             fgColor = fgColor.dimmedColor (towards: bgColor)
         }
         fgColor = fgColor.withContrast (atLeast: minimumContrastRatio, against: bgColor)
+#if os(macOS)
+        fgColor = fgColor.withBrightness(foregroundBrightness)
+#endif
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fgColor,

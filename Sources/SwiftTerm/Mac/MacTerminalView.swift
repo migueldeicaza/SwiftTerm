@@ -1462,6 +1462,16 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    /// Multiplies rendered foreground RGB without changing any cell backgrounds.
+    /// Includes ANSI and truecolor text; 1 preserves the program's colors.
+    public var foregroundBrightness: CGFloat = 1 {
+        didSet {
+            foregroundBrightness = foregroundBrightness.isFinite ? min(1, max(0, foregroundBrightness)) : 1
+            guard foregroundBrightness != oldValue else { return }
+            colorsChanged()
+        }
+    }
+
     /// The least contrast, as a WCAG ratio from 1 to 21, that text keeps against its background. Text whose colors
     /// fall below it, such as colors a program picked for a background of the other brightness, is darkened or
     /// lightened just enough to reach it. Powerline separators, box drawing, and block elements keep their colors.
