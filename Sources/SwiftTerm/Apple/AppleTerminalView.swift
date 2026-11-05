@@ -2747,7 +2747,7 @@ extension TerminalView {
         ]
         if flags.contains (.underline) {
             let underlineColor = attribute.underlineColor.map {
-                mapColor(color: $0, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
+                mapColor(color: $0, isFg: true, isBold: false, useBrightColors: useBrightColors)
             } ?? fgColor
             let underlineVariant = attribute.underlineStyle == .none ? .single : attribute.underlineStyle
             nsattr [.underlineColor] = underlineColor
