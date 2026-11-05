@@ -26,7 +26,9 @@ struct MacDefaultLinkTests {
         #expect(!TerminalView.hasURLScheme("main.swift:12"))
         #expect(!TerminalView.hasURLScheme("README.md:3:4"))
         #expect(TerminalView.hasURLScheme("https://example.com:443"))
-        #expect(TerminalView.hasURLScheme("tel:5551234") == false)
+        #expect(TerminalView.hasURLScheme("tel:5551234"))
+        #expect(TerminalView.hasURLScheme("SMS:5551234"))
+        #expect(!TerminalView.hasURLScheme("Makefile:12"))
         #expect(TerminalView.defaultLinkTarget("main.swift:12", isExplicit: true).decision == .deny(.malformedURL))
         #expect(TerminalView.defaultLinkTarget("missing-\(UUID()).swift:12", isExplicit: false).decision
                 == .deny(.malformedURL))
@@ -36,6 +38,20 @@ struct MacDefaultLinkTests {
             let base = TerminalView.LinkPathBase.directory(url.deletingLastPathComponent().path)
             #expect(TerminalView.defaultLinkTarget("main.swift:12", isExplicit: false, pathBase: base).decision
                     == .allow(url.standardizedFileURL.resolvingSymlinksInPath()))
+        }
+    }
+
+    @Test func knownSchemeIsNotAFileWithTheSameName() throws {
+        try withTemporaryFile(named: "tel") { url in
+            let base = TerminalView.LinkPathBase.directory(url.deletingLastPathComponent().path)
+            #expect(TerminalView.defaultLinkURL("tel:5551234", pathBase: base) == URL(string: "tel:5551234"))
+            #expect(TerminalView.defaultLinkTarget("tel:5551234", isExplicit: false, pathBase: base).decision
+                    == .confirm(URL(string: "tel:5551234")!))
+        }
+        try withTemporaryFile(named: "Makefile") { url in
+            let base = TerminalView.LinkPathBase.directory(url.deletingLastPathComponent().path)
+            // Another name stays a path; the file check then decides.
+            #expect(TerminalView.defaultLinkURL("Makefile:12", pathBase: base)?.path == url.path)
         }
     }
 

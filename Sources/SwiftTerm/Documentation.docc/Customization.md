@@ -197,10 +197,17 @@ When a click/tap lands on an active link, ``TerminalView`` calls
   other active content. The check resolves symbolic links and rejects remote
   file hosts. OSC 8 targets must have a scheme; detected paths can become file
   URLs. Alerts show as a sheet on the window of the view.
-- A detected relative path resolves against the shell's directory, when the
-  shell reports it with OSC 7. Without OSC 7, it resolves against the directory
-  of the application. When OSC 7 names a different host, detected paths are
-  remote files, and SwiftTerm does not open them.
+- When `resolvesLinksAgainstShellDirectory` is true, a detected relative path
+  resolves against the shell's directory, when the shell reports it with OSC 7.
+  Without OSC 7, or when the property is false, a relative path resolves
+  against the directory of the application. When OSC 7 names a different host,
+  detected paths are remote files, and SwiftTerm does not open them, with
+  either value of the property.
+- OSC 7 is terminal output, so it cannot prove that the session is local. A
+  remote program can report a `file://localhost/...` directory. The property is
+  false by default. `LocalProcessTerminalView` sets it to true. Keep it false
+  for a view that shows a remote session. A local shell can still start a
+  remote session, for example with ssh; SwiftTerm cannot see that.
 - A custom delegate can give `openDefault` a rewrite of the link. For an OSC 8
   target, a rewrite must be a URL with a scheme, such as a `file://` URL.
   It can call `openDefault` later, for example after an async step. Nothing

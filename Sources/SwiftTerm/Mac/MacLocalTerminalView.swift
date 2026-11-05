@@ -270,6 +270,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     func setup ()
     {
         terminalDelegate = self
+        resolvesLinksAgainstShellDirectory = true
         let adapter = LocalProcessTerminalViewProcessAdapter(
             renderOwner: renderOwner,
             frameSignal: frameSignal,

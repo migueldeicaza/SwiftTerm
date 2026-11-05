@@ -336,6 +336,7 @@ struct TerminalLinkOpeningTests {
         let view = TerminalView(frame: .zero)
         let delegate = DefaultDelegate()
         view.terminalDelegate = delegate
+        view.resolvesLinksAgainstShellDirectory = true
         view.feed(text: "\u{1b}]7;file://localhost\(directory.path)\u{07}")
         var opened: [URL] = []
         withExtendedLifetime(delegate) {
@@ -346,13 +347,40 @@ struct TerminalLinkOpeningTests {
         #expect(opened.map { $0.resolvingSymlinksInPath() } == [file.resolvingSymlinksInPath()])
     }
 
-    @Test func detectedPathFromARemoteShellIsDenied() async throws {
+    @Test func withoutTheHostGateOsc7IsNotTheBase() async throws {
+        let (directory, _) = try makeTemporaryFile()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let view = TerminalView(frame: .zero)
+        let delegate = DefaultDelegate()
+        view.terminalDelegate = delegate
+        defer { withExtendedLifetime(delegate) {} }
+        #expect(!view.resolvesLinksAgainstShellDirectory)
+        // A remote program can claim that its directory is on this Mac.
+        view.feed(text: "\u{1b}]7;file://localhost\(directory.path)\u{07}")
+        var alerts = 0
+        var opened: [URL] = []
+        view.activateLink("main.txt:12", params: [:], isExplicit: false) { alert, _, completion in
+            alerts += 1
+            #expect(alert.buttons.map(\.title) == ["OK"])
+            completion(.alertFirstButtonReturn)
+        } open: { opened.append($0) }
+        await waitUntil { alerts == 1 }
+        #expect(opened.isEmpty)
+    }
+
+    @Test func localProcessViewResolvesAgainstTheShellDirectory() {
+        #expect(LocalProcessTerminalView(frame: .zero).resolvesLinksAgainstShellDirectory)
+    }
+
+    @Test(arguments: [true, false])
+    func detectedPathFromARemoteShellIsDenied(resolvesAgainstShellDirectory: Bool) async throws {
         let (directory, file) = try makeTemporaryFile()
         defer { try? FileManager.default.removeItem(at: directory) }
         let view = TerminalView(frame: .zero)
         let delegate = DefaultDelegate()
         view.terminalDelegate = delegate
         defer { withExtendedLifetime(delegate) {} }
+        view.resolvesLinksAgainstShellDirectory = resolvesAgainstShellDirectory
         view.feed(text: "\u{1b}]7;file://remote.example.com\(directory.path)\u{07}")
         var alerts = 0
         var opened: [URL] = []

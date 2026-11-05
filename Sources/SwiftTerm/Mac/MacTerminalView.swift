@@ -5198,6 +5198,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     // Set only while a checked link is sent to the delegate.
     var approvedLinkForDelegate: ApprovedLink?
+
+    /// Set to true when the terminal shows a session on this Mac. Then a
+    /// detected relative path resolves against the shell's directory from OSC 7.
+    ///
+    /// OSC 7 is terminal output, so it cannot prove that the session is local:
+    /// a remote program can report a "file://localhost/..." directory. Keep
+    /// this false for a remote session. The default is false, and relative
+    /// paths resolve against the directory of the application. When OSC 7
+    /// names another host, detected paths do not open, with either value.
+    /// `LocalProcessTerminalView` sets it to true. A local shell can still
+    /// start a remote session, for example with ssh; SwiftTerm cannot see that.
+    public var resolvesLinksAgainstShellDirectory = false
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}
@@ -5261,11 +5273,21 @@ extension TerminalView {
 
     /// True when the link is a URL. Foundation parses "main.swift:12" as a URL
     /// with the scheme "main.swift", so a name with a location suffix is a path.
+    /// A known scheme with a numeric target, such as "tel:5551234", stays a URL.
     nonisolated static func hasURLScheme (_ link: String) -> Bool
     {
-        guard URL(string: link)?.scheme != nil else { return false }
+        guard let scheme = URL(string: link)?.scheme else { return false }
+        if numericURLSchemes.contains(scheme.lowercased()) {
+            return true
+        }
         return link.range(of: #"^[^:/]+:[0-9]+(?::[0-9]+)?$"#, options: .regularExpression) == nil
     }
+
+    /// Schemes whose target can be only digits. A file with the same name as
+    /// the scheme must not take the link.
+    nonisolated static let numericURLSchemes: Set<String> = [
+        "tel", "sms", "facetime", "facetime-audio", "callto", "fax",
+    ]
 
     /// The directory that relative paths in the terminal output resolve against.
     enum LinkPathBase: Equatable {
