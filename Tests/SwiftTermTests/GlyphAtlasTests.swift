@@ -104,6 +104,44 @@ struct GlyphAtlasTests {
                 "pixels moved or were corrupted by grow")
     }
 
+    /// The texture holds each glyph inside a one-pixel ring that repeats its
+    /// nearest edge pixel, so filtering at a glyph's edge never blends in a
+    /// neighbor. Checked for both formats, read back from the texture alone.
+    @Test(arguments: [GlyphAtlasFormat.bgra, .grayscale])
+    func writeRepeatsEdgesIntoPadding(format: GlyphAtlasFormat) throws {
+        let atlas = makeAtlas(size: 256, maxSize: 256, format: format)
+        // A neighbor first, so the glyph under test sits away from the origin.
+        let neighbor = try #require(atlas.ensureRegion(width: 3, height: 3))
+        atlas.write(region: neighbor, pixels: makePixels(width: 3, height: 3, seed: 11), width: 3, height: 3)
+        let width = 5
+        let height = 4
+        let pixels = makePixels(width: width, height: height, seed: 5)
+        let region = try #require(atlas.ensureRegion(width: width, height: height))
+        atlas.write(region: region, pixels: pixels, width: width, height: height)
+
+        let bytesPerPixel = format.bytesPerPixel
+        let paddedWidth = width + 2
+        let paddedHeight = height + 2
+        var readback = [UInt8](repeating: 0, count: paddedWidth * paddedHeight * bytesPerPixel)
+        readback.withUnsafeMutableBytes { raw in
+            atlas.texture.getBytes(raw.baseAddress!,
+                                   bytesPerRow: paddedWidth * bytesPerPixel,
+                                   from: MTLRegionMake2D(region.x - 1, region.y - 1, paddedWidth, paddedHeight),
+                                   mipmapLevel: 0)
+        }
+        for y in 0..<paddedHeight {
+            for x in 0..<paddedWidth {
+                // The content pixel this one repeats; the bitmap's rows run bottom-up.
+                let column = min(max(x - 1, 0), width - 1)
+                let sourceRow = height - 1 - min(max(y - 1, 0), height - 1)
+                let source = (sourceRow * width + column) * 4
+                let expected = format == .bgra ? Array(pixels[source..<source + 4]) : [pixels[source + 3]]
+                let at = (y * paddedWidth + x) * bytesPerPixel
+                #expect(Array(readback[at..<at + bytesPerPixel]) == expected, "pixel \(x), \(y) of the padded glyph")
+            }
+        }
+    }
+
     @Test func resetAtMaxSizeSetsDidReset() throws {
         let atlas = makeAtlas(size: 256, maxSize: 256)
         for _ in 0..<4 {

@@ -38,7 +38,7 @@ private struct Options {
 
 private func usage() -> Never {
     let names = try! (VTEBenchWorkloads.makeDefault() + VTEBenchWorkloads.makeHardening()
-        + VTEBenchWorkloads.makeHyperlink())
+        + VTEBenchWorkloads.makeHyperlink() + VTEBenchWorkloads.makeGhosttyStream())
         .map(\.name).joined(separator: ", ")
     FileHandle.standardError.write(Data("""
     usage: SwiftTermProfile WORKLOAD [--iterations N] [--warmup N] [--minimum-bytes N]
@@ -52,13 +52,13 @@ guard let options = Options.parse(Array(CommandLine.arguments.dropFirst())) else
     usage()
 }
 let workloads = try VTEBenchWorkloads.makeDefault() + VTEBenchWorkloads.makeHardening()
-    + VTEBenchWorkloads.makeHyperlink()
+    + VTEBenchWorkloads.makeHyperlink() + VTEBenchWorkloads.makeGhosttyStream()
 guard let workload = workloads.first(where: { $0.name == options.workloadName }) else {
     usage()
 }
 
-let columns = VTEBenchWorkloads.defaultColumns
-let rows = VTEBenchWorkloads.defaultRows
+let columns = workload.columns
+let rows = workload.rows
 let queue = DispatchQueue(label: "SwiftTermProfile", qos: .userInteractive)
 let terminalOptions = TerminalOptions(
     cols: columns,

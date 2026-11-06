@@ -45,27 +45,13 @@ internal enum ByteRunScanner {
             index += 1
         }
 
-#if compiler(>=6.4)
-        let rawBytes = bytes.bytes
-        while index <= bytes.count - vectorWidth {
-            let vector = rawBytes.load(
-                fromByteOffset: index, as: ByteVector.self)
-            let matches = vector .< space
-            if any(matches) {
-                for lane in 0..<vectorWidth where vector[lane] < 0x20 {
-                    return index + lane
-                }
-            }
-            index += vectorWidth
-        }
-#else
-        // Swift 6.3 has no checked `RawSpan.load`. Short runs, which dominate
-        // interactive output, stay in the scalar loop below; a full vector
-        // moves to the out-of-line helper so this function stays inlinable.
         if bytes.count - index >= vectorWidth {
+#if DEBUG
+            index = wordScanC0(in: bytes, from: index)
+#else
             index = vectorScanC0(in: bytes, from: index)
-        }
 #endif
+        }
 
         while index < bytes.count {
             if bytes[index] < 0x20 {
@@ -106,25 +92,13 @@ internal enum ByteRunScanner {
             index += 1
         }
 
-#if compiler(>=6.4)
-        let rawBytes = bytes.bytes
-        while index <= bytes.count - vectorWidth {
-            let vector = rawBytes.load(
-                fromByteOffset: index, as: ByteVector.self)
-            let matches = vector .>= nonASCII
-            if any(matches) {
-                for lane in 0..<vectorWidth where vector[lane] >= 0x80 {
-                    return index + lane
-                }
-            }
-            index += vectorWidth
-        }
-#else
-        // See `vectorScanC0`: the Swift 6.3 vector loop lives out of line.
         if bytes.count - index >= vectorWidth {
+#if DEBUG
+            index = wordScanNonASCII(in: bytes, from: index)
+#else
             index = vectorScanNonASCII(in: bytes, from: index)
-        }
 #endif
+        }
 
         while index < bytes.count {
             if bytes[index] >= 0x80 {
@@ -156,27 +130,13 @@ internal enum ByteRunScanner {
             index += 1
         }
 
-#if compiler(>=6.4)
-        let target = ByteVector(repeating: value)
-        let rawBytes = bytes.bytes
-        while index <= bytes.count - vectorWidth {
-            let vector = rawBytes.load(
-                fromByteOffset: index, as: ByteVector.self)
-            let matches = (vector .< space) .| (vector .== target)
-            if any(matches) {
-                for lane in 0..<vectorWidth
-                where vector[lane] < 0x20 || vector[lane] == value {
-                    return index + lane
-                }
-            }
-            index += vectorWidth
-        }
-#else
-        // See `vectorScanC0`: the Swift 6.3 vector loop lives out of line.
         if bytes.count - index >= vectorWidth {
+#if DEBUG
+            index = wordScanC0OrByte(value, in: bytes, from: index)
+#else
             index = vectorScanC0OrByte(value, in: bytes, from: index)
-        }
 #endif
+        }
 
         while index < bytes.count {
             let byte = bytes[index]
@@ -188,12 +148,62 @@ internal enum ByteRunScanner {
         return bytes.count
     }
 
-#if !compiler(>=6.4)
-    /// Scans whole vectors from the borrowed buffer. Returns the first index
-    /// that still needs a scalar check: a matching byte or the start of the
-    /// short tail. The loop bound keeps every load inside the span.
+#if compiler(>=6.4)
+    @inline(__always)
+    static func vectorScanC0(in bytes: Span<UInt8>, from start: Int) -> Int {
+        let rawBytes = bytes.bytes
+        var index = start
+        while index <= bytes.count - vectorWidth {
+            let vector = rawBytes.load(fromByteOffset: index, as: ByteVector.self)
+            if any(vector .< space) {
+                for lane in 0..<vectorWidth where vector[lane] < 0x20 {
+                    return index + lane
+                }
+            }
+            index += vectorWidth
+        }
+        return index
+    }
+
+    @inline(__always)
+    static func vectorScanNonASCII(in bytes: Span<UInt8>, from start: Int) -> Int {
+        let rawBytes = bytes.bytes
+        var index = start
+        while index <= bytes.count - vectorWidth {
+            let vector = rawBytes.load(fromByteOffset: index, as: ByteVector.self)
+            if any(vector .>= nonASCII) {
+                for lane in 0..<vectorWidth where vector[lane] >= 0x80 {
+                    return index + lane
+                }
+            }
+            index += vectorWidth
+        }
+        return index
+    }
+
+    @inline(__always)
+    static func vectorScanC0OrByte(
+        _ value: UInt8, in bytes: Span<UInt8>, from start: Int
+    ) -> Int {
+        let target = ByteVector(repeating: value)
+        let rawBytes = bytes.bytes
+        var index = start
+        while index <= bytes.count - vectorWidth {
+            let vector = rawBytes.load(fromByteOffset: index, as: ByteVector.self)
+            if any((vector .< space) .| (vector .== target)) {
+                for lane in 0..<vectorWidth
+                where vector[lane] < 0x20 || vector[lane] == value {
+                    return index + lane
+                }
+            }
+            index += vectorWidth
+        }
+        return index
+    }
+#else
+    // Swift 6.3 has no checked `RawSpan.load`.
     @inline(never)
-    private static func vectorScanC0(in bytes: Span<UInt8>, from start: Int) -> Int {
+    static func vectorScanC0(in bytes: Span<UInt8>, from start: Int) -> Int {
         bytes.withUnsafeBufferPointer { buffer in
             let base = UnsafeRawPointer(buffer.baseAddress!)
             var index = start
@@ -212,7 +222,7 @@ internal enum ByteRunScanner {
     }
 
     @inline(never)
-    private static func vectorScanNonASCII(in bytes: Span<UInt8>, from start: Int) -> Int {
+    static func vectorScanNonASCII(in bytes: Span<UInt8>, from start: Int) -> Int {
         bytes.withUnsafeBufferPointer { buffer in
             let base = UnsafeRawPointer(buffer.baseAddress!)
             var index = start
@@ -231,7 +241,7 @@ internal enum ByteRunScanner {
     }
 
     @inline(never)
-    private static func vectorScanC0OrByte(
+    static func vectorScanC0OrByte(
         _ value: UInt8, in bytes: Span<UInt8>, from start: Int
     ) -> Int {
         let target = ByteVector(repeating: value)
@@ -253,6 +263,63 @@ internal enum ByteRunScanner {
         }
     }
 #endif
+
+    // Unoptimized SIMD operators are per-lane generic calls; integer word scans stay fast.
+    private static let wordWidth = MemoryLayout<UInt64>.size
+    private static let lowBits: UInt64 = 0x0101_0101_0101_0101
+    private static let highBits: UInt64 = 0x8080_8080_8080_8080
+
+    /// True when a byte of `word` is below `limit`, which is at most 0x80.
+    @inline(__always)
+    private static func hasByte(below limit: UInt8, in word: UInt64) -> Bool {
+        (word &- lowBits &* UInt64(limit)) & ~word & highBits != 0
+    }
+
+    static func wordScanC0(in bytes: Span<UInt8>, from start: Int) -> Int {
+        wordScan(bytes, from: start) { hasByte(below: 0x20, in: $0) }
+    }
+
+    static func wordScanNonASCII(in bytes: Span<UInt8>, from start: Int) -> Int {
+        wordScan(bytes, from: start) { $0 & highBits != 0 }
+    }
+
+    static func wordScanC0OrByte(
+        _ value: UInt8, in bytes: Span<UInt8>, from start: Int
+    ) -> Int {
+        let target = lowBits &* UInt64(value)
+        return wordScan(bytes, from: start) { word in
+            hasByte(below: 0x20, in: word) || hasByte(below: 1, in: word ^ target)
+        }
+    }
+
+    private static func wordScan(
+        _ bytes: Span<UInt8>, from start: Int, _ hasMatch: (UInt64) -> Bool
+    ) -> Int {
+#if compiler(>=6.4)
+        let rawBytes = bytes.bytes
+        var index = start
+        while index <= bytes.count - wordWidth {
+            if hasMatch(rawBytes.load(fromByteOffset: index, as: UInt64.self)) {
+                return index
+            }
+            index += wordWidth
+        }
+        return index
+#else
+        return bytes.withUnsafeBufferPointer { buffer in
+            guard let base = buffer.baseAddress else { return start }
+            let raw = UnsafeRawPointer(base)
+            var index = start
+            while index <= buffer.count - wordWidth {
+                if hasMatch(raw.loadUnaligned(fromByteOffset: index, as: UInt64.self)) {
+                    return index
+                }
+                index += wordWidth
+            }
+            return index
+        }
+#endif
+    }
 
     @inline(__always)
     private static func legacyFirstC0Byte(

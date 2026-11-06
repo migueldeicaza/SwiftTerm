@@ -183,9 +183,15 @@ Both AppKit and UIKit `TerminalView` expose `linkReporting`:
 
 `linkReporting` controls link discovery/tracking. Link activation is additionally gated by `linkHighlightMode`.
 
-When the user activates a link, `TerminalView` calls `TerminalViewDelegate.requestOpenLink(source:link:params:)`.
-For explicit OSC 8 hyperlinks, `params` includes parsed key/value metadata (if provided); implicit links use empty `params`.
-On macOS, the default delegate implementation opens links via `NSWorkspace`. On iOS/visionOS, handle `requestOpenLink` in your delegate.
+When the user activates a link, `TerminalView` calls `TerminalViewDelegate.requestOpenLink(source:request:)`.
+The `TerminalLinkRequest` has the link text from the terminal output, which is untrusted.
+`request.isExplicit` is true for an OSC 8 hyperlink. For an OSC 8 hyperlink, `request.params` includes parsed key/value metadata (if provided); implicit links use empty `params`.
+On macOS, the default delegate implementation checks the link and opens it via `NSWorkspace`. A custom delegate can call `request.openDefault()` to do the same.
+On iOS/visionOS, implement `requestOpenLink(source:request:)` in your delegate.
+`requestOpenLink(source:link:params:)` is deprecated.
+On macOS, that old method still receives a checked URL, so it cannot recover a
+source path's `:line` suffix. See [Link customization](Sources/SwiftTerm/Documentation.docc/Customization.md#migrate-a-macos-link-delegate)
+for a migration example and the checks needed when an app opens links itself.
 
 * On macOS, tracking is hover-based. The default highlight mode is `.hoverWithModifier`, so Command-hover and Command-click are the default link interaction.
 * On iOS/visionOS, tracking is driven by pointer/hover interactions (`UIPointerInteraction` / `UIHoverGestureRecognizer`), and tap activation depends on the active `linkHighlightMode` (including modifier requirements for modifier-based modes).

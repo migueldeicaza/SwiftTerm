@@ -62,7 +62,6 @@ final class GlyphAtlas {
     private let maxSize: Int
     private(set) var size: Int
     private(set) var texture: MTLTexture
-    private var data: [UInt8]
     private var nextX = 0
     private var nextY = 0
     private var rowHeight = 0
@@ -89,8 +88,8 @@ final class GlyphAtlas {
     }
 
     /// The maximum atlas size to use for a given device and format, balancing
-    /// CJK-sized glyph working sets against memory (the atlas keeps a CPU
-    /// shadow copy, so cost is 2 * size^2 * bytesPerPixel).
+    /// CJK-sized glyph working sets against memory (an atlas costs
+    /// size^2 * bytesPerPixel).
     /// `SWIFTTERM_ATLAS_MAX` overrides the cap for testing.
     static func recommendedMaxSize(device: MTLDevice, format: GlyphAtlasFormat) -> Int {
         if let raw = ProcessInfo.processInfo.environment["SWIFTTERM_ATLAS_MAX"], let value = Int(raw) {
@@ -118,7 +117,6 @@ final class GlyphAtlas {
             return nil
         }
         self.texture = texture
-        self.data = Array(repeating: UInt8(0), count: self.size * self.size * bytesPerPixel)
     }
 
     func ensureRegion(width: Int, height: Int) -> AtlasRegion? {
@@ -169,7 +167,6 @@ final class GlyphAtlas {
         guard width == region.width, height == region.height else {
             return
         }
-        let atlasStride = size * bytesPerPixel
         let srcStride = width * 4
         let padding = Self.glyphPadding
 
@@ -181,67 +178,63 @@ final class GlyphAtlas {
         let paddedBottom = min(size, region.y + height + padding)
         let paddedWidth = paddedRight - paddedX
         let paddedHeight = paddedBottom - paddedY
+        // The padded block, with the content `left` and `top` pixels in.
+        let blockStride = paddedWidth * bytesPerPixel
+        let left = region.x - paddedX
+        let top = region.y - paddedY
+        var block = [UInt8](repeating: 0, count: blockStride * paddedHeight)
+        pixels.withUnsafeBufferPointer { source in
+            block.withUnsafeMutableBufferPointer { block in
+                let base = block.baseAddress!
+                // 1) Copy the content rows, flipped: the bitmap is bottom-up.
+                //    This is the hot path for color glyphs.
+                for row in 0..<height {
+                    let srcOffset = (height - 1 - row) * srcStride
+                    let dstOffset = ((top + row) * blockStride) + (left * bytesPerPixel)
+                    switch format {
+                    case .bgra:
+                        (base + dstOffset).update(from: source.baseAddress! + srcOffset, count: srcStride)
+                    case .grayscale:
+                        for col in 0..<width {
+                            block[dstOffset + col] = source[srcOffset + col * 4 + 3]
+                        }
+                    }
+                }
 
-        // 1) Bulk-copy the content rows. This is the hot path for color
-        //    glyphs and matches the pre-padding behavior.
-        for row in 0..<height {
-            let srcRow = height - 1 - row
-            let srcOffset = srcRow * srcStride
-            let dstOffset = ((region.y + row) * atlasStride) + (region.x * bytesPerPixel)
-            switch format {
-            case .bgra:
-                data[dstOffset..<dstOffset + srcStride] = pixels[srcOffset..<srcOffset + srcStride]
-            case .grayscale:
-                for col in 0..<width {
-                    data[dstOffset + col] = pixels[srcOffset + col * 4 + 3]
+                // 2) Replicate the first/last content rows into the top/bottom
+                //    padding strips.
+                let contentRowBytes = width * bytesPerPixel
+                let firstRowOffset = (top * blockStride) + (left * bytesPerPixel)
+                let lastRowOffset = ((top + height - 1) * blockStride) + (left * bytesPerPixel)
+                for row in 0..<top {
+                    (base + (row * blockStride) + (left * bytesPerPixel)).update(from: base + firstRowOffset, count: contentRowBytes)
+                }
+                for row in (top + height)..<paddedHeight {
+                    (base + (row * blockStride) + (left * bytesPerPixel)).update(from: base + lastRowOffset, count: contentRowBytes)
+                }
+
+                // 3) Replicate the left/right edge pixels across the full padded
+                //    height. Step 2 already filled the edge columns of the top
+                //    and bottom rows, so the four corners come out correctly.
+                for row in 0..<paddedHeight {
+                    let rowBase = row * blockStride
+                    let leftSrc = rowBase + (left * bytesPerPixel)
+                    let rightSrc = rowBase + ((left + width - 1) * bytesPerPixel)
+                    for col in 0..<left {
+                        (base + rowBase + (col * bytesPerPixel)).update(from: base + leftSrc, count: bytesPerPixel)
+                    }
+                    for col in (left + width)..<paddedWidth {
+                        (base + rowBase + (col * bytesPerPixel)).update(from: base + rightSrc, count: bytesPerPixel)
+                    }
                 }
             }
         }
 
-        // 2) Replicate the first/last content rows into the top/bottom
-        //    padding strips.
-        let contentRowBytes = width * bytesPerPixel
-        let firstRowOffset = (region.y * atlasStride) + (region.x * bytesPerPixel)
-        let lastRowOffset = ((region.y + height - 1) * atlasStride) + (region.x * bytesPerPixel)
-        for row in paddedY..<region.y {
-            let dst = (row * atlasStride) + (region.x * bytesPerPixel)
-            for i in 0..<contentRowBytes {
-                data[dst + i] = data[firstRowOffset + i]
-            }
-        }
-        for row in (region.y + height)..<paddedBottom {
-            let dst = (row * atlasStride) + (region.x * bytesPerPixel)
-            for i in 0..<contentRowBytes {
-                data[dst + i] = data[lastRowOffset + i]
-            }
-        }
-
-        // 3) Replicate the left/right edge pixels across the full padded
-        //    height. Step 2 already filled column `region.x` of the top
-        //    and bottom rows, so the four corners come out correctly.
-        for row in paddedY..<paddedBottom {
-            let rowBase = row * atlasStride
-            let leftSrc = rowBase + (region.x * bytesPerPixel)
-            let rightSrc = rowBase + ((region.x + width - 1) * bytesPerPixel)
-            for col in paddedX..<region.x {
-                let dst = rowBase + (col * bytesPerPixel)
-                for b in 0..<bytesPerPixel {
-                    data[dst + b] = data[leftSrc + b]
-                }
-            }
-            for col in (region.x + width)..<paddedRight {
-                let dst = rowBase + (col * bytesPerPixel)
-                for b in 0..<bytesPerPixel {
-                    data[dst + b] = data[rightSrc + b]
-                }
-            }
-        }
-
-        let regionMTL = MTLRegionMake2D(paddedX, paddedY, paddedWidth, paddedHeight)
-        let offset = (paddedY * atlasStride) + (paddedX * bytesPerPixel)
-        data.withUnsafeBytes { raw in
-            let base = raw.baseAddress!.advanced(by: offset)
-            texture.replace(region: regionMTL, mipmapLevel: 0, withBytes: base, bytesPerRow: atlasStride)
+        block.withUnsafeBytes { raw in
+            texture.replace(region: MTLRegionMake2D(paddedX, paddedY, paddedWidth, paddedHeight),
+                            mipmapLevel: 0,
+                            withBytes: raw.baseAddress!,
+                            bytesPerRow: blockStride)
         }
     }
 
@@ -291,41 +284,36 @@ final class GlyphAtlas {
             return
         }
         Self.log.info("glyph atlas (\(self.format.label, privacy: .public)) grow: \(self.size) -> \(newSize)")
-        let newData = Array(repeating: UInt8(0), count: newSize * newSize * bytesPerPixel)
-        var updatedData = newData
-        let oldStride = size * bytesPerPixel
-        let newStride = newSize * bytesPerPixel
-        for row in 0..<size {
-            let srcOffset = row * oldStride
-            let dstOffset = row * newStride
-            updatedData[dstOffset..<dstOffset + oldStride] = data[srcOffset..<srcOffset + oldStride]
+        // Glyphs keep their pixel coordinates, as the renderer keeps its glyph
+        // cache across a grow: the old texture is read back into the new one's
+        // corner, through a buffer that lives only for the copy. The rest of the
+        // new texture is written glyph by glyph before any frame samples it.
+        let copied = MTLRegionMake2D(0, 0, size, size)
+        let stride = size * bytesPerPixel
+        let count = stride * size
+        let oldTexture = texture
+        let pixels = [UInt8](unsafeUninitializedCapacity: count) { buffer, initialized in
+            oldTexture.getBytes(buffer.baseAddress!, bytesPerRow: stride, from: copied, mipmapLevel: 0)
+            initialized = count
+        }
+        pixels.withUnsafeBytes { raw in
+            newTexture.replace(region: copied, mipmapLevel: 0, withBytes: raw.baseAddress!, bytesPerRow: stride)
         }
         size = newSize
-        data = updatedData
         texture = newTexture
         // Capacity actually increased: re-arm the overflow diagnostics so a
         // later, genuinely-new overflow episode is logged once more.
         loggedFrozenMiss = false
         loggedResetOverflow = false
-        data.withUnsafeBytes { raw in
-            texture.replace(region: MTLRegionMake2D(0, 0, size, size),
-                            mipmapLevel: 0,
-                            withBytes: raw.baseAddress!,
-                            bytesPerRow: size * bytesPerPixel)
-        }
     }
 
     private func reset() {
+        // Packing starts over from the origin. Every region handed out from here
+        // on is written whole, padding included, before a frame samples it, so
+        // the old pixels need no clearing.
         nextX = 0
         nextY = 0
         rowHeight = 0
-        data = Array(repeating: UInt8(0), count: size * size * bytesPerPixel)
-        data.withUnsafeBytes { raw in
-            texture.replace(region: MTLRegionMake2D(0, 0, size, size),
-                            mipmapLevel: 0,
-                            withBytes: raw.baseAddress!,
-                            bytesPerRow: size * bytesPerPixel)
-        }
     }
 
     private static func makeTexture(device: MTLDevice, size: Int, format: GlyphAtlasFormat) -> MTLTexture? {

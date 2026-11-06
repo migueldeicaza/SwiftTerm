@@ -270,6 +270,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     func setup ()
     {
         terminalDelegate = self
+        resolvesLinksAgainstShellDirectory = true
         let adapter = LocalProcessTerminalViewProcessAdapter(
             renderOwner: renderOwner,
             frameSignal: frameSignal,
@@ -420,8 +421,22 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     }
 
     /**
-     * Invoked when the user activates a link, override to handle the link yourself
+     * Invoked when the user activates a link. Override to handle the link yourself.
+     *
+     * `request.link` is untrusted terminal output. Call `request.openDefault(_:)`
+     * to check it with SwiftTerm's policy and open it. The default implementation
+     * checks the link and calls ``requestOpenLink(source:link:params:)`` with
+     * the approved URL.
      */
+    open func requestOpenLink (source: TerminalView, request: TerminalLinkRequest)
+    {
+        source.requestOpenLinkWithCheckedURL(request, delegate: self)
+    }
+
+    /**
+     * Invoked with a checked link from ``requestOpenLink(source:request:)``.
+     */
+    @available(*, deprecated, message: "Override requestOpenLink(source:request:)")
     open func requestOpenLink (source: TerminalView, link: String, params: [String:String])
     {
         source.openLinkFromDelegate(link)

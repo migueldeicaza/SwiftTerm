@@ -44,9 +44,9 @@ struct BrightColorPolicyTests {
         view.withTerminal { terminal in
             for bold in [false, true] {
                 for code in UInt8(0)...UInt8(255) {
-                    // Preserve the existing promotion boundary (indexes below 7).
+                    // Bold promotes all eight base ANSI colors, white (7) included.
                     let index = useBright
-                        ? Int(code) + (code < 7 && bold ? 8 : 0)
+                        ? Int(code) + (code < 8 && bold ? 8 : 0)
                         : Int(code) - (collapse && code > 7 ? 8 : 0)
                     let live = view.mapColor(color: .ansi256(code: code), isFg: true,
                                              isBold: bold, useBrightColors: useBright)
@@ -57,6 +57,54 @@ struct BrightColorPolicyTests {
                 }
             }
         }
+    }
+
+    @Test func boldWhitePromotesToBrightWhite() {
+        let view = makeView()
+        view.withTerminal { terminal in
+            let color = view.mapColor(color: .ansi256(code: 7), isFg: true, isBold: true)
+            #expect(color == NSColor.make(color: terminal.ansiColors[15]))
+        }
+    }
+
+    @Test(arguments: [UInt8(1), UInt8(7)])
+    func boldTextKeepsExplicitUnderlineColor(code: UInt8) throws {
+        let view = makeView()
+        view.feed(text: "\u{1b}[1;4;37;58;5;\(code)mX")
+        let cell = try #require(view.withTerminal { $0.getCharData(col: 0, row: 0) })
+        let expected = view.withTerminal { terminal in
+            NSColor.make(color: terminal.ansiColors[Int(code)])
+        }
+        let brightWhite = view.withTerminal { terminal in
+            NSColor.make(color: terminal.ansiColors[15])
+        }
+
+        let live = try #require(view.withTerminal { _ in
+            view.getAttributes(cell.attribute, withUrl: false)
+        })
+        #expect((live[.foregroundColor] as? NSColor) == brightWhite)
+        #expect((live[.underlineColor] as? NSColor) == expected)
+
+        let frame = snapshot(view)
+        let context = SnapshotRenderContext(viewState: FrameViewState(view: view), snapshot: frame)
+        let captured = try renderedAttributes(view)
+        #expect((captured[.foregroundColor] as? NSColor) == brightWhite)
+        #expect((captured[.underlineColor] as? NSColor) == expected)
+
+        let row = try #require(frame.rows.first)
+        let plain = try #require(view.textBuilder.plainRow(row: row, absoluteRow: frame.firstRow,
+                                                         context: context))
+        let run = try #require(plain.runs.first)
+        let underline = try #require(run.style.underline)
+        if case .color(let color) = underline.color {
+            #expect(color == expected)
+        } else {
+            Issue.record("Indexed underline should use a palette color")
+        }
+
+        let caret = attributedValue(for: cell.attribute, usingFg: brightWhite,
+                                    andBg: context.effectiveBackgroundColor, context: context)
+        #expect((caret[.underlineColor] as? NSColor) == expected)
     }
 
     @Test func preservingIndexesDoesNotChangeBackgrounds() {

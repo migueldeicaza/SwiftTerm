@@ -169,6 +169,20 @@ final class EscapeSequenceParserHardeningTests {
         TerminalTestHarness.assertCursor(terminal.buffer, col: 0, row: 0)
     }
 
+    @Test func titleOscDecodesAsciiUtf8AndRejectsInvalidUtf8() {
+        let delegate = BareEscapeOscDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 10, rows: 2, scrollback: 0))
+
+        terminal.feed(text: "\(esc)]0;plain ascii\u{7}")
+        terminal.feed(text: "\(esc)]0;café 中文 🚀\u{7}")
+        // A lone continuation byte is invalid UTF-8; the title becomes empty.
+        terminal.feed(byteArray: Array("\(esc)]0;bad ".utf8) + [0x80] + [0x07])
+
+        #expect(delegate.titles == ["plain ascii", "café 中文 🚀", ""])
+    }
+
     @Test func bareEscapeDispatchesClipboardOscBeforeStartingCsi() {
         let delegate = BareEscapeOscDelegate()
         let terminal = Terminal(

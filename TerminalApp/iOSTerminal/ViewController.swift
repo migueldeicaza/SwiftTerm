@@ -183,7 +183,7 @@ private final class PointerTestViewController: UIViewController, TerminalViewDel
     func sizeChanged(source: SwiftTerm.TerminalView, newCols: Int, newRows: Int) {}
     func setTerminalTitle(source: SwiftTerm.TerminalView, title: String) {}
     func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {}
-    func requestOpenLink(source: SwiftTerm.TerminalView, link: String, params: [String: String]) {}
+    func requestOpenLink(source: SwiftTerm.TerminalView, request: TerminalLinkRequest) {}
     func rangeChanged(source: SwiftTerm.TerminalView, startY: Int, endY: Int) {}
 }
 #endif

@@ -212,6 +212,9 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
     private var state = State()
 #else
     private let state = Locked(State())
+    /// The number of registrations, so that `publish` can skip the lock
+    /// when there are no observers. Change it only while `state` is locked.
+    private let registrationCount = LockedCount()
     private let deliveryQueue = TerminalCallbackQueue(label: "org.tirania.SwiftTerm.osc-events")
 #endif
 
@@ -229,6 +232,7 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
             let id = state.nextID
             state.nextID &+= 1
             state.registrations.append(Registration(id: id, codes: codes, handler: handler))
+            registrationCount.store(state.registrations.count)
             return id
         }
 
@@ -243,6 +247,7 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
 #if SWIFTTERM_EMBEDDED
         let registrations = state.registrations.filter { $0.accepts(code) }
 #else
+        guard registrationCount.value > 0 else { return }
         let registrations = state.withLock { $0.registrations.filter { $0.accepts(code) } }
 #endif
         guard !registrations.isEmpty else { return }
@@ -279,6 +284,7 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
 #else
         state.withLock { state in
             state.registrations.removeAll { $0.id == id }
+            registrationCount.store(state.registrations.count)
         }
 #endif
     }

@@ -22,16 +22,17 @@ private enum SwiftTermBenchmarks {
     static let hyperlinkWorkloads = VTEBenchWorkloads.makeHyperlink(
         columns: columns,
         rows: rows)
+    static let ghosttyStreamWorkloads = VTEBenchWorkloads.makeGhosttyStream()
 }
 
 private func feed(_ benchmark: Benchmark, workload: VTEBenchWorkload) {
     let options = TerminalOptions(
-        cols: SwiftTermBenchmarks.columns,
-        rows: SwiftTermBenchmarks.rows,
+        cols: workload.columns,
+        rows: workload.rows,
         maximumOscBytes: workload.maximumOscBytes ?? TerminalOptions.default.maximumOscBytes)
     let headlessTerminal = HeadlessTerminal(queue: SwiftTermBenchmarks.queue, options: options) { _ in }
     let terminal = headlessTerminal.terminal!
-    terminal.resize(cols: SwiftTermBenchmarks.columns, rows: SwiftTermBenchmarks.rows)
+    terminal.resize(cols: workload.columns, rows: workload.rows)
     terminal.feed(byteArray: SwiftTermBenchmarks.reset)
     if !workload.setup.isEmpty {
         terminal.feed(byteArray: workload.setup)
@@ -185,6 +186,17 @@ let benchmarks: @Sendable () -> Void = {
 
     if ProcessInfo.processInfo.environment["SWIFTTERM_HARDENING_BENCHMARKS"] == "1" {
         for workload in SwiftTermBenchmarks.hardeningWorkloads {
+            Benchmark(
+                workload.name,
+                configuration: .init(metrics: [.wallClock], maxDuration: .seconds(10))
+            ) { benchmark in
+                feed(benchmark, workload: workload)
+            }
+        }
+    }
+
+    if ProcessInfo.processInfo.environment["SWIFTTERM_GHOSTTY_STREAM_BENCHMARKS"] == "1" {
+        for workload in SwiftTermBenchmarks.ghosttyStreamWorkloads {
             Benchmark(
                 workload.name,
                 configuration: .init(metrics: [.wallClock], maxDuration: .seconds(10))

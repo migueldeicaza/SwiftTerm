@@ -448,11 +448,16 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
         .allow(rememberPassword: false)
     }
 
-    public func requestOpenLink (source: TerminalView, link: String, params: [String:String])
+    public func requestOpenLink (source: TerminalView, request: TerminalLinkRequest)
     {
-        if let url = URL(string: link) {
-            UIApplication.shared.open (url)
+        // The link is untrusted terminal output. This sample opens only web links.
+        guard let url = URL(string: request.link),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host?.isEmpty == false else {
+            return
         }
+        UIApplication.shared.open (url)
     }
     
     public func rangeChanged(source: SwiftTerm.TerminalView, startY: Int, endY: Int) {

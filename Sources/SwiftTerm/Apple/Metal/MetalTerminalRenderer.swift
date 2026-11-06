@@ -1237,10 +1237,13 @@ final class MetalTerminalRenderer {
             throw MetalError.commandQueueUnavailable
         }
         self.commandQueue = commandQueue
+        // Color glyphs (emoji) are rare on a terminal screen, so the color
+        // atlas starts at the smallest size and grows when they come.
         guard let grayscaleAtlas = GlyphAtlas(device: device,
                                               maxSize: GlyphAtlas.recommendedMaxSize(device: device, format: .grayscale),
                                               format: .grayscale),
               let colorAtlas = GlyphAtlas(device: device,
+                                          size: 256,
                                           maxSize: GlyphAtlas.recommendedMaxSize(device: device, format: .bgra),
                                           format: .bgra) else {
             throw MetalError.atlasUnavailable
@@ -4030,7 +4033,8 @@ final class MetalTerminalRenderer {
         }
 
         let caretTextColor = renderData.textColor
-        if !snapshot.style.textBlinkVisible && renderData.cellAttribute.style.contains(.blink) {
+        if renderData.cellAttribute.style.contains(.invisible)
+            || (!snapshot.style.textBlinkVisible && renderData.cellAttribute.style.contains(.blink)) {
             return (colorVertices, [], [])
         }
         if PowerlineRenderer.shouldRender(codePoint: UInt32(renderData.code),
@@ -4278,10 +4282,10 @@ final class MetalTerminalRenderer {
         guard let texture = device.makeTexture(descriptor: descriptor) else {
             return nil
         }
-        // Kitty RGBA rows start at the top of the image. The image textures
-        // loaded through MTKTextureLoader use a bottom-left origin, which is
-        // also what the terminal image quads expect. Reverse the Kitty rows so
-        // both texture paths have the same origin.
+        // The terminal image quads expect bottom-up rows. Kitty RGBA rows
+        // start at the top of the image, so reverse them here. Image stripes
+        // get there through textureOptions: a bottom-left load on macOS, a
+        // top-left load of the already flipped stripe on iOS and visionOS.
         let premultiplied = Self.kittyPremultipliedRGBA(
             bytes, width: width, height: height, flipVertically: true)
         let region = MTLRegionMake2D(0, 0, width, height)
@@ -4344,9 +4348,15 @@ final class MetalTerminalRenderer {
     }
 
     private func textureOptions() -> [MTKTextureLoader.Option: Any] {
+        #if os(iOS) || os(visionOS)
+        // drawImageInStripe already draws iOS stripes upside down for the Core Graphics renderer.
+        let origin = MTKTextureLoader.Origin.topLeft
+        #else
+        let origin = MTKTextureLoader.Origin.bottomLeft
+        #endif
         return [
             .SRGB: false,
-            .origin: MTKTextureLoader.Origin.bottomLeft
+            .origin: origin
         ]
     }
 

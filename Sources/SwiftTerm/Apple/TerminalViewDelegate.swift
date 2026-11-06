@@ -81,20 +81,46 @@ public protocol TerminalViewDelegate: AnyObject {
     /**
      * Invoked when the user activates a link (click on macOS, tap on iOS/visionOS).
      *
-     * Explicit OSC 8 links can provide key/value metadata in `params`. Implicit URL
-     * detection uses an empty `params` dictionary.
+     * `request.link` is the text from the terminal output, unchanged, and it is
+     * untrusted. `request.isExplicit` tells an OSC 8 hyperlink from a detected link.
+     *
+     * On macOS, `request.openDefault(_:)` checks the link and opens it through
+     * `NSWorkspace.shared.open`. It blocks unsafe local files and asks for
+     * confirmation before custom URL schemes. OSC 8 targets must have a scheme.
+     * You can call it later, for example after an async step, and with a rewrite
+     * of the link, for example a relative path that you resolved.
+     * A later call uses the shell's current directory at that time. Resolve a
+     * relative path first if it must refer to the file at click time. If your
+     * app opens the link itself, it must check the untrusted target.
+     *
+     * The default implementation calls ``requestOpenLink(source:link:params:)``.
+     * On macOS, it checks the link first and gives that method the approved URL.
+     * On iOS/visionOS, it gives that method the original link.
+     * On iOS/visionOS, implement this method to handle link taps. Without an
+     * implementation, a tap on a link does nothing.
+     * - Parameter source: the terminalview that called this method
+     * - Parameter request: the link, its OSC 8 parameters, and how it was activated
+     */
+    func requestOpenLink (source: TerminalView, request: TerminalLinkRequest)
+
+    /**
+     * Invoked when the user activates a link (click on macOS, tap on iOS/visionOS).
+     *
+     * SwiftTerm calls this method only from the default implementation of
+     * ``requestOpenLink(source:request:)``.
      *
      * On macOS, the view checks terminal links before this call. It blocks unsafe
      * local files and asks for confirmation before custom URL schemes. The link
      * is an absolute URL; local paths are canonicalized. The default handler opens
      * the checked URL through `NSWorkspace.shared.open`.
-     * On iOS/visionOS, implement this method to decide how to handle navigation.
+     * On iOS/visionOS, `link` is the text from the terminal output, unchanged.
      * - Parameter source: the terminalview that called this method
      * - Parameter link: the string that was encoded as a link by the client application, typically a url,
      * but could be anything, and could be used to communicate by the embedded application and the host
      * - Parameter params: the specification allows for key/value pairs to be provided, this contains the
      * key and value pairs that were provided
      */
+    @available(*, deprecated, message: "Implement requestOpenLink(source:request:)")
     func requestOpenLink (source: TerminalView, link: String, params: [String:String])
     
     /**

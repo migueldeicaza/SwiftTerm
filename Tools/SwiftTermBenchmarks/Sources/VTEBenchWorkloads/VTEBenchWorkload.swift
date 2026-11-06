@@ -5,6 +5,9 @@ public struct VTEBenchWorkload: Sendable {
     public let name: String
     public let setup: [UInt8]
     public let payload: [UInt8]
+    /// Terminal dimensions for this workload.
+    public let columns: Int
+    public let rows: Int
     /// The OSC size limit for this case. `nil` uses the terminal default.
     public let maximumOscBytes: Int?
     /// Split a repeated sample into input chunks of this size.
@@ -21,11 +24,14 @@ public struct VTEBenchWorkload: Sendable {
         name: String,
         setup: [UInt8] = [],
         payload: [UInt8],
+        columns: Int = 80,
+        rows: Int = 25,
         maximumOscBytes: Int? = nil,
         inputChunkSize: Int? = nil,
         lastHyperlink: String? = nil
     ) {
         precondition(!payload.isEmpty, "A benchmark payload must not be empty")
+        precondition(columns > 0 && rows > 0, "Terminal dimensions must be positive")
         precondition(maximumOscBytes == nil || maximumOscBytes! >= 0,
                      "The OSC size limit must not be negative")
         precondition(inputChunkSize == nil || inputChunkSize! > 0,
@@ -33,6 +39,8 @@ public struct VTEBenchWorkload: Sendable {
         self.name = name
         self.setup = setup
         self.payload = payload
+        self.columns = columns
+        self.rows = rows
         self.maximumOscBytes = maximumOscBytes
         self.inputChunkSize = inputChunkSize
         self.lastHyperlink = lastHyperlink
@@ -60,6 +68,13 @@ public struct VTEBenchWorkload: Sendable {
         return stride(from: 0, to: sample.count, by: inputChunkSize).map { start in
             Array(sample[start..<min(start + inputChunkSize, sample.count)])
         }
+    }
+
+    func sized(columns: Int, rows: Int) -> VTEBenchWorkload {
+        VTEBenchWorkload(
+            name: name, setup: setup, payload: payload, columns: columns, rows: rows,
+            maximumOscBytes: maximumOscBytes, inputChunkSize: inputChunkSize,
+            lastHyperlink: lastHyperlink)
     }
 }
 
@@ -124,7 +139,7 @@ public enum VTEBenchWorkloads {
                 name: "unicode",
                 setup: alternateScreen,
                 payload: unicodeSymbols())
-        ]
+        ].map { $0.sized(columns: columns, rows: rows) }
     }
 
     /// Creates focused parser workloads for hardening changes.
@@ -180,7 +195,7 @@ public enum VTEBenchWorkloads {
                 name: "hardening_block_color_cells",
                 setup: alternateScreen,
                 payload: blockColorCells(columns: columns, rows: rows))
-        ]
+        ].map { $0.sized(columns: columns, rows: rows) }
     }
 
     /// Creates OSC 8 hyperlink workloads.
@@ -238,7 +253,7 @@ public enum VTEBenchWorkloads {
                 name: "osc8_dense",
                 payload: denseLinks(count: denseLinkCount),
                 lastHyperlink: "u\(denseLinkCount - 1)")
-        ]
+        ].map { $0.sized(columns: columns, rows: rows) }
     }
 
     private static func hyperlink(_ uri: String, _ text: String) -> String {

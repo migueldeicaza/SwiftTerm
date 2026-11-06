@@ -1560,6 +1560,50 @@ open class Terminal {
         }
     }
     
+    /// Collects the payload of one DCS request, up to a fixed size.
+    ///
+    /// When the payload is more than the limit, the accumulator discards all
+    /// of it. It never truncates the payload, so a handler cannot answer a
+    /// request from a prefix of it.
+    struct BoundedDcsPayload {
+        /// Largest payload that the accumulator keeps.
+        let limit: Int
+
+        /// The collected bytes, or `nil` when the payload is more than ``limit``.
+        private(set) var bytes: [UInt8]? = []
+
+        init (limit: Int)
+        {
+            self.limit = limit
+        }
+
+        /// Starts a new, empty payload.
+        mutating func reset ()
+        {
+            bytes = []
+        }
+
+        mutating func append (_ data: ArraySlice<UInt8>)
+        {
+            guard let count = bytes?.count else {
+                return
+            }
+            if count + data.count > limit {
+                bytes = nil
+                return
+            }
+            bytes?.append (contentsOf: data)
+        }
+
+        /// Returns the payload, or `nil` when it was discarded, and starts a
+        /// new, empty payload.
+        mutating func take () -> [UInt8]?
+        {
+            defer { bytes = [] }
+            return bytes
+        }
+    }
+
     // DCS + q Pt ST
     // XTGETTCAP - request terminfo capabilities.
     //   The payload is a list of semicolon-separated, hex-encoded capability
@@ -1573,14 +1617,12 @@ open class Terminal {
         /// The hex encoding of `TN`, the key that names the terminfo entry.
         static let terminalNameKey = "544E"
 
-        /// Longest `TERM` value that gets a `TN` reply. This limit matches Ghostty.
+        /// Longest `TERM` value that receives a `TN` reply. This limit matches Ghostty.
         static let maximumTerminalNameBytes = 128
 
-        private var data: [UInt8] = []
-
-        /// Set when the payload passes ``maximumRequestBytes``. The whole
-        /// request is then dropped rather than answered from a prefix.
-        private var isDiscarded = false
+        /// The request payload. A payload that is more than
+        /// ``maximumRequestBytes`` is dropped and receives no reply.
+        private(set) var payload = BoundedDcsPayload (limit: maximumRequestBytes)
 
         // Nested lifetime: this handler is created per XTGETTCAP sequence and
         // held in the parser's `activeDcsHandler` for the duration of that one
@@ -1598,30 +1640,17 @@ open class Terminal {
 
         func hook (collect: cstring, parameters: CsiParameters, flag: UInt8)
         {
-            data = []
-            isDiscarded = false
+            payload.reset ()
         }
 
         func put (data: ArraySlice<UInt8>)
         {
-            if isDiscarded {
-                return
-            }
-            if self.data.count + data.count > Self.maximumRequestBytes {
-                isDiscarded = true
-                self.data = []
-                return
-            }
-            self.data.append (contentsOf: data)
+            payload.append (data)
         }
 
         func unhook ()
         {
-            let payload = data
-            let wasDiscarded = isDiscarded
-            data = []
-            isDiscarded = false
-            if wasDiscarded {
+            guard let payload = payload.take () else {
                 return
             }
 
@@ -1706,7 +1735,22 @@ open class Terminal {
     //   Request Status String (DECRQSS), VT420 and up.
     // Response: DECRPSS (https://vt100.net/docs/vt510-rm/DECRPSS.html)
     class DECRQSS : DcsHandler {
-        var data: [UInt8]
+        /// The requests that receive a valid reply. Each one has a case in
+        /// the switch in ``unhook()``.
+        static let knownRequests = ["\"q", "\"p", "r", "m", "s", " q", "*x", "t", "*|", "$~", "$}"]
+
+        /// Largest payload kept for one request. This is the length of the
+        /// longest item in ``knownRequests``, and a test makes sure that the two
+        /// values agree.
+        ///
+        /// A payload that is more than this limit receives the invalid reply
+        /// `DCS 0 $ r ST`, as xterm sends for an unknown request. Ghostty
+        /// also keeps 2 bytes, but it sends no reply for a longer payload.
+        static let maximumRequestBytes = 2
+
+        /// The request payload.
+        private(set) var payload = BoundedDcsPayload (limit: maximumRequestBytes)
+
         // Nested lifetime: this handler is created per DECRQSS sequence and
         // held in the parser's `activeDcsHandler` for the duration of that one
         // sequence, well inside the terminal's life.
@@ -1719,25 +1763,28 @@ open class Terminal {
         public init (terminal: Terminal)
         {
             self.terminal = terminal
-            data = []
         }
 
         func hook (collect: cstring, parameters: CsiParameters,  flag: UInt8)
         {
-            data = []
+            payload.reset ()
         }
         
         func put (data : ArraySlice<UInt8>)
         {
-            for x in data {
-                self.data.append(x)
-            }
+            payload.append (data)
         }
         
         func unhook ()
         {
-            let newData = terminalStringASCII(data[...])
-            var ok = 1 // 0 means the request is valid according to docs, but tests expect 0?
+            guard let payload = payload.take () else {
+                // Do not report the payload, see the comment in the default case below.
+                terminal.log ("DECRQSS request is more than \(Self.maximumRequestBytes) bytes")
+                terminal.sendResponse (terminal.cc.DCS, "0$r", terminal.cc.ST)
+                return
+            }
+            let newData = terminalStringASCII(payload[...])
+            var ok = 1 // As in xterm, 1 means a valid request and 0 means an invalid request. The VT510 manual uses the opposite values.
             var result: String
             switch (newData) {
             case "\"q": // DECSCA - Select Character Protection Attribute
@@ -1764,6 +1811,7 @@ open class Terminal {
             case "$}": // DECSASD - output always goes to the main display
                 result = "0$}"
             default:
+                assert (!Self.knownRequests.contains (newData ?? ""), "DECRQSS.knownRequests has a request with no case")
                 ok = 0 // this means the request is not valid, report that to the host.
                 // invalid: DCS 0 $ r Pt ST (xterm)
                 terminal.log ("Unknown DCS + \(newData ?? "")")
@@ -1963,12 +2011,7 @@ open class Terminal {
             }
         }
 
-        handlePrintSlow(
-            byteCount: pending.count,
-            previousScalar: previousScalar
-        ) { index in
-            pending[pending.startIndex + index]
-        }
+        handlePrintSlow(pending.span, from: 0, previousScalar: previousScalar)
     }
 
     /// Processes a borrowed printable run without making an owned batch copy.
@@ -2029,12 +2072,7 @@ open class Terminal {
            insertPlainScalar(data, from: start, buffer: buffer, previousScalar: previousScalar) {
             return
         }
-        handlePrintSlow(
-            byteCount: data.count - start,
-            previousScalar: previousScalar
-        ) { index in
-            data[start + index]
-        }
+        handlePrintSlow(data, from: start, previousScalar: previousScalar)
     }
 
     /// Inserts a print run that is one plain scalar — well-formed UTF-8, one
@@ -2085,14 +2123,16 @@ open class Terminal {
         return true
     }
 
-    /// Processes the non-bulk part of a print run. The byte accessor is
-    /// nonescaping, so it can read either an owned slice or a borrowed span.
+    /// Processes the non-bulk part of a print run: the bytes of `data` from
+    /// `start`. It reads the span directly; a byte-accessor closure here cost
+    /// an indirect call for each byte, about a quarter of UTF-8 print time.
     private func handlePrintSlow(
-        byteCount: Int,
-        previousScalar initialPreviousScalar: UInt32?,
-        byteAt: (Int) -> UInt8
+        _ data: Span<UInt8>,
+        from start: Int,
+        previousScalar initialPreviousScalar: UInt32?
     )
     {
+        let byteCount = data.count - start
         let buffer = self.buffer
         let putback = readingBuffer.putbackBuffer
         let putbackCount = putback.count
@@ -2121,7 +2161,7 @@ open class Terminal {
             if inputIndex < putbackCount {
                 result = putback[inputIndex]
             } else {
-                result = byteAt(inputIndex - putbackCount)
+                result = data[start + inputIndex - putbackCount]
             }
             inputIndex += 1
             return result
@@ -2132,7 +2172,7 @@ open class Terminal {
             if index < putbackCount {
                 return putback[index]
             }
-            return byteAt(index - putbackCount)
+            return data[start + index - putbackCount]
         }
 
         /// Returns the last scalar of the cell that a combining scalar would
@@ -2180,26 +2220,39 @@ open class Terminal {
                 value = UInt32(firstByte)
             } else {
                 guard size > 1, index + size <= totalCount else { return nil }
-                value = UInt32(firstByte) & (0x7F >> UInt32(size))
-                var wellFormed = true
-                for offset in 1..<size {
-                    let nextByte = byte(at: index + offset)
-                    if nextByte & 0xC0 != 0x80 {
-                        wellFormed = false
+                // Straight-line decode: a `for` loop over `1..<size` here
+                // compiles to generic iterator calls.
+                let second = byte(at: index + 1)
+                // Each continuation byte is 10xxxxxx: bit 7 set in the AND of
+                // all of them, bit 6 clear in the OR.
+                var andBits = second
+                var orBits = second
+                value = (UInt32(firstByte) & (0x7F >> UInt32(size))) << 6
+                    | (UInt32(second) & 0x3F)
+                if size > 2 {
+                    let third = byte(at: index + 2)
+                    andBits &= third
+                    orBits |= third
+                    value = (value << 6) | (UInt32(third) & 0x3F)
+                    if size > 3 {
+                        let fourth = byte(at: index + 3)
+                        andBits &= fourth
+                        orBits |= fourth
+                        value = (value << 6) | (UInt32(fourth) & 0x3F)
                     }
-                    value = (value << 6) | (UInt32(nextByte) & 0x3F)
                 }
                 let minimum: UInt32 = size == 2 ? 0x80 :
                     (size == 3 ? 0x800 : 0x10000)
-                guard wellFormed, value >= minimum else { return nil }
+                guard andBits & 0x80 != 0, orBits & 0x40 == 0,
+                      value >= minimum, value <= 0x10FFFF,
+                      value & 0xFFFFF800 != 0xD800 else { return nil }
             }
-            guard let scalar = Unicode.Scalar(value) else { return nil }
-            let width = UnicodeUtil.columnWidth(rune: scalar)
+            let width = value >= 0x20 && value < 0x7F ? 1 : UnicodeWidthData.columnWidth(value)
             // The emoji-modifier exclusion is also the precondition for the
             // `graphemeJoinNonEmojiModifier` calls in `insertScalarBatch`.
             guard width == 1 || width == 2,
                   value != 0x200D,
-                  !UnicodeUtil.isRegionalIndicator(scalar),
+                  !UnicodeUtil.isRegionalIndicator(value),
                   !UnicodeUtil.isVariationSelector(value),
                   !UnicodeUtil.isEmojiModifier(value) else {
                 return nil
@@ -2253,8 +2306,8 @@ open class Terminal {
             return true
         }
 
-        /// Inserts a prefix of width-homogeneous subruns. Difficult scalars
-        /// stay on the existing path below.
+        /// Inserts a prefix of batchable scalars, narrow and wide mixed, with
+        /// one call. Difficult scalars stay on the existing path below.
         func insertScalarBatch() -> Bool {
             guard batchingEnabled, hasNext(), buffer.allowsBulkInsert else { return false }
             guard let first = batchableScalar(at: inputIndex) else { return false }
@@ -2292,6 +2345,7 @@ open class Terminal {
                         widths.baseAddress!.advanced(by: 1).initialize(to: second.width)
                         var scan = batchStart + first.size + second.size
                         var count = 2
+                        var columns = Int(first.width) + Int(second.width)
                         var previousValue = second.value
                         var previousProperties = second.properties
                         while scan < totalCount && count < capacity {
@@ -2314,6 +2368,7 @@ open class Terminal {
                             scalars.baseAddress!.advanced(by: count).initialize(to: next.value)
                             sizes.baseAddress!.advanced(by: count).initialize(to: UInt8(next.size))
                             widths.baseAddress!.advanced(by: count).initialize(to: next.width)
+                            columns += Int(next.width)
                             count += 1
                             scan += next.size
                         }
@@ -2322,35 +2377,25 @@ open class Terminal {
                             sizes.baseAddress!.deinitialize(count: count)
                             widths.baseAddress!.deinitialize(count: count)
                         }
-                        var inserted = 0
-                        var consumedBytes = 0
-                        while inserted < count {
-                            let runWidth = widths[inserted]
-                            var runEnd = inserted + 1
-                            while runEnd < count, widths[runEnd] == runWidth {
-                                runEnd += 1
+                        let inserted = buffer.insertScalarRun(
+                            UnsafeBufferPointer(start: scalars.baseAddress!, count: count),
+                            widths: UnsafeBufferPointer(start: widths.baseAddress!, count: count),
+                            columns: columns, styleID: curStyleID, payloadCode: hyperlinkPayloadCode)
+                        if inserted > 0 {
+                            var consumedBytes = 0
+                            var index = 0
+                            while index < inserted {
+                                consumedBytes += Int(sizes[index])
+                                index += 1
                             }
-                            let source = UnsafeBufferPointer(
-                                start: scalars.baseAddress!.advanced(by: inserted),
-                                count: runEnd - inserted)
-                            let consumed = buffer.insertScalarRun(
-                                source, width: Int(runWidth), styleID: curStyleID,
-                                payloadCode: hyperlinkPayloadCode)
-                            if consumed > 0 {
-                                for index in inserted ..< (inserted + consumed) {
-                                    consumedBytes += Int(sizes[index])
-                                }
-                                inputIndex = batchStart + consumedBytes
-                                cursorStartsNewGrapheme = false
-                                previousScalar = scalars[inserted + consumed - 1]
-                            }
-                            inserted += consumed
-                            if inserted < runEnd {
-                                // The scalar path must process the suffix. This
-                                // preserves no-wrap repeated-overwrite behavior.
-                                batchingEnabled = false
-                                break
-                            }
+                            inputIndex = batchStart + consumedBytes
+                            cursorStartsNewGrapheme = false
+                            previousScalar = scalars[inserted - 1]
+                        }
+                        if inserted < count {
+                            // The scalar path must process the suffix. This
+                            // preserves no-wrap repeated-overwrite behavior.
+                            batchingEnabled = false
                         }
                         return inserted > 0
                     }
@@ -4032,6 +4077,13 @@ open class Terminal {
     }
 
     private func parseProgressReport(_ data: ArraySlice<UInt8>) -> ProgressReport? {
+        // Most OSC 9 messages are notifications. Reject them before making a
+        // String and splitting it into fields.
+        guard data.count >= 2,
+              data[data.startIndex] == UInt8(ascii: "4"),
+              data[data.startIndex + 1] == UInt8(ascii: ";") else {
+            return nil
+        }
         guard let text = terminalStringASCII(data) else {
             return nil
         }
@@ -4787,7 +4839,7 @@ open class Terminal {
         updateRange (j - 1)
         while (j != 0) {
             j -= 1
-            resetBufferLine (y: j, clearImages: true, bidiState: currentBidiState)
+            resetBufferLine (y: j, bidiState: currentBidiState)
         }
         updateRange (0)
     }
@@ -4799,12 +4851,10 @@ open class Terminal {
     // - Parameter start: first cell index to be erased
     // - Parameter end:   end - 1 is last erased cell
     //
-    func eraseInBufferLine (y: Int, start: Int, end: Int, clearWrap: Bool = false, clearRenderMode: Bool = false, clearImages: Bool = false)
+    func eraseInBufferLine (y: Int, start: Int, end: Int, clearWrap: Bool = false, clearRenderMode: Bool = false)
     {
         let line = buffer.lines [buffer.yBase + y]
-        if clearImages {
-            buffer.clearImagesFromLine(at: buffer.yBase + y)
-        }
+        buffer.clearTextOverwrittenImagesFromLine(line)
         line.repairWideSeam(at: start)
         line.repairWideSeam(at: end)
         line.replacePackedCells(start: start, end: end,
@@ -7518,6 +7568,7 @@ open class Terminal {
         }
 
         let line = buffer.lines[buffer.y + buffer.yBase]
+        buffer.clearTextOverwrittenImagesFromLine(line)
         line.repairWideSeam(at: buffer.x)
         line.repairWideSeam(at: buffer.x + p)
         line.replacePackedCells(
@@ -7825,10 +7876,9 @@ open class Terminal {
     // The cell gets replaced with the eraseChar of the terminal and the isWrapped property is set to false.
     // @param y row index
     //
-    func resetBufferLine (y: Int, clearImages: Bool = false,
-                          bidiState: BidiPresentationState? = nil)
+    func resetBufferLine (y: Int, bidiState: BidiPresentationState? = nil)
     {
-        eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true, clearRenderMode: true, clearImages: clearImages)
+        eraseInBufferLine (y: y, start: 0, end: cols, clearWrap: true, clearRenderMode: true)
         if let bidiState {
             buffer.lines[buffer.yBase + y].bidiState = bidiState
         }
