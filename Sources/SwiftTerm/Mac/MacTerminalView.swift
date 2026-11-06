@@ -5215,6 +5215,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// `LocalProcessTerminalView` sets it to true. A local shell can still
     /// start a remote session, for example with ssh; SwiftTerm cannot see that.
     public var resolvesLinksAgainstShellDirectory = false
+
+    /// Resolves scheme-less explicit and detected links using the host's session context.
+    /// Called when a link goes through the view's default opening policy, except when
+    /// OSC 7 names a remote host. Only file URLs are accepted, and they still pass
+    /// through the normal untrusted-link checks. A nil or non-file result leaves
+    /// the target unresolved, without falling back to the app or shell directory.
+    public var localLinkResolver: ((String) -> URL?)?
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}
