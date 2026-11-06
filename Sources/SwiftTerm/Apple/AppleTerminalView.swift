@@ -2648,10 +2648,9 @@ extension TerminalView {
         }
     }
     
-    /// Sets the color for the cursor block, and the text when it is under that cursor in block mode
-    public func setCursorColor(source: Terminal, color: Color?, textColor: Color?) {
+    /// Implements TerminalDelegate's cursor color callback (OSC 12 / OSC 112).
+    public nonisolated func setCursorColor(source: Terminal, color: Color?) {
         let nativeColor = color.map { TTColor.make(color: $0) }
-        let nativeTextColor = textColor.map { TTColor.make(color: $0) }
         onMain { [weak self] in
             guard let self else { return }
             if let nativeColor {
@@ -2660,13 +2659,6 @@ extension TerminalView {
             } else if let caretView = self.caretView {
                 self.cursorColorIsDefault = true
                 caretView.caretColor = caretView.defaultCaretColor
-            }
-            if let nativeTextColor {
-                self.cursorTextColorIsDefault = false
-                self.caretTextColor = nativeTextColor
-            } else if let caretView = self.caretView {
-                self.cursorTextColorIsDefault = true
-                caretView.caretTextColor = caretView.defaultCaretTextColor
             }
 #if canImport(MetalKit) && os(macOS)
             self.frameDriver.markDirty()
