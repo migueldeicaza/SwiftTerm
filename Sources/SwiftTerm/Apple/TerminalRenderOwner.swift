@@ -150,6 +150,8 @@ final class TerminalRenderOwner: Sendable {
     private let session = Locked<TerminalRenderSession?>(nil)
     private let publishedVisibility = Locked(TerminalVisibility.potentiallyVisible)
     private let renderState = Locked(TerminalRenderState())
+    /// The view's mirrors, guarded by the terminal lock.
+    let mirrors = TerminalMirrors()
     // Geometry calls outside feed can leave an inactive update pending. If no
     // feed follows, the stale event is harmless because Terminal checks both
     // the active flag and generation before it clears the mode.
@@ -203,6 +205,11 @@ final class TerminalRenderOwner: Sendable {
         session.withLock { $0 }
     }
 
+    /// The terminal this owner feeds, once a view has attached one.
+    func attachedTerminal() -> Terminal? {
+        currentSession()?.terminal
+    }
+
     private func takePendingSynchronizedOutputWatchdogUpdate()
         -> PendingSynchronizedOutputWatchdogUpdate?
     {
@@ -239,24 +246,41 @@ final class TerminalRenderOwner: Sendable {
     /// Feeds one parser batch while this owner retains all mutable terminal
     /// services. The caller can wake the frame driver before and after this
     /// transaction without retaining a view.
+    ///
+    /// Each feed tells the view's mirrors about the batch right after it
+    /// parses, still under the lock. With no mirror that costs one check.
     func feed (bytes: ArraySlice<UInt8>) -> Bool? {
-        feedTransaction { terminal in
+        let mirrors = self.mirrors
+        return feedTransaction { terminal in
             terminal.feed(buffer: bytes)
+            if mirrors.isActive {
+                mirrors.didParse(terminal, bytes)
+            }
         }
     }
 
     /// Feeds one borrowed parser batch. The parse finishes before this method
     /// returns, so the caller can release the source storage after the call.
+    /// A mirror gets a copy, made only when one runs.
     func feed(borrowedBytes: Span<UInt8>) -> Bool? {
-        feedTransaction { terminal in
+        let mirrors = self.mirrors
+        return feedTransaction { terminal in
             terminal.feedBorrowed(borrowedBytes)
+            if mirrors.isActive {
+                let copy = borrowedBytes.withUnsafeBufferPointer { Array($0) }
+                mirrors.didParse(terminal, copy[...])
+            }
         }
     }
 
     /// Text variant of ``feed(bytes:)``.
     func feed (text: String) -> Bool? {
-        feedTransaction { terminal in
+        let mirrors = self.mirrors
+        return feedTransaction { terminal in
             terminal.feed(text: text)
+            if mirrors.isActive {
+                mirrors.didParse(terminal, Array(text.utf8)[...])
+            }
         }
     }
 
