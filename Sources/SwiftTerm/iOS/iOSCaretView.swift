@@ -97,14 +97,15 @@ class CaretView: UIView {
         renderTextColor = data.textColor
         renderCustomBlockGlyphs = data.customBlockGlyphs
         renderNormalFont = data.normalFont
-        let hideBlinkingText = !data.textBlinkVisible && data.cellAttribute.style.contains(.blink)
-        if hideBlinkingText {
+        let hideText = data.cellAttribute.style.contains(.invisible)
+            || (!data.textBlinkVisible && data.cellAttribute.style.contains(.blink))
+        if hideText {
             powerlineCodePoint = nil
         } else {
             powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(data.code)) == nil
                 ? nil : UInt32(data.code)
         }
-        let character = hideBlinkingText ? " " : data.character
+        let character = hideText ? " " : data.character
         // A host glyph fallback carries an explicit font; appending a
         // variation selector would only fight it.
         let usesGlyphFallback = data.attributes[SwiftTermGlyphPolicyKey] != nil
