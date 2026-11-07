@@ -177,3 +177,31 @@ public struct SemanticPromptPointerSnapshot: Equatable, Sendable {
         self.pressWasSemanticEligible = pressWasSemanticEligible
     }
 }
+
+/// The role of a buffer row in OSC 133 semantic-prompt output.
+public enum SemanticRowRole: Equatable, Sendable {
+    /// The row is neither a prompt nor command output, including every row
+    /// before the first prompt.
+    case none
+    /// The row opens a primary prompt.
+    case prompt
+    /// The row has cells marked as command output.
+    case output
+}
+
+/// The semantic role of every row in the normal buffer, with the viewport
+/// geometry needed to place them on screen.
+public struct SemanticRowMap: Equatable, Sendable {
+    /// One role per buffer row, scrollback included.
+    public let roles: [SemanticRowRole]
+    /// The buffer row at the top of the viewport.
+    public let viewportTop: Int
+    /// The number of rows the viewport shows.
+    public let visibleRows: Int
+
+    public init(roles: [SemanticRowRole], viewportTop: Int, visibleRows: Int) {
+        self.roles = roles
+        self.viewportTop = viewportTop
+        self.visibleRows = visibleRows
+    }
+}

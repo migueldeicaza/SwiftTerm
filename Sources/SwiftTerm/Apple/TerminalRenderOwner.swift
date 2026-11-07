@@ -461,6 +461,44 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func hasSemanticPrompts() -> Bool {
+        guard let terminal = currentSession()?.terminal else { return false }
+        return terminal.terminalLock.withLock {
+            guard !terminal.isCurrentBufferAlternate else { return false }
+            let buffer = terminal.buffer
+            return (0..<buffer.lines.count).contains { buffer.semanticRowOpensPrompt($0) }
+        }
+    }
+
+    func semanticRowMap() -> SemanticRowMap? {
+        guard let terminal = currentSession()?.terminal else { return nil }
+        return terminal.terminalLock.withLock {
+            guard !terminal.isCurrentBufferAlternate else { return nil }
+            let buffer = terminal.buffer
+            var seenPrompt = false
+            var roles: [SemanticRowRole] = []
+            roles.reserveCapacity(buffer.lines.count)
+            for row in 0..<buffer.lines.count {
+                if buffer.semanticRowOpensPrompt(row) {
+                    seenPrompt = true
+                    roles.append(.prompt)
+                    continue
+                }
+                guard seenPrompt else {
+                    roles.append(.none)
+                    continue
+                }
+                let line = buffer.lines[row]
+                let hasOutput = (0..<line.count).contains {
+                    line.packedView(at: $0).semanticContent == .output
+                }
+                roles.append(hasOutput ? .output : .none)
+            }
+            return SemanticRowMap(
+                roles: roles, viewportTop: buffer.yDisp, visibleRows: terminal.rows)
+        }
+    }
+
     func ansi256PaletteStrategy() -> Ansi256PaletteStrategy {
         guard let terminal = currentSession()?.terminal else { return .base16Lab }
         return terminal.terminalLock.withLock {
