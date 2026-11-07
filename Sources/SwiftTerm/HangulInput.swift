@@ -122,25 +122,10 @@ enum HangulInput {
         return Character(scalar)
     }
 
-    static func composeSyllable(base: Character, finalIndex: Int) -> Character? {
-        guard finalIndex > 0 && finalIndex < finalCount else { return nil }
-        guard let components = syllableComponents(of: base) else { return nil }
-        guard components.finalIndex == 0 else { return nil }
-        return composeSyllable(
-            leadingIndex: components.leadingIndex,
-            vowelIndex: components.vowelIndex,
-            finalIndex: finalIndex)
-    }
-
-    // Transitional overload: keep the existing input path working while callers migrate.
-    static func composeSyllable(base: Character, followingJamo jamo: Character) -> Character? {
-        composeContinuation(base: base, followingJamo: jamo)
-    }
-
     /// Extends the existing iOS Korean-input fallback for an unmarked trailing
     /// syllable followed by one compatibility jamo. UIKit normally owns IME
     /// composition; this must not be applied to marked text or pasted text.
-    static func composeContinuation(base: Character, followingJamo jamo: Character) -> Character? {
+    static func composeSyllable(base: Character, followingJamo jamo: Character) -> Character? {
         guard let components = syllableComponents(of: base) else { return nil }
         let vowelIndex: Int
         let finalIndex: Int
