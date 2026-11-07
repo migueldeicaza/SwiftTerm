@@ -2,6 +2,50 @@ import XCTest
 @testable import SwiftTerm
 
 final class HangulInputTests: XCTestCase {
+    func testComposesCompoundVowels() {
+        let cases: [(Character, Character, Character)] = [
+            ("고", "ㅏ", "과"), ("고", "ㅐ", "괘"), ("도", "ㅣ", "되"),
+            ("구", "ㅓ", "궈"), ("구", "ㅔ", "궤"), ("구", "ㅣ", "귀"), ("그", "ㅣ", "긔")
+        ]
+        for (base, jamo, expected) in cases {
+            XCTAssertEqual(HangulInput.composeContinuation(base: base, followingJamo: jamo), expected)
+        }
+    }
+
+    func testComposesAllCompoundFinals() {
+        let cases: [(Character, Character, Character)] = [
+            ("넉", "ㅅ", "넋"), ("안", "ㅈ", "앉"), ("안", "ㅎ", "않"),
+            ("달", "ㄱ", "닭"), ("올", "ㅁ", "옮"), ("짤", "ㅂ", "짧"),
+            ("골", "ㅅ", "곬"), ("할", "ㅌ", "핥"), ("을", "ㅍ", "읊"),
+            ("실", "ㅎ", "싫"), ("갑", "ㅅ", "값")
+        ]
+        for (base, jamo, expected) in cases {
+            XCTAssertEqual(HangulInput.composeContinuation(base: base, followingJamo: jamo), expected)
+        }
+    }
+
+    func testContinuationPreservesEverySimpleFinal() {
+        for (jamo, finalIndex) in HangulInput.finalIndexByJamo {
+            XCTAssertEqual(HangulInput.composeContinuation(base: "하", followingJamo: jamo),
+                           HangulInput.composeSyllable(base: "하", finalIndex: finalIndex))
+        }
+    }
+
+    func testContinuationRejectsUnrelatedCharactersAndInvalidCombinations() {
+        let cases: [(Character, Character)] = [
+            ("A", "ㅣ"), ("ㄷ", "ㅣ"), ("도", "x"), ("도", "ㅓ"),
+            ("돈", "ㅣ"), ("안", "ㄱ"), ("않", "ㅎ"), ("되", "ㅣ"), ("값", "ㅅ")
+        ]
+        for (base, jamo) in cases {
+            XCTAssertNil(HangulInput.composeContinuation(base: base, followingJamo: jamo))
+        }
+    }
+
+    func testNewCompoundFinalCanResyllabify() {
+        let composed = HangulInput.composeContinuation(base: "안", followingJamo: "ㅎ")!
+        XCTAssertEqual(HangulInput.resyllabifyFinalConsonant(base: composed, followingVowel: "ㅏ"), "안하")
+    }
+
     func testComposesTrailingFinalConsonant() {
         XCTAssertEqual(
             HangulInput.composeSyllable(base: "하", finalIndex: HangulInput.finalIndexByJamo["ㅅ"]!),
