@@ -65,6 +65,12 @@ struct UntrustedTerminalLink: Equatable {
         self.string = string
     }
 
+    var canResolveAsLocalPath: Bool {
+        guard !string.isEmpty, !Self.containsUnsafeCharacters(string) else { return false }
+        guard let scheme = URL(string: string)?.scheme else { return true }
+        return isSourceLocation(scheme: scheme)
+    }
+
     var decision: Decision {
         guard !string.isEmpty else { return .deny(.malformedURL) }
         // Check the source first. URL conversion can encode unsafe characters.
@@ -77,9 +83,7 @@ struct UntrustedTerminalLink: Equatable {
             return .deny(.malformedURL)
         }
 
-        // Foundation parses "main.swift:12" as a URL with the scheme "main.swift".
-        if scheme.contains("."),
-           string.range(of: #"^[^:]+:[0-9]+(?::[0-9]+)?$"#, options: .regularExpression) != nil {
+        if isSourceLocation(scheme: scheme) {
             return .deny(.malformedURL)
         }
 
@@ -109,6 +113,10 @@ struct UntrustedTerminalLink: Equatable {
 
     /// Shows the effective target on one line.
     var displayString: String {
+        displayString(normalizeBarePaths: true)
+    }
+
+    func displayString(normalizeBarePaths: Bool) -> String {
         // URL(fileURLWithPath:) traps on an empty path.
         guard !string.isEmpty else { return "" }
         let normalized: String
@@ -117,8 +125,10 @@ struct UntrustedTerminalLink: Equatable {
             normalized = url.isFileURL
                 ? url.standardizedFileURL.resolvingSymlinksInPath().path
                 : string
-        } else {
+        } else if normalizeBarePaths {
             normalized = URL(fileURLWithPath: string).standardizedFileURL.path
+        } else {
+            normalized = string
         }
 
         // Escape after path conversion, which can decode unsafe characters.
@@ -136,6 +146,12 @@ struct UntrustedTerminalLink: Equatable {
 }
 
 private extension UntrustedTerminalLink {
+    // Foundation parses "main.swift:12" as a URL with the scheme "main.swift".
+    func isSourceLocation(scheme: String) -> Bool {
+        scheme.contains(".")
+            && string.range(of: #"^[^:]+:[0-9]+(?::[0-9]+)?$"#, options: .regularExpression) != nil
+    }
+
     func fileDecision(for url: URL) -> Decision {
         guard url.isFileURL, url.query == nil, url.fragment == nil else {
             return .deny(.malformedURL)
