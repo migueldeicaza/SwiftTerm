@@ -2487,7 +2487,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case .prefixReinserted:
             break
         case .none:
-            if tryResyllabifyKoreanFinalBeforeVowel(text) || tryComposeKoreanContinuation(text) {
+            if tryResyllabifyKoreanFinalBeforeVowel(text) || tryComposeKoreanSyllable(text) {
                 return
             }
         }
@@ -2951,15 +2951,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
     // Extend the unmarked Korean fallback to compound vowels and finals as
     // well as the first final: 도 + ㅣ -> 되, 안 + ㅎ -> 않, 우 + ㅇ -> 웅.
-    private func tryComposeKoreanContinuation(_ text: String) -> Bool {
+    private func tryComposeKoreanSyllable(_ text: String) -> Bool {
         guard isKoreanTextInput else { return false }
         guard _markedTextRange == nil else { return false }
         guard _selectedTextRange.isEmpty, _selectedTextRange.endPosition.offset == textInputStorage.textInputUTF16Count else { return false }
         guard text.count == 1, let jamo = text.first else { return false }
         guard let lastChar = textInputStorage.last else { return false }
-        guard let composed = HangulInput.composeContinuation(base: lastChar, followingJamo: jamo) else { return false }
+        guard let composed = HangulInput.composeSyllable(base: lastChar, followingJamo: jamo) else { return false }
 
-        uitiLog("koreanComposeContinuation base:\(lastChar) jamo:\(jamo) -> \(composed)")
+        uitiLog("koreanComposeSyllable base:\(lastChar) jamo:\(jamo) -> \(composed)")
 
         beginTextInputEdit()
         textInputStorage.removeLast()
