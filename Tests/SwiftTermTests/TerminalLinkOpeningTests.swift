@@ -471,21 +471,29 @@ struct TerminalLinkOpeningTests {
         await waitUntil { alerts == 1 }
     }
 
-    @Test(arguments: ["https://example.com", "tel:5551234"])
-    func urlsDoNotReachTheLocalResolver(link: String) async {
+    @Test(arguments: ["https://example.com", "tel:5551234", "custom:123", "vscode:123"], [true, false])
+    func urlsDoNotReachTheLocalResolver(link: String, isExplicit: Bool) async throws {
+        let (directory, file) = try makeTemporaryFile()
+        defer { try? FileManager.default.removeItem(at: directory) }
         let view = TerminalView(frame: .zero)
         let delegate = DefaultDelegate()
         view.terminalDelegate = delegate
         defer { withExtendedLifetime(delegate) {} }
+        view.resolvesLinksAgainstShellDirectory = true
+        view.feed(text: "\u{1b}]7;file://localhost\(directory.path)\u{07}")
         view.localLinkResolver = { _ in
             Issue.record("A URL must not be resolved as a local path")
-            return nil
+            return file
         }
+        var prompts = 0
         var opened: [URL] = []
-        view.activateLink(link, params: [:], isExplicit: true) { _, _, completion in
+        view.activateLink(link, params: [:], isExplicit: isExplicit) { alert, _, completion in
+            prompts += 1
+            #expect(alert.buttons.map(\.title) == ["Cancel", "Open Link"])
             completion(.alertSecondButtonReturn)
         } open: { opened.append($0) }
         await waitUntil { opened.count == 1 }
+        #expect(prompts == (link.hasPrefix("https:") ? 0 : 1))
         #expect(opened == [URL(string: link)!])
     }
 

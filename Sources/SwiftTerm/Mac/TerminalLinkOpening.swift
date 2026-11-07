@@ -173,12 +173,12 @@ extension TerminalView {
             pathBase = .processDirectory
         }
         let target: UntrustedTerminalLink
+        let original = UntrustedTerminalLink(link)
         if let localLinkResolver,
            pathBase != .remote,
-           !Self.hasURLScheme(link),
-           !UntrustedTerminalLink.containsUnsafeCharacters(link) {
+           original.canResolveAsLocalPath {
             let resolved = localLinkResolver(link).flatMap { $0.isFileURL ? $0.absoluteString : nil }
-            target = UntrustedTerminalLink(resolved ?? link)
+            target = resolved.map(UntrustedTerminalLink.init) ?? original
         } else {
             target = Self.defaultLinkTarget(link, isExplicit: isExplicit, pathBase: pathBase)
         }
