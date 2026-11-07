@@ -80,6 +80,18 @@ struct MacDefaultLinkTests {
         #expect(view.urlPreview == nil)
     }
 
+    @Test @MainActor func previewsShowTheOriginalPathWithALocalResolver() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        view.localLinkResolver = { _ in
+            Issue.record("Preview must not call the resolver")
+            return nil
+        }
+        view.previewUrl(payload: ";report.txt")
+        #expect(view.urlPreview?.stringValue == "report.txt")
+        view.previewUrl(payload: ";src/report\u{202E}.txt")
+        #expect(view.urlPreview?.stringValue == "src/report\\u{202E}.txt")
+    }
+
     @Test @MainActor func customSchemeConfirmationDefaultsToCancel() throws {
         let url = try #require(URL(string: "ssh://example.com"))
         let alert = TerminalLinkOpening.confirmationAlert(for: url, displayString: url.absoluteString)
