@@ -132,6 +132,66 @@ enum HangulInput {
             finalIndex: finalIndex)
     }
 
+    /// Extends the existing iOS Korean-input fallback for an unmarked trailing
+    /// syllable followed by one compatibility jamo. UIKit normally owns IME
+    /// composition; this must not be applied to marked text or pasted text.
+    static func composeContinuation(base: Character, followingJamo jamo: Character) -> Character? {
+        guard let components = syllableComponents(of: base) else { return nil }
+        let vowelIndex: Int
+        let finalIndex: Int
+        if let followingVowel = vowelIndexByJamo[jamo] {
+            guard components.finalIndex == 0,
+                  let combined = compoundVowelIndex(first: components.vowelIndex, second: followingVowel) else {
+                return nil
+            }
+            vowelIndex = combined
+            finalIndex = 0
+        } else if let followingFinal = finalIndexByJamo[jamo] {
+            vowelIndex = components.vowelIndex
+            if components.finalIndex == 0 {
+                finalIndex = followingFinal
+            } else {
+                guard let combined = compoundFinalIndex(first: components.finalIndex, second: followingFinal) else {
+                    return nil
+                }
+                finalIndex = combined
+            }
+        } else {
+            return nil
+        }
+        return composeSyllable(leadingIndex: components.leadingIndex, vowelIndex: vowelIndex, finalIndex: finalIndex)
+    }
+
+    private static func compoundVowelIndex(first: Int, second: Int) -> Int? {
+        switch (first, second) {
+        case (8, 0): return 9    // ㅗ + ㅏ = ㅘ
+        case (8, 1): return 10   // ㅗ + ㅐ = ㅙ
+        case (8, 20): return 11  // ㅗ + ㅣ = ㅚ
+        case (13, 4): return 14  // ㅜ + ㅓ = ㅝ
+        case (13, 5): return 15  // ㅜ + ㅔ = ㅞ
+        case (13, 20): return 16 // ㅜ + ㅣ = ㅟ
+        case (18, 20): return 19 // ㅡ + ㅣ = ㅢ
+        default: return nil
+        }
+    }
+
+    private static func compoundFinalIndex(first: Int, second: Int) -> Int? {
+        switch (first, second) {
+        case (1, 19): return 3  // ㄱ + ㅅ = ㄳ
+        case (4, 22): return 5  // ㄴ + ㅈ = ㄵ
+        case (4, 27): return 6  // ㄴ + ㅎ = ㄶ
+        case (8, 1): return 9   // ㄹ + ㄱ = ㄺ
+        case (8, 16): return 10 // ㄹ + ㅁ = ㄻ
+        case (8, 17): return 11 // ㄹ + ㅂ = ㄼ
+        case (8, 19): return 12 // ㄹ + ㅅ = ㄽ
+        case (8, 25): return 13 // ㄹ + ㅌ = ㄾ
+        case (8, 26): return 14 // ㄹ + ㅍ = ㄿ
+        case (8, 27): return 15 // ㄹ + ㅎ = ㅀ
+        case (17, 19): return 18 // ㅂ + ㅅ = ㅄ
+        default: return nil
+        }
+    }
+
     static func resyllabifyFinalConsonant(base: Character, followingVowel: Character) -> String? {
         resyllabificationEdit(base: base, followingVowel: followingVowel)?.textToInsert
     }
