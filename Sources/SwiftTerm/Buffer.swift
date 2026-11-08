@@ -1082,7 +1082,7 @@ public final class Buffer {
         lines.trimStart (count: amountToTrim)
         yBase = 0
         yDisp = 0
-        savedY = max (savedY - amountToTrim, 0)
+        // savedY is relative to the screen, which doesn't move here.
     }
 
     public func changeHistorySize (_ newScrollback: Int?)
