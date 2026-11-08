@@ -29,6 +29,11 @@ import Metal
 @MainActor
 open class TerminalRenderView: NSView, CaretHost {
     /// The source of the frames that the view draws.
+    ///
+    /// The view keeps a weak reference. With no source (nil, or released),
+    /// the view shows only the background color: no text, no images and no
+    /// caret. A release is seen on the next frame tick, for example after
+    /// ``requestRedraw()`` or a change of size or appearance.
     public weak var frameSource: TerminalExternalFrameSource? {
         didSet { invalidateAll() }
     }
@@ -276,8 +281,9 @@ open class TerminalRenderView: NSView, CaretHost {
 
     open override func draw (_ dirtyRect: NSRect) {
 #if canImport(MetalKit)
-        // The Metal surface covers the view.
-        if metalRenderer != nil { return }
+        // The Metal surface covers the view, except while it is hidden
+        // because there is no frame.
+        if metalRenderer != nil, metalSurface?.isHidden == false { return }
 #endif
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         // Layer-backed drawing can pass an unbounded rectangle.
@@ -310,8 +316,8 @@ open class TerminalRenderView: NSView, CaretHost {
     private func computeCellDimension () -> TerminalView.CellDimension {
         let normal = fontSet.normal
         let height = ceil((CTFontGetAscent(normal) + CTFontGetDescent(normal) + CTFontGetLeading(normal)) * lineSpacing)
-        let glyph = normal.glyph(withName: "W")
-        let width = normal.advancement(forGlyph: glyph).width
+        // As in TerminalView.computeFontDimensions.
+        let width = TerminalView.cellAdvance(of: normal)
         let scale = backingScaleFactor()
         let snappedWidth = (width * scale).rounded() / scale
         let snappedHeight = ceil(height * scale) / scale
@@ -334,7 +340,7 @@ open class TerminalRenderView: NSView, CaretHost {
         onGridSizeChange?(grid.columns, grid.rows)
     }
 
-    fileprivate func frameFonts () -> FrameFontSet {
+    func frameFonts () -> FrameFontSet {
         if let cachedFonts, cachedFonts.source.isEqual(fontSet.normal) {
             return cachedFonts.fonts
         }
@@ -343,7 +349,7 @@ open class TerminalRenderView: NSView, CaretHost {
         return fonts
     }
 
-    fileprivate func frameAppearance () -> FrameAppearance {
+    func frameAppearance () -> FrameAppearance {
         let caret = caretColor ?? nativeForegroundColor
         let caretText = caretTextColor ?? nativeBackgroundColor
         let key = [nativeForegroundColor, nativeBackgroundColor, selectedTextBackgroundColor,
@@ -368,10 +374,15 @@ open class TerminalRenderView: NSView, CaretHost {
     }
 
     func frameTick () {
-        guard let source = frameSource, let viewState = captureFrameViewState(),
+        guard let source = frameSource else {
+            showEmpty()
+            return
+        }
+        guard let viewState = captureFrameViewState(),
               let prepared = owner.prepare(source: source, viewState: viewState) else { return }
 #if canImport(MetalKit)
         if let metalRenderer {
+            metalSurface?.isHidden = false
             // The renderer draws the whole frame, cursor included. It keeps
             // the rows it built, so an unchanged row costs little.
             renderMetalFrame(metalRenderer, viewState: viewState)
@@ -389,6 +400,22 @@ open class TerminalRenderView: NSView, CaretHost {
             }
         }
         updateCaret(prepared.cursor, rows: prepared.rows)
+    }
+
+    /// The state with no source: the background color only.
+    private func showEmpty () {
+        var changed = owner.hasSnapshot
+        owner.clear()
+        caretView?.removeFromSuperview()
+#if canImport(MetalKit)
+        // The renderer cannot draw without a snapshot, so hide its surface
+        // and let draw(_:) fill the background.
+        if let metalSurface, !metalSurface.isHidden {
+            metalSurface.isHidden = true
+            changed = true
+        }
+#endif
+        if changed { setNeedsDisplay(bounds) }
     }
 
     private func updateCaret (_ cursor: SnapshotCursor?, rows: Int) {
@@ -560,38 +587,6 @@ open class TerminalRenderView: NSView, CaretHost {
         return rendered
     }
 #endif
-}
-
-extension FrameViewState {
-    @MainActor
-    init (renderView view: TerminalRenderView) {
-        linkHighlightRange = nil
-        linkHighlightMode = .hover
-        commandActive = false
-        textBlinkVisible = true
-        notifyUpdateChanges = false
-        fonts = view.frameFonts()
-        cellDimension = view.cellDimension
-        viewBounds = view.bounds
-        viewFrameHeight = view.frame.height
-        let scale = view.backingScaleFactor()
-        renderingScale = scale
-        fontSmoothing = view.fontSmoothing
-        cursorHasFocus = view.hasFocus
-        cellPixelWidth = Int((cellDimension.width * scale).rounded())
-        cellPixelHeight = Int((cellDimension.height * scale).rounded())
-        imageScale = view.getImageScale()
-        metalBufferingMode = view.metalBufferingMode
-        antiAliasCustomBlockGlyphs = view.antiAliasCustomBlockGlyphs
-        appearance = view.frameAppearance()
-        customBlockGlyphs = view.customBlockGlyphs
-        useBrightColors = view.useBrightColors
-        collapseBrightColorsToBase = view.collapseBrightColorsToBase
-        minimumContrastRatio = view.minimumContrastRatio
-        translucentCellBackgrounds = view.translucentCellBackgrounds
-        bidiHostPolicy = view.bidiHostPolicy
-        glyphFallbackProvider = view.glyphFallbackProvider
-    }
 }
 
 #endif

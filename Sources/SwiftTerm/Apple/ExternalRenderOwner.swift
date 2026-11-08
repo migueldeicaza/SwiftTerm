@@ -125,6 +125,55 @@ final class ExternalRenderOwner {
     func invalidate () {
         signature = nil
     }
+
+    /// Drops the frame, for when the view has no source. Nothing is drawn
+    /// until `prepare` gets a frame again, and that frame repaints everything.
+    func clear () {
+        hasSnapshot = false
+        signature = nil
+        revisions = []
+        cursorKey = nil
+        kittyKey = nil
+    }
+}
+
+extension FrameViewState {
+    /// The view state of a `TerminalRenderView`, on macOS or iOS.
+    @MainActor
+    init (renderView view: TerminalRenderView) {
+        linkHighlightRange = nil
+        linkHighlightMode = .hover
+        commandActive = false
+        textBlinkVisible = true
+        notifyUpdateChanges = false
+        fonts = view.frameFonts()
+        cellDimension = view.cellDimension
+        viewBounds = view.bounds
+        viewFrameHeight = view.frame.height
+        let scale = view.backingScaleFactor()
+        renderingScale = scale
+#if os(macOS)
+        fontSmoothing = view.fontSmoothing
+        translucentCellBackgrounds = view.translucentCellBackgrounds
+#else
+        // As in the iOS TerminalView.
+        fontSmoothing = true
+        translucentCellBackgrounds = false
+#endif
+        cursorHasFocus = view.hasFocus
+        cellPixelWidth = Int((cellDimension.width * scale).rounded())
+        cellPixelHeight = Int((cellDimension.height * scale).rounded())
+        imageScale = view.getImageScale()
+        metalBufferingMode = view.metalBufferingMode
+        antiAliasCustomBlockGlyphs = view.antiAliasCustomBlockGlyphs
+        appearance = view.frameAppearance()
+        customBlockGlyphs = view.customBlockGlyphs
+        useBrightColors = view.useBrightColors
+        collapseBrightColorsToBase = view.collapseBrightColorsToBase
+        minimumContrastRatio = view.minimumContrastRatio
+        bidiHostPolicy = view.bidiHostPolicy
+        glyphFallbackProvider = view.glyphFallbackProvider
+    }
 }
 
 #endif

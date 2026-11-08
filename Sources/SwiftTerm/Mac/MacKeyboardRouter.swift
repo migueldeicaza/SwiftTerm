@@ -8,6 +8,7 @@
 //  reaches the program as the same bytes in both.
 //
 
+#if !SWIFTTERM_EMBEDDED
 #if os(macOS)
 import AppKit
 import Carbon.HIToolbox
@@ -1309,3 +1310,4 @@ public final class TerminalKeyboardRouter {
     }
 }
 #endif
+#endif // !SWIFTTERM_EMBEDDED

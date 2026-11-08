@@ -157,6 +157,73 @@ struct TerminalRenderViewTests {
         #expect(view.gridSize.rows == 3)
     }
 
+    /// Line numbers can be negative: the frame contract permits any
+    /// increasing numbering.
+    @Test func negativeLineNumbersDraw() throws {
+        let source = FixedFrameSource(columns: 10, rows: 5, topLine: -10)
+        let red = Attribute(foreground: .defaultColor, background: .ansi256(code: 1), style: [])
+        source.setLine(-10, "RED", attribute: red)
+        source.setLine(-6, "RED", attribute: red)
+        let view = TerminalRenderView(frame: .zero, font: font)
+        view.nativeBackgroundColor = .black
+        view.nativeForegroundColor = .white
+        view.setFrameSize(NSSize(width: view.cellSize.width * 10, height: view.cellSize.height * 5))
+        view.frameSource = source
+        view.frameTick()
+        let image = try bitmap(view)
+        let scale = CGFloat(image.pixelsHigh) / view.bounds.height
+        let rowPixels = Int(view.cellSize.height * scale)
+        func reddish(row: Int) -> Int {
+            var result = 0
+            for y in (row * rowPixels + 1) ..< ((row + 1) * rowPixels - 1) {
+                for x in 0 ..< image.pixelsWide {
+                    if let c = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                       c.redComponent > 0.6 && c.greenComponent < 0.3 && c.blueComponent < 0.3 {
+                        result += 1
+                    }
+                }
+            }
+            return result
+        }
+        #expect(reddish(row: 0) > 0)
+        #expect(reddish(row: 2) == 0)
+        #expect(reddish(row: 4) > 0)
+    }
+
+    /// With no source, the view shows only the background, with no caret.
+    @Test func lostSourceClearsTheView() throws {
+        var source: FixedFrameSource? = FixedFrameSource(columns: 10, rows: 3, topLine: 0)
+        source!.setLine(0, "RED", attribute: Attribute(foreground: .defaultColor, background: .ansi256(code: 1), style: []))
+        source!.frame.cursorVisible = true
+        source!.frame.cursorLine = 1
+        let view = TerminalRenderView(frame: .zero, font: font)
+        view.nativeBackgroundColor = .black
+        view.nativeForegroundColor = .white
+        view.setFrameSize(NSSize(width: view.cellSize.width * 10, height: view.cellSize.height * 3))
+        view.frameSource = source
+        view.frameTick()
+        #expect(view.caretFrame != .zero)
+        #expect(view.subviews.contains { $0 is CaretView })
+        let isRed: (NSColor) -> Bool = { $0.redComponent > 0.6 && $0.greenComponent < 0.3 && $0.blueComponent < 0.3 }
+        #expect(count(try bitmap(view), isRed) > 0)
+
+        // The host releases the source; the next tick shows the empty state.
+        source = nil
+        #expect(view.frameSource == nil)
+        view.requestRedraw()
+        view.frameTick()
+        #expect(!view.subviews.contains { $0 is CaretView })
+        let lit = count(try bitmap(view)) { $0.redComponent + $0.greenComponent + $0.blueComponent > 0.2 }
+        #expect(lit == 0)
+
+        // A new source draws again.
+        let next = FixedFrameSource(columns: 10, rows: 3, topLine: 0)
+        next.setLine(0, "RED", attribute: Attribute(foreground: .defaultColor, background: .ansi256(code: 1), style: []))
+        view.frameSource = next
+        view.frameTick()
+        #expect(count(try bitmap(view), isRed) > 0)
+    }
+
     @Test func missingRowsDrawAsBackground() throws {
         let source = FixedFrameSource(columns: 10, rows: 3, topLine: 0)
         let view = TerminalRenderView(frame: .zero, font: font)

@@ -22,8 +22,10 @@ protocol CoreGraphicsPaintHost: AnyObject {
     var fontSmoothing: Bool { get }
 #else
     var cellDimension: TerminalView.CellDimension { get }
-    var contentOffset: CGPoint { get }
     var selectionHandleColor: TTColor { get }
+    /// The first buffer row that the painter draws (iOS). The painter draws
+    /// in the coordinates that `bufferOffset` gives to `drawTerminalContents`.
+    func firstPaintedRow (snapshot: TerminalSnapshot) -> Int
 #endif
     var fontSet: TerminalView.FontSet { get }
     var bounds: CGRect { get }
@@ -49,13 +51,12 @@ protocol CoreGraphicsPaintHost: AnyObject {
     func didDrawCoreGraphicsFrame ()
 }
 
-#if os(macOS)
 /// A view that shows a `CaretView` for its snapshot cursor.
 @MainActor
 protocol CaretHost: CoreGraphicsPaintHost {
+    /// Whether the caret shows as focused (filled and blinking).
     var hasFocus: Bool { get }
 }
-#endif
 
 extension TerminalView: CoreGraphicsPaintHost {
     func didDrawCoreGraphicsFrame () {
@@ -70,6 +71,16 @@ extension TerminalView: CoreGraphicsPaintHost {
 
 #if os(macOS)
 extension TerminalView: CaretHost {}
+#else
+extension TerminalView: CaretHost {
+    var hasFocus: Bool { isFirstResponder }
+
+    func firstPaintedRow (snapshot: TerminalSnapshot) -> Int {
+        // The scroll view is kept in sync with yDisp (contentOffset.y ==
+        // yDisp * cellHeight); see drawTerminalContents.
+        Int(contentOffset.y / cellDimension.height)
+    }
+}
 #endif
 
 #endif

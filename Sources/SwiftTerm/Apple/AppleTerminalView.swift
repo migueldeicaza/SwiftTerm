@@ -159,11 +159,20 @@ struct FrameColor: Sendable, Hashable {
 #if os(macOS)
         self.init(color, appearance: view.effectiveAppearance)
 #else
+        self.init(color, traitCollection: view.traitCollection)
+#endif
+    }
+
+#if !os(macOS)
+    /// Resolves `color` for `traitCollection`. Views without a `TerminalView`
+    /// use this.
+    @MainActor
+    init (_ color: TTColor, traitCollection: UITraitCollection) {
         var red: CGFloat = 0
         var green: CGFloat = 0
         var blue: CGFloat = 0
         var alpha: CGFloat = 1
-        let resolved = color.resolvedColor(with: view.traitCollection)
+        let resolved = color.resolvedColor(with: traitCollection)
         let captured = resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
         if !captured {
             // Pattern colors and colors in unsupported spaces use a stable
@@ -178,8 +187,8 @@ struct FrameColor: Sendable, Hashable {
         self.green = min(max(green, 0), 1)
         self.blue = min(max(blue, 0), 1)
         self.alpha = min(max(alpha, 0), 1)
-#endif
     }
+#endif
 
 #if os(macOS)
     /// Resolves `color` in `appearance`. Views without a `TerminalView` use this.
@@ -2098,6 +2107,21 @@ extension TerminalView {
     }
     
     // Computes the font dimensions once font.normal has been set
+    #if os(macOS)
+    /// The advance of "W" in `font`: the unsnapped cell width.
+    static func cellAdvance (of font: NSFont) -> CGFloat
+    {
+        // Look W up by character, not by glyph name: fonts whose glyphs are
+        // unnamed or named by CID (BIZ UDGothic, STHeiti, Songti) have no glyph
+        // named "W", and the name lookup returns .notdef, which is usually a
+        // full em wide and spreads the text across twice as many columns.
+        var characters: [UniChar] = [0x57]
+        var glyphs: [CGGlyph] = [0]
+        let glyph = CTFontGetGlyphsForCharacters (font, &characters, &glyphs, 1) ? NSGlyph (glyphs [0]) : font.glyph(withName: "W")
+        return font.advancement(forGlyph: glyph).width
+    }
+    #endif
+
     func computeFontDimensions () -> CellDimension
     {
         let lineAscent = CTFontGetAscent (fontSet.normal)
@@ -2116,14 +2140,7 @@ extension TerminalView {
         // let cellWidth = (0..<95).reduce(into: 0) { partialResult, idx in
         //     partialResult = max(partialResult, sizes[idx].width)
         // }
-        // Look W up by character, not by glyph name: fonts whose glyphs are
-        // unnamed or named by CID (BIZ UDGothic, STHeiti, Songti) have no glyph
-        // named "W", and the name lookup returns .notdef, which is usually a
-        // full em wide and spreads the text across twice as many columns.
-        var characters: [UniChar] = [0x57]
-        var glyphs: [CGGlyph] = [0]
-        let glyph = CTFontGetGlyphsForCharacters (fontSet.normal, &characters, &glyphs, 1) ? NSGlyph (glyphs [0]) : fontSet.normal.glyph(withName: "W")
-        let cellWidth = fontSet.normal.advancement(forGlyph: glyph).width
+        let cellWidth = Self.cellAdvance(of: fontSet.normal)
         #else
         let fontAttributes = [NSAttributedString.Key.font: fontSet.normal]
         let cellWidth = "W".size(withAttributes: fontAttributes).width
@@ -3372,7 +3389,7 @@ extension CoreGraphicsPaintHost {
         // positions, producing garbled output. contentOffset.y is always correct because
         // the scroll view is kept in sync with yDisp (contentOffset.y == yDisp * cellHeight).
         let cellHeight = cellDimension.height
-        let firstRow = Int(contentOffset.y / cellHeight)
+        let firstRow = firstPaintedRow(snapshot: snapshot)
         let lastRow = firstRow + Int(ceil(bounds.height / cellHeight))
         #else
         // On Mac, we are drawing the terminal buffer
@@ -3495,10 +3512,9 @@ extension CoreGraphicsPaintHost {
         }
         #endif
 
+        // Rows can be negative: an external frame can use any increasing
+        // line numbering. `row(atAbsolute:)` skips rows outside the snapshot.
         for row in firstRow...lastRow {
-            if row < 0 {
-                continue
-            }
             guard let snapshotRow = snapshot.row(atAbsolute: row) else {
                 continue
             }
