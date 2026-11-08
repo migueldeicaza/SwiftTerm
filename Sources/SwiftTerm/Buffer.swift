@@ -627,6 +627,71 @@ public final class Buffer {
         return row >= 0 && row < lines.count && originMarkGroup(at: row, activeOrigin: semanticPromptStartRow) != nil
     }
 
+    /// The rows that hold the output of one OSC 133 command.
+    ///
+    /// The output starts at the first row after the prompt that has an
+    /// `.output` cell, and ends at the last such row before the next prompt.
+    /// Blank lines between the two are part of the output: only written
+    /// characters carry a tag. The command's own input rows (PS2 rows
+    /// included) come before the first output cell, and trailing blank lines
+    /// come after the last one, so neither is part of the range. `A` always
+    /// starts a fresh row, so a row with output never also opens the next
+    /// prompt.
+    ///
+    /// - Parameter promptRow: A row that opens a primary prompt. When nil,
+    ///   the newest prompt whose command has output.
+    /// - Returns: nil when `promptRow` does not open a prompt, or when the
+    ///   command has no output.
+    ///
+    /// The caller holds the terminal lock. The cost is proportional to the
+    /// cells of the commands the search visits, not to the whole buffer.
+    func semanticCommandOutputRows(forPromptAt promptRow: Int?) -> ClosedRange<Int>? {
+        if let promptRow {
+            guard semanticRowOpensPrompt(promptRow) else { return nil }
+            var end = promptRow + 1
+            while end < lines.count && !semanticRowOpensPrompt(end) {
+                end += 1
+            }
+            return semanticOutputRows(after: promptRow, before: end)
+        }
+        var end = lines.count
+        var row = lines.count - 1
+        while row >= 0 {
+            if semanticRowOpensPrompt(row) {
+                if let range = semanticOutputRows(after: row, before: end) {
+                    return range
+                }
+                end = row
+            }
+            row -= 1
+        }
+        return nil
+    }
+
+    /// The first through the last row in `prompt + 1 ..< end` that has an
+    /// `.output` cell, or nil when no row has one.
+    private func semanticOutputRows(after prompt: Int, before end: Int) -> ClosedRange<Int>? {
+        let first = prompt + 1
+        guard first < end else { return nil }
+        guard let start = (first..<end).first(where: rowHasSemanticOutput) else {
+            return nil
+        }
+        var last = end - 1
+        while last > start && !rowHasSemanticOutput(last) {
+            last -= 1
+        }
+        return start...last
+    }
+
+    private func rowHasSemanticOutput(_ row: Int) -> Bool {
+        let outputCode = CellArena.semanticContentCode(for: .output)
+        let line = lines[row]
+        for column in 0..<line.count where line.packedView(at: column).packed.semanticContentCode == outputCode {
+            return true
+        }
+        return false
+    }
+
     /// The group ID of a row's group-opening mark, or nil if the row is not an
     /// origin. An `initial` mark is always an origin; a `secondary` mark counts
     /// only on the tracked active origin row (an `A;k=s` group with no primary).
