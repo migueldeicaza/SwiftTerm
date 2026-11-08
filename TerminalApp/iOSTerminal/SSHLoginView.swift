@@ -8,13 +8,18 @@
 import SwiftUI
 
 struct SSHLoginView: View {
+    @AppStorage("iosterminal.host") private var host = "localhost"
+    @AppStorage("iosterminal.port") private var port = "22"
     @AppStorage("iosterminal.username") private var username = ""
     @AppStorage("iosterminal.password") private var password = ""
     @State private var connectionInfo: SSHConnectionInfo?
     @State private var animate = false
 
     private var canConnect: Bool {
-        !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty
+        !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        Int(port).map { (1...65535).contains($0) } == true &&
+        !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !password.isEmpty
     }
 
     var body: some View {
@@ -87,10 +92,24 @@ struct SSHLoginView: View {
                     .font(.system(size: 32, weight: .semibold, design: .serif))
                     .foregroundColor(Color(red: 0.12, green: 0.15, blue: 0.18))
 
-                Text("Connect to localhost:22")
+                Text("Connect to \(host):\(port)")
                     .font(.system(size: 14, weight: .medium, design: .rounded))
                     .foregroundColor(Color(red: 0.36, green: 0.42, blue: 0.46))
             }
+
+            CredentialField(
+                title: "Host",
+                placeholder: "localhost",
+                text: $host,
+                isSecure: false
+            )
+
+            CredentialField(
+                title: "Port",
+                placeholder: "22",
+                text: $port,
+                isSecure: false
+            )
 
             CredentialField(
                 title: "Username",
@@ -148,10 +167,17 @@ struct SSHLoginView: View {
     }
 
     private func connect() {
-        guard canConnect else { return }
+        guard canConnect, let portNumber = Int(port) else { return }
+        let trimmedHost = host.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedUser = username.trimmingCharacters(in: .whitespacesAndNewlines)
+        host = trimmedHost
         username = trimmedUser
-        connectionInfo = SSHConnectionInfo(username: trimmedUser, password: password)
+        connectionInfo = SSHConnectionInfo(
+            host: trimmedHost,
+            port: portNumber,
+            username: trimmedUser,
+            password: password
+        )
     }
 }
 

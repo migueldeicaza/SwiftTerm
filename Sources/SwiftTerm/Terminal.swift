@@ -5176,8 +5176,9 @@ open class Terminal {
             // We only support copying on the same page, and the page being 1
             if pars [4] == pars [7] && pars [4] == 1 {
                 if let (top, left, bottom, right) = getRectangleFromRequest(pars [0...3]) {
-                    let rowTarget = min (rows-1, pars [5]-1)
-                    let colTarget = min (cols-1, pars [6]-1)
+                    // In origin mode the destination is relative to the margins, as the source is.
+                    let rowTarget = min (rows-1, pars [5]-1 + (originMode ? buffer.scrollTop : 0))
+                    let colTarget = min (cols-1, pars [6]-1 + (originMode ? buffer.marginLeft : 0))
                     
                     // Block size
                     let columns = right - left + 1
@@ -8432,8 +8433,13 @@ open class Terminal {
             let rightMargin = buffer.marginRight
             if x == rightMargin  {
                 columnScroll (back: back, at: leftMargin)
+            } else if x == buffer.cols && rightMargin == buffer.cols - 1 {
+                // The cursor waits to wrap after a write to the last column, so
+                // it is at the right margin: scroll, as xterm does.
+                buffer.x = rightMargin
+                columnScroll (back: back, at: leftMargin)
             } else if x == buffer.cols {
-                // on the boundaries, we ignore, test_DECFI_WholeScreenScrolls
+                // Past a right margin that is not the last column: ignore.
             } else {
                 cursorForward(count: 1)
             }

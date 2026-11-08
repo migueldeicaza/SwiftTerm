@@ -68,6 +68,19 @@ struct Osc8LinkRenderingTests {
         }
     }
 
+    @Test func clickedLinkKeepsSemicolonsInItsTarget() throws {
+        let target = "https://example.test/a;b=c?d=e;f"
+        let view = TerminalView(frame: .zero, font: nil,
+                                options: TerminalOptions(cols: 12, rows: 4))
+        view.frameDriver.invalidate()
+        view.linkHighlightMode = .always
+        view.feed(text: "\u{1b}]8;id=1:x=y;\(target)\u{7}L\u{1b}]8;;\u{7}")
+
+        let link = try #require(view.linkForClick(at: Position(col: 0, row: 0), hasCommandModifier: true))
+        #expect(link.link == target)
+        #expect(link.params == ["id": "1", "x": "y"])
+    }
+
     @Test(arguments: [LinkHighlightMode.hover, .hoverWithModifier])
     func disablingOsc8KeepsImplicitLinkHighlights(_ mode: LinkHighlightMode) throws {
         let view = TerminalView(frame: .zero, font: nil,

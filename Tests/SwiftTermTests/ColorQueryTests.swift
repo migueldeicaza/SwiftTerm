@@ -21,8 +21,8 @@ final class ColorQueryTests {
         }
 
         func setCursorColor(source: Terminal, color: Color?) {
+            // Record the callback. The terminal must update its own state.
             cursorColors.append(color)
-            source.cursorColor = color
         }
     }
 
@@ -69,6 +69,7 @@ final class ColorQueryTests {
         )
 
         terminal.cursorColor = Color(red: 0x1111, green: 0x2222, blue: 0x3333)
+        #expect(terminal.cursorColor != nil)
         terminal.feed(text: "\u{1b}]112\u{07}")
 
         #expect(delegate.cursorColors.last != nil)
