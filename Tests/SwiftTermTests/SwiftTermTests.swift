@@ -44,6 +44,8 @@ final class SwiftTermTests {
             var options = TerminalOptions.default
             options.cols = 80
             options.rows = 25
+            // esctest examines the screen with DECRQCRA, which release builds disable.
+            options.enableRectangularAreaChecksum = true
             terminal = Terminal(delegate: self, options: options)
             // A serial queue, so that two reads never feed the terminal at once.
             process = LocalProcess(delegate: self, dispatchQueue: DispatchQueue(label: "esctest"))

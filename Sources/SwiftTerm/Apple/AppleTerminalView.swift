@@ -1768,6 +1768,18 @@ extension TerminalView {
         renderOwner.dimensions()
     }
 
+    /// Answer DECRQCRA (Request Checksum of Rectangular Area) with the real
+    /// checksum of the screen contents.
+    ///
+    /// An application in the terminal can use DECRQCRA to read back the screen
+    /// text, so this is a screen-scraping channel. The default is true in debug
+    /// builds and false in release builds. See
+    /// ``TerminalOptions/enableRectangularAreaChecksum``.
+    public var enableRectangularAreaChecksum: Bool {
+        get { withTerminal { $0.enableRectangularAreaChecksum } }
+        set { withTerminal { $0.enableRectangularAreaChecksum = newValue } }
+    }
+
     /// Accept OSC 8 hyperlinks. The default is true.
     /// Changes also apply to links already in the terminal buffer.
     /// Implicit URL and path detection remain available when this is false.

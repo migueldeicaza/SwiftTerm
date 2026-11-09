@@ -450,6 +450,17 @@ open class Terminal {
         }
     }
     
+    /// Answer DECRQCRA requests with the real checksum of the screen contents.
+    /// Changes take effect at the next request.
+    ///
+    /// An application can use DECRQCRA to screen-scrape the terminal, so this is
+    /// off in release builds by default. See
+    /// ``TerminalOptions/enableRectangularAreaChecksum`` for the details.
+    public var enableRectangularAreaChecksum: Bool {
+        get { _options.enableRectangularAreaChecksum }
+        set { _options.enableRectangularAreaChecksum = newValue }
+    }
+
     // Selection services attached to this terminal.  The views own them; a
     // `SelectionService` owns its terminal, so this side must not retain, or the
     // two would form a cycle.
@@ -5281,13 +5292,18 @@ open class Terminal {
     //   Pg is the page number.
     //   Pt ; Pl ; Pb ; Pr denotes the rectangle.
     //   The x's are hexadecimal digits 0-9 and A-F.
+    //
+    // A program can use this to read back the screen one cell at a time, so the
+    // checksum is computed only when the host enables it with
+    // `enableRectangularAreaChecksum`. Otherwise the answer is always 0000, so
+    // that programs that wait for a response do not stop.
     func cmdDECRQCRA (_ pars: CsiParameters, _ collect: cstring)
     {
         var checksum: UInt32 = 0
         let rid = pars.count > 0 ? pars [0] : 1
         let _ = pars.count > 1 ? pars [1] : 0
         var result = "0000"
-        if (tdel?.isProcessTrusted(source: self) ?? false) && pars.count > 2 {
+        if enableRectangularAreaChecksum && (tdel?.isProcessTrusted(source: self) ?? false) && pars.count > 2 {
             if let (top, left, bottom, right) = getRectangleFromRequest(pars [2...]) {
                 for row in top...bottom {
                     let line = buffer.lines [row+buffer.yBase]

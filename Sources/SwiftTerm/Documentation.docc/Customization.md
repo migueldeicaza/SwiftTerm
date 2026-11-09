@@ -323,6 +323,7 @@ Key options:
 | `initialBidiArrowKeySwap` | `false` | Initial state for BiDi left/right arrow swapping |
 | `kittyGraphics` | 10 MB per screen, direct media only | Kitty storage and local-media policy |
 | `ansi256PaletteStrategy` | `.base16Lab` | 256-color palette generation strategy |
+| `enableRectangularAreaChecksum` | `true` in debug builds, `false` in release builds | Answer DECRQCRA with the real checksum of the screen |
 
 The `.base16Lab` and `.base16LabHarmonious` strategies are based on the
 palette-generation write-up by
@@ -331,6 +332,33 @@ palette-generation write-up by
 Use `.base16Lab` to keep the generated cube and grayscale ramp ordered dark to
 light even on light themes. Use `.base16LabHarmonious` to preserve the theme's
 native background-to-foreground direction instead.
+
+### Screen Checksums (DECRQCRA)
+
+DECRQCRA (Request Checksum of Rectangular Area, `CSI Pi ; Pg ; Pt ; Pl ; Pb ; Pr * y`)
+asks the terminal for a checksum of the text in a rectangle of the screen.
+Test suites such as esctest and vttest use it to examine the screen.
+
+> Warning: An application can use DECRQCRA to screen-scrape the terminal. It
+> can request the checksum of one cell at a time and get the text of each cell.
+> This can expose text that a different program wrote, for example output from
+> before an `ssh` session started, or a password prompt that echoes input.
+
+For this reason, SwiftTerm computes the checksum only when
+`enableRectangularAreaChecksum` is true. The default is true in debug builds and
+false in release builds. When it is false, the terminal answers each request
+with a checksum of `0000`, so an application that waits for a response does not
+stop. The ``TerminalDelegate/isProcessTrusted(source:)`` check also applies.
+
+Set the initial value in ``TerminalOptions``, or change the live value on the
+terminal or the view. A change takes effect at the next request:
+
+```swift
+let options = TerminalOptions(enableRectangularAreaChecksum: true)
+
+terminal.enableRectangularAreaChecksum = false
+terminalView.enableRectangularAreaChecksum = true
+```
 
 ## Rendering Options
 
