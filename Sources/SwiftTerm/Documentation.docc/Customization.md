@@ -430,26 +430,48 @@ or surface a notification the application posted.
 
 ``TerminalViewDelegate/progressReport(source:report:)`` is called every time the
 view handles an OSC 9;4 progress report, with the report it just applied to the
-progress bar. `set` and `indeterminate` mean the application is working;
-`remove` means it is done. A `set` or `indeterminate` is followed by a
-`remove`: from the application, from the silence timer that clears a bar the
-application never removed (``TerminalView/progressReportTimeout``), or from
-the view closing
-(``TerminalView/updateUiClosed()``); the last two arrive as a synthetic report.
-That holds as long as the same delegate stays attached; a delegate attached
-while a report is live is not caught up on it, and one detached before the
-removal never hears it.
+progress bar. The states mean:
+
+- `set` and `indeterminate`: the application is working, with or without a
+  percentage.
+- `error`: the work stopped on a failure. The bar stays up, in red,
+  until the application removes it.
+- `pause`: the work is paused. The bar stays up, in orange, until the application resumes
+  or removes it.
+- `remove`: the report is over.
+
+Every report other than `remove` is live, and each live report is followed by
+exactly one `remove`: from the application, from the silence timer that clears
+a bar the application never removed (``TerminalView/progressReportTimeout``),
+from the process exiting (``LocalProcessTerminalView``), or from the view
+closing (``TerminalView/updateUiClosed()``); the last three arrive as a
+synthetic report. A `remove` the application sends with no report live is not
+passed on, since some shell integrations send one at every prompt, and nothing
+is reported once the view closes.
 
 ```swift
 func progressReport (source: TerminalView, report: Terminal.ProgressReport) {
-    isBusy = report.state != .remove
+    switch report.state {
+    case .set, .indeterminate: status = .working
+    case .error: status = .failed
+    case .pause: status = .paused
+    case .remove: status = .idle
+    }
 }
 ```
+
+The view keeps the live report in ``TerminalView/currentProgressReport``, so a
+delegate attached while one is live, or a host that changes delegates, reads
+the state there instead of waiting for the next report.
 
 ``TerminalViewDelegate/notification(source:title:body:)`` is called when the
 application posts a desktop notification with OSC 777
 (`ESC ] 777 ; notify ; title ; body BEL`). SwiftTerm never posts one itself:
 whether it becomes a banner, a badge, or nothing at all is the host's policy.
+The title and body are untrusted plain text, passed on verbatim, one call for
+each sequence: any program that writes to the terminal can send them, including
+a remote one over SSH or a file printed with `cat`. Do not present them as if
+they came from the system, and expect them in bursts.
 
 Both are defaulted to do nothing, so neither is a breaking change for an
 existing delegate.

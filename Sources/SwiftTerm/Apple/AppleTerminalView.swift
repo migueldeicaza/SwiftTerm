@@ -2676,9 +2676,66 @@ extension TerminalView {
         let capturedTitle = title
         let capturedBody = body
         onMain { [weak self] in
-            guard let self else { return }
+            guard let self, self.uiShutdownState == .active else { return }
             self.terminalDelegate?.notification(source: self, title: capturedTitle, body: capturedBody)
         }
+    }
+
+    // MARK: Progress reports (OSC 9;4)
+
+    /// Applies a report to the bar and tells the host.
+    ///
+    /// Nothing reaches the host once the view is closing: a report the parser
+    /// queued before ``updateUiClosed()``, or one the process writes after it,
+    /// would land after the removal the close sent and leave the host busy for
+    /// a session that is gone. A removal is passed on only while a report is
+    /// live, so the host hears each report end once, and never an end it did
+    /// not hear start: some shell integrations send `9;4;0` at every prompt.
+    @MainActor
+    func handleProgressReport(_ report: Terminal.ProgressReport) {
+        guard uiShutdownState == .active else { return }
+        if report.state == .remove {
+            let wasLive = currentProgressReport != nil
+            clearProgressReport()
+            guard wasLive else { return }
+        } else {
+            currentProgressReport = report
+            progressBarView?.apply(state: report.state, progress: report.progress)
+            resetProgressReportTimer()
+        }
+        terminalDelegate?.progressReport(source: self, report: report)
+    }
+
+    /// Ends a live report as a removal the host hears: the silence timer's
+    /// clear, and the process exiting. Nothing when no report is live.
+    @MainActor
+    func endProgressReport() {
+        handleProgressReport(Terminal.ProgressReport(state: .remove, progress: nil))
+    }
+
+    @MainActor
+    func clearProgressReport() {
+        cancelProgressReportTimer()
+        currentProgressReport = nil
+        progressBarView?.apply(state: .remove, progress: nil)
+    }
+
+    /// Clears the report while the view is stopping, and says whether the host
+    /// is owed its removal. ``updateUiClosed()`` sends it once the view has
+    /// stopped, so a host that closes the session when it hears the removal
+    /// finds the teardown finished, and its own ``updateUiClosed()`` returns
+    /// at once.
+    @MainActor
+    func shutdownProgressReport() -> Bool {
+        let owed = currentProgressReport != nil
+        clearProgressReport()
+        return owed
+    }
+
+    /// The removal owed for a report that was live when the view closed.
+    @MainActor
+    func reportClosedProgressRemoval() {
+        terminalDelegate?.progressReport(source: self, report: Terminal.ProgressReport(state: .remove, progress: nil))
     }
     
     //

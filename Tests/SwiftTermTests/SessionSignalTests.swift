@@ -48,6 +48,19 @@ struct SessionSignalTests {
         func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
     }
 
+    /// A host that closes the session as soon as it hears the removal, as one
+    /// that closes idle tabs would, noting how far the teardown had got.
+    private class ClosingHost: HostDelegate {
+        var stateAtRemoval: TerminalView.UIShutdownState?
+
+        override func progressReport(source: TerminalView, report: Terminal.ProgressReport) {
+            super.progressReport(source: source, report: report)
+            guard report.state == .remove else { return }
+            stateAtRemoval = source.uiShutdownState
+            source.updateUiClosed()
+        }
+    }
+
     private class ProcessHost: LocalProcessTerminalViewDelegate {
         var reports: [Terminal.ProgressReport] = []
         var notifications: [(title: String, body: String)] = []
@@ -77,8 +90,8 @@ struct SessionSignalTests {
     /// The view parses on its I/O thread and hops to the main queue before it
     /// touches the bar or the host, so a test waits for the effect rather than
     /// for a fixed slice.
-    private func settle(until satisfied: () -> Bool) async {
-        let deadline = Date(timeIntervalSinceNow: 2)
+    private func settle(seconds: TimeInterval = 2, until satisfied: () -> Bool) async {
+        let deadline = Date(timeIntervalSinceNow: seconds)
         while !satisfied(), Date() < deadline {
             try? await Task.sleep(for: .milliseconds(5))
         }
@@ -127,14 +140,72 @@ struct SessionSignalTests {
         let view = makeView()
         let delegate = HostDelegate()
         view.terminalDelegate = delegate
+        view.schedulesProgressReportTimer = false
 
         view.feed(text: "\u{1b}]9;4;1;40\u{07}")
         await settle { !delegate.reports.isEmpty }
-        view.expireProgressReport()
+        view.progressReportTimer?.fire()
 
         #expect(delegate.reports.count == 2)
         #expect(delegate.reports.last?.state == .remove)
         #expect(progressBar(of: view)?.isHidden == true)
+        #expect(view.currentProgressReport == nil)
+    }
+
+    /// A removal the host never heard start reads as the end of work it never
+    /// started: some shell integrations send one at every prompt, and the
+    /// application can send its own after the silence timer already did.
+    @Test func aRemovalWithNoLiveReportIsNotForwarded() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+        view.schedulesProgressReportTimer = false
+
+        view.feed(text: "\u{1b}]9;4;0\u{07}")
+        await settleBriefly()
+        #expect(delegate.reports.isEmpty)
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        view.progressReportTimer?.fire()
+        view.feed(text: "\u{1b}]9;4;0\u{07}")
+        await settleBriefly()
+
+        #expect(delegate.reports.map(\.state) == [.set, .remove])
+    }
+
+    /// The live report is readable, for a delegate attached while it is up.
+    @Test func theCurrentReportIsReadable() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+
+        view.feed(text: "\u{1b}]9;4;2;70\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        #expect(view.currentProgressReport == Terminal.ProgressReport(state: .error, progress: 70))
+
+        view.feed(text: "\u{1b}]9;4;0\u{07}")
+        await settle { delegate.reports.count > 1 }
+        #expect(view.currentProgressReport == nil)
+    }
+
+    /// Turning the silence clear back on while a report is live starts its
+    /// wait; with no report live there is nothing to wait for.
+    @Test func theTimeoutRearmsOnlyForALiveReport() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+        view.schedulesProgressReportTimer = false
+
+        view.progressReportTimeout = 5
+        #expect(view.progressReportTimer == nil)
+
+        view.progressReportTimeout = nil
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        #expect(view.progressReportTimer == nil)
+        view.progressReportTimeout = 5
+        #expect(view.progressReportTimer != nil)
     }
 
     /// Closing the view ends the session; a host that heard the `set` has to
@@ -181,6 +252,42 @@ struct SessionSignalTests {
         await settleBriefly()
 
         #expect(delegate.reports.isEmpty)
+    }
+
+    /// A report the process writes after the view closed, or one the parser
+    /// queued before it, would land after the close's removal and leave the
+    /// host busy for a session that is gone; a notification is dropped too.
+    @Test func nothingReachesTheHostAfterTheViewCloses() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        view.updateUiClosed()
+        view.feed(text: "\u{1b}]9;4;1;60\u{07}")
+        view.feed(text: "\u{1b}]777;notify;Build;Done\u{07}")
+        await settleBriefly()
+
+        #expect(delegate.reports.map(\.state) == [.set, .remove])
+        #expect(delegate.notifications.isEmpty)
+        #expect(view.progressReportTimer == nil)
+        #expect(view.currentProgressReport == nil)
+    }
+
+    /// The close's removal comes once the view has stopped, so a host that
+    /// closes the session on it does not run the teardown a second time.
+    @Test func theCloseRemovalArrivesAfterTheViewStopped() async {
+        let view = makeView()
+        let delegate = ClosingHost()
+        view.terminalDelegate = delegate
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        view.updateUiClosed()
+
+        #expect(delegate.stateAtRemoval == .stopped)
+        #expect(delegate.reports.map(\.state) == [.set, .remove])
     }
 
     /// Teardown is idempotent, and so is the removal it reports.
@@ -266,6 +373,21 @@ struct SessionSignalTests {
         view.feed(text: "\u{1b}]777;notify;Build;Done\u{07}")
         await settle { !delegate.notifications.isEmpty }
         #expect(delegate.notifications.first?.title == "Build")
+    }
+
+    /// A process that exits mid-report never sends its removal, so its exit
+    /// ends the report.
+    @Test func aProcessExitingMidReportEndsIt() async {
+        let view = LocalProcessTerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 320))
+        let delegate = ProcessHost()
+        view.processDelegate = delegate
+        view.progressReportTimeout = nil
+
+        view.startProcess(executable: "/bin/sh", args: ["-c", "printf '\\033]9;4;1;40\\007'; sleep 0.2"])
+        await settle(seconds: 10) { delegate.reports.count > 1 }
+
+        #expect(delegate.reports.map(\.state) == [.set, .remove])
+        #expect(view.currentProgressReport == nil)
     }
 
     /// A delegate written against the previous release conforms unchanged, and

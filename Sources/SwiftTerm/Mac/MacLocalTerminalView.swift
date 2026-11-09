@@ -66,7 +66,8 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     /// See ``TerminalViewDelegate/progressReport(source:report:)``.
     func progressReport(source: TerminalView, report: Terminal.ProgressReport)
 
-    /// Invoked when the process posts an OSC 777 desktop notification.
+    /// Invoked when the process posts an OSC 777 desktop notification. The
+    /// title and body are untrusted plain text.
     ///
     /// See ``TerminalViewDelegate/notification(source:title:body:)``.
     func notification(source: TerminalView, title: String, body: String)
@@ -534,6 +535,8 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
 
     open func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         programStatusProcessExited()
+        // A process that exits mid-report never sends its removal.
+        endProgressReport()
         processDelegate?.processTerminated(source: self, exitCode: exitCode)
     }
 

@@ -221,11 +221,18 @@ public protocol TerminalViewDelegate: AnyObject {
      * an editor that holds back input until the command finishes. The view keeps its own
      * state, so an implementation only has to mirror what it is told.
      *
-     * A `set` or `indeterminate` is followed by a `remove`: from the application, from the
-     * 15 second silence timer, or from the view closing — the last two arrive as a synthetic
-     * ``Terminal/ProgressReport`` with the ``Terminal/ProgressReportState/remove`` state. That
-     * holds as long as the same delegate stays attached; a delegate attached while a report is
-     * live is not caught up on it, and one detached before the removal never hears it.
+     * `set` and `indeterminate` mean the application is working. `error` and `pause` keep
+     * the report live too: the work stopped on a failure, or is paused, and the bar stays up
+     * until the application removes it, so a host that shows the session as busy should treat
+     * them as their own states rather than as work in progress.
+     *
+     * Every live report is followed by exactly one `remove`: from the application, from the
+     * silence timer (``TerminalView/progressReportTimeout``), from the process exiting, or
+     * from the view closing; the last three arrive as a synthetic ``Terminal/ProgressReport``
+     * with the ``Terminal/ProgressReportState/remove`` state. A `remove` the application sends
+     * with no report live is not passed on, and nothing is reported once the view closes. A
+     * delegate attached while a report is live reads it from
+     * ``TerminalView/currentProgressReport``.
      *
      * The default implementation does nothing.
      */
@@ -237,6 +244,11 @@ public protocol TerminalViewDelegate: AnyObject {
      *
      * SwiftTerm never posts a notification itself: what the host does with one — a banner,
      * a badge, an entry in its own inbox, nothing at all — is the host's policy.
+     *
+     * The title and body are untrusted plain text, passed on verbatim, one call for each
+     * sequence: any program that writes to the terminal can send them, including a remote one
+     * over SSH or a file being printed with `cat`. Do not present them as if they came from
+     * the system, and expect them in bursts.
      *
      * The default implementation does nothing.
      */

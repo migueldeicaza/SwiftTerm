@@ -494,20 +494,19 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var markedTextStorage: NSAttributedString?
     private var markedSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
     private var markedTextOverlay: DictationOverlayTextView?
-    private var progressBarView: TerminalProgressBarView?
+    private(set) var progressBarView: TerminalProgressBarView?
     private(set) var progressReportTimer: Timer?
     var schedulesProgressReportTimer = true
-    /// The report the application has up and has not removed — what a host
-    /// mirroring the session is showing. Kept apart from `progressReportTimer`,
-    /// which only exists while the silence clear is armed: a teardown owes the
-    /// host a removal for the report, whether or not a timer is running.
-    private var liveProgressReport: Terminal.ProgressReport?
-    private enum UIShutdownState {
+    /// The OSC 9;4 report the application has up and has not removed, or `nil`
+    /// when none is live: what a host mirroring the session should show. A
+    /// delegate attached while a report is live reads it here.
+    public internal(set) var currentProgressReport: Terminal.ProgressReport?
+    enum UIShutdownState {
         case active
         case stopping
         case stopped
     }
-    private var uiShutdownState = UIShutdownState.active
+    private(set) var uiShutdownState = UIShutdownState.active
 
     /// Tracks the selection state of the terminal, and can be used to set it
     /// programmatically (see `SelectionService`).
@@ -1207,19 +1206,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// a wait that is already running.
     public var progressReportTimeout: TimeInterval? = TerminalView.defaultProgressReportTimeout {
         didSet {
-            guard progressBarView?.isHidden == false else { return }
+            guard currentProgressReport != nil else { return }
             resetProgressReportTimer()
         }
     }
 
     @MainActor
-    private func resetProgressReportTimer() {
-        progressReportTimer?.invalidate()
-        progressReportTimer = nil
+    func resetProgressReportTimer() {
+        cancelProgressReportTimer()
         guard let progressReportTimeout else { return }
         let timer = Timer(timeInterval: progressReportTimeout, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.expireProgressReport()
+                self?.endProgressReport()
             }
         }
         if schedulesProgressReportTimer {
@@ -1229,49 +1227,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     @MainActor
-    private func clearProgressReport() {
+    func cancelProgressReportTimer() {
         progressReportTimer?.invalidate()
         progressReportTimer = nil
-        liveProgressReport = nil
-        progressBarView?.apply(state: .remove, progress: nil)
-    }
-
-    @MainActor
-    private func handleProgressReport(_ report: Terminal.ProgressReport) {
-        if report.state == .remove {
-            clearProgressReport()
-        } else {
-            liveProgressReport = report
-            progressBarView?.apply(state: report.state, progress: report.progress)
-            resetProgressReportTimer()
-        }
-        terminalDelegate?.progressReport(source: self, report: report)
-    }
-
-    /// Ends a bar the application started and never removed.
-    ///
-    /// Routed through `handleProgressReport` rather than straight to
-    /// `clearProgressReport` so the host hears the silence as the removal it
-    /// stands for: a delegate that mirrors the bar's state would otherwise sit
-    /// on `set` forever.
-    @MainActor
-    func expireProgressReport() {
-        handleProgressReport(Terminal.ProgressReport(state: .remove, progress: nil))
-    }
-
-    /// Ends a live report when the view is torn down.
-    ///
-    /// A host that heard a `set` has to hear the matching `remove`, or it stays
-    /// busy after the session it was mirroring is gone. So the closing view
-    /// reports the removal while a report is live, and only clears its own
-    /// state when there is nothing to report.
-    @MainActor
-    private func shutdownProgressReport() {
-        if liveProgressReport != nil {
-            expireProgressReport()
-        } else {
-            clearProgressReport()
-        }
     }
 
     /// Permanently releases UI drivers and renderer resources.
@@ -1299,11 +1257,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         stopWindowMouseMovedFallback()
         stopFocusNotifications()
         stopTextBlinking()
-        shutdownProgressReport()
+        let owesProgressRemoval = shutdownProgressReport()
         overlayScrollerHideTimer?.invalidate()
         overlayScrollerHideTimer = nil
         renderOwner.invalidateSynchronizedOutputWatchdog()
         uiShutdownState = .stopped
+        if owesProgressRemoval { reportClosedProgressRemoval() }
         return true
     }
     
