@@ -32,6 +32,10 @@ final class FontDimensionTests {
         let scale = view.backingScaleFactor()
         #expect(view.cellDimension.width == (advance * scale).rounded() / scale)
         #expect(view.cellDimension.width < font.pointSize)
+
+        // The render view measures the same cell.
+        let renderView = TerminalRenderView(frame: .zero, font: font)
+        #expect(renderView.cellSize.width == view.cellDimension.width)
     }
 }
 #endif

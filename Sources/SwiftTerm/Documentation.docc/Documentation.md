@@ -42,6 +42,13 @@ The UIKit ``TerminalView`` is an embeddable `UIScrollView` subclass that uses th
 same ``TerminalViewDelegate`` protocol. Since iOS does not support local processes,
 the typical use case is connecting the terminal to a remote host via SSH.
 
+### Terminals that run elsewhere
+
+`TerminalRenderView` draws a terminal whose emulator runs in another process
+or on another machine, with the renderer of ``TerminalView``. On macOS,
+``TerminalKeyboardRouter`` gives such a view the keyboard behavior of
+``TerminalView``. See <doc:ExternalRendering>.
+
 ### Headless
 
 ``HeadlessTerminal`` runs a local process without any UI, useful for scripting,
@@ -81,6 +88,19 @@ testing, and screen-scraping terminal output.
 - ``TerminalView``
 - ``TerminalViewDelegate``
 
+### Remote and External Rendering
+
+- <doc:ExternalRendering>
+- ``TerminalRowStore``
+- ``TerminalExternalFrameSource``
+- ``TerminalExternalFrame``
+- ``TerminalExternalSelection``
+- ``TerminalExternalImage``
+- ``TerminalKeyboardRouter``
+- ``TerminalKeyboardHost``
+- ``TerminalKeyboardModes``
+- ``TerminalKeyEvent``
+
 ### Running Local Processes
 
 - ``LocalProcess``
@@ -119,6 +139,7 @@ testing, and screen-scraping terminal output.
 - <doc:SSHIntegration>
 - <doc:PortableBuilds>
 - <doc:PortableHosting>
+- <doc:ExternalRendering>
 
 ### Terminal Delegate
 

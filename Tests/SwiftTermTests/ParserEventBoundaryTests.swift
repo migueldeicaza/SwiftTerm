@@ -43,6 +43,24 @@ struct ParserEventBoundaryTests {
         withExtendedLifetime(observation) {}
     }
 
+    @Test func observerGetsOnlyTheCodesItAsksFor() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 10, rows: 1)
+        let received = Locked<[Int]>([])
+        let delivered = DispatchSemaphore(value: 0)
+        let observation = terminal.observeOscEvents(codes: [9, 777]) { event in
+            received.withLock { $0.append(event.code) }
+            if event.code == 777 { delivered.signal() }
+        }
+
+        terminal.terminalLock.withLock {
+            terminal.feed(text: "\u{1b}]1337;File=x\u{7}\u{1b}]9;hello\u{7}\u{1b}]8;;http://a\u{7}\u{1b}]777;notify;a;b\u{7}")
+        }
+
+        #expect(delivered.wait(timeout: .now() + 2) == .success)
+        #expect(received.withLock { $0 } == [9, 777])
+        withExtendedLifetime(observation) {}
+    }
+
     @Test func observerCopiesCursorAtEachOscBoundary() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 20, rows: 3)
         let received = Locked<[TerminalOscEvent]>([])

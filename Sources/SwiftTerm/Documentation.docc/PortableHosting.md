@@ -9,6 +9,9 @@ scrollback while SwiftTerm continues to own terminal parsing and state. They
 are useful for a custom native renderer and are the core APIs behind the WASM
 browser package.
 
+To show a terminal that runs in another process or on another machine with
+the renderer of `TerminalView`, see <doc:ExternalRendering>.
+
 The host has two directions of data flow:
 
 1. Feed output received from a process or remote peer into the terminal.
@@ -86,7 +89,7 @@ exports copied graphics snapshots; see the repository's
 
 ## Keyboard, paste, and pointer input
 
-Use ``Terminal/sendHostKey(key:code:modifiers:eventType:text:shiftedKey:baseLayoutKey:)``
+Use ``Terminal/sendHostKey(key:code:modifiers:eventType:text:shiftedKey:baseLayoutKey:composing:backspaceSendsControlH:)``
 for physical keys, ``Terminal/sendHostText(_:)`` for committed text (including
 IME results), and ``Terminal/sendHostTextPaste(_:allowUnsafe:)`` for paste.
 Committed text follows the active keyboard modes; paste separately follows the
@@ -138,7 +141,7 @@ for build instructions, lifecycle rules, and a Canvas example.
 
 ### Host Input
 
-- ``Terminal/sendHostKey(key:code:modifiers:eventType:text:shiftedKey:baseLayoutKey:)``
+- ``Terminal/sendHostKey(key:code:modifiers:eventType:text:shiftedKey:baseLayoutKey:composing:backspaceSendsControlH:)``
 - ``Terminal/sendHostText(_:)``
 - ``Terminal/sendHostTextPaste(_:allowUnsafe:)``
 - ``Terminal/sendHostMouse(action:button:modifiers:col:row:pixelX:pixelY:)``

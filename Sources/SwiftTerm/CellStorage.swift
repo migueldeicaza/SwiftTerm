@@ -606,6 +606,11 @@ final class CellArena {
         attributes[Int(identifier)]
     }
 
+    /// The largest number of attributes this arena can intern.
+    var attributeLimit: Int { attributeCapacity }
+    /// The largest number of grapheme clusters this arena can intern.
+    var graphemeLimit: Int { graphemeCapacity }
+
     func intern(grapheme scalars: [UInt32]) -> UInt32? {
         if let identifier = graphemeIdentifiers[scalars] {
             return identifier
