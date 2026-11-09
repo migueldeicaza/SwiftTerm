@@ -4330,8 +4330,6 @@ open class Terminal {
                 tdel?.setBackgroundColor(source: self, color: color)
             case 2:
                 cursorColor = color
-                tdel?.setCursorColor(source: self, color: color)
-                break
             default:
                 break
             }
@@ -4357,7 +4355,6 @@ open class Terminal {
     {
         if let cursorColor = Color.parseColor(data) {
             self.cursorColor = cursorColor
-            tdel?.setCursorColor(source: self, color: cursorColor)
         }
     }
 

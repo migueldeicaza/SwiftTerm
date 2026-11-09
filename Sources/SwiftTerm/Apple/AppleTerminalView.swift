@@ -1323,6 +1323,17 @@ struct TerminalViewCrossThreadState: Sendable {
     /// The last cursor style the terminal set, waiting for
     /// `applyPendingViewUpdates`.
     var pendingCursorStyle: CursorStyle?
+    /// The last cursor color the terminal set (OSC 12) or reset (OSC 112),
+    /// waiting for `applyPendingViewUpdates`.
+    var pendingCursorColor: PendingCursorColor?
+}
+
+/// A cursor color change that waits for the main actor.
+enum PendingCursorColor: Sendable {
+    /// Use this color.
+    case color(Color)
+    /// Use the view's default cursor color.
+    case reset
 }
 
 final class AppleKittyClipboardBridge: Sendable {
@@ -2600,15 +2611,29 @@ extension TerminalView {
     /// the last call. The frame driver calls this before it draws.
     func applyPendingViewUpdates ()
     {
-        let (position, cursorStyle) = crossThreadState.withLock { state in
-            let pending = (state.pendingSyncEndScrollPosition, state.pendingCursorStyle)
+        let (position, cursorStyle, cursorColor) = crossThreadState.withLock { state in
+            let pending = (state.pendingSyncEndScrollPosition, state.pendingCursorStyle,
+                           state.pendingCursorColor)
             state.pendingSyncEndScrollPosition = nil
             state.pendingCursorStyle = nil
+            state.pendingCursorColor = nil
             return pending
         }
         if let cursorStyle {
             caretView?.style = cursorStyle
             updateCaretView()
+        }
+        switch cursorColor {
+        case .color(let color):
+            cursorColorIsDefault = false
+            caretColor = TTColor.make(color: color)
+        case .reset:
+            if let caretView {
+                cursorColorIsDefault = true
+                caretView.caretColor = caretView.defaultCaretColor
+            }
+        case nil:
+            break
         }
         if let position {
             updateScroller()
@@ -2650,20 +2675,12 @@ extension TerminalView {
     
     /// Implements TerminalDelegate's cursor color callback (OSC 12 / OSC 112).
     public nonisolated func setCursorColor(source: Terminal, color: Color?) {
-        let nativeColor = color.map { TTColor.make(color: $0) }
-        onMain { [weak self] in
-            guard let self else { return }
-            if let nativeColor {
-                self.cursorColorIsDefault = false
-                self.caretColor = nativeColor
-            } else if let caretView = self.caretView {
-                self.cursorColorIsDefault = true
-                caretView.caretColor = caretView.defaultCaretColor
-            }
-#if canImport(MetalKit) && os(macOS)
-            self.frameDriver.markDirty()
-#endif
-        }
+        // Programs such as vim send OSC 112 many times a second. Record only
+        // the latest color: the frame driver applies it once, at its next
+        // tick (applyPendingViewUpdates), and draws after it.
+        let pending: PendingCursorColor = color.map { .color($0) } ?? .reset
+        crossThreadState.withLock { $0.pendingCursorColor = pending }
+        frameSignal.requestViewUpdate()
     }
 
     public nonisolated func getColors (source: Terminal) -> (foreground: Color, background: Color)
