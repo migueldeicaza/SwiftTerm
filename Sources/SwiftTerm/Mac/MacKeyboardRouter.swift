@@ -153,6 +153,10 @@ public final class TerminalKeyboardRouter {
     /// during a preedit. Cleared by the next key down or by its key up.
     private var composingKeyCode: UInt16?
     private var keysWithReportedPress: Set<UInt16> = []
+    /// The functional key that each reported press sent. The release sends
+    /// the same key, because the arrow swap (DECSET 1243) or the paragraph
+    /// direction can change while the key is held.
+    private var reportedFunctionalKeys: [UInt16: KittyFunctionalKey] = [:]
     private var keyDownCode: UInt16?
 
     private static let regularArrowKeyCodes: Set<UInt16> = [
@@ -221,6 +225,7 @@ public final class TerminalKeyboardRouter {
     /// Call when the view loses focus: releases can be lost then.
     public func focusLost () {
         keysWithReportedPress.removeAll()
+        reportedFunctionalKeys.removeAll()
     }
 
     // MARK: Events
@@ -246,6 +251,7 @@ public final class TerminalKeyboardRouter {
         composingKeyCode = nil
         if !event.isARepeat {
             keysWithReportedPress.remove(event.keyCode)
+            reportedFunctionalKeys.removeValue(forKey: event.keyCode)
         }
         let modes = host.keyboardModes
         let keyboardEnhancementFlags = modes.kittyFlags
@@ -533,12 +539,16 @@ public final class TerminalKeyboardRouter {
             composingKeyCode = nil
         }
         let hadReportedPress = keysWithReportedPress.remove(event.keyCode) != nil
+        let pressedKey = reportedFunctionalKeys.removeValue(forKey: event.keyCode)
         guard hadReportedPress, let host else { return }
         let flags = host.keyboardModes.kittyFlags
         // Every key whose press reached the application gets a release,
         // including plain text keys.
         if flags.contains(.reportEvents),
-           let kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
+           var kittyEvent = kittyKeyEvent(from: event, eventType: .release, text: nil) {
+            if let pressedKey, case .functional = kittyEvent.key {
+                kittyEvent.key = .functional(pressedKey)
+            }
             if !flags.contains(.reportAllKeys),
                case .unicode(let codepoint) = kittyEvent.key,
                codepoint == 9 || codepoint == 13 || codepoint == 127 {
@@ -801,6 +811,9 @@ public final class TerminalKeyboardRouter {
             switch event.key {
             case .none:
                 break
+            case .functional(let key):
+                keysWithReportedPress.insert(keyCode)
+                reportedFunctionalKeys[keyCode] = key
             default:
                 keysWithReportedPress.insert(keyCode)
             }

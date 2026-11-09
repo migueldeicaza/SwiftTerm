@@ -134,10 +134,10 @@ struct KeyboardRouterTests {
         return (view, capture)
     }
 
-    private func arrow(left: Bool) throws -> NSEvent {
+    private func arrow(left: Bool, type: NSEvent.EventType = .keyDown) throws -> NSEvent {
         let scalar = UnicodeScalar(UInt32(left ? NSLeftArrowFunctionKey : NSRightArrowFunctionKey))!
         let text = String(scalar)
-        return try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.function, .numericPad],
+        return try #require(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [.function, .numericPad],
                                              timestamp: 0, windowNumber: 0, context: nil, characters: text,
                                              charactersIgnoringModifiers: text, isARepeat: false,
                                              keyCode: left ? 123 : 124))
@@ -163,6 +163,29 @@ struct KeyboardRouterTests {
         latin.withTerminal { $0.bidiArrowKeySwap = true }
         latin.keyDown(with: try arrow(left: true))
         #expect(latinCapture.sent == EscapeSequences.moveLeftNormal)
+    }
+
+    /// The release of a swapped arrow reports the key that its press
+    /// reported, also when the swap ends while the key is held.
+    @Test func swappedArrowReleaseMatchesItsPress() throws {
+        // Kitty flags 3: disambiguate and report event types.
+        let (view, capture) = view(feed: "אב\u{1b}[>3u")
+        view.withTerminal { $0.bidiArrowKeySwap = true }
+        view.keyDown(with: try arrow(left: true))
+        let press = String(decoding: capture.sent, as: UTF8.self)
+        #expect(press.hasSuffix("C"), "press \(press.debugDescription)")
+
+        view.withTerminal { $0.bidiArrowKeySwap = false }
+        capture.sent = []
+        view.keyUp(with: try arrow(left: true, type: .keyUp))
+        let release = String(decoding: capture.sent, as: UTF8.self)
+        #expect(release == "\u{1b}[1;1:3C")
+
+        // A new press uses the current swap state.
+        capture.sent = []
+        view.keyDown(with: try arrow(left: true))
+        view.keyUp(with: try arrow(left: true, type: .keyUp))
+        #expect(String(decoding: capture.sent, as: UTF8.self) == "\u{1b}[D\u{1b}[1;1:3D")
     }
 
     /// Records the events that go to the input system.
