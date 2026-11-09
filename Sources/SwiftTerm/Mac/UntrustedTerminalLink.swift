@@ -109,6 +109,8 @@ struct UntrustedTerminalLink: Equatable {
 
     /// Shows the effective target on one line.
     var displayString: String {
+        // URL(fileURLWithPath:) traps on an empty path.
+        guard !string.isEmpty else { return "" }
         let normalized: String
         if let url = URL(string: string), url.scheme != nil {
             // Use the same path for the preview and the file check.

@@ -340,6 +340,28 @@ final class SwiftTermOsc {
         #expect(explicitLink(terminal, row: 0, col: 0) == "https://second.example")
     }
 
+    /// Issue #834: an empty URI ends the link, also when params are present.
+    @Test(arguments: ["id=a;", ""])
+    func testOscHyperlinkEmptyUriWithParamsEndsLink(_ closing: String) {
+        let terminal = Terminal(
+            delegate: TitleDelegate(),
+            options: TerminalOptions(cols: 16, rows: 2, scrollback: 0)
+        )
+        let escape = "\u{1b}"
+        let stringTerminator = "\(escape)\\"
+
+        terminal.feed(text: "\(escape)]8;id=a;https://example.com\(stringTerminator)")
+        terminal.feed(text: "AB")
+        // "" is a malformed OSC 8 with no separator. It also ends the link.
+        terminal.feed(text: "\(escape)]8;\(closing)\(stringTerminator)")
+        terminal.feed(text: "CD")
+
+        #expect(explicitLink(terminal, row: 0, col: 0) == "https://example.com")
+        #expect(explicitLink(terminal, row: 0, col: 1) == "https://example.com")
+        #expect(payload(terminal, row: 0, col: 2) == nil)
+        #expect(payload(terminal, row: 0, col: 3) == nil)
+    }
+
     /// Test OSC 8 hyperlinks with ID parameter
     /// From Ghostty: hyperlink with id
     @Test func testOscHyperlinkWithId() {

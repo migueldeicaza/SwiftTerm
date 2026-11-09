@@ -3962,12 +3962,16 @@ open class Terminal {
             activeHyperlink = nil
             return
         }
-        if data.count == 1 && data [data.startIndex] == UInt8 (ascii: ";") {
+        // The form is "params;URI". An empty URI ends the link, also when
+        // params are present ("id=x;"). A payload without the separator is
+        // malformed and also ends the link.
+        guard let separator = data.firstIndex(of: UInt8 (ascii: ";")),
+              data.index(after: separator) < data.endIndex else {
             activeHyperlink = nil
-        } else {
-            let payload = terminalStringUTF8(data) ?? terminalStringASCII(data) ?? ""
-            activeHyperlink = .pending(payload)
+            return
         }
+        let payload = terminalStringUTF8(data) ?? terminalStringASCII(data) ?? ""
+        activeHyperlink = .pending(payload)
     }
     
     // OSC 52 – clipboard access
@@ -9705,7 +9709,7 @@ open class Terminal {
     private func parseHyperlinkPayload(_ payload: String) -> String?
     {
         let split = payload.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
-        guard split.count > 1 else {
+        guard split.count > 1, !split[1].isEmpty else {
             return nil
         }
         return String(split[1])

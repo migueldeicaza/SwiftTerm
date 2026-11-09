@@ -2882,7 +2882,8 @@ extension TerminalView {
     {
         // Only the first ";" is a separator: the URL itself can contain more.
         let split = payload.split(separator: ";", maxSplits: 1, omittingEmptySubsequences: false)
-        if split.count > 1 {
+        // An empty URI is not a link.
+        if split.count > 1 && !split[1].isEmpty {
             let pairs = split[0].split(separator: ":")
             var params: [String:String] = [:]
             for p in pairs {
