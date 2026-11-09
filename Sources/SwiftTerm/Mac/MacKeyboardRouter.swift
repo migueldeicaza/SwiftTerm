@@ -104,6 +104,9 @@ public protocol TerminalKeyboardHost: NSView {
     /// that the keyboard layout composes nothing for; see
     /// `TerminalView.optionAsMetaKeyForFunctionalKeys`.
     var optionAsMetaKeyForFunctionalKeys: Bool { get }
+    /// A held letter opens the accent menu of macOS and does not repeat;
+    /// see `TerminalView.pressAndHoldShowsAccentMenu`.
+    var pressAndHoldShowsAccentMenu: Bool { get }
     var backspaceSendsControlH: Bool { get }
     /// Return true to give a Command key to a program that enabled the
     /// kitty keyboard protocol, instead of the menu.
@@ -131,6 +134,8 @@ public protocol TerminalKeyboardHost: NSView {
 extension TerminalKeyboardHost {
     /// False: Option is Meta only when ``optionAsMetaKey`` is true.
     public var optionAsMetaKeyForFunctionalKeys: Bool { false }
+    /// False: a held text key repeats.
+    public var pressAndHoldShowsAccentMenu: Bool { false }
 }
 
 /// Decides what each key event sends, for a `TerminalKeyboardHost`. Call it
@@ -163,6 +168,11 @@ public final class TerminalKeyboardRouter {
     /// direction can change while the key is held.
     private var reportedFunctionalKeys: [UInt16: KittyFunctionalKey] = [:]
     private var keyDownCode: UInt16?
+    /// The key whose press AppKit committed as plain text, and that text.
+    /// A repeat of this key sends the text again and does not go to the
+    /// input context. The input context shows the press-and-hold accent
+    /// menu on a repeat and discards the repeat.
+    private var repeatableTextKey: (keyCode: UInt16, text: String)?
 
     private static let regularArrowKeyCodes: Set<UInt16> = [
         UInt16(kVK_LeftArrow),
@@ -260,6 +270,7 @@ public final class TerminalKeyboardRouter {
         if !event.isARepeat {
             keysWithReportedPress.remove(event.keyCode)
             reportedFunctionalKeys.removeValue(forKey: event.keyCode)
+            repeatableTextKey = nil
         }
         let modes = host.keyboardModes
         let keyboardEnhancementFlags = modes.kittyFlags
@@ -401,7 +412,9 @@ public final class TerminalKeyboardRouter {
             }
 
             pendingKittyKeyEvent = PendingKittyKeyEvent(event: event, eventType: textEventType)
-            host.interpretKeyEvents([event])
+            if !repeatText(event) {
+                host.interpretKeyEvents([event])
+            }
             return
         }
 
@@ -536,8 +549,29 @@ public final class TerminalKeyboardRouter {
             }
             return
         }
-        
-        host.interpretKeyEvents([event])
+
+        if !repeatText(event) {
+            host.interpretKeyEvents([event])
+        }
+    }
+
+    /// Sends the text of a held text key again. Returns `false` when the
+    /// event is not a repeat of a key that AppKit committed as plain text.
+    ///
+    /// AppKit must not get these repeats: when the press-and-hold feature of
+    /// macOS is on, the input context opens the accent menu and discards
+    /// them, and the key does not repeat. A host that sets
+    /// `pressAndHoldShowsAccentMenu` asks for that behavior.
+    private func repeatText (_ event: NSEvent) -> Bool {
+        guard event.isARepeat, !isComposing,
+              host?.pressAndHoldShowsAccentMenu != true,
+              let key = repeatableTextKey,
+              key.keyCode == event.keyCode,
+              key.text == event.characters else {
+            return false
+        }
+        insertText(key.text)
+        return true
     }
 
     /// Reports the release of a key whose press the program got. Call the
@@ -726,6 +760,9 @@ public final class TerminalKeyboardRouter {
         // unmarkText after a commit, so clear the state here.
         let wasComposing = isComposing
         isComposing = false
+        if let keyDownCode, !wasComposing, isPlainPrintableText(text) {
+            repeatableTextKey = (keyDownCode, text)
+        }
         let keyboardEnhancementFlags = host.keyboardModes.kittyFlags
         guard !keyboardEnhancementFlags.isEmpty else {
             host.keyboardRouter(sendText: text)

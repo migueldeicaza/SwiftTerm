@@ -2223,6 +2223,16 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// Meta on every key.
     public var optionAsMetaKeyForFunctionalKeys: Bool = false
 
+    /// When `true`, a held letter opens the accent menu of macOS (the
+    /// press-and-hold feature) and the key does not repeat. The default is
+    /// `false`: a held key repeats, as terminal programs expect.
+    ///
+    /// macOS uses the key repeat to open the menu, so a key cannot do both.
+    /// The setting has no effect when the user or the application has set
+    /// the `ApplePressAndHoldEnabled` default to `false`; the menu is then
+    /// off for all views.
+    public var pressAndHoldShowsAccentMenu: Bool = false
+
     //
     // We capture a handful of keydown events and pre-process those, and then let
     // interpretKeyEvents do the rest of the work, that includes text-insertion, and

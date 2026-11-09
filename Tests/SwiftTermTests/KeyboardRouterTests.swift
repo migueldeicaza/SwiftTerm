@@ -75,6 +75,7 @@ struct KeyboardRouterTests {
     private final class RecordingHost: NSView, TerminalKeyboardHost {
         var keyboardModes = TerminalKeyboardModes()
         var optionAsMetaKey = true
+        var pressAndHoldShowsAccentMenu = false
         var backspaceSendsControlH = false
         var shouldSendCommandKeyToTerminal: ((NSEvent) -> Bool)?
         var swapsHorizontalArrowKeys: Bool { false }
@@ -86,6 +87,62 @@ struct KeyboardRouterTests {
         func keyboardRouter(send bytes: [UInt8]) { self.bytes.append(bytes) }
         func keyboardRouter(sendText text: String) { bytes.append(Array(text.utf8)) }
         func keyboardRouterScrollPage(up: Bool) {}
+
+        /// Stands in for the input context of AppKit.
+        var interpret: ((NSEvent) -> Void)?
+        override func interpretKeyEvents(_ eventArray: [NSEvent]) { eventArray.forEach { interpret?($0) } }
+    }
+
+    /// A held text key repeats and its repeats do not go to the input
+    /// context, which shows the press-and-hold accent menu and discards them.
+    @Test func heldTextKeyRepeatsWithoutTheInputContext() throws {
+        func key(_ characters: String, code: UInt16, isARepeat: Bool) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                          windowNumber: 0, context: nil, characters: characters,
+                                          charactersIgnoringModifiers: characters, isARepeat: isARepeat,
+                                          keyCode: code))
+        }
+        for flags: KittyKeyboardFlags in [[], [.disambiguate]] {
+            let host = RecordingHost(frame: .zero)
+            host.keyboardModes = TerminalKeyboardModes(kittyFlags: flags)
+            let router = TerminalKeyboardRouter(host: host)
+            var interpreted = 0
+            var commits = true
+            host.interpret = { event in
+                interpreted += 1
+                if commits { router.insertText(event.characters ?? "") }
+            }
+            router.keyDown(try key("a", code: 0, isARepeat: false))
+            router.keyDown(try key("a", code: 0, isARepeat: true))
+            router.keyDown(try key("a", code: 0, isARepeat: true))
+            #expect(interpreted == 1, "flags \(flags.rawValue)")
+            #expect(host.keys.map(\.bytes) + host.bytes == [[0x61], [0x61], [0x61]], "flags \(flags.rawValue)")
+
+            // The host can keep the accent menu: the repeats then go to
+            // the input context.
+            host.pressAndHoldShowsAccentMenu = true
+            router.keyDown(try key("a", code: 0, isARepeat: true))
+            #expect(interpreted == 2, "flags \(flags.rawValue)")
+            host.pressAndHoldShowsAccentMenu = false
+            interpreted = 1
+
+            // A key that the input method did not commit as text stays
+            // with the input method while it repeats.
+            commits = false
+            router.keyDown(try key("e", code: 14, isARepeat: false))
+            router.keyDown(try key("e", code: 14, isARepeat: true))
+            #expect(interpreted == 3, "flags \(flags.rawValue)")
+
+            // A commit of other text than the key gives (an input method)
+            // does not let the key bypass the input method.
+            host.interpret = { _ in
+                interpreted += 1
+                router.insertText("あ")
+            }
+            router.keyDown(try key("a", code: 0, isARepeat: false))
+            router.keyDown(try key("a", code: 0, isARepeat: true))
+            #expect(interpreted == 5, "flags \(flags.rawValue)")
+        }
     }
 
     /// Without the kitty protocol, Control and Option-as-Meta keys send
