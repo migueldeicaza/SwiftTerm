@@ -24,6 +24,7 @@
 public final class TerminalRowStore {
     let arena: CellArena
 
+    /// Creates an empty store.
     public init () {
         arena = CellArena()
     }
@@ -57,10 +58,14 @@ public final class TerminalRowStore {
     /// Sets one cell.
     ///
     /// - Parameters:
+    ///   - line: A line that this store made.
+    ///   - column: The column of the cell, from 0.
     ///   - text: the grapheme cluster; nil or empty for a cell that was never
     ///     written (it renders as a blank and copies as nothing).
     ///   - width: 1 for a narrow cell, 2 for the first cell of a wide
     ///     character, 0 for the cell that follows a wide character.
+    ///   - attribute: The colors and the style of the cell.
+    ///   - isProtected: Whether DECSCA protects the cell from selective erase.
     /// - Returns: false when `line` does not belong to this store or the cell
     ///   cannot be represented.
     @discardableResult

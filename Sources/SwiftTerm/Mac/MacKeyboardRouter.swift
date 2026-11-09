@@ -24,6 +24,7 @@ public struct TerminalKeyboardModes: Equatable, Sendable {
     /// DECBKM: Backspace sends BS (Control-H) and not DEL.
     public var backarrowKeyMode: Bool
 
+    /// Creates the modes. The defaults are the modes of a terminal after a reset.
     public init (kittyFlags: KittyKeyboardFlags = [], applicationCursor: Bool = false,
                  applicationKeypad: Bool = false, backarrowKeyMode: Bool = false) {
         self.kittyFlags = kittyFlags
@@ -82,6 +83,7 @@ public struct TerminalKeyEvent {
     public var modifiers: UInt32 { UInt32(event.modifiers.rawValue) }
     /// 1 press, 2 repeat, 3 release.
     public var eventType: UInt32 { UInt32(event.eventType.rawValue) }
+    /// The text of the key, or the committed text when ``isText`` is true.
     public var text: String? { event.text }
     /// The key with Shift, or 0.
     public var shiftedKey: UInt32 { event.shiftedKey?.value ?? 0 }
@@ -127,6 +129,7 @@ public protocol TerminalKeyboardHost: NSView {
 }
 
 extension TerminalKeyboardHost {
+    /// False: Option is Meta only when ``optionAsMetaKey`` is true.
     public var optionAsMetaKeyForFunctionalKeys: Bool { false }
 }
 
@@ -135,8 +138,10 @@ extension TerminalKeyboardHost {
 /// `performKeyEquivalent`, and the text input methods.
 @MainActor
 public final class TerminalKeyboardRouter {
+    /// The view that gets the keys. The router keeps a weak reference.
     public weak var host: (any TerminalKeyboardHost)?
 
+    /// Creates a router for `host`.
     public init (host: (any TerminalKeyboardHost)? = nil) {
         self.host = host
     }
@@ -246,6 +251,9 @@ public final class TerminalKeyboardRouter {
         return true
     }
 
+    /// Sends a key press. Call it from the `keyDown(with:)` method of the host.
+    /// Text keys go to `interpretKeyEvents(_:)` of the host, which calls
+    /// ``insertText(_:)`` or ``doCommand(_:)``.
     public func keyDown (_ event: NSEvent) {
         guard let host else { return }
         composingKeyCode = nil
@@ -584,6 +592,8 @@ public final class TerminalKeyboardRouter {
         }
     }
 
+    /// Sends the key of an editing command, for example `deleteBackward:` or
+    /// `moveLeft:`. Call it from `doCommand(by:)` of the host.
     public func doCommand (_ selector: Selector) {
         guard let host else { return }
         let keyboardEnhancementFlags = host.keyboardModes.kittyFlags

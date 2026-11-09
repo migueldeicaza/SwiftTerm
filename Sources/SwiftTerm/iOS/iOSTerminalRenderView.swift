@@ -58,8 +58,15 @@ open class TerminalRenderView: UIView, CaretHost {
         didSet { updateMetrics() }
     }
 
+    /// Draws the custom block and box glyphs with anti-aliasing instead of
+    /// pixel-aligned edges; see ``TerminalView/antiAliasCustomBlockGlyphs``.
     public var antiAliasCustomBlockGlyphs: Bool = false { didSet { invalidateAll() } }
+    /// Draws block elements (U+2580–U+259F) and box drawing characters
+    /// (U+2500–U+257F) with custom code instead of the font, so that they
+    /// join; see ``TerminalView/customBlockGlyphs``.
     public var customBlockGlyphs: Bool = true { didSet { invalidateAll() } }
+    /// Shows bold text in the ANSI colors 0–7 with the bright colors 8–15;
+    /// see ``TerminalView/useBrightColors``.
     public var useBrightColors: Bool = true { didSet { invalidateAll() } }
     /// Draws explicit bright ANSI indexes as base colors with a bold font
     /// while `useBrightColors` is false; see
@@ -78,6 +85,9 @@ open class TerminalRenderView: UIView, CaretHost {
             colorsChanged()
         }
     }
+    /// Supplies the symbol glyphs (for example Nerd Font icons) that the font
+    /// does not have. Nil, the default, turns this off. See
+    /// ``TerminalGlyphFallbackProvider``.
     public var glyphFallbackProvider: (any TerminalGlyphFallbackProvider)? { didSet { invalidateAll() } }
     /// Whether rows use the bidi state that the terminal set on them, as in
     /// `TerminalView`. `.legacyLeftToRight` draws every row in logical order.
@@ -85,11 +95,15 @@ open class TerminalRenderView: UIView, CaretHost {
     /// How the Metal renderer builds its GPU buffers, as in `TerminalView`.
     public var metalBufferingMode: MetalBufferingMode = .perRowPersistent { didSet { invalidateAll() } }
 
+    /// The default foreground color: the color of text with no explicit color.
     public var nativeForegroundColor: UIColor = .label { didSet { colorsChanged() } }
+    /// The default background color. The view fills its background with it.
     public var nativeBackgroundColor: UIColor = .systemBackground { didSet { colorsChanged() } }
+    /// The background color of selected text.
     public var selectedTextBackgroundColor = UIColor(red: 0, green: 166.0 / 255.0, blue: 178.0 / 255.0, alpha: 1.0) {
         didSet { colorsChanged() }
     }
+    /// The color of selected text.
     public var selectedTextForegroundColor: UIColor = .black { didSet { colorsChanged() } }
     /// The color of the selection handles that the Core Graphics renderer
     /// draws at the ends of the frame's selection, as in `TerminalView`.
@@ -226,6 +240,12 @@ open class TerminalRenderView: UIView, CaretHost {
     private var cachedFonts: (source: UIFont, fonts: FrameFontSet)?
     private var cachedAppearance: (key: [UIColor], traits: UITraitCollection, value: FrameAppearance)?
 
+    /// Creates a view with no frame source.
+    ///
+    /// - Parameters:
+    ///   - frame: The frame of the view.
+    ///   - font: The font of the terminal text. Nil uses the default font of
+    ///     `TerminalView`.
     public init (frame: CGRect, font: UIFont? = nil) {
         fontSet = TerminalView.FontSet(font: font ?? TerminalView.FontSet.defaultFont)
         cellDimension = CGSize(width: 1, height: 1)

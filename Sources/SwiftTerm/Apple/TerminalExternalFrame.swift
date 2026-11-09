@@ -20,6 +20,8 @@ public struct TerminalExternalSelection: Equatable, Sendable {
     /// includes that column.
     public var end: Position
 
+    /// Creates a selection from `start` to `end`, in the line numbering of
+    /// the frame.
     public init (start: Position, end: Position) {
         self.start = start
         self.end = end
@@ -33,11 +35,16 @@ public struct TerminalExternalSelection: Equatable, Sendable {
 /// Keep the same object while the slice does not change: the renderers cache
 /// their textures by image identity.
 public final class TerminalExternalImage: @unchecked Sendable {
+    /// The image of this slice: the part of the full image on this line.
     public let image: TTImage
+    /// The column where the slice starts.
     public let column: Int
+    /// The width of the slice, in points.
     public let width: Int
+    /// The height of the slice, in points.
     public let height: Int
 
+    /// Creates the slice of an image on one line.
     public init (image: TTImage, column: Int, width: Int, height: Int) {
         self.image = image
         self.column = column
@@ -52,17 +59,26 @@ public final class TerminalExternalImage: @unchecked Sendable {
 /// numbers that never repeat). `topLine`, the cursor and the selection use
 /// the same numbering.
 public struct TerminalExternalFrame: Sendable {
+    /// The number of columns of the grid.
     public var columns: Int
+    /// The number of visible rows.
     public var rows: Int
     /// The line number of the first visible row.
     public var topLine: Int
+    /// The line number of the cursor. A cursor outside the visible rows is
+    /// not drawn.
     public var cursorLine: Int
+    /// The column of the cursor.
     public var cursorColumn: Int
+    /// Whether the program shows the cursor (DECTCEM).
     public var cursorVisible: Bool
+    /// The shape of the cursor and whether it blinks.
     public var cursorStyle: CursorStyle
+    /// Whether the terminal shows its alternate screen.
     public var isAlternateBuffer: Bool
     /// The 256-color palette. Build it with `makePalette` from the theme.
     public var palette: [Color]
+    /// The selected text, or nil when there is no selection.
     public var selection: TerminalExternalSelection?
     /// The terminal's `maximumBidiParagraphRows`: a wrapped paragraph with
     /// more rows is drawn without bidi reordering, as in a local terminal.
@@ -75,6 +91,8 @@ public struct TerminalExternalFrame: Sendable {
     /// placements use but that are missing from `imagesById` are not drawn.
     public var kitty: KittyGraphicsRenderSnapshot?
 
+    /// Creates a frame. ``images``, ``kitty`` and
+    /// ``maximumBidiParagraphRows`` keep their default values.
     public init (columns: Int, rows: Int, topLine: Int, cursorLine: Int, cursorColumn: Int,
                  cursorVisible: Bool, cursorStyle: CursorStyle, isAlternateBuffer: Bool,
                  palette: [Color], selection: TerminalExternalSelection? = nil)
