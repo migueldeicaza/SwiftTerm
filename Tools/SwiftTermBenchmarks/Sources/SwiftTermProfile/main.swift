@@ -38,7 +38,8 @@ private struct Options {
 
 private func usage() -> Never {
     let names = try! (VTEBenchWorkloads.makeDefault() + VTEBenchWorkloads.makeHardening()
-        + VTEBenchWorkloads.makeHyperlink() + VTEBenchWorkloads.makeGhosttyStream())
+        + VTEBenchWorkloads.makeHyperlink() + VTEBenchWorkloads.makeGhosttyStream()
+        + VTEBenchWorkloads.makeWrap())
         .map(\.name).joined(separator: ", ")
     FileHandle.standardError.write(Data("""
     usage: SwiftTermProfile WORKLOAD [--iterations N] [--warmup N] [--minimum-bytes N]
@@ -53,6 +54,7 @@ guard let options = Options.parse(Array(CommandLine.arguments.dropFirst())) else
 }
 let workloads = try VTEBenchWorkloads.makeDefault() + VTEBenchWorkloads.makeHardening()
     + VTEBenchWorkloads.makeHyperlink() + VTEBenchWorkloads.makeGhosttyStream()
+    + VTEBenchWorkloads.makeWrap()
 guard let workload = workloads.first(where: { $0.name == options.workloadName }) else {
     usage()
 }
