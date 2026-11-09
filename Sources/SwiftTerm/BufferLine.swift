@@ -576,11 +576,11 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// Accesses the CharIndex at the specified position
     public subscript (index : Int /*, callingMethod: String = #function */) -> CharData {
         get {
-            // The x value in a buffer can point beyond the column, due to the way that we allow
-            // buffer.x to grow (this is to support some wrapmodes and write on the edge)
+            // `buffer.x` is always less than `cols` (a pending wrap is a flag,
+            // not a column past the line). The clamp stays for callers that
+            // pass other indexes.
             let dataSize = storage.count
             if index >= dataSize {
-                /* print ("Warning: the method \(callingMethod) has not been audited to clamp buffer.x to cols-1; fixing") */
                 return storage.cell(at: dataSize - 1)
             }
             return storage.cell(at: index)

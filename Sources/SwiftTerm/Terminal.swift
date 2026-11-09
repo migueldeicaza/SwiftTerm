@@ -1335,6 +1335,8 @@ open class Terminal {
         resizeNormalBufferToCurrentGridIfNeeded()
         normalBuffer.x = altBuffer.x
         normalBuffer.y = altBuffer.y
+        // xterm keeps one pending-wrap flag for both screens.
+        normalBuffer.pendingWrap = altBuffer.pendingWrap
         
         // The alt buffer should always be cleared when we switch to the normal
         // buffer. This frees up memory since the alt buffer should always be new
@@ -1356,6 +1358,8 @@ open class Terminal {
         semanticNoteAlternateScreenSwitch()
         altBuffer.x = normalBuffer.x
         altBuffer.y = normalBuffer.y
+        // xterm keeps one pending-wrap flag for both screens.
+        altBuffer.pendingWrap = normalBuffer.pendingWrap
         
         // Since the alt buffer is always cleared when the normal buffer is
         // activated, we want to fill it when switching to it.
@@ -1926,10 +1930,11 @@ open class Terminal {
     /// Finds the glyph that owns the terminal cell immediately before the cursor.
     /// A wide glyph has one or more width-zero trailing cells, so walk back to
     /// its leading cell before attempting to extend its grapheme cluster.
+    /// With a pending wrap, the cell under the cursor is the last one written.
     private func combiningTarget(in buffer: Buffer) -> (y: Int, x: Int)?
     {
         let y = buffer.y + buffer.yBase
-        var x = buffer.x - 1
+        var x = buffer.pendingWrap ? buffer.x : buffer.x - 1
         guard x >= 0 else { return nil }
 
         let line = buffer.lines[y]
@@ -2289,7 +2294,14 @@ open class Terminal {
                     payloadCode: cell.packed.payloadCode,
                     semanticContentCode: cell.packed.semanticContentCode)!
                 line.setPackedCell(tail, at: x + 1)
-                buffer.x += 1
+                // The cursor goes after the tail. A tail on the right margin
+                // keeps the cursor on it, with a wrap pending.
+                if x + 1 == right {
+                    buffer.x = right
+                    buffer.pendingWrap = true
+                } else {
+                    buffer.x = x + 2
+                }
                 return true
             }
 
@@ -2605,8 +2617,15 @@ open class Terminal {
                             let tail = existingLine.packedCell(at: lastx + 1)
                             existingLine.setPackedCell(tail.demotedToNarrowBlank(), at: lastx + 1)
                         }
-                        if oldSize == 2 && buffer.x > 0 {
-                            buffer.x -= 1
+                        if oldSize == 2 {
+                            // The cursor goes after the narrowed glyph. With a
+                            // pending wrap it is on the old tail, which is that
+                            // column.
+                            if buffer.pendingWrap {
+                                buffer.pendingWrap = false
+                            } else if buffer.x > 0 {
+                                buffer.x -= 1
+                            }
                         }
                     } else if narrowRI && UnicodeUtil.isRegionalIndicator(firstScalar) &&
                               oldSize == 1 {
@@ -2868,9 +2887,10 @@ open class Terminal {
             line.bidiState = _currentBidiState
         }
         
-        // If the end of the line is hit, prevent this action from wrapping around to the next line.
-        if buffer.x >= _cols {
-            buffer.x -= 1
+        // A line feed cancels a pending wrap, also when the cursor does not
+        // move. Test first: a store on each line feed costs cycles.
+        if buffer.pendingWrap {
+            buffer.pendingWrap = false
         }
 
         finishSemanticLineAdvance(buffer: buffer, movedToNextLine: movedToNextLine)
@@ -3322,8 +3342,8 @@ open class Terminal {
 
     /// The logical offset of a position over the group's offset sequence:
     /// the number of input cells (and hard-boundary newlines) strictly
-    /// before it. The column is intentionally not clamped to `cols - 1`, so
-    /// a pending wrap (`buffer.x == cols`) contributes the full row.
+    /// before it. The column can be `cols`: for the cursor, a pending wrap
+    /// (`Buffer.columnsBeforeCursor`) contributes the full row.
     private func semanticOffset(of position: Position, in geometry: SemanticGroupGeometry)
         -> (offset: Int, line: Int, offsetInLine: Int)? {
         guard let index = geometry.rows.firstIndex(of: position.row) else {
@@ -3498,9 +3518,9 @@ open class Terminal {
             sendResponse("\u{1b}[<0;\(x);\(y)M")
             return true
         case .cursorKeys(let strategy):
-            // The cursor's offset uses buffer.x unclamped so a pending wrap
-            // contributes the full row.
-            let cursor = Position(col: buffer.x, row: buffer.yBase + buffer.y)
+            // A pending wrap counts as the column after the cursor, so the
+            // cursor's offset includes the full row.
+            let cursor = Position(col: buffer.columnsBeforeCursor, row: buffer.yBase + buffer.y)
             guard geometry.rows.contains(cursor.row) else { return false }
             let target = normalizeSemanticClickTarget(position)
             guard let data = semanticCursorMovementData(strategy: strategy,
@@ -3582,7 +3602,7 @@ open class Terminal {
     /// margin. `k=r` is exempt and never reaches this.
     private func freshSemanticPromptLine() {
         let left = marginMode ? buffer.marginLeft : 0
-        guard buffer.x != left else { return }
+        guard buffer.x != left || buffer.pendingWrap else { return }
         cmdCarriageReturn()
         cmdLineFeedBasic()
     }
@@ -4403,6 +4423,7 @@ open class Terminal {
             return
         }
         let buffer = self.buffer
+        buffer.pendingWrap = false
         
         buffer.lines[buffer.y + buffer.yBase].insertPackedCells(
             pos: buffer.x, n: pars.count > 0 ? max(pars[0], 1) : 1,
@@ -4451,14 +4472,11 @@ open class Terminal {
         }
         let newY = buffer.y + param
 
+        // Setting y also cancels a pending wrap.
         if newY >= bottom {
                 buffer.y = bottom
         } else {
                 buffer.y = newY
-        }
-        // If the end of the line is hit, prevent this action from wrapping around to the next line.
-        if buffer.x >= cols {
-                buffer.x -= 1
         }
     }
     
@@ -4480,10 +4498,7 @@ open class Terminal {
         if buffer.x > right {
             right = buffer.cols - 1
         }
-        buffer.x += (max (count, 1))
-        if buffer.x > right {
-            buffer.x = right
-        }
+        buffer.x = min (buffer.x + max (count, 1), right)
     }
 
     //
@@ -4514,15 +4529,16 @@ open class Terminal {
     func reverseWrapBackward (count: Int)
     {
         let buffer = self.buffer
-        restrictCursor(false)
+        let wasPendingWrap = buffer.pendingWrap
+        restrictCursor()
         var left = marginMode ? buffer.marginLeft : 0
         let right = marginMode ? buffer.marginRight : cols - 1
         var n = count
 
-        // After a write to the last column the cursor waits past it. The first
-        // step only cancels the wait.
-        if buffer.x > right {
-            buffer.x = right
+        // After a write to the last column a wrap is pending. The first step
+        // only cancels it (restrictCursor did that). As Ghostty; xterm 411
+        // CursorBack moves one cell less than this for counts above 1.
+        if wasPendingWrap {
             n -= 1
         }
         // If the cursor is already left of the left margin, let it go to the edge.
@@ -4593,13 +4609,13 @@ open class Terminal {
     }
     
     /**
-     * Restrict cursor to viewport size / scroll margin (origin mode)
-     * - Parameter limitCols: by default it is true, but the reverseWraparound mechanism in Backspace needs `x` to go beyond.
+     * Restrict cursor to viewport size / scroll margin (origin mode).
+     * It sets the cursor, so it also cancels a pending wrap.
      */
-    func restrictCursor(_ limitCols: Bool = true)
+    func restrictCursor()
     {
         let buffer = self.buffer
-        buffer.x = min (cols - (limitCols ? 1 : 0), max (0, buffer.x))
+        buffer.x = min (cols - 1, max (0, buffer.x))
         buffer.y = originMode
             ? min (buffer.scrollBottom, max (buffer.scrollTop, buffer.y))
             : min (rows - 1, max (0, buffer.y))
@@ -4621,14 +4637,19 @@ open class Terminal {
         cursorStartsNewGrapheme = true
         let buffer = self.buffer
         updateRange(borrowing: buffer, buffer.y)
+        // Clamp first and set each coordinate once, as restrictCursor would.
+        let x: Int
+        let y: Int
         if originMode {
-            buffer.x = col + (usingMargins () ? buffer.marginLeft : 0)
-            buffer.y = buffer.scrollTop + row
+            x = col + (usingMargins () ? buffer.marginLeft : 0)
+            y = min (buffer.scrollBottom, max (buffer.scrollTop, buffer.scrollTop + row))
         } else {
-            buffer.x = col
-            buffer.y = row
+            x = col
+            y = min (rows - 1, max (0, row))
         }
-        restrictCursor ()
+        buffer.x = min (cols - 1, max (0, x))
+        buffer.y = y
+        updateRange(borrowing: buffer, y)
     }
 
     //
@@ -4700,7 +4721,11 @@ open class Terminal {
         let buffer = self.buffer
         let param = max (pars.count > 0 ? pars [0] : 1, 1)
 
-        buffer.x = (usingMargins() ? buffer.marginLeft : 0) + min (param - 1, cols - 1)
+        // As xterm CursorSet, and as HPA: in origin mode the column stops at
+        // the right margin.
+        let left = usingMargins() ? buffer.marginLeft : 0
+        let right = usingMargins() ? buffer.marginRight : cols - 1
+        buffer.x = min (left + param - 1, right)
     }
 
     //
@@ -4717,6 +4742,8 @@ open class Terminal {
     func cmdEraseInLine (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = pars.count == 0 ? 0 : pars [0]
+        // EL and DECSEL cancel a pending wrap, as xterm and Ghostty.
+        buffer.pendingWrap = false
 
         // DECSEL always keeps protected cells. EL keeps them only for ISO protection.
         if characterProtectionMode == .iso || (collect.count == 1 && collect [0] == UInt8 (ascii: "?")) {
@@ -4761,6 +4788,8 @@ open class Terminal {
     func cmdEraseInDisplay (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = pars.count == 0 ? 0 : pars [0]
+        // ED and DECSED cancel a pending wrap, as xterm and Ghostty.
+        buffer.pendingWrap = false
         var j: Int
 
         // DECSED always keeps protected cells. ED keeps them only for ISO protection.
@@ -4901,6 +4930,8 @@ open class Terminal {
         if buffer.y < buffer.scrollTop || buffer.y > buffer.scrollBottom {
             return
         }
+        // As xterm InsertLine and Ghostty.
+        buffer.pendingWrap = false
         // Past the rows from the cursor to the region's bottom, each line
         // inserted only blanks the region again, so a huge count would loop
         // under the terminal lock for nothing.
@@ -5099,6 +5130,8 @@ open class Terminal {
         // Saved values can become invalid after resize/scroll operations.
         buffer.x = min(max(0, buffer.savedX), cols - 1)
         buffer.y = min(max(0, buffer.savedY), rows - 1)
+        // After the moves above, which cancel it (xterm CursorRestore).
+        buffer.pendingWrap = buffer.savedPendingWrap
         setCurrentAttribute(buffer.savedAttr)
         charset = buffer.savedCharset
         originMode = buffer.savedOriginMode
@@ -5674,6 +5707,7 @@ open class Terminal {
 
         buffer.savedX = buffer.x
         buffer.savedY = buffer.y
+        buffer.savedPendingWrap = buffer.pendingWrap
         buffer.savedAttr = curAttr
         buffer.savedCharset = charset
         buffer.savedOriginMode = originMode
@@ -6399,9 +6433,8 @@ open class Terminal {
                 let y = max (1, buffer.y + 1 - (originMode ? buffer.scrollTop : 0))
                 
                 // Need the max, because the cursor could be before the leftMargin.
-                // After a write to the last column the cursor waits one cell past
-                // it, but the report gives the last column.
-                let x = max (1, min (buffer.x, cols - 1) + 1 - (originMode ? buffer.marginLeft : 0))
+                // A pending wrap reports the column of the cursor, as xterm.
+                let x = max (1, buffer.x + 1 - (originMode ? buffer.marginLeft : 0))
                 sendResponse (cc.CSI, "\(y);\(x)R")
             default:
                 break;
@@ -6413,9 +6446,8 @@ open class Terminal {
             case 6:
                 // cursor position
                 let y = buffer.y + 1 - (originMode ? buffer.scrollTop : 0)
-                // Need the max, because the cursor could be before the leftMargin,
-                // and the min for a write to the last column, as in CPR.
-                let x = max (1, min (buffer.x, cols - 1) + 1  - (usingMargins () ? buffer.marginLeft : 0))
+                // Need the max, because the cursor could be before the leftMargin.
+                let x = max (1, buffer.x + 1  - (usingMargins () ? buffer.marginLeft : 0))
                 sendResponse (cc.CSI, "?\(y);\(x);1R")
             case 15:
                 // Request printer status report, we respond "We are ready"
@@ -7335,15 +7367,8 @@ open class Terminal {
             }
         }
         
-        buffer.y = p - 1 + (originMode ? buffer.scrollTop : 0)
-        if buffer.y >= rows {
-            buffer.y = rows - 1
-        }
-        
-        buffer.x = q - 1 + (originMode && marginMode ? buffer.marginLeft : 0)
-        if buffer.x >= cols {
-            buffer.x = cols - 1
-        }
+        buffer.y = min (p - 1 + (originMode ? buffer.scrollTop : 0), rows - 1)
+        buffer.x = min (q - 1 + (originMode && marginMode ? buffer.marginLeft : 0), cols - 1)
     }
 
     //
@@ -7357,15 +7382,11 @@ open class Terminal {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         let newY = buffer.y + p
 
+        // Setting y also cancels a pending wrap.
         if newY >= rows {
             buffer.y = rows - 1
         } else {
             buffer.y = newY
-        }
-
-        // If the end of the line is hit, prevent this action from wrapping around to the next line.
-        if buffer.x >= cols {
-            buffer.x -= 1
         }
     }
 
@@ -7496,7 +7517,17 @@ open class Terminal {
         let maxRepeat = cols*rows*2
         let p = min (maxRepeat, max (pars.count == 0 ? 1 : pars [0], 1))
         let line = buffer.lines [buffer.yBase + buffer.y]
-        let cell = buffer.x > 0 ? line.packedCell(at: buffer.x - 1) : PackedCell()
+        // With a pending wrap, the cell under the cursor is the last one
+        // written. A wide glyph repeats from its lead cell.
+        var column = buffer.pendingWrap ? buffer.x : buffer.x - 1
+        while column > 0 && line.packedWidth(at: column) == 0 {
+            column -= 1
+        }
+        let cell = column >= 0 ? line.packedCell(at: column) : PackedCell()
+        // As xterm: only a character with a width repeats.
+        if column >= 0 && line.packedWidth(at: column) == 0 {
+            return
+        }
         
         for _ in 0..<p {
             buffer.insertCharacter(cell)
@@ -7513,10 +7544,7 @@ open class Terminal {
         cursorStartsNewGrapheme = true
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         
-        buffer.x += p
-        if buffer.x >= cols {
-            buffer.x = cols - 1
-        }
+        buffer.x = min (buffer.x + p, cols - 1)
     }
 
     //
@@ -7541,9 +7569,6 @@ open class Terminal {
     func cmdCursorBackwardTab (_ pars: CsiParameters, _ collect: cstring)
     {
         cursorStartsNewGrapheme = true
-        if buffer.x > cols {
-            return
-        }
         let p = min (buffer.cols, max (pars.count == 0 ? 1 : pars [0], 1))
 
         for _ in 0..<p {
@@ -7558,6 +7583,8 @@ open class Terminal {
     func cmdEraseChars (_ pars: CsiParameters, _ collect: cstring)
     {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
+        // As xterm (ClearRight) and Ghostty.
+        buffer.pendingWrap = false
 
         // ECH keeps protected cells only for ISO protection.
         if characterProtectionMode == .iso {
@@ -7738,6 +7765,8 @@ open class Terminal {
     {
         let buffer = self.buffer
         var p = max (pars.count == 0 ? 1 : pars [0], 1)
+        // As xterm (DeleteChar) and Ghostty.
+        buffer.pendingWrap = false
         
         if marginMode {
             if buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
@@ -7746,10 +7775,6 @@ open class Terminal {
             if buffer.x + p > buffer.marginRight {
                 p = buffer.marginRight - buffer.x + 1
             }
-        }
-        // buffer.x = buffer.cols is a special case on the edge, we do not delete columns in that boundary
-        if buffer.x == buffer.cols {
-            return
         }
         buffer.lines[buffer.y + buffer.yBase].deletePackedCells(
             pos: buffer.x, n: p,
@@ -7843,10 +7868,6 @@ open class Terminal {
     {
         let buffer = self.buffer
         if buffer.y > buffer.scrollBottom || buffer.y < buffer.scrollTop {
-            return
-        }
-        // buffer.x = buffer.cols is a special case on the edge, we do not delete columns in that boundary
-        if buffer.x == buffer.cols {
             return
         }
         if marginMode {
@@ -8009,9 +8030,24 @@ open class Terminal {
                 deliverPendingScrollNotification()
                 reconcileSynchronizedOutputWatchdog()
             }
+            #if DEBUG
+            assertCursorInvariant()
+            #endif
         }
         parser.parse(data: buffer, self)
     }
+
+    #if DEBUG
+    /// The cursor column is always a valid column; a pending wrap is a flag,
+    /// not a column past the line. Debug builds only.
+    private func assertCursorInvariant() {
+        for b in [normalBuffer, altBuffer] {
+            if b.x < 0 || b.x >= b.cols || b.y < 0 || b.y >= b.rows {
+                fatalError("cursor (\(b.x), \(b.y)) is outside \(b.cols)x\(b.rows)")
+            }
+        }
+    }
+    #endif
 
     /// Parses one borrowed batch and completes all parser effects before return.
     private func parseBorrowed(_ bytes: Span<UInt8>)
@@ -8023,6 +8059,9 @@ open class Terminal {
                 deliverPendingScrollNotification()
                 reconcileSynchronizedOutputWatchdog()
             }
+            #if DEBUG
+            assertCursorInvariant()
+            #endif
         }
         parser.parseBorrowed(bytes, self)
     }
@@ -8429,14 +8468,9 @@ open class Terminal {
         } else {
             let rightMargin = buffer.marginRight
             if x == rightMargin  {
+                // Also with a pending wrap, which the scroll keeps (xterm
+                // xtermColScroll; Ghostty clears it).
                 columnScroll (back: back, at: leftMargin)
-            } else if x == buffer.cols && rightMargin == buffer.cols - 1 {
-                // The cursor waits to wrap after a write to the last column, so
-                // it is at the right margin: scroll, as xterm does.
-                buffer.x = rightMargin
-                columnScroll (back: back, at: leftMargin)
-            } else if x == buffer.cols {
-                // Past a right margin that is not the last column: ignore.
             } else {
                 cursorForward(count: 1)
             }
@@ -8494,10 +8528,6 @@ open class Terminal {
         } else {
             buffer.y = newY
             movedToNextLine = true
-        }
-        // If the end of the line is hit, prevent this action from wrapping around to the next line
-        if buffer.x > cols {
-            buffer.x -= 1
         }
         finishSemanticLineAdvance(buffer: _buffer, movedToNextLine: movedToNextLine)
     }
