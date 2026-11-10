@@ -345,7 +345,7 @@ public class SshTerminalView: TerminalView, TerminalViewDelegate {
             // default is nil, which suppresses the reply, because parts of
             // the report depend on the host. See the MacTerminal sample for
             // the meaning of each flag.
-            featureReport: "T3CwLrMSc7UUw17Ts3BFGsSyHSxP",
+            featureReport: "T3CwLrMSc7UUw18Ts3BFGsSyHSxP",
             // The library default is empty. This app serves both clipboard
             // directions; see kittyClipboardRequestPermission below.
             kittyClipboardPolicy: .all)

@@ -9,6 +9,35 @@ import Testing
 
 @testable import SwiftTerm
 
+// The generated tables use Unicode 18 data. Swift 6.4 has Unicode 17
+// properties, so its standard library reports these Unicode 18 marks as
+// unassigned. All of them are General_Category Mn or Mc,
+// Grapheme_Cluster_Break=Extend and InCB=Extend; all except U+0B53, U+0B54
+// and U+11DF0 have a nonzero canonical combining class. The tests use this
+// list only for a scalar that the host does not know, so the list has no
+// effect when the toolchain has Unicode 18 data.
+private enum Unicode18Marks {
+    static let ranges: [ClosedRange<UInt32>] = [
+        0x05C8...0x05C9, 0x0B53...0x0B54, 0x1ADE...0x1ADF, 0x1AEC...0x1AF0,
+        0x10ECB...0x10ECF, 0x10EF0...0x10EF9, 0x11DF0...0x11DF0,
+        0x1D127...0x1D128, 0x1D250...0x1D252, 0x1D25B...0x1D25C,
+        0x1D25F...0x1D25F, 0x1D280...0x1D281,
+    ]
+    static let combiningClassZero: Set<UInt32> = [0x0B53, 0x0B54, 0x11DF0]
+
+    static func contains(_ value: UInt32) -> Bool {
+        ranges.contains { $0.contains(value) }
+    }
+
+    /// True when `value` is a Unicode 18 mark that the host stdlib does not know.
+    static func hostLacks(_ value: UInt32) -> Bool {
+        guard contains(value), let scalar = Unicode.Scalar(value) else {
+            return false
+        }
+        return scalar.properties.age == nil
+    }
+}
+
 private enum UnicodeColumnWidthReference {
     static func columnWidth (_ rune: Unicode.Scalar) -> Int
     {
@@ -1145,11 +1174,12 @@ final class SwiftTermUnicode {
         #expect(t.buffer.y == 1)  // Should be on second line
     }
 
-    // SwiftTerm uses Unicode 17 data. Swift 6.2 has older Unicode properties,
+    // SwiftTerm uses Unicode 18 data. Swift 6.2 has older Unicode properties,
     // so an equality test against that standard library gives false failures
     // for Unicode 17 scalars. Run the parity tests only when the compiler has
-    // Unicode 17 data. The generated-data checksum and boundary tests still
-    // run with older compilers.
+    // Unicode 17 data, and use Unicode18Marks for the Unicode 18 additions
+    // that Swift 6.4 does not know. The generated-data checksum and boundary
+    // tests still run with older compilers.
 #if compiler(>=6.4)
     // UnicodeUtil.isVariationSelector/isEmojiModifier/isCombining are range
     // tests used in the hot parse path. Unicode has extended these property
@@ -1166,7 +1196,10 @@ final class SwiftTermUnicode {
                     "isVariationSelector mismatch at U+\(String(value, radix: 16, uppercase: true))")
             #expect(UnicodeUtil.isEmojiModifier(value) == properties.isEmojiModifier,
                     "isEmojiModifier mismatch at U+\(String(value, radix: 16, uppercase: true))")
-            #expect(UnicodeUtil.isCombining(value) == (properties.canonicalCombiningClass != .notReordered),
+            let hostCombining = Unicode18Marks.hostLacks(value)
+                ? !Unicode18Marks.combiningClassZero.contains(value)
+                : properties.canonicalCombiningClass != .notReordered
+            #expect(UnicodeUtil.isCombining(value) == hostCombining,
                     "isCombining mismatch at U+\(String(value, radix: 16, uppercase: true))")
         }
     }
@@ -1223,6 +1256,19 @@ final class SwiftTermUnicode {
             (0x231B, 2),
             (0x231C, 1),  // After the U+231A...U+231B wide range.
             (0x1F3FB, 2), // Standalone emoji modifier.
+            // Unicode 18 additions that ucs-detect measures.
+            (0x18DFF, 1), // Before the Jurchen wide range.
+            (0x18E00, 2), // First Jurchen character.
+            (0x19191, 2), // Last Jurchen character.
+            (0x191D2, 2), // Last Jurchen radical.
+            (0x1F1AE, 2), // New emoji.
+            (0x1FAFA, 2), // New emoji.
+            (0x05C8, 0),  // New combining mark.
+            (0x1D250, 0), // New Mc mark.
+            // Unicode 18 makes these letters InCB=Linker. They stay spacing.
+            (0x1CF5, 1),
+            (0x1CF6, 1),
+            (0x11A3A, 1),
             (0x10000, 1),
             (0x10FFFF, 1),
         ]
@@ -1368,6 +1414,8 @@ final class SwiftTermUnicode {
             (unicode17ExtendRanges.flatMap { Array($0) }, "\u{0301}", UnicodeWidthData.graphemeExtendMask),
             ([0x11B61, 0x11B65, 0x11B67], "\u{0903}", UnicodeWidthData.graphemeSpacingMarkMask),
             ([0x11A3A], "A", 0), // Prepend in Unicode 16, Other in Unicode 17.
+            // New in Unicode 18, all GCB=Extend.
+            (Unicode18Marks.ranges.flatMap { Array($0) }, "\u{0301}", UnicodeWidthData.graphemeExtendMask),
         ]
 
         // Kirat Rai already has GCB=V in Unicode 16, but host segmenters can
@@ -1376,7 +1424,7 @@ final class SwiftTermUnicode {
         let hostSegmenterDivergence: [OracleAliasGroup] = [
             ([0x16D63, 0x16D67, 0x16D68, 0x16D69, 0x16D6A], "\u{1161}", 2), // GCB V.
         ]
-        #expect(ucdVersionSkew.map { $0.scalars.count } == [39, 3, 1])
+        #expect(ucdVersionSkew.map { $0.scalars.count } == [39, 3, 1, 37])
         #expect(hostSegmenterDivergence[0].scalars.count == 5)
         let gcbMask = UnicodeWidthData.graphemeClassMask |
             UnicodeWidthData.graphemePrependMask |
@@ -1393,7 +1441,7 @@ final class SwiftTermUnicode {
                 hostOracleAliases[value] = group.representative
             }
         }
-        #expect(hostOracleAliases.count == 48)
+        #expect(hostOracleAliases.count == 85)
 
         // A decided answer must match this two-scalar oracle, except for the
         // documented UTS #51 tailoring below. Context-sensitive `.undecided`
@@ -1483,7 +1531,9 @@ final class SwiftTermUnicode {
             }
             scalarCount += 1
             let generated = UnicodeUtil.columnWidth (rune: scalar)
-            let reference = UnicodeColumnWidthReference.columnWidth (scalar)
+            // The reference reads General_Category from the host stdlib.
+            let reference = Unicode18Marks.hostLacks (value)
+                ? 0 : UnicodeColumnWidthReference.columnWidth (scalar)
             if generated != reference {
                 #expect(generated == reference,
                         "Column width mismatch at U+\(String(format: "%04X", value))")
