@@ -105,6 +105,16 @@ final class MarkedTextOverlayColorTests {
         #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeForegroundColor))
     }
 
+    /// A drawn cursor over a wide character reverses both of its columns.
+    @Test func testOverlayIgnoresADrawnCursorOverAWideCharacter() throws {
+        let view = makeView()
+        view.feed(text: "> \u{1b}[7m\u{304B}\u{1b}[0m          \r\u{1b}[2C")
+        mark(view, "ce shi")
+        let overlay = try #require(overlay(in: view))
+        #expect(rgb(overlay.overlayBackgroundColor) == rgb(view.effectiveNativeBackgroundColor))
+        #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeForegroundColor))
+    }
+
     /// The same drawn cursor on a row painted with an explicit background.
     @Test func testOverlayTakesTheRowBackgroundAroundADrawnCursor() throws {
         let view = makeView()

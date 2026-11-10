@@ -2418,8 +2418,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                 return (effectiveNativeForegroundColor, effectiveNativeBackgroundColor)
             }
             let line = buffer.lines[row]
-            var attribute = line[buffer.x].attribute
-            let neighbor = buffer.x + 1 < buffer.cols ? buffer.x + 1 : buffer.x - 1
+            let cell = line[buffer.x]
+            var attribute = cell.attribute
+            // A wide character's second column carries its attributes, so look past it.
+            let next = buffer.x + max(1, Int(cell.width))
+            let neighbor = next < buffer.cols ? next : buffer.x - 1
             if attribute.style.contains(.inverse), neighbor >= 0, !line[neighbor].attribute.style.contains(.inverse) {
                 attribute = line[neighbor].attribute
             }
