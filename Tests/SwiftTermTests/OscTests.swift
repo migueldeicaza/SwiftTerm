@@ -1439,9 +1439,9 @@ final class SwiftTermOsc {
         #expect(terminal.buffer.semanticPromptInvariantsHold())
     }
 
-    /// Acceptance 5: cols-width input with a pending wrap: the cursor offset
-    /// is unclamped, so a click on the first cell emits `cols` movements and
-    /// a click on the last cell emits one.
+    /// Acceptance 5: cols-width input with a pending wrap: the pending wrap
+    /// counts as one more column, so a click on the first cell emits `cols`
+    /// movements and a click on the last cell emits one.
     @Test func testOscPendingWrapUsesUnclampedCursorOffset() {
         let width = 10
         let delegate = SemanticDelegate()
@@ -1449,7 +1449,8 @@ final class SwiftTermOsc {
                                 options: TerminalOptions(cols: width, rows: 4, scrollback: 0))
         terminal.feed(text: "\u{1b}]133;A;cl=line\u{07}\u{1b}]133;B\u{07}" +
                             String(repeating: "x", count: width))
-        #expect(terminal.buffer.x == width)
+        #expect(terminal.buffer.x == width - 1)
+        #expect(terminal.buffer.pendingWrap)
 
         #expect(terminal.handleSemanticPromptClick(at: Position(col: 0, row: 0)))
         #expect(delegate.sentData.count == width * EscapeSequences.moveLeftNormal.count)

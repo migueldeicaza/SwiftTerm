@@ -23,6 +23,9 @@ private enum SwiftTermBenchmarks {
         columns: columns,
         rows: rows)
     static let ghosttyStreamWorkloads = VTEBenchWorkloads.makeGhosttyStream()
+    static let wrapWorkloads = VTEBenchWorkloads.makeWrap(
+        columns: columns,
+        rows: rows)
 }
 
 private func feed(_ benchmark: Benchmark, workload: VTEBenchWorkload) {
@@ -197,6 +200,17 @@ let benchmarks: @Sendable () -> Void = {
 
     if ProcessInfo.processInfo.environment["SWIFTTERM_GHOSTTY_STREAM_BENCHMARKS"] == "1" {
         for workload in SwiftTermBenchmarks.ghosttyStreamWorkloads {
+            Benchmark(
+                workload.name,
+                configuration: .init(metrics: [.wallClock], maxDuration: .seconds(10))
+            ) { benchmark in
+                feed(benchmark, workload: workload)
+            }
+        }
+    }
+
+    if ProcessInfo.processInfo.environment["SWIFTTERM_WRAP_BENCHMARKS"] == "1" {
+        for workload in SwiftTermBenchmarks.wrapWorkloads {
             Benchmark(
                 workload.name,
                 configuration: .init(metrics: [.wallClock], maxDuration: .seconds(10))
