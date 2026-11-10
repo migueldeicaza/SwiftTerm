@@ -5300,20 +5300,7 @@ open class Terminal {
         if collect.count > 0 && collect == [39 /* ' */] {
              // DECIC - Insert Column
             let n = pars.count > 0 ? max (pars [0],1) : 1
-            let buffer = self.buffer
-            
-            if marginMode && buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
-                return
-            }
-            
-            for row in buffer.scrollTop...buffer.scrollBottom {
-                let line = buffer.lines [row+buffer.yBase]
-                line.insertPackedCells(
-                    pos: buffer.x, n: n,
-                    rightMargin: marginMode ? buffer.marginRight : cols - 1,
-                    fill: buffer.getPackedNullCell())
-                line.isWrapped = false
-            }
+            columnScroll (count: n, toLeft: false, at: buffer.x)
             return
         } else {
             log ("CSI # } not implemented- XTPOPSGR with \(pars)")
@@ -7886,27 +7873,8 @@ open class Terminal {
 
     func cmdDeleteColumns (_ pars: CsiParameters, _ collect: cstring)
     {
-        let buffer = self.buffer
-        if buffer.y > buffer.scrollBottom || buffer.y < buffer.scrollTop {
-            return
-        }
-        if marginMode {
-            if buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
-                return
-            }
-        }
-
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
-        
-        for y in buffer.scrollTop...buffer.scrollBottom {
-            let line = buffer.lines [buffer.yBase + y]
-            line.deletePackedCells(
-                pos: buffer.x, n: p,
-                rightMargin: marginMode ? buffer.marginRight : cols - 1,
-                fill: currentEraseSpaceCell)
-            line.isWrapped = false
-        }
-        updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
+        columnScroll (count: p, toLeft: true, at: buffer.x)
     }
 
 
@@ -8481,7 +8449,7 @@ open class Terminal {
         let leftMargin = buffer.marginLeft
         if back {
             if x == leftMargin {
-                columnScroll (back: back, at: x)
+                columnScroll (count: 1, toLeft: false, at: x)
             } else {
                 cursorBackward(count: 1)
             }
@@ -8490,37 +8458,70 @@ open class Terminal {
             if x == rightMargin  {
                 // Also with a pending wrap, which the scroll keeps (xterm
                 // xtermColScroll; Ghostty clears it).
-                columnScroll (back: back, at: leftMargin)
+                columnScroll (count: 1, toLeft: true, at: leftMargin)
             } else {
                 cursorForward(count: 1)
             }
         }
     }
     
-    func columnScroll (back: Bool, at: Int)
+    //
+    // The column scroll that these commands share (xterm xtermColScroll):
+    //   SL and SR (CSI Ps SP @, CSI Ps SP A)
+    //   DECIC and DECDC (CSI Ps ' }, CSI Ps ' ~)
+    //   DECBI and DECFI (ESC 6, ESC 9)
+    //
+    // Each row of the scroll region moves `count` columns between `at` and the
+    // right margin, and blanks with the current background fill the free
+    // columns. Nothing occurs if the cursor is outside the margins. The cursor
+    // and the pending wrap do not change.
+    //
+    func columnScroll (count: Int, toLeft: Bool, at: Int)
     {
-        if buffer.y < buffer.scrollTop || buffer.y > buffer.scrollBottom || buffer.x < buffer.marginLeft || buffer.x > buffer.marginRight {
+        let buffer = self.buffer
+        let leftMargin = marginMode ? buffer.marginLeft : 0
+        let rightMargin = marginMode ? buffer.marginRight : cols - 1
+        if buffer.y < buffer.scrollTop || buffer.y > buffer.scrollBottom
+            || buffer.x < leftMargin || buffer.x > rightMargin
+            || at < leftMargin || at > rightMargin {
             return
         }
+        // The cell before the cursor can now be a different one.
+        cursorStartsNewGrapheme = true
+        let n = min (max (count, 1), rightMargin - at + 1)
+
         for y in buffer.scrollTop...buffer.scrollBottom {
             let line = buffer.lines [buffer.yBase + y]
-            if back {
-                line.insertPackedCells(
-                    pos: at, n: 1,
-                    rightMargin: marginMode ? buffer.marginRight : cols - 1,
-                    fill: buffer.getPackedNullCell())
+            if toLeft {
+                line.deletePackedCells(pos: at, n: n, rightMargin: rightMargin,
+                                       fill: currentEraseBlankCell)
             } else {
-                line.deletePackedCells(
-                    pos: at, n: 1,
-                    rightMargin: marginMode ? buffer.marginRight : cols - 1,
-                    fill: currentEraseSpaceCell)
+                line.insertPackedCells(pos: at, n: n, rightMargin: rightMargin,
+                                       fill: currentEraseBlankCell)
             }
-            //line.isWrapped = false
+            line.isWrapped = false
         }
-        updateRange (buffer.scrollTop)
-        updateRange (buffer.scrollBottom)
+        // The row below the region must not continue a row that moved.
+        let below = buffer.yBase + buffer.scrollBottom + 1
+        if below < buffer.lines.count {
+            buffer.lines [below].isWrapped = false
+        }
+        updateRange (startLine: buffer.scrollTop, endLine: buffer.scrollBottom)
     }
-    
+
+    //
+    // CSI Ps SP @  Scroll left Ps columns (default = 1) (SL), ECMA-48.
+    // CSI Ps SP A  Scroll right Ps columns (default = 1) (SR), ECMA-48.
+    //
+    // As xterm, the scroll starts at the left margin, and the command does
+    // nothing if the cursor is outside the margins.
+    //
+    func cmdScrollColumns (_ pars: CsiParameters, left: Bool)
+    {
+        columnScroll (count: pars.count > 0 ? pars [0] : 1, toLeft: left,
+                      at: marginMode ? buffer.marginLeft : 0)
+    }
+
     // ESC D Index (Index is 0x84) - IND
     func cmdIndex ()
     {

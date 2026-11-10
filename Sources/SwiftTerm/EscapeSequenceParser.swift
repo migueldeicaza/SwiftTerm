@@ -618,8 +618,18 @@ final class EscapeSequenceParser {
 
     func dispatchCsi(code: UInt8, pars: CsiParameters, collect: cstring, _ terminal: Terminal) {
         switch code {
-        case 0x40: terminal.cmdInsertChars(pars, collect)       // @
-        case 0x41: terminal.cmdCursorUp(pars, collect)          // A
+        case 0x40:                                              // @
+            if collect.isEmpty {
+                terminal.cmdInsertChars(pars, collect)
+            } else if collect == [32] {
+                terminal.cmdScrollColumns(pars, left: true)     // SL
+            }
+        case 0x41:                                              // A
+            if collect.isEmpty {
+                terminal.cmdCursorUp(pars, collect)
+            } else if collect == [32] {
+                terminal.cmdScrollColumns(pars, left: false)    // SR
+            }
         case 0x42: terminal.cmdCursorDown(pars, collect)        // B
         case 0x43: terminal.cmdCursorForward(pars, collect)     // C
         case 0x44: terminal.cmdCursorBackward(pars, collect)    // D
