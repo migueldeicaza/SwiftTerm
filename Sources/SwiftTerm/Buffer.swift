@@ -1822,24 +1822,15 @@ public final class Buffer {
         // As xterm: a cursor right of the right margin writes to the last
         // column of the line. After a wrap the cursor is inside the margins.
         var right = _x > marginRight ? _cols &- 1 : marginRight
-        var consumed = 0
+        if pendingWrap {
+            // With DECAWM reset, the scalar path overwrites the last cell.
+            guard wraparound else { return 0 }
+            pendingWrap = false
+            right = marginRight
+            wrapCursorToNextLine()
+        }
         var idx = bytes.startIndex
-        while idx < bytes.endIndex {
-            if pendingWrap {
-                // With DECAWM reset, the scalar path overwrites the last cell.
-                guard wraparound else { break }
-                pendingWrap = false
-                right = marginRight
-                _x = marginMode ? _marginLeft : 0
-                if _y >= _scrollBottom {
-                    scroll(true)
-                } else {
-                    let paragraphBidiState = _lines[_y + _yBase].bidiState
-                    _y += 1
-                    _lines[_y + _yBase].isWrapped = true
-                    _lines[_y + _yBase].bidiState = paragraphBidiState
-                }
-            }
+        while true {
             let available = right - _x + 1
             let runLen = min(available, bytes.endIndex - idx)
             let row = _lines[_y + _yBase]
@@ -1847,18 +1838,21 @@ public final class Buffer {
             row.setPackedAsciiRun(bytes, sourceStart: idx, count: runLen, at: _x,
                                   styleID: styleID, payloadCode: payloadCode,
                                   semanticContentCode: semanticCode)
-            // A run that fills the line keeps the cursor on its last cell,
-            // with a wrap pending.
-            if runLen == available {
+            idx += runLen
+            if runLen < available {
+                _x += runLen
+                break
+            }
+            // The run fills the line. See the Span version.
+            if idx == bytes.endIndex || !wraparound {
                 _x = right
                 pendingWrap = true
-            } else {
-                _x += runLen
+                break
             }
-            consumed += runLen
-            idx += runLen
+            right = marginRight
+            wrapCursorToNextLine()
         }
-        return consumed
+        return idx - bytes.startIndex
     }
 
     /// Bulk-inserts borrowed ASCII characters (all width-1, non-combining).
@@ -1874,24 +1868,15 @@ public final class Buffer {
         // As xterm: a cursor right of the right margin writes to the last
         // column of the line. After a wrap the cursor is inside the margins.
         var right = _x > marginRight ? _cols &- 1 : marginRight
+        if pendingWrap {
+            // With DECAWM reset, the scalar path overwrites the last cell.
+            guard wraparound else { return 0 }
+            pendingWrap = false
+            right = marginRight
+            wrapCursorToNextLine()
+        }
         var consumed = 0
-
-        while consumed < bytes.count {
-            if pendingWrap {
-                // With DECAWM reset, the scalar path overwrites the last cell.
-                guard wraparound else { break }
-                pendingWrap = false
-                right = marginRight
-                _x = marginMode ? _marginLeft : 0
-                if _y >= _scrollBottom {
-                    scroll(true)
-                } else {
-                    let paragraphBidiState = _lines[_y + _yBase].bidiState
-                    _y += 1
-                    _lines[_y + _yBase].isWrapped = true
-                    _lines[_y + _yBase].bidiState = paragraphBidiState
-                }
-            }
+        while true {
             let available = right - _x + 1
             let runLength = min(available, bytes.count - consumed)
             // Borrow the line from its slot. The subscript copies the line
@@ -1903,17 +1888,39 @@ public final class Buffer {
                                       at: x, styleID: styleID, payloadCode: payloadCode,
                                       semanticContentCode: semanticCode)
             }
-            // A run that fills the line keeps the cursor on its last cell,
-            // with a wrap pending.
-            if runLength == available {
+            consumed += runLength
+            if runLength < available {
+                _x += runLength
+                break
+            }
+            // The run fills the line. When more bytes follow, wrap now and
+            // do not store the flag: two more stores after the row fill
+            // stall on the full store buffer.
+            if consumed == bytes.count || !wraparound {
                 _x = right
                 pendingWrap = true
-            } else {
-                _x += runLength
+                break
             }
-            consumed += runLength
+            right = marginRight
+            wrapCursorToNextLine()
         }
         return consumed
+    }
+
+    /// Moves the cursor to the left margin of the next line for an
+    /// autowrap: scrolls at the bottom of the scroll region, else marks the
+    /// next line as wrapped.
+    @inline(__always)
+    private func wrapCursorToNextLine() {
+        _x = marginMode ? _marginLeft : 0
+        if _y >= _scrollBottom {
+            scroll(true)
+        } else {
+            let paragraphBidiState = _lines[_y + _yBase].bidiState
+            _y += 1
+            _lines[_y + _yBase].isWrapped = true
+            _lines[_y + _yBase].bidiState = paragraphBidiState
+        }
     }
 
     /// Inserts scalars of width 1 or 2 (`widths`) and wraps as
