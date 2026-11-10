@@ -82,6 +82,16 @@ protocol MetalRenderTarget: AnyObject {
 
     /// Asks the surface to schedule another frame.
     func requestDisplay()
+
+    /// Lets go of the surface's spare drawables while the view is out of a
+    /// window. Each layer keeps a pool of up to three
+    /// drawables at its last size, so a host that keeps many terminals and
+    /// shows a few would otherwise hold tens of megabytes per hidden one.
+    /// Call it with no frame in flight.
+    func releaseDrawables()
+
+    /// Sizes the surface for drawing again after ``releaseDrawables()``.
+    func restoreDrawables()
 }
 
 #if canImport(MetalKit)
@@ -132,6 +142,10 @@ extension MTKView: MetalRenderTarget {
     }
 
     var needsExternalDrawCall: Bool { false }
+
+    // `releaseDrawables()` is MTKView's own, and with `autoResizeDrawable` it
+    // makes new ones at the right size when next asked.
+    func restoreDrawables() {}
 
     func requestDisplay() {
 #if os(macOS)
