@@ -212,6 +212,47 @@ public protocol TerminalViewDelegate: AnyObject {
     /// Updates can be combined before delivery. Text is untrusted plain text.
     func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus])
 
+    /**
+     * Invoked every time the terminal view handles an OSC 9;4 progress report, with the
+     * report it just applied to the progress bar.
+     *
+     * The bar draws the progress itself; this callback exists for hosts that also want to
+     * know whether the session is busy — a launcher that shows a spinner next to the tab,
+     * an editor that holds back input until the command finishes. The view keeps its own
+     * state, so an implementation only has to mirror what it is told.
+     *
+     * `set` and `indeterminate` mean the application is working. `error` and `pause` keep
+     * the report live too: the work stopped on a failure, or is paused, and the bar stays up
+     * until the application removes it, so a host that shows the session as busy should treat
+     * them as their own states rather than as work in progress.
+     *
+     * Every live report is followed by exactly one `remove`: from the application, from the
+     * silence timer (``TerminalView/progressReportTimeout``), from the process exiting, or
+     * from the view closing; the last three arrive as a synthetic ``Terminal/ProgressReport``
+     * with the ``Terminal/ProgressReportState/remove`` state. A `remove` the application sends
+     * with no report live is not passed on, and nothing is reported once the view closes. A
+     * delegate attached while a report is live reads it from
+     * ``TerminalView/currentProgressReport``.
+     *
+     * The default implementation does nothing.
+     */
+    func progressReport (source: TerminalView, report: Terminal.ProgressReport)
+
+    /**
+     * Invoked when the client application posts a desktop notification with OSC 777
+     * (`ESC ] 777 ; notify ; title ; body BEL`).
+     *
+     * SwiftTerm never posts a notification itself: what the host does with one — a banner,
+     * a badge, an entry in its own inbox, nothing at all — is the host's policy.
+     *
+     * The title and body are untrusted plain text, passed on verbatim, one call for each
+     * sequence: any program that writes to the terminal can send them, including a remote one
+     * over SSH or a file being printed with `cat`. Do not present them as if they came from
+     * the system, and expect them in bursts.
+     *
+     * The default implementation does nothing.
+     */
+    func notification (source: TerminalView, title: String, body: String)
 }
 
 public extension TerminalViewDelegate {

@@ -487,15 +487,19 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var markedTextStorage: NSAttributedString?
     private var markedSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
     private var markedTextOverlay: DictationOverlayTextView?
-    private var progressBarView: TerminalProgressBarView?
+    private(set) var progressBarView: TerminalProgressBarView?
     private(set) var progressReportTimer: Timer?
     var schedulesProgressReportTimer = true
-    private enum UIShutdownState {
+    /// The OSC 9;4 report the application has up and has not removed, or `nil`
+    /// when none is live: what a host mirroring the session should show. A
+    /// delegate attached while a report is live reads it here.
+    public internal(set) var currentProgressReport: Terminal.ProgressReport?
+    enum UIShutdownState {
         case active
         case stopping
         case stopped
     }
-    private var uiShutdownState = UIShutdownState.active
+    private(set) var uiShutdownState = UIShutdownState.active
 
     /// Tracks the selection state of the terminal, and can be used to set it
     /// programmatically (see `SelectionService`).
@@ -1195,19 +1199,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// a wait that is already running.
     public var progressReportTimeout: TimeInterval? = TerminalView.defaultProgressReportTimeout {
         didSet {
-            guard progressBarView?.isHidden == false else { return }
+            guard currentProgressReport != nil else { return }
             resetProgressReportTimer()
         }
     }
 
     @MainActor
-    private func resetProgressReportTimer() {
-        progressReportTimer?.invalidate()
-        progressReportTimer = nil
+    func resetProgressReportTimer() {
+        cancelProgressReportTimer()
         guard let progressReportTimeout else { return }
         let timer = Timer(timeInterval: progressReportTimeout, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.clearProgressReport()
+                self?.endProgressReport()
             }
         }
         if schedulesProgressReportTimer {
@@ -1217,21 +1220,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     @MainActor
-    private func clearProgressReport() {
+    func cancelProgressReportTimer() {
         progressReportTimer?.invalidate()
         progressReportTimer = nil
-        progressBarView?.apply(state: .remove, progress: nil)
-    }
-
-    @MainActor
-    private func handleProgressReport(_ report: Terminal.ProgressReport) {
-        if report.state == .remove {
-            clearProgressReport()
-            return
-        }
-
-        progressBarView?.apply(state: report.state, progress: report.progress)
-        resetProgressReportTimer()
     }
 
     /// Permanently releases UI drivers and renderer resources.
@@ -1259,11 +1250,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         stopWindowMouseMovedFallback()
         stopFocusNotifications()
         stopTextBlinking()
-        clearProgressReport()
+        let owesProgressRemoval = shutdownProgressReport()
         overlayScrollerHideTimer?.invalidate()
         overlayScrollerHideTimer = nil
         renderOwner.invalidateSynchronizedOutputWatchdog()
         uiShutdownState = .stopped
+        if owesProgressRemoval { reportClosedProgressRemoval() }
         return true
     }
     
