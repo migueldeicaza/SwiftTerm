@@ -1091,7 +1091,13 @@ public final class Buffer {
     {
         // If this is the last row in the wrapped line, get the actual trimmed length
         if nextLine == nil {
-            return line.getTrimmedLength ()
+            return min (line.getTrimmedLength (), line.count)
+        }
+        // A line can be shorter than the old width; do not count cells that
+        // are not there.
+        let cols = min (cols, line.count)
+        if cols <= 0 {
+            return 0
         }
 
         // Detect whether the following line starts with a wide character and the end of the current line
@@ -1418,7 +1424,11 @@ public final class Buffer {
 
             var srcLineIndex = wrappedLines.count - linesToAdd - 1
             var srcCol = lastLineLength
-            while srcLineIndex >= 0 {
+            // The lengths come from the line contents. Keep each copy inside
+            // both lines, and stop when there is no destination line.
+            while srcLineIndex >= 0 && destLineIndex >= 0 {
+                srcCol = min (srcCol, wrappedLines [srcLineIndex].count)
+                destCol = min (destCol, wrappedLines [destLineIndex].count)
                 let cellsToCopy = min (srcCol, destCol)
                 wrappedLines [destLineIndex].copyFrom (wrappedLines [srcLineIndex], srcCol: srcCol - cellsToCopy, dstCol: destCol - cellsToCopy, len: cellsToCopy)
                 destCol -= cellsToCopy
@@ -1438,8 +1448,8 @@ public final class Buffer {
             }
 
             // Null out the end of the line ends if a wide character wrapped to the following line
-            for i in 0..<wrappedLines.count {
-                if destLineLengths [i] < newCols {
+            for i in 0..<min (wrappedLines.count, destLineLengths.count) {
+                if destLineLengths [i] < newCols && destLineLengths [i] < wrappedLines [i].count {
                     wrappedLines [i] [destLineLengths [i]] = CharData.Null
                 }
             }
@@ -1664,6 +1674,13 @@ public final class Buffer {
                 // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
                 _x = right
             }
+        }
+        // A wide glyph in a region of one column on the last column has no
+        // cell for its tail, also after the wrap. Drop it, as with DECAWM
+        // reset: a head without a tail makes the line seem one cell longer
+        // than it is, and reflow then reads past the line.
+        if _x + chWidth > _cols {
+            return
         }
         let bufferRow = _lines[_y+_yBase]
 
