@@ -16,28 +16,24 @@ import Testing
 struct MacPointerCursorTests {
     private let esc = "\u{1b}"
 
-    private func makeView() -> (TerminalView, NSWindow) {
-        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
-        let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
-                              backing: .buffered, defer: false)
-        window.contentView = view
-        return (view, window)
+    private func makeView() -> TerminalView {
+        TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
     }
 
     @Test func plainOutputShowsTheIBeam() {
-        let (view, _) = makeView()
+        let view = makeView()
         view.feed(text: "$ ls")
         #expect(view.pointerCursor(modifiers: []) === NSCursor.iBeam)
     }
 
     @Test func mouseReportingShowsTheArrow() {
-        let (view, _) = makeView()
+        let view = makeView()
         view.feed(text: "\(esc)[?1000h\(esc)[?1006h")
         #expect(view.pointerCursor(modifiers: []) === NSCursor.arrow)
     }
 
     @Test func shiftShowsTheIBeamWhileItBypassesReporting() {
-        let (view, _) = makeView()
+        let view = makeView()
         view.feed(text: "\(esc)[?1002h\(esc)[?1006h")
         #expect(view.pointerCursor(modifiers: .shift) === NSCursor.iBeam)
 
@@ -46,7 +42,7 @@ struct MacPointerCursorTests {
     }
 
     @Test func turningReportingOffBringsBackTheIBeam() {
-        let (view, _) = makeView()
+        let view = makeView()
         view.feed(text: "\(esc)[?1003h")
         #expect(view.pointerCursor(modifiers: []) === NSCursor.arrow)
 
@@ -55,20 +51,24 @@ struct MacPointerCursorTests {
     }
 
     @Test func disallowedReportingShowsTheIBeam() {
-        let (view, _) = makeView()
+        let view = makeView()
         view.feed(text: "\(esc)[?1000h")
         view.allowMouseReporting = false
         #expect(view.pointerCursor(modifiers: []) === NSCursor.iBeam)
     }
 
     @Test func cursorUpdateSetsTheArrowWhileReporting() throws {
-        let (view, window) = makeView()
+        let view = makeView()
+        let window = NSWindow(contentRect: view.frame, styleMask: .borderless,
+                              backing: .buffered, defer: false)
+        window.contentView = view
         view.feed(text: "\(esc)[?1003h\(esc)[?1006h")
         let event = try #require(NSEvent.mouseEvent(
             with: .mouseMoved, location: CGPoint(x: 10, y: 10), modifierFlags: [],
             timestamp: 0, windowNumber: window.windowNumber, context: nil,
             eventNumber: 1, clickCount: 0, pressure: 0))
 
+        NSCursor.iBeam.set()
         view.cursorUpdate(with: event)
         #expect(NSCursor.current === NSCursor.arrow)
 

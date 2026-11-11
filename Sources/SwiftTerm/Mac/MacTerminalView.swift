@@ -1735,7 +1735,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// need a way of toggling this behavior.
     public var allowMouseReporting: Bool = true {
         didSet {
-            window?.invalidateCursorRects(for: self)
+            refreshPointer(modifiers: NSEvent.modifierFlags)
         }
     }
 
@@ -1921,20 +1921,35 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // cycle that re-evaluates cursor rects. With a customized pointer (size or
         // colour in Accessibility settings) each set() re-renders the cursor image,
         // so setting the cursor that is already current is expensive. Skip it.
-        let cursor = pointerCursor (modifiers: event.modifierFlags)
-        if NSCursor.current != cursor {
-            cursor.set ()
-        }
+        setPointer(modifiers: event.modifierFlags)
     }
 
     /// The pointer shown over the terminal: the arrow while the application
     /// receives the mouse, as other terminals do, and the I-beam for selecting
     /// text otherwise, including while Shift bypasses mouse reporting.
-    func pointerCursor (modifiers: NSEvent.ModifierFlags) -> NSCursor
-    {
+    func pointerCursor(modifiers: NSEvent.ModifierFlags) -> NSCursor {
         let reportsMouse = allowMouseReporting && currentMouseMode != .off
-        let shiftSelects = modifiers.contains (.shift) && !withTerminal { $0.mouseShiftCapture }
+        let shiftSelects = modifiers.contains(.shift) && withTerminal { _ in
+            shiftBypassesMouseReportingLocked(modifiers: modifiers)
+        }
         return reportsMouse && !shiftSelects ? .arrow : .iBeam
+    }
+
+    private func setPointer(modifiers: NSEvent.ModifierFlags) {
+        let cursor = pointerCursor(modifiers: modifiers)
+        if NSCursor.current != cursor {
+            cursor.set()
+        }
+    }
+
+    /// Applies a change of the pointer's rule at once when the pointer is over
+    /// the terminal, since AppKit only reads the cursor rects again on the next move.
+    private func refreshPointer(modifiers: NSEvent.ModifierFlags) {
+        guard let window else { return }
+        window.invalidateCursorRects(for: self)
+        if bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
+            setPointer(modifiers: modifiers)
+        }
     }
     
     func makeFirstResponder ()
@@ -2200,6 +2215,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             turnOffUrlPreview ()
         }
         keyboardRouter.flagsChanged(event)
+        refreshPointer(modifiers: event.modifierFlags)
         super.flagsChanged(with: event)
     }
     
@@ -2934,8 +2950,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     private func shiftBypassesMouseReportingLocked(for event: NSEvent) -> Bool {
+        shiftBypassesMouseReportingLocked(modifiers: event.modifierFlags)
+    }
+
+    private func shiftBypassesMouseReportingLocked(modifiers: NSEvent.ModifierFlags) -> Bool {
         terminal.terminalLock.preconditionLocked()
-        return event.modifierFlags.contains(.shift) && !terminal.mouseShiftCapture
+        return modifiers.contains(.shift) && !terminal.mouseShiftCapture
     }
 
     private func semanticPromptModifiers(for event: NSEvent) -> SemanticPromptClickModifiers {
@@ -3755,7 +3775,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     public override func resetCursorRects() {
-        addCursorRect(bounds, cursor: pointerCursor (modifiers: NSEvent.modifierFlags))
+        addCursorRect(bounds, cursor: pointerCursor(modifiers: NSEvent.modifierFlags))
     }
     
     public func resetFontSize ()
@@ -3893,7 +3913,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             } else {
                 deregisterTrackingInterest()
             }
-            window?.invalidateCursorRects(for: self)
+            refreshPointer(modifiers: NSEvent.modifierFlags)
         case .bell:
             deliverBell()
         case .programStatusChanged:
