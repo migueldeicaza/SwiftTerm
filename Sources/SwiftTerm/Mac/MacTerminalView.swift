@@ -1735,7 +1735,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// need a way of toggling this behavior.
     public var allowMouseReporting: Bool = true {
         didSet {
-            refreshPointer(modifiers: NSEvent.modifierFlags)
+            refreshPointer()
         }
     }
 
@@ -1921,7 +1921,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // cycle that re-evaluates cursor rects. With a customized pointer (size or
         // colour in Accessibility settings) each set() re-renders the cursor image,
         // so setting the cursor that is already current is expensive. Skip it.
-        setPointer(modifiers: event.modifierFlags)
+        setPointer()
     }
 
     /// The pointer shown over the terminal: the arrow while the application
@@ -1935,8 +1935,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         return reportsMouse && !shiftSelects ? .arrow : .iBeam
     }
 
-    private func setPointer(modifiers: NSEvent.ModifierFlags) {
-        let cursor = pointerCursor(modifiers: modifiers)
+    /// Reads the keys held now rather than an event's flags, which can miss a
+    /// Shift held since before the cursor update AppKit sends after a rect change.
+    private func setPointer() {
+        let cursor = pointerCursor(modifiers: NSEvent.modifierFlags)
         if NSCursor.current != cursor {
             cursor.set()
         }
@@ -1944,11 +1946,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     /// Applies a change of the pointer's rule at once when the pointer is over
     /// the terminal, since AppKit only reads the cursor rects again on the next move.
-    private func refreshPointer(modifiers: NSEvent.ModifierFlags) {
+    private func refreshPointer() {
         guard let window else { return }
         window.invalidateCursorRects(for: self)
         if bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
-            setPointer(modifiers: modifiers)
+            setPointer()
         }
     }
     
@@ -2215,7 +2217,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             turnOffUrlPreview ()
         }
         keyboardRouter.flagsChanged(event)
-        refreshPointer(modifiers: event.modifierFlags)
+        refreshPointer()
         super.flagsChanged(with: event)
     }
     
@@ -3913,7 +3915,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             } else {
                 deregisterTrackingInterest()
             }
-            refreshPointer(modifiers: NSEvent.modifierFlags)
+            refreshPointer()
         case .bell:
             deliverBell()
         case .programStatusChanged:
