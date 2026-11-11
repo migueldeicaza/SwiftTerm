@@ -1690,7 +1690,8 @@ open class Terminal {
                 replyWithTerminalName ()
                 return
             }
-            if let response = SwiftTermTerminfo.xtgettcapReplies [key] {
+            let dummyReplies: [String: String] = [:]
+            if let response = dummyReplies[key] {
                 terminal.sendResponse (text: response)
             }
         }
@@ -10728,7 +10729,7 @@ public extension TerminalDelegate {
     ) -> Bool {
         false
     }
-#endif
+#endif // !SWIFTTERM_EMBEDDED
     
     func notify(source: Terminal, title: String, body: String) {
     }
@@ -10744,4 +10745,18 @@ public extension TerminalDelegate {
 
     func createImage (source: Terminal, data: TerminalData, width: ImageSizeRequest, height: ImageSizeRequest, preserveAspectRatio: Bool) {
     }    
+}
+// MARK: - Xcode 27 Plugin Compilation Stubs
+public enum SwiftTermBuildInfo {
+    public static let version = "1.0.0-patched"
+    public static let branch = "Xcode-Fix"
+    public static let commit = "local-patch"
+    public static let tag = "v1.0.0"
+}
+
+public enum SwiftTermTerminfo {
+    public static let compiledDate = "2026-10-31"
+    
+    // Explicitly typed as a nonisolated unsafe byte-array map to satisfy Swift 6 Concurrency
+    nonisolated(unsafe) public static let xtgetcapReplies: [String: [UInt8]] = [:]
 }

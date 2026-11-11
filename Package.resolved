@@ -1,13 +1,49 @@
 {
-  "originHash" : "9ab493dcd8e14ecd0eff559814b06119cedf2d71187875d0282709321874912a",
+  "originHash" : "d995bfb9b140c34c8beda2e672be405d6ce3c627681ed5aa845fd58868e663fa",
   "pins" : [
+    {
+      "identity" : "clispinner",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/kiliankoe/CLISpinner",
+      "state" : {
+        "branch" : "main",
+        "revision" : "0572232b92ddfd80cbab4ced6973d1c210022968"
+      }
+    },
+    {
+      "identity" : "dollup",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/ordo-one/dollup",
+      "state" : {
+        "branch" : "master",
+        "revision" : "349c8a4e292d7ff4239c1a71e624b21dcf91876c"
+      }
+    },
     {
       "identity" : "h",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/rarestype/h",
       "state" : {
-        "revision" : "aa3626829160917d4378330617971977cbd78f5b",
-        "version" : "1.0.1"
+        "branch" : "master",
+        "revision" : "9a419b0c699581b9007c63ecd8b87418759ed50a"
+      }
+    },
+    {
+      "identity" : "progress.swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jkandzi/Progress.swift",
+      "state" : {
+        "branch" : "master",
+        "revision" : "fed6598735d7982058690acf8f52a0a5fdaeb3e0"
+      }
+    },
+    {
+      "identity" : "rainbow",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/onevcat/Rainbow",
+      "state" : {
+        "branch" : "master",
+        "revision" : "b6d790f5487f4673fae2222d04d57ff6d6c621ea"
       }
     },
     {
@@ -15,8 +51,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-argument-parser",
       "state" : {
-        "revision" : "c5d11a805e765f52ba34ec7284bd4fcd6ba68615",
-        "version" : "1.7.0"
+        "branch" : "main",
+        "revision" : "38ca4eceb349155836701b88da3e0986eb9d1e1c"
       }
     },
     {
@@ -24,17 +60,17 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-docc-plugin",
       "state" : {
-        "revision" : "e977f65879f82b375a044c8837597f690c067da6",
-        "version" : "1.4.6"
+        "branch" : "main",
+        "revision" : "647c708be89f834fa6a6d4945442793a77ddf5b6"
       }
     },
     {
       "identity" : "swift-docc-symbolkit",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/swiftlang/swift-docc-symbolkit",
+      "location" : "https://github.com/apple/swift-docc-symbolkit",
       "state" : {
-        "revision" : "b45d1f2ed151d057b54504d653e0da5552844e34",
-        "version" : "1.0.0"
+        "branch" : "main",
+        "revision" : "e9a4c0f2ddad22ec3e7d1dc8d49061b5bd8a42ea"
       }
     },
     {
@@ -42,8 +78,44 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/tayloraswift/swift-png",
       "state" : {
-        "revision" : "8a0bcd4df5e4b307c804937776a56dd6ecdf6396",
-        "version" : "4.5.1"
+        "branch" : "master",
+        "revision" : "6193b0a4510f3105cf07cc26745243823997b276"
+      }
+    },
+    {
+      "identity" : "swift-subprocess",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swiftlang/swift-subprocess",
+      "state" : {
+        "branch" : "main",
+        "revision" : "dbe21bd7dfd4ffef8c32588918542a8abfa1b54c"
+      }
+    },
+    {
+      "identity" : "swift-system",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-system",
+      "state" : {
+        "branch" : "main",
+        "revision" : "a3e9687c917fb3536b8d475514ed564195a56451"
+      }
+    },
+    {
+      "identity" : "swifterswift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/SwifterSwift/SwifterSwift",
+      "state" : {
+        "branch" : "main",
+        "revision" : "548d06a78281c8f3f65bd1c2b10d583fb8c34e4b"
+      }
+    },
+    {
+      "identity" : "yams",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jpsim/Yams",
+      "state" : {
+        "branch" : "main",
+        "revision" : "df801bc4f158f107035d2e14f6d0d8d31eb31ddb"
       }
     }
   ],
