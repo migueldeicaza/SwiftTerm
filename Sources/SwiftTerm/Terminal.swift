@@ -5693,12 +5693,16 @@ open class Terminal {
     {
         guard collect.isEmpty else { return }
 
-        var left = min (cols-1, max (0, (pars.count > 0 ? pars[0] : 1) - 1))
-        let right = min (cols-1, max (0, (pars.count > 1 ? pars [1] : cols) - 1))
-        
-        left = min (left, right)
-        buffer.marginLeft = left
-        buffer.marginRight = right
+        // As xterm and Ghostty: a region must have two columns or more. A
+        // request with left >= right (after right is clamped to the screen)
+        // is ignored. A region of one column cannot hold a wide character.
+        let left = max (1, pars.count > 0 ? pars [0] : 1)
+        let rightParameter = pars.count > 1 ? pars [1] : 0
+        let right = min (cols, rightParameter == 0 ? cols : rightParameter)
+        guard left < right else { return }
+
+        buffer.marginLeft = left - 1
+        buffer.marginRight = right - 1
     }
     
     //

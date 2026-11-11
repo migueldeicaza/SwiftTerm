@@ -929,7 +929,9 @@ public final class BufferLine: CustomDebugStringConvertible {
         for i in (0..<storage.count).reversed() {
             let code = storage.logicalCode(at: i)
             if code != 0 {
-                return i + Int(storage.width(at: i))
+                // A wide head on the last column must not report a length
+                // past the line.
+                return min (i + Int(storage.width(at: i)), storage.count)
             }
         }
         return 0
@@ -941,8 +943,12 @@ public final class BufferLine: CustomDebugStringConvertible {
     ///  - srcCol: the column index in the other buffer line
     ///  - dstCol: the destination in this buffer line
     ///  - len: the number of elements to copy
-    public func copyFrom (_ src: BufferLine, srcCol: Int, dstCol: Int, len: Int)
+    public func copyFrom (_ src: BufferLine, srcCol: Int, dstCol: Int, len requestedLen: Int)
     {
+        // The storage copy does no range check, also in debug builds. Keep
+        // the copy inside both lines; a caller with a bad range copies less.
+        guard srcCol >= 0, dstCol >= 0 else { return }
+        let len = max (0, min (requestedLen, src.count - srcCol, count - dstCol))
         defer { noteWritten(from: dstCol, upTo: dstCol + len) }
         let movesSemanticHardContinuation = srcCol == 0 && dstCol == 0 && len >= count
         let movedSemanticHardContinuationGroup = src.semanticHardContinuationGroup
