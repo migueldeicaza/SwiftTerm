@@ -1733,7 +1733,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// This vaiable controls whether mouse events are sent to the application running under the
     /// terminal if it has requested the data.   This poses a problem for selection, so users
     /// need a way of toggling this behavior.
-    public var allowMouseReporting: Bool = true
+    public var allowMouseReporting: Bool = true {
+        didSet {
+            window?.invalidateCursorRects(for: self)
+        }
+    }
 
     /// Controls how link tracking resolves hovered links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
@@ -1917,9 +1921,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // cycle that re-evaluates cursor rects. With a customized pointer (size or
         // colour in Accessibility settings) each set() re-renders the cursor image,
         // so setting the cursor that is already current is expensive. Skip it.
-        if NSCursor.current != NSCursor.iBeam {
-            NSCursor.iBeam.set ()
+        let cursor = pointerCursor (modifiers: event.modifierFlags)
+        if NSCursor.current != cursor {
+            cursor.set ()
         }
+    }
+
+    /// The pointer shown over the terminal: the arrow while the application
+    /// receives the mouse, as other terminals do, and the I-beam for selecting
+    /// text otherwise, including while Shift bypasses mouse reporting.
+    func pointerCursor (modifiers: NSEvent.ModifierFlags) -> NSCursor
+    {
+        let reportsMouse = allowMouseReporting && currentMouseMode != .off
+        let shiftSelects = modifiers.contains (.shift) && !withTerminal { $0.mouseShiftCapture }
+        return reportsMouse && !shiftSelects ? .arrow : .iBeam
     }
     
     func makeFirstResponder ()
@@ -3740,7 +3755,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     public override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .iBeam)
+        addCursorRect(bounds, cursor: pointerCursor (modifiers: NSEvent.modifierFlags))
     }
     
     public func resetFontSize ()
@@ -3878,6 +3893,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             } else {
                 deregisterTrackingInterest()
             }
+            window?.invalidateCursorRects(for: self)
         case .bell:
             deliverBell()
         case .programStatusChanged:
