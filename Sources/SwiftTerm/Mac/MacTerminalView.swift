@@ -2406,6 +2406,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     ///
     /// The background is mapped the way the renderer fills cells: bold never
     /// brightens it, only the foreground.
+    ///
+    /// TUIs that hide the hardware cursor and draw their own (Claude Code, for
+    /// one) leave a single reverse-video cell under the caret. That cell is the
+    /// cursor, not the row, so the overlay reads the neighboring cell instead.
     private func markedTextColorsAtCaret() -> (foreground: NSColor, background: NSColor) {
         withTerminal { terminal in
             let buffer = terminal.displayBuffer
@@ -2413,7 +2417,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             guard row >= 0, row < buffer.lines.count, buffer.x >= 0, buffer.x < buffer.cols else {
                 return (effectiveNativeForegroundColor, effectiveNativeBackgroundColor)
             }
-            let attribute = buffer.lines[row][buffer.x].attribute
+            let line = buffer.lines[row]
+            let cell = line[buffer.x]
+            var attribute = cell.attribute
+            // A wide character's second column carries its attributes, so look past it.
+            let next = buffer.x + max(1, Int(cell.width))
+            let neighbor = next < buffer.cols ? next : buffer.x - 1
+            if attribute.style.contains(.inverse), neighbor >= 0, !line[neighbor].attribute.style.contains(.inverse) {
+                attribute = line[neighbor].attribute
+            }
             let isBold = attribute.style.contains(.bold)
             guard attribute.style.contains(.inverse) else {
                 return (effectiveNativeForegroundColor,
