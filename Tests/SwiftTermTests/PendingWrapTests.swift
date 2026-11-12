@@ -400,7 +400,8 @@ struct PendingWrapTests {
         ("ED", "\u{1b}[J", 1, 9),
         ("DECSEL", "\u{1b}[?K", 1, 9),
         ("DECSED", "\u{1b}[?J", 1, 9),
-        ("TAB", "\t", 1, 9),
+        // TAB keeps the pending wrap (xterm, Ghostty, esctest
+        // test_DECSET_MoreFix); see EmulationGapTests.tabKeepsThePendingWrap.
     ])
     func operationCancelsTheWrap(name: String, sequence: String, row: Int, col: Int) {
         let (terminal, _) = make()
