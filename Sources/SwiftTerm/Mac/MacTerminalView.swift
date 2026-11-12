@@ -4373,21 +4373,25 @@ final class DictationOverlayTextView: NSTextView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        drawPerFragmentBackground(in: dirtyRect)
+        overlayBackgroundColor.setFill()
+        for rect in backgroundRects where rect.intersects(dirtyRect) {
+            rect.fill()
+        }
         super.draw(dirtyRect)
     }
 
-    private func drawPerFragmentBackground(in dirtyRect: NSRect) {
-        guard let layoutManager, let container = textContainer else { return }
-        overlayBackgroundColor.setFill()
+    /// The area behind the marked text on each line. It covers the text only, not
+    /// the rest of the line, so characters to the right of the caret stay visible
+    /// while composing in the middle of a line.
+    var backgroundRects: [NSRect] {
+        guard let layoutManager, let container = textContainer else { return [] }
         let glyphRange = layoutManager.glyphRange(for: container)
         let origin = textContainerOrigin
-        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, _, _, _, _ in
-            let r = fragmentRect.offsetBy(dx: origin.x, dy: origin.y)
-            if r.intersects(dirtyRect) {
-                r.fill()
-            }
+        var rects: [NSRect] = []
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, _, _ in
+            rects.append(usedRect.offsetBy(dx: origin.x, dy: origin.y))
         }
+        return rects
     }
 }
 #endif
