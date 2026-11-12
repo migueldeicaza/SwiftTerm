@@ -2349,22 +2349,14 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
         // Match the terminal's effective foreground color. This preserves
         // host-selected themes and terminal foreground-color changes.
-        //
-        // The terminal pixel-snaps each cell's width, so the effective per-cell
-        // advance is slightly wider than the font's natural advance. Apply a
-        // matching `.kern` so overlay characters line up with the terminal grid.
-        let glyphW = font.glyph(withName: "W")
-        let naturalAdvance = font.advancement(forGlyph: glyphW).width
-        let kern = max(0, cellDimension.width - naturalAdvance)
-
         let display = NSMutableAttributedString(attributedString: markedTextStorage)
         let fullRange = NSRange(location: 0, length: display.length)
         display.addAttributes([
             .font: font,
             .foregroundColor: caretColors.foreground,
             .paragraphStyle: para,
-            .kern: kern,
         ], range: fullRange)
+        alignToCells(display)
         overlay.textStorage?.setAttributedString(display)
 
         // The overlay spans the full content width. Line 1 skips the portion
@@ -2394,6 +2386,26 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             width: overlayWidth,
             height: overlayHeight
         )
+    }
+
+    /// Kerns each character of the marked text so it spans the columns the
+    /// terminal gives it once committed: one cell for most characters, two for
+    /// wide ones such as CJK. Their glyphs, often from a fallback font, are
+    /// narrower than two cells, and the terminal pixel-snaps cell widths, so the
+    /// font's own advances would drift from the grid.
+    private func alignToCells(_ text: NSMutableAttributedString) {
+        var location = 0
+        for character in text.string {
+            let length = character.utf16.count
+            let range = NSRange(location: location, length: length)
+            let columns = max(1, character.unicodeScalars.first.map { UnicodeUtil.columnWidth(rune: $0) } ?? 1)
+            let advance = text.attributedSubstring(from: range).size().width
+            // Kern adds space after a glyph, so it goes on the cluster's last unit only.
+            text.addAttribute(.kern,
+                              value: max(0, CGFloat(columns) * cellDimension.width - advance),
+                              range: NSRange(location: location + length - 1, length: 1))
+            location += length
+        }
     }
 
     /// Colors for the marked-text overlay, taken from the cell under the caret.
