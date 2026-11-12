@@ -1453,6 +1453,7 @@ open class Terminal {
         _ = applyDECPrivateMode(SpecialDECPrivateMode.kittyPasteEvents.rawValue, value: false)
         reportedOnly.decModes.removeAll()
         reportedOnly.attributeChangeExtent = 0
+        cold.moreFix = false
         if isReset {
             savedPrivateModes.removeAll()
 #if !SWIFTTERM_EMBEDDED
@@ -3022,6 +3023,17 @@ open class Terminal {
     func cmdTab ()
     {
         cursorStartsNewGrapheme = true
+        let buffer = self.buffer
+        // As xterm, TAB keeps a pending wrap, so the next character goes to
+        // the next line. With DECSET 41 (more(1) fix) and DECAWM, TAB wraps
+        // first and then moves to the tab stop.
+        if buffer.pendingWrap {
+            guard cold.moreFix && wraparound else {
+                return
+            }
+            buffer.wrapCursorToNextLine()
+            buffer.pendingWrap = false
+        }
         buffer.x = buffer.nextTabStop (marginMode: marginMode)
     }
 
@@ -3899,6 +3911,21 @@ open class Terminal {
     // not move their offsets. Only cold fields come after it.
     private let reportedOnly = ReportedOnlyState()
 
+    /// Cold state for xterm features that are not only reported.
+    private final class ColdState {
+        /// DECSET 41, xterm's fix for more(1): a TAB in the pending-wrap
+        /// position wraps to the next line before it moves to the tab stop.
+        var moreFix = false
+        /// The color that the host set, and the color that OSC 10 set over it.
+        /// OSC 110 restores the host color.
+        var foregroundOverride: (host: Color, osc: Color)? = nil
+        /// As `foregroundOverride`, for OSC 11 and OSC 111.
+        var backgroundOverride: (host: Color, osc: Color)? = nil
+    }
+
+    // As `reportedOnly`, this is at the end of the stored properties.
+    private let cold = ColdState()
+
     @inline(never)
     private func resolveActiveHyperlink() -> TinyAtom? {
         guard let activeHyperlink else {
@@ -4363,9 +4390,11 @@ open class Terminal {
             }
             switch target {
             case 0:
+                cold.foregroundOverride = Terminal.override(cold.foregroundOverride, current: foregroundColor, new: color)
                 foregroundColor = color
                 tdel?.setForegroundColor(source: self, color: color)
             case 1:
+                cold.backgroundOverride = Terminal.override(cold.backgroundOverride, current: backgroundColor, new: color)
                 backgroundColor = color
                 tdel?.setBackgroundColor(source: self, color: color)
             case 2:
@@ -4373,6 +4402,35 @@ open class Terminal {
             default:
                 break
             }
+        }
+    }
+
+    /// Keeps the host color under an OSC 10 or OSC 11 color. When the current
+    /// color is not the last OSC color, the host changed it, so it is the new
+    /// host color.
+    private static func override(_ slot: (host: Color, osc: Color)?, current: Color, new: Color) -> (host: Color, osc: Color) {
+        if let slot, slot.osc == current {
+            return (slot.host, new)
+        }
+        return (current, new)
+    }
+
+    /// OSC 110 and OSC 111: restore the default foreground or background, which
+    /// is the color that the host set. When the host changed the color after the
+    /// OSC 10 or OSC 11, its color is already the default. Setting the color
+    /// notifies the delegate.
+    func oscResetDynamicColor (foreground: Bool)
+    {
+        if foreground {
+            if let slot = cold.foregroundOverride, slot.osc == foregroundColor {
+                foregroundColor = slot.host
+            }
+            cold.foregroundOverride = nil
+        } else {
+            if let slot = cold.backgroundOverride, slot.osc == backgroundColor {
+                backgroundColor = slot.host
+            }
+            cold.backgroundOverride = nil
         }
     }
 
@@ -5998,6 +6056,8 @@ open class Terminal {
         switch mode {
         case 7:
             return wraparound
+        case 41:
+            return cold.moreFix
         case 67:
             return backarrowKeyMode
         case _ where Terminal.reportedOnlyDECModes.contains(mode):
@@ -6029,7 +6089,7 @@ open class Terminal {
         switch mode {
         case 7:
             return true
-        case 67:
+        case 41, 67:
             return false
         case _ where Terminal.reportedOnlyDECModes.contains(mode):
             return false
@@ -6056,6 +6116,8 @@ open class Terminal {
         switch mode {
         case 7: // DECAWM - Wraparound Mode
             setWraparound(value)
+        case 41: // more(1) fix
+            cold.moreFix = value
         case 67: // DECBKM
             backarrowKeyMode = value
         case _ where Terminal.reportedOnlyDECModes.contains(mode):
@@ -6192,8 +6254,6 @@ open class Terminal {
                 res = modeCouldBeImplementedButReset
             case 40: // Enable 80 to 132 transition
                 res = allow80To132 ? modeSet : modeReset
-            case 41: // xterm tab workaround in "more(1)" command
-                res = modeReset
             case 44: // MARGIN_BELL
                 res = modeAlwaysReset
             case 45: // REVERSEWRAP
@@ -7029,9 +7089,6 @@ open class Terminal {
                 cursorBlink = false
             case 40:
                 allow80To132 = false
-            case 41:
-                // Workaround not implemented 
-                break
             case 45:
                 reverseWraparound = false
             case 1045:

@@ -1919,9 +1919,9 @@ public final class Buffer {
 
     /// Moves the cursor to the left margin of the next line for an
     /// autowrap: scrolls at the bottom of the scroll region, else marks the
-    /// next line as wrapped.
+    /// next line as wrapped. The caller clears ``pendingWrap``.
     @inline(__always)
-    private func wrapCursorToNextLine() {
+    func wrapCursorToNextLine() {
         _x = marginMode ? _marginLeft : 0
         if _y >= _scrollBottom {
             scroll(true)
