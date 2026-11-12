@@ -3031,8 +3031,7 @@ open class Terminal {
             guard cold.moreFix && wraparound else {
                 return
             }
-            buffer.wrapCursorToNextLine()
-            buffer.pendingWrap = false
+            tabWrapForMoreFix()
         }
         buffer.x = buffer.nextTabStop (marginMode: marginMode)
     }
@@ -3912,7 +3911,7 @@ open class Terminal {
     private let reportedOnly = ReportedOnlyState()
 
     /// Cold state for xterm features that are not only reported.
-    private final class ColdState {
+    final class ColdState {
         /// DECSET 41, xterm's fix for more(1): a TAB in the pending-wrap
         /// position wraps to the next line before it moves to the tab stop.
         var moreFix = false
@@ -3923,8 +3922,9 @@ open class Terminal {
         var backgroundOverride: (host: Color, osc: Color)? = nil
     }
 
-    // As `reportedOnly`, this is at the end of the stored properties.
-    private let cold = ColdState()
+    // As `reportedOnly`, this is after the hot fields. Internal, so that
+    // TerminalRarePaths.swift can use it.
+    let cold = ColdState()
 
     @inline(never)
     private func resolveActiveHyperlink() -> TinyAtom? {
@@ -4390,11 +4390,11 @@ open class Terminal {
             }
             switch target {
             case 0:
-                cold.foregroundOverride = Terminal.override(cold.foregroundOverride, current: foregroundColor, new: color)
+                cold.foregroundOverride = Terminal.dynamicColorOverride(cold.foregroundOverride, current: foregroundColor, new: color)
                 foregroundColor = color
                 tdel?.setForegroundColor(source: self, color: color)
             case 1:
-                cold.backgroundOverride = Terminal.override(cold.backgroundOverride, current: backgroundColor, new: color)
+                cold.backgroundOverride = Terminal.dynamicColorOverride(cold.backgroundOverride, current: backgroundColor, new: color)
                 backgroundColor = color
                 tdel?.setBackgroundColor(source: self, color: color)
             case 2:
@@ -4402,35 +4402,6 @@ open class Terminal {
             default:
                 break
             }
-        }
-    }
-
-    /// Keeps the host color under an OSC 10 or OSC 11 color. When the current
-    /// color is not the last OSC color, the host changed it, so it is the new
-    /// host color.
-    private static func override(_ slot: (host: Color, osc: Color)?, current: Color, new: Color) -> (host: Color, osc: Color) {
-        if let slot, slot.osc == current {
-            return (slot.host, new)
-        }
-        return (current, new)
-    }
-
-    /// OSC 110 and OSC 111: restore the default foreground or background, which
-    /// is the color that the host set. When the host changed the color after the
-    /// OSC 10 or OSC 11, its color is already the default. Setting the color
-    /// notifies the delegate.
-    func oscResetDynamicColor (foreground: Bool)
-    {
-        if foreground {
-            if let slot = cold.foregroundOverride, slot.osc == foregroundColor {
-                foregroundColor = slot.host
-            }
-            cold.foregroundOverride = nil
-        } else {
-            if let slot = cold.backgroundOverride, slot.osc == backgroundColor {
-                backgroundColor = slot.host
-            }
-            cold.backgroundOverride = nil
         }
     }
 
