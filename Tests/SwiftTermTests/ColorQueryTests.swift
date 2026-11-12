@@ -61,6 +61,20 @@ final class ColorQueryTests {
         #expect(delegate.colorChanges.last! == nil)
     }
 
+    @Test func testOsc104IgnoresOutOfRangeIndices() {
+        let delegate = ColorDelegate()
+        let terminal = Terminal(
+            delegate: delegate,
+            options: TerminalOptions(cols: 80, rows: 24, scrollback: 0)
+        )
+
+        terminal.feed(text: "\u{1b}]104;-1\u{07}")
+        terminal.feed(text: "\u{1b}]104;256\u{07}")
+        terminal.feed(text: "\u{1b}]104;-1;3\u{07}")
+
+        #expect(delegate.colorChanges == [3])
+    }
+
     @Test func testOsc112ResetsCursorColor() {
         let delegate = ColorDelegate()
         let terminal = Terminal(

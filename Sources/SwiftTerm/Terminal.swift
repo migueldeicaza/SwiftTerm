@@ -2555,7 +2555,7 @@ open class Terminal {
     
     func resetColor (_ number: Int)
     {
-        if number > 255 {
+        guard ansiColors.indices.contains(number), defaultAnsiColors.indices.contains(number) else {
             return
         }
         ansiColors [number] = defaultAnsiColors [number]
