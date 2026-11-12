@@ -70,6 +70,70 @@ final class GhosttyImplicitLinkDetectionTests: TerminalDelegate {
         }
     }
 
+    // None of these inputs has a link. The unanchored regex used to retry
+    // the whole remaining word/component chain at every character, blocking
+    // the caller for seconds on a single long logical line.
+    @Test func testLongNonLinksDoNotRetryEverySuffix() {
+        let inputs = [
+            String(repeating: "a", count: 81_920),
+            String(repeating: "a/", count: 40_960),
+            String(repeating: "a-", count: 40_960) + "/",
+            String(repeating: "a/", count: 40_960) + "$HOME/"
+        ]
+        for input in inputs {
+            let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 24, scrollback: 5_000))
+            terminal.feed(text: input)
+            let start = ProcessInfo.processInfo.systemUptime
+            let link = terminal.link(at: .buffer(Position(col: 20, row: 500)), mode: .explicitAndImplicit)
+            let elapsed = ProcessInfo.processInfo.systemUptime - start
+            #expect(link == nil)
+            // A generous bound catches the multi-second regression without
+            // requiring a microbenchmark's timing on shared CI runners.
+            #expect(elapsed < 2)
+        }
+    }
+
+    @Test func testLongLinksRemainCompleteAcrossWrappedRows() {
+        let inputs = [
+            "https://example.com/" + String(repeating: "a", count: 81_920),
+            "/" + String(repeating: "a/", count: 40_960) + "file",
+            String(repeating: "a/", count: 40_960) + "file.txt",
+            String(repeating: "a/", count: 40_960) + "$HOME/file"
+        ]
+        for input in inputs {
+            let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 24, scrollback: 5_000))
+            terminal.feed(text: input)
+            let link = terminal.link(at: .buffer(Position(col: 20, row: 500)), mode: .explicitAndImplicit)
+            #expect(link == input)
+        }
+    }
+
+    @Test func testLinkAfterLongNonLinkText() {
+        let prefix = String(repeating: "a", count: 81_920) + " \""
+        let expected = "https://example.com/file.txt"
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 24, scrollback: 5_000))
+        terminal.feed(text: prefix + expected + "\"")
+        let offset = prefix.utf8.count + 5
+        let link = terminal.link(at: .buffer(Position(col: offset % 80, row: offset / 80)), mode: .explicitAndImplicit)
+        #expect(link == expected)
+    }
+
+    @Test func testCandidatePrefixesPreserveUnicodeAndBoundaries() {
+        let cases: [(String, String)] = [
+            ("a.\u{301}/file", "a.\u{301}/file"),
+            ("--foo/file.txt", "foo/file.txt"),
+            ("...config/file", ".config/file"),
+            ("中/$HOME/file", "中/$HOME/file"),
+            ("https://x/(word) .config/file", ".config/file"),
+            ("/tmp/a.txt .config/file", "/tmp/a.txt .config/")
+        ]
+        for (input, expected) in cases {
+            assertImplicitMatch(input: input, expected: expected)
+        }
+        assertNoImplicitMatch(input: "foo$HOME/bar")
+        assertNoImplicitMatch(input: "foo~/bar")
+    }
+
     @Test func testGhosttyStyleImplicitPositiveCases() {
         let cases: [(String, String)] = [
             ("hello https://example.com world", "https://example.com"),
