@@ -996,14 +996,16 @@ public final class Buffer {
             // Deal with columns increasing (reducing needs to happen after reflow)
             
             if cols < newCols {
-                // Iterate only the lines that exist: touching every capacity slot
-                // materializes a BufferLine per empty slot (the CircularList subscript
-                // calls makeEmpty), making resize O(scrollback capacity). Empty slots
-                // are created on demand at the buffer's current cols, so they never
-                // need resizing here.
-                for i in 0..<lines.count {
-                    lines[i].resize(cols: newCols,
-                                    fill: defaultBlank)
+                // Widen every line the ring holds, not only the counted ones:
+                // a row below `lines.count` that a program wrote to was created
+                // at the width of that time and is not counted, and a later
+                // print into it at the new width ran past its cells (a trap in
+                // insertAsciiRun). Empty slots stay empty (touching them through
+                // the subscript would create a BufferLine per slot, making
+                // resize O(scrollback capacity)); they are created on demand at
+                // the buffer's current cols.
+                lines.forEachHeldLine { line in
+                    line.resize(cols: newCols, fill: defaultBlank)
                 }
 
             }
@@ -1090,6 +1092,17 @@ public final class Buffer {
             }
         }
         
+        // A row created while this method ran (reflow reads rows through the
+        // subscript, which fills an empty slot) took the old `cols`, which
+        // changes only below. Bring those to the new width as well.
+        if cols < newCols {
+            lines.forEachHeldLine { line in
+                if line.count < newCols {
+                    line.resize(cols: newCols, fill: defaultBlank)
+                }
+            }
+        }
+
         // DEBUG: Post-condition
         if lines.count > 0 {
             // lines.count, not lines.maxLength: checking every capacity slot would
