@@ -1132,6 +1132,55 @@ final class LocalProcessPrimaryDescriptorTests {
         #expect(delegate.waitForTermination(count: 1, timeout: 5))
         #expect(delegate.exitCode == 0)
     }
+
+    // MARK: - Fixture cleanup
+
+    @Test func explicitReservationCloseDoesNotCloseAReusedDescriptorOnDeinit() throws {
+        // Break caught: explicit close leaves the helper's number valid, so its
+        // later deinit closes a reservation that a new owner took in that slot.
+        let sourcePath = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("swiftterm-primary-reservation-source-\(UUID().uuidString).dat")
+            .path
+        let released = WeakOwnedUnrelatedFileReference()
+
+        // The reservation source is opened while the helper still owns its
+        // slot, and the helper outlives the reservation only until this
+        // function returns, so its deinit runs after the slot is ours.
+        func closeReserveAndRelease() throws -> (
+            reserved: Int32,
+            identity: PrimaryDescriptorIdentity
+        ) {
+            let helper = try OwnedUnrelatedFile()
+            released.value = helper
+            let former = helper.descriptor
+            let source = open(sourcePath, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
+            guard source >= 0 else {
+                throw PrimaryDescriptorTestError.couldNotOpenFile(sourcePath, errno)
+            }
+            defer {
+                closeTestDescriptor(source)
+                try? FileManager.default.removeItem(atPath: sourcePath)
+            }
+            let identity = try primaryDescriptorIdentity(source)
+            helper.close()
+            let reserved = try reservePrimarySlot(at: former, from: source)
+            // Pin the helper through the reservation so the old deinit, not a
+            // pre-reservation release, is what the test observes.
+            withExtendedLifetime(helper) {}
+            return (reserved, identity)
+        }
+        let acquired = try closeReserveAndRelease()
+        #expect(released.value == nil)
+        defer {
+            // The old deinit closes this slot; only close it while it still
+            // is our reservation rather than an unrelated reused file.
+            if descriptorRefersToSameOpenFile(acquired.reserved, as: acquired.identity) {
+                closeTestDescriptor(acquired.reserved)
+            }
+        }
+        let surviving = try? primaryDescriptorIdentity(acquired.reserved)
+        #expect(surviving == acquired.identity)
+    }
 }
 
 // MARK: - Fixtures and synchronization
@@ -1287,7 +1336,7 @@ private final class PrimaryFifo {
 
 private final class OwnedUnrelatedFile {
     let path: String
-    let descriptor: Int32
+    private(set) var descriptor: Int32
 
     init() throws {
         path = URL(fileURLWithPath: NSTemporaryDirectory())
@@ -1304,9 +1353,13 @@ private final class OwnedUnrelatedFile {
         }
     }
 
+    /// Invalidates before closing so a later `deinit` cannot close a foreign
+    /// file that reused this number.
     func close() {
         if descriptor >= 0 {
-            closeTestDescriptor(descriptor)
+            let closing = descriptor
+            descriptor = -1
+            closeTestDescriptor(closing)
         }
         try? FileManager.default.removeItem(atPath: path)
     }
@@ -1314,6 +1367,11 @@ private final class OwnedUnrelatedFile {
     deinit {
         close()
     }
+}
+
+/// Observes deallocation of an `OwnedUnrelatedFile` without retaining it.
+private final class WeakOwnedUnrelatedFileReference {
+    weak var value: OwnedUnrelatedFile?
 }
 
 /// Records primary control calls and write-alias creation in program order,
