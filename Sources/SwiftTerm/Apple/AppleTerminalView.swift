@@ -5165,6 +5165,7 @@ struct WheelReportBudget {
 
     private var allowance: Double = Double(Self.burst)
     private var stampNanoseconds: UInt64
+    private var nextSingleReportHorizontal: Bool?
 
     init(nowNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds) {
         stampNanoseconds = nowNanoseconds
@@ -5202,6 +5203,29 @@ struct WheelReportBudget {
         let granted = min(wanted, Int(allowance))
         allowance -= Double(granted)
         return granted
+    }
+
+    mutating func grant(
+        vertical: Int,
+        horizontal: Int,
+        preferHorizontal: Bool,
+        nowNanoseconds: UInt64 = DispatchTime.now().uptimeNanoseconds
+    ) -> (vertical: Int, horizontal: Int) {
+        let granted = grant(vertical + horizontal, nowNanoseconds: nowNanoseconds)
+        guard vertical > 0, horizontal > 0, granted > 0 else {
+            return (min(vertical, granted), min(horizontal, granted))
+        }
+
+        // Alternate axes if successive diagonal events can only send one report each.
+        if granted == 1 {
+            let useHorizontal = nextSingleReportHorizontal ?? preferHorizontal
+            nextSingleReportHorizontal = !useHorizontal
+            return useHorizontal ? (0, 1) : (1, 0)
+        }
+
+        // Reserve one report for the other axis before satisfying the dominant axis.
+        let first = min(preferHorizontal ? horizontal : vertical, granted - 1)
+        return preferHorizontal ? (granted - first, first) : (first, granted - first)
     }
 }
 

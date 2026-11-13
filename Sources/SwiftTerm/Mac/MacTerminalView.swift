@@ -4705,14 +4705,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                   event.scrollingDeltaX, event.scrollingDeltaY, columns, rows, route.rawValue)
         }
         if route == .mouse || route == .cursorKeys {
-            // Share one budget across axes, prioritizing the dominant direction
-            // so small diagonal jitter cannot consume the intended movement.
-            if abs(columns) > abs(rows) {
-                sendWheelSteps(event, steps: columns, horizontal: true, route: route)
-                sendWheelSteps(event, steps: rows, horizontal: false, route: route)
+            func requested(_ steps: Int) -> Int {
+                route == .mouse
+                    ? WheelReportBudget.requestedReports(lineCount: steps, isPrecise: event.hasPreciseScrollingDeltas)
+                    : WheelReportBudget.requestedKeys(lineCount: steps)
+            }
+            let horizontalFirst = abs(columns) > abs(rows)
+            let counts = wheelReportBudget.grant(vertical: requested(rows), horizontal: requested(columns),
+                                                 preferHorizontal: horizontalFirst)
+            if horizontalFirst {
+                sendWheelSteps(event, steps: columns, count: counts.horizontal, horizontal: true, route: route)
+                sendWheelSteps(event, steps: rows, count: counts.vertical, horizontal: false, route: route)
             } else {
-                sendWheelSteps(event, steps: rows, horizontal: false, route: route)
-                sendWheelSteps(event, steps: columns, horizontal: true, route: route)
+                sendWheelSteps(event, steps: rows, count: counts.vertical, horizontal: false, route: route)
+                sendWheelSteps(event, steps: columns, count: counts.horizontal, horizontal: true, route: route)
             }
         } else if rows != 0 {
             if rows > 0 { scrollUp(lines: rows) } else { scrollDown(lines: -rows) }
@@ -4725,7 +4731,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                             accumulator: inout WheelDistanceAccumulator<WheelRoute>) -> Int {
         guard delta.isFinite else { accumulator.reset(); return 0 }
         // Bound arithmetic before converting accelerated distance to Int.
-        let scaled = min(max(delta * scrollSensitivity, -cellSize * 1_000_000), cellSize * 1_000_000)
+        let limit = cellSize * 1_000_000
+        let scaled = delta == 0 ? 0 : min(max(delta * scrollSensitivity, -limit), limit)
         if event.hasPreciseScrollingDeltas {
             return accumulator.takeWholeLines(distance: scaled, cellHeight: cellSize, route: route)
         }
@@ -4735,12 +4742,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         return rounded != 0 ? rounded : (delta > 0 ? 1 : -1)
     }
 
-    private func sendWheelSteps(_ event: NSEvent, steps: Int, horizontal: Bool, route: WheelRoute) {
-        guard steps != 0 else { return }
-        let wanted = route == .mouse
-            ? WheelReportBudget.requestedReports(lineCount: steps, isPrecise: event.hasPreciseScrollingDeltas)
-            : WheelReportBudget.requestedKeys(lineCount: steps)
-        let count = wheelReportBudget.grant(wanted)
+    private func sendWheelSteps(_ event: NSEvent, steps: Int, count: Int, horizontal: Bool, route: WheelRoute) {
         guard count > 0 else { return }
         if route == .cursorKeys {
             for _ in 0..<count {

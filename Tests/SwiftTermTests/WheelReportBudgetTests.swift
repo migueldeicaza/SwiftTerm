@@ -39,6 +39,25 @@ import Testing
         #expect(budget.grant(1, nowNanoseconds: start + 9_999_999) == 0)
         #expect(budget.grant(1, nowNanoseconds: start + 10_000_000) == 1)
     }
+
+    @Test func diagonalInputSharesTheBurstAndAlternatesWhenOnlyOneReportRefills() {
+        let start: UInt64 = 1_000_000_000
+        var budget = WheelReportBudget(nowNanoseconds: start)
+
+        let burst = budget.grant(vertical: 6, horizontal: 1, preferHorizontal: false, nowNanoseconds: start)
+        #expect(burst.vertical == 5)
+        #expect(burst.horizontal == 1)
+        #expect(budget.grant(1, nowNanoseconds: start) == 0)
+
+        let first = budget.grant(vertical: 6, horizontal: 1, preferHorizontal: false, nowNanoseconds: start + 10_000_000)
+        let second = budget.grant(vertical: 6, horizontal: 1, preferHorizontal: false, nowNanoseconds: start + 20_000_000)
+        #expect(first.vertical == 1 && first.horizontal == 0)
+        #expect(second.vertical == 0 && second.horizontal == 1)
+
+        let horizontalBurst = budget.grant(vertical: 1, horizontal: 6, preferHorizontal: true,
+                                           nowNanoseconds: start + 100_000_000)
+        #expect(horizontalBurst.vertical == 1 && horizontalBurst.horizontal == 5)
+    }
 }
 
 @Suite struct WheelDistanceAccumulatorTests {
