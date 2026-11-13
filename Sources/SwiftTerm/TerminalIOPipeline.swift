@@ -88,10 +88,17 @@ final class TerminalIOPipeline: Sendable {
     private let sink: TerminalIOPipelineSink
     private let worker: TerminalIOPipelineWorker
 
-    init(fd: Int32, delegate: TerminalIOPipelineDelegate) {
+    init(
+        fd: Int32,
+        delegate: TerminalIOPipelineDelegate,
+        prepareDescriptor: @escaping @Sendable (Int32) -> Bool = TerminalIOPipelineWorker.setNonBlocking
+    ) {
         let sink = TerminalIOPipelineSink(delegate: delegate)
         self.sink = sink
-        worker = TerminalIOPipelineWorker(fd: fd, sink: sink)
+        worker = TerminalIOPipelineWorker(
+            fd: fd,
+            sink: sink,
+            prepareDescriptor: prepareDescriptor)
         sink.attach(pipeline: self)
     }
 
@@ -284,6 +291,7 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
     private static let gatherBudgetNs: UInt64 = 3_000_000
 
     private let sink: TerminalIOPipelineSink
+    private let prepareDescriptor: @Sendable (Int32) -> Bool
     private var fd: Int32
     private var controlReadFd: Int32 = -1
     private var controlWriteFd: Int32 = -1
@@ -324,9 +332,14 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
     private let workerMarker = UUID().uuidString
     private static let workerMarkerKey = "org.tirania.SwiftTerm.io-worker"
 
-    init(fd: Int32, sink: TerminalIOPipelineSink) {
+    init(
+        fd: Int32,
+        sink: TerminalIOPipelineSink,
+        prepareDescriptor: @escaping @Sendable (Int32) -> Bool
+    ) {
         self.fd = fd
         self.sink = sink
+        self.prepareDescriptor = prepareDescriptor
         self.storage = UnsafeMutablePointer<UInt8>.allocate(
             capacity: TerminalIOPipeline.bufferCount * TerminalIOPipeline.bufferCapacity)
         let controlPipeReady = Self.makePipe(readFd: &controlReadFd, writeFd: &controlWriteFd)
@@ -353,17 +366,21 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
         remainingThreads = 2
         condition.unlock()
 
-        guard wakePipesReady, Self.setNonBlocking(fd) else {
+        guard wakePipesReady, prepareDescriptor(fd) else {
             // No threads were spawned, so nobody else will deliver EOF or
             // run the thread-exit accounting; do both here so the owner
             // still learns the stream is dead and waiters can finish.
+            // Invalidate before publishing zero workers or closing the
+            // primary, so a shutdown waiter cannot clear the sink first.
+            // The callback runs with neither the condition nor the sink
+            // lock held.
+            sink.reachedEOF()
             condition.lock()
             done = true
             remainingThreads = 0
             condition.broadcast()
             condition.unlock()
             closeDescriptorsIfNeeded()
-            sink.reachedEOF()
             return
         }
 
@@ -930,7 +947,7 @@ private final class TerminalIOPipelineWorker: @unchecked Sendable {
     }
 
     @discardableResult
-    private static func setNonBlocking(_ fd: Int32) -> Bool {
+    fileprivate static func setNonBlocking(_ fd: Int32) -> Bool {
         guard fd >= 0 else {
             return false
         }
