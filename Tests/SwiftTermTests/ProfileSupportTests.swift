@@ -194,6 +194,34 @@ final class ClearScrollbackTests {
         #expect (visibleAfter == visibleBefore)
     }
 
+    @Test func clearScrollbackKeepsTheSavedCursor () {
+        let terminal = Terminal (delegate: DummyDelegate (),
+                                 options: TerminalOptions (cols: 20, rows: 5, scrollback: 100))
+        for i in 0..<30 {
+            terminal.feed (text: "line \(i)\r\n")
+        }
+        terminal.feed (text: "\u{1b}[3;5H\u{1b}7\u{1b}[1;1H")
+
+        terminal.clearScrollback ()
+        terminal.feed (text: "\u{1b}8")
+        #expect (terminal.buffer.y == 2)
+        #expect (terminal.buffer.x == 4)
+    }
+
+    @Test func clearScrollbackInAlternateScreenKeepsTheCursorToRestore () {
+        let terminal = Terminal (delegate: DummyDelegate (),
+                                 options: TerminalOptions (cols: 20, rows: 5, scrollback: 100))
+        for i in 0..<30 {
+            terminal.feed (text: "line \(i)\r\n")
+        }
+        terminal.feed (text: "\u{1b}[3;5H\u{1b}[?1049h")
+
+        terminal.clearScrollback ()
+        terminal.feed (text: "\u{1b}[?1049l")
+        #expect (terminal.buffer.y == 2)
+        #expect (terminal.buffer.x == 4)
+    }
+
     @Test func clearScrollbackOnEmptyBufferIsANoop () {
         let terminal = Terminal (delegate: DummyDelegate (),
                                  options: TerminalOptions (cols: 20, rows: 5, scrollback: 100))

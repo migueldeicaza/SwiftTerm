@@ -576,11 +576,11 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// Accesses the CharIndex at the specified position
     public subscript (index : Int /*, callingMethod: String = #function */) -> CharData {
         get {
-            // The x value in a buffer can point beyond the column, due to the way that we allow
-            // buffer.x to grow (this is to support some wrapmodes and write on the edge)
+            // `buffer.x` is always less than `cols` (a pending wrap is a flag,
+            // not a column past the line). The clamp stays for callers that
+            // pass other indexes.
             let dataSize = storage.count
             if index >= dataSize {
-                /* print ("Warning: the method \(callingMethod) has not been audited to clamp buffer.x to cols-1; fixing") */
                 return storage.cell(at: dataSize - 1)
             }
             return storage.cell(at: index)
@@ -929,7 +929,9 @@ public final class BufferLine: CustomDebugStringConvertible {
         for i in (0..<storage.count).reversed() {
             let code = storage.logicalCode(at: i)
             if code != 0 {
-                return i + Int(storage.width(at: i))
+                // A wide head on the last column must not report a length
+                // past the line.
+                return min (i + Int(storage.width(at: i)), storage.count)
             }
         }
         return 0
@@ -941,8 +943,12 @@ public final class BufferLine: CustomDebugStringConvertible {
     ///  - srcCol: the column index in the other buffer line
     ///  - dstCol: the destination in this buffer line
     ///  - len: the number of elements to copy
-    public func copyFrom (_ src: BufferLine, srcCol: Int, dstCol: Int, len: Int)
+    public func copyFrom (_ src: BufferLine, srcCol: Int, dstCol: Int, len requestedLen: Int)
     {
+        // The storage copy does no range check, also in debug builds. Keep
+        // the copy inside both lines; a caller with a bad range copies less.
+        guard srcCol >= 0, dstCol >= 0 else { return }
+        let len = max (0, min (requestedLen, src.count - srcCol, count - dstCol))
         defer { noteWritten(from: dstCol, upTo: dstCol + len) }
         let movesSemanticHardContinuation = srcCol == 0 && dstCol == 0 && len >= count
         let movedSemanticHardContinuationGroup = src.semanticHardContinuationGroup

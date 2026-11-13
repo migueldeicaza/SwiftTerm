@@ -24,6 +24,12 @@ struct MacUntrustedLinkTests {
         #expect(UntrustedTerminalLink(value).decision == .deny(.malformedURL))
     }
 
+    /// Issue #834: the "Link blocked" alert reads displayString for an empty link.
+    @Test
+    func emptyLinkHasEmptyDisplayString() {
+        #expect(UntrustedTerminalLink("").displayString == "")
+    }
+
     @Test(arguments: ["vscode://file/tmp/example.swift", "ssh://example.com", "custom:payload"])
     func requiresConfirmationForCustomSchemes(_ value: String) throws {
         let url = try #require(URL(string: value))

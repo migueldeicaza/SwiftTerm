@@ -17,7 +17,7 @@ import CoreText
 
 // The CaretView is used to show the cursor
 class CaretView: NSView {
-    weak var terminal: TerminalView?
+    weak var terminal: (any CaretHost)?
     var ctline: CTLine?
     /// Cell width of the character currently under the caret (2 for full-width
     /// CJK). Used to center its glyph within the caret, matching the text.
@@ -35,7 +35,7 @@ class CaretView: NSView {
         }
     }
     
-    public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
+    init (frame: CGRect, cursorStyle: CursorStyle, terminal: any CaretHost)
     {
         self.terminal = terminal
         style = cursorStyle
@@ -64,14 +64,15 @@ class CaretView: NSView {
         renderTextColor = data.textColor
         renderCustomBlockGlyphs = data.customBlockGlyphs
         renderNormalFont = data.normalFont
-        let hideBlinkingText = !data.textBlinkVisible && data.cellAttribute.style.contains(.blink)
-        if hideBlinkingText {
+        let hideText = data.cellAttribute.style.contains(.invisible)
+            || (!data.textBlinkVisible && data.cellAttribute.style.contains(.blink))
+        if hideText {
             powerlineCodePoint = nil
         } else {
             powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(data.code)) == nil
                 ? nil : UInt32(data.code)
         }
-        let character = hideBlinkingText ? " " : data.character
+        let character = hideText ? " " : data.character
         // A host glyph fallback carries an explicit font; appending a
         // variation selector would only fight it.
         let usesGlyphFallback = data.attributes[SwiftTermGlyphPolicyKey] != nil

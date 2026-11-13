@@ -194,7 +194,13 @@ public final class TerminalOscObservation: Sendable {
 final class TerminalOscEventDispatcher: @unchecked Sendable {
     private struct Registration: Sendable {
         let id: UInt64
+        /// The OSC codes to observe, or nil for every code.
+        let codes: Set<Int>?
         let handler: @Sendable (TerminalOscEvent) -> Void
+
+        func accepts(_ code: Int) -> Bool {
+            codes?.contains(code) ?? true
+        }
     }
 
     private struct State {
@@ -213,18 +219,19 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
 #endif
 
     func observe(
+        codes: Set<Int>? = nil,
         _ handler: @escaping @Sendable (TerminalOscEvent) -> Void
     ) -> TerminalOscObservation {
 #if SWIFTTERM_EMBEDDED
         let id = state.nextID
         state.nextID &+= 1
-        state.registrations.append(Registration(id: id, handler: handler))
+        state.registrations.append(Registration(id: id, codes: codes, handler: handler))
         return TerminalOscObservation { [self] in cancel(id: id) }
 #else
         let id = state.withLock { state in
             let id = state.nextID
             state.nextID &+= 1
-            state.registrations.append(Registration(id: id, handler: handler))
+            state.registrations.append(Registration(id: id, codes: codes, handler: handler))
             registrationCount.store(state.registrations.count)
             return id
         }
@@ -236,11 +243,12 @@ final class TerminalOscEventDispatcher: @unchecked Sendable {
     }
 
     func publish(code: Int, payload: ArraySlice<UInt8>, cursor: Position) {
+        // Copy the payload only for the observers of this code.
 #if SWIFTTERM_EMBEDDED
-        let registrations = state.registrations
+        let registrations = state.registrations.filter { $0.accepts(code) }
 #else
         guard registrationCount.value > 0 else { return }
-        let registrations = state.withLock { $0.registrations }
+        let registrations = state.withLock { $0.registrations.filter { $0.accepts(code) } }
 #endif
         guard !registrations.isEmpty else { return }
         let event = TerminalOscEvent(code: code, payload: Array(payload), cursor: cursor)
@@ -610,8 +618,18 @@ final class EscapeSequenceParser {
 
     func dispatchCsi(code: UInt8, pars: CsiParameters, collect: cstring, _ terminal: Terminal) {
         switch code {
-        case 0x40: terminal.cmdInsertChars(pars, collect)       // @
-        case 0x41: terminal.cmdCursorUp(pars, collect)          // A
+        case 0x40:                                              // @
+            if collect.isEmpty {
+                terminal.cmdInsertChars(pars, collect)
+            } else if collect == [32] {
+                terminal.cmdScrollColumns(pars, left: true)     // SL
+            }
+        case 0x41:                                              // A
+            if collect.isEmpty {
+                terminal.cmdCursorUp(pars, collect)
+            } else if collect == [32] {
+                terminal.cmdScrollColumns(pars, left: false)    // SR
+            }
         case 0x42: terminal.cmdCursorDown(pars, collect)        // B
         case 0x43: terminal.cmdCursorForward(pars, collect)     // C
         case 0x44: terminal.cmdCursorBackward(pars, collect)    // D
@@ -798,7 +816,9 @@ final class EscapeSequenceParser {
         case 12:   terminal.oscSetColors(data, startAt: 2)
         case 52:   terminal.oscClipboard(data)
         case 104:  terminal.oscResetColor(data)
-        case 112:  terminal.tdel?.setCursorColor(source: terminal, color: nil)
+        case 110:  terminal.oscResetDynamicColor(foreground: true)
+        case 111:  terminal.oscResetDynamicColor(foreground: false)
+        case 112:  terminal.cursorColor = nil
         case 133:  terminal.oscSemanticPrompt(data)
         case 777:  terminal.oscNotification(data)
         case 1337: terminal.osciTerm2(data)

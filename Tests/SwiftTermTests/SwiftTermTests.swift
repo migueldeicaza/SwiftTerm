@@ -44,7 +44,14 @@ final class SwiftTermTests {
             var options = TerminalOptions.default
             options.cols = 80
             options.rows = 25
+            // esctest examines the screen with DECRQCRA, which release builds disable.
+            options.enableRectangularAreaChecksum = true
             terminal = Terminal(delegate: self, options: options)
+            // The host colors are xterm's defaults, black on white. esctest sets
+            // them with OSC 10 and OSC 11, and expects OSC 110 and OSC 111 to
+            // return to them.
+            terminal.foregroundColor = Color(red: 0, green: 0, blue: 0)
+            terminal.backgroundColor = Color(red: 0xffff, green: 0xffff, blue: 0xffff)
             // A serial queue, so that two reads never feed the terminal at once.
             process = LocalProcess(delegate: self, dispatchQueue: DispatchQueue(label: "esctest"))
         }

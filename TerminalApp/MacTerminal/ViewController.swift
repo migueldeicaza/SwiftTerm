@@ -196,10 +196,10 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
             // the reply, because parts of it depend on the host: T3 both
             // 24-bit color forms, Cw writable clipboard, Lr left and right
             // margins, M SGR mouse, Sc7 cursor styles 0 through 6, U and
-            // Uw17 Unicode with Unicode 17 widths, Ts3 title stacks, B
+            // Uw18 Unicode with Unicode 18 widths, Ts3 title stacks, B
             // bracketed paste, F focus reporting, Gs strikethrough, Sy
             // synchronized output, H hyperlinks, Sx Sixel, P progress.
-            featureReport: "T3CwLrMSc7UUw17Ts3BFGsSyHSxP",
+            featureReport: "T3CwLrMSc7UUw18Ts3BFGsSyHSxP",
             // The library default is empty. This app serves both directions,
             // each one still behind the permission prompt above.
             kittyClipboardPolicy: .all)

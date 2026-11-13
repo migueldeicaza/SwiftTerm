@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 
 
-UNICODE_VERSION = "17.0.0"
+UNICODE_VERSION = "18.0.0"
 UNICODE_BASE_URL = f"https://www.unicode.org/Public/{UNICODE_VERSION}/ucd"
 MAX_SCALAR = 0x10FFFF
 PAGE_BITS = 8
@@ -48,27 +48,27 @@ PROPERTY_INCB_MASK = 3 << 6
 SOURCES = {
     "UnicodeData.txt": (
         f"{UNICODE_BASE_URL}/UnicodeData.txt",
-        "2e1efc1dcb59c575eedf5ccae60f95229f706ee6d031835247d843c11d96470c",
+        "0736451de439ae7baf1425136617da495e09ee5afbe6e394374db7009ea08950",
     ),
     "EastAsianWidth.txt": (
         f"{UNICODE_BASE_URL}/EastAsianWidth.txt",
-        "ea7ce50f3444a050333448dffef1cadd9325af55cbb764b4a2280faf52170a33",
+        "a0cf29eacd00cfcaec4381c6b7c281685f18dbb4e7ff82b4076ccb342ca839aa",
     ),
     "emoji-variation-sequences.txt": (
         f"{UNICODE_BASE_URL}/emoji/emoji-variation-sequences.txt",
-        "bb3d09ef03f206012c7532dd52dc0a21c9efddba0135ea4cf0d9201b8b9bba7e",
+        "ff1707564aa1f1b2fcf4ec92d609d4cb26940bc0d4dcf07f5328ad6879e84da3",
     ),
     "emoji-data.txt": (
         f"{UNICODE_BASE_URL}/emoji/emoji-data.txt",
-        "2cb2bb9455cda83e8481541ecf5b6dfda66a3bb89efa3fa7c5297eccf607b72b",
+        "80d00f8e616a0ef27fd6b8de3b758c06383b5d917e2977709578e68baf733bf1",
     ),
     "GraphemeBreakProperty.txt": (
         f"{UNICODE_BASE_URL}/auxiliary/GraphemeBreakProperty.txt",
-        "d6b51d1d2ae5c33b451b7ed994b48f1f4dc62b2272a5831e7fd418514a6bae89",
+        "0839dcb79e4ac639ecd538b1abf7c9d22e3f9dd265b7e182d33627aa4d75b45a",
     ),
     "DerivedCoreProperties.txt": (
         f"{UNICODE_BASE_URL}/DerivedCoreProperties.txt",
-        "24c7fed1195c482faaefd5c1e7eb821c5ee1fb6de07ecdbaa64b56a99da22c08",
+        "09c928886a178fcafd93c29e4bd59073a058e5a100b716d425cb563ab50f68c9",
     ),
 }
 
@@ -305,8 +305,7 @@ def parse_indic_conjunct_break(text, property_value):
     return merge_ranges(ranges)
 
 
-def terminal_width(value, categories, east_asian_wide, grapheme_prepend,
-                   incb_linker):
+def terminal_width(value, categories, east_asian_wide, grapheme_prepend):
     if value == 0:
         return 0
     if value < 0x20:
@@ -319,8 +318,6 @@ def terminal_width(value, categories, east_asian_wide, grapheme_prepend,
     category = categories[value]
     if grapheme_prepend[value]:
         return 1
-    if incb_linker[value]:
-        return 0
     if category in ("Mn", "Mc", "Me"):
         return 0
     if category == "Cf":
@@ -342,8 +339,7 @@ def terminal_width(value, categories, east_asian_wide, grapheme_prepend,
     return 1
 
 
-def make_width_pages(categories, east_asian_ranges, grapheme_prepend_ranges,
-                     incb_linker_ranges):
+def make_width_pages(categories, east_asian_ranges, grapheme_prepend_ranges):
     wide = bytearray(MAX_SCALAR + 1)
     for lo, hi in east_asian_ranges:
         wide[lo : hi + 1] = bytes([1]) * (hi - lo + 1)
@@ -352,17 +348,12 @@ def make_width_pages(categories, east_asian_ranges, grapheme_prepend_ranges,
     for lo, hi in grapheme_prepend_ranges:
         grapheme_prepend[lo : hi + 1] = bytes([1]) * (hi - lo + 1)
 
-    incb_linker = bytearray(MAX_SCALAR + 1)
-    for lo, hi in incb_linker_ranges:
-        incb_linker[lo : hi + 1] = bytes([1]) * (hi - lo + 1)
-
     page_indices = []
     pages = []
     known_pages = {}
     for page_start in range(0, MAX_SCALAR + 1, PAGE_SIZE):
         encoded = [
-            terminal_width(value, categories, wide, grapheme_prepend,
-                           incb_linker) + 1
+            terminal_width(value, categories, wide, grapheme_prepend) + 1
             for value in range(page_start, page_start + PAGE_SIZE)
         ]
         packed = bytes(
@@ -503,8 +494,7 @@ def generate(source_text, generator_checksum):
         for name in HANGUL_CLASSES
     }
     page_indices, packed_pages, page_count = make_width_pages(
-        categories, east_asian_ranges, grapheme_prepend_ranges,
-        incb_linker_ranges)
+        categories, east_asian_ranges, grapheme_prepend_ranges)
     property_page_indices, property_pages, property_page_count = \
         make_grapheme_property_pages(
             grapheme_prepend_ranges, grapheme_extend_ranges,

@@ -419,6 +419,39 @@ struct FrameDriverTests {
         view.frameDriver.shutdown()
     }
 
+    /// Programs such as vim send OSC 112 (reset the cursor color) many times
+    /// a second. Each OSC 12 and OSC 112 used to queue its own main-queue
+    /// block. They now reach the view through the frame signal, once, with
+    /// the latest color.
+    @Test func cursorColorChangesHopToMainOnce() async {
+        let view = TerminalView(
+            frame: .zero,
+            font: nil,
+            options: TerminalOptions(cols: 20, rows: 4, scrollback: 20))
+        await drainMainQueue()
+        let hops = view.diagnostics.mainHops
+
+        var text = ""
+        for line in 0..<100 {
+            text += "\u{1b}]12;#\(line % 2 == 0 ? "ff0000" : "00ff00")\u{07}line \(line)\r\n\u{1b}]112\u{07}"
+        }
+        text += "\u{1b}]12;#123456\u{07}"
+        view.feed(text: text)
+        await drainMainQueue()
+
+        #expect(view.diagnostics.mainHops == hops)
+        #expect(!view.cursorColorIsDefault)
+        let expected = TTColor.make(color: Color(red: 0x1212, green: 0x3434, blue: 0x5656))
+        #expect(view.caretView.caretColor == expected)
+
+        view.feed(text: "\u{1b}]112\u{07}")
+        await drainMainQueue()
+        #expect(view.diagnostics.mainHops == hops)
+        #expect(view.cursorColorIsDefault)
+        #expect(view.caretView.caretColor == view.caretView.defaultCaretColor)
+        view.frameDriver.shutdown()
+    }
+
     /// A mark recorded while the source ran, and not yet ticked, must survive
     /// the source stopping for any reason. Hiding the terminal stops it without
     /// a tick; becoming visible again must draw that mark.

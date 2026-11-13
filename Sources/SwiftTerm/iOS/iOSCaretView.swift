@@ -15,7 +15,7 @@ import CoreGraphics
 
 // The CaretView is used to show the cursor
 class CaretView: UIView {
-    weak var terminal: TerminalView?
+    weak var terminal: (any CaretHost)?
     var ctline: CTLine?
     /// Cell width of the character currently under the caret (2 for full-width
     /// CJK). Used to center its glyph within the caret, matching the text.
@@ -33,7 +33,7 @@ class CaretView: UIView {
         }
     }
     
-    public init (frame: CGRect, cursorStyle: CursorStyle, terminal: TerminalView)
+    public init (frame: CGRect, cursorStyle: CursorStyle, terminal: any CaretHost)
     {
         style = cursorStyle
         bgColor = caretColor.cgColor
@@ -97,14 +97,15 @@ class CaretView: UIView {
         renderTextColor = data.textColor
         renderCustomBlockGlyphs = data.customBlockGlyphs
         renderNormalFont = data.normalFont
-        let hideBlinkingText = !data.textBlinkVisible && data.cellAttribute.style.contains(.blink)
-        if hideBlinkingText {
+        let hideText = data.cellAttribute.style.contains(.invisible)
+            || (!data.textBlinkVisible && data.cellAttribute.style.contains(.blink))
+        if hideText {
             powerlineCodePoint = nil
         } else {
             powerlineCodePoint = PowerlineRenderer.glyph(for: UInt32(data.code)) == nil
                 ? nil : UInt32(data.code)
         }
-        let character = hideBlinkingText ? " " : data.character
+        let character = hideText ? " " : data.character
         // A host glyph fallback carries an explicit font; appending a
         // variation selector would only fight it.
         let usesGlyphFallback = data.attributes[SwiftTermGlyphPolicyKey] != nil
@@ -117,7 +118,7 @@ class CaretView: UIView {
     }
     
     func updateCursorStyle () {
-        let canBlink = !tracksFocus || (superview?.isFirstResponder ?? true)
+        let canBlink = !tracksFocus || (terminal?.hasFocus ?? true)
         switch style {
         case .blinkUnderline, .blinkBlock, .blinkBar:
             updateAnimation(to: canBlink)
@@ -135,7 +136,7 @@ class CaretView: UIView {
     /// Makes the cursor visible now and delays the next blink cycle. Repeated
     /// input therefore keeps the cursor visible until typing pauses.
     func resetBlinkAfterInput () {
-        let canBlink = !tracksFocus || (superview?.isFirstResponder ?? true)
+        let canBlink = !tracksFocus || (terminal?.hasFocus ?? true)
         guard canBlink else { return }
         switch style {
         case .blinkUnderline, .blinkBlock, .blinkBar:
@@ -178,7 +179,7 @@ class CaretView: UIView {
         context.scaleBy (x: 1, y: -1)
         context.translateBy(x: 0, y: -frame.height)
 
-        drawCursor(in: context, hasFocus: tracksFocus ? (superview?.isFirstResponder ?? true) : true)
+        drawCursor(in: context, hasFocus: tracksFocus ? (terminal?.hasFocus ?? true) : true)
     }
 
 }

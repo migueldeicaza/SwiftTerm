@@ -101,10 +101,14 @@ public final class Buffer {
         }
     }
     /**
-     * This is the cursor column 0-based, due to the way that the terminal must behave, buffer.x sometimes can
-     * be beyond the boundary of the buffer, so it is important that any writes to a line with [buffer.x] first
-     * does so by clamping the value to cols-1.
+     * The cursor column, 0-based. It is always a valid column: `0 ..< cols`.
      *
+     * After a write to the last column of the line (or of the right margin),
+     * the cursor stays on that column and the next printed character wraps
+     * first. That state is not visible in `x`; the terminal keeps it in an
+     * internal pending-wrap flag, as xterm (`do_wrap`) does.
+     *
+     * Setting `x` moves the cursor, and a cursor move cancels a pending wrap.
      */
     public var x: Int {
         get { return _x }
@@ -116,12 +120,19 @@ public final class Buffer {
                 return
                 #endif
             }
+            #if DEBUG
+            if newValue >= _cols {
+                fatalError("x must be less than cols")
+            }
+            #endif
             _x = newValue
+            pendingWrap = false
         }
     }
     
     /**
-     * This is the cursor row 0-based
+     * This is the cursor row 0-based. Setting it moves the cursor, and a
+     * cursor move cancels a pending wrap (see ``x``).
      */
     public var y: Int {
         get { return _y }
@@ -134,8 +145,14 @@ public final class Buffer {
                 #endif
             }
             _y = newValue
+            pendingWrap = false
         }
     }
+
+    /// The cursor column with a pending wrap counted as one more column: the
+    /// number of cells before the cursor on its row. Code that measures text
+    /// up to the cursor uses it; code that addresses a cell uses ``x``.
+    var columnsBeforeCursor: Int { pendingWrap ? _x + 1 : _x }
     
     private var _scrollBottom: Int
     /**
@@ -188,6 +205,9 @@ public final class Buffer {
     var savedMarginMode: Bool = false
     /// The DECSCA or SPA protection saved by DECSC.
     var savedCharacterProtection: Bool = false
+    /// The pending-wrap flag saved by DECSC (xterm `wrap_flag`). This field
+    /// uses padding after the previous one, so no other field moves.
+    var savedPendingWrap: Bool = false
 
     /**
      * The left margin, 0-indexed, used when marginMode is turned on
@@ -336,6 +356,19 @@ public final class Buffer {
     var semanticInput: SemanticInputState = .idle
     var semanticClickMode: SemanticPromptClickMode = .none
     var semanticUsesSpecialCursorKeys = false
+
+    /// Set when a write fills the last column of the line or of the right
+    /// margin: the cursor stays on that column (`x`) and the next printed
+    /// character wraps first (with DECAWM set) or overwrites it (with DECAWM
+    /// reset). This is xterm's `do_wrap` and Ghostty's `pending_wrap`.
+    ///
+    /// The print functions set it; a cursor move through ``x`` or ``y``
+    /// clears it. Operations that clear it without a cursor move (erase,
+    /// insert, delete) clear it explicitly. It is not public.
+    ///
+    /// It uses padding after the previous field, so no other field of this
+    /// hot class moves (see the layout note in the pending-wrap work order).
+    var pendingWrap: Bool = false
 
     // The origin is the line object carrying the active group's primary
     // mark, plus a cached row index. No scroll, splice, margin, trim, or
@@ -916,6 +949,7 @@ public final class Buffer {
         savedOriginMode = false
         savedMarginMode = false
         savedCharacterProtection = false
+        savedPendingWrap = false
     }
     
     public var isCursorInViewPort : Bool {
@@ -946,6 +980,12 @@ public final class Buffer {
     public func resize (newCols : Int, newRows : Int)
     {
         let defaultBlank = PackedCell()
+        // A pending wrap counts as the column after the cursor. If the new
+        // width has room for that column, the cursor goes there and the wrap
+        // is cancelled; if not, the cursor stays on the last column and the
+        // wrap stays pending, as in xterm and Ghostty.
+        let cursorColumns = columnsBeforeCursor
+        let savedColumns = savedPendingWrap ? savedX + 1 : savedX
         marginLeft = 0
         marginRight = newCols - 1
         let newMaxLength = getCorrectBufferLength(newRows)
@@ -1021,13 +1061,10 @@ public final class Buffer {
             }
 
             // Make sure that the cursor stays on screen
-            x = min (x, newCols - 1)
             y = min (y, newRows - 1)
             if addToY != 0 {
                 y += addToY
             }
-
-            savedX = min (savedX, newCols - 1)
 
             scrollTop = 0
         }
@@ -1069,6 +1106,13 @@ public final class Buffer {
         }
         rows = newRows
         cols = newCols
+        if lines.count > 0 {
+            // After reflow: it moves rows, which clears the flag.
+            _x = min (cursorColumns, newCols - 1)
+            pendingWrap = cursorColumns >= newCols
+            savedX = min (savedColumns, newCols - 1)
+            savedPendingWrap = savedColumns >= newCols
+        }
     }
     
     /// Removes the scrollback history (the lines above the visible screen)
@@ -1082,7 +1126,7 @@ public final class Buffer {
         lines.trimStart (count: amountToTrim)
         yBase = 0
         yDisp = 0
-        savedY = max (savedY - amountToTrim, 0)
+        // savedY is relative to the screen, which doesn't move here.
     }
 
     public func changeHistorySize (_ newScrollback: Int?)
@@ -1265,7 +1309,13 @@ public final class Buffer {
     {
         // If this is the last row in the wrapped line, get the actual trimmed length
         if nextLine == nil {
-            return line.getTrimmedLength ()
+            return min (line.getTrimmedLength (), line.count)
+        }
+        // A line can be shorter than the old width; do not count cells that
+        // are not there.
+        let cols = min (cols, line.count)
+        if cols <= 0 {
+            return 0
         }
 
         // Detect whether the following line starts with a wide character and the end of the current line
@@ -1597,7 +1647,11 @@ public final class Buffer {
 
             var srcLineIndex = wrappedLines.count - linesToAdd - 1
             var srcCol = lastLineLength
-            while srcLineIndex >= 0 {
+            // The lengths come from the line contents. Keep each copy inside
+            // both lines, and stop when there is no destination line.
+            while srcLineIndex >= 0 && destLineIndex >= 0 {
+                srcCol = min (srcCol, wrappedLines [srcLineIndex].count)
+                destCol = min (destCol, wrappedLines [destLineIndex].count)
                 let cellsToCopy = min (srcCol, destCol)
                 wrappedLines [destLineIndex].copyFrom (wrappedLines [srcLineIndex], srcCol: srcCol - cellsToCopy, dstCol: destCol - cellsToCopy, len: cellsToCopy)
                 destCol -= cellsToCopy
@@ -1617,8 +1671,8 @@ public final class Buffer {
             }
 
             // Null out the end of the line ends if a wide character wrapped to the following line
-            for i in 0..<wrappedLines.count {
-                if destLineLengths [i] < newCols {
+            for i in 0..<min (wrappedLines.count, destLineLengths.count) {
+                if destLineLengths [i] < newCols && destLineLengths [i] < wrappedLines[i].count {
                     wrappedLines[i].setPackedCell(
                         PackedCell(),
                         at: destLineLengths[i])
@@ -1772,22 +1826,21 @@ public final class Buffer {
                         payloadCode: UInt16) -> Int {
         guard allowsBulkInsert else { return 0 }
         let semanticCode = CellArena.semanticContentCode(for: semanticContent)
-        let right = marginMode ? _marginRight : _cols - 1
-        var consumed = 0
+        // `&-`: cols is at least 1, and the overflow check costs
+        // instructions on each call.
+        let marginRight = marginMode ? _marginRight : _cols &- 1
+        // As xterm: a cursor right of the right margin writes to the last
+        // column of the line. After a wrap the cursor is inside the margins.
+        var right = _x > marginRight ? _cols &- 1 : marginRight
+        if pendingWrap {
+            // With DECAWM reset, the scalar path overwrites the last cell.
+            guard wraparound else { return 0 }
+            pendingWrap = false
+            right = marginRight
+            wrapCursorToNextLine()
+        }
         var idx = bytes.startIndex
-        while idx < bytes.endIndex {
-            if _x > right {
-                guard wraparound else { break }
-                _x = marginMode ? _marginLeft : 0
-                if _y >= _scrollBottom {
-                    scroll(true)
-                } else {
-                    let paragraphBidiState = _lines[_y + _yBase].bidiState
-                    _y += 1
-                    _lines[_y + _yBase].isWrapped = true
-                    _lines[_y + _yBase].bidiState = paragraphBidiState
-                }
-            }
+        while true {
             let available = right - _x + 1
             let runLen = min(available, bytes.endIndex - idx)
             let row = _lines[_y + _yBase]
@@ -1795,11 +1848,21 @@ public final class Buffer {
             row.setPackedAsciiRun(bytes, sourceStart: idx, count: runLen, at: _x,
                                   styleID: styleID, payloadCode: payloadCode,
                                   semanticContentCode: semanticCode)
-            _x += runLen
-            consumed += runLen
             idx += runLen
+            if runLen < available {
+                _x += runLen
+                break
+            }
+            // The run fills the line. See the Span version.
+            if idx == bytes.endIndex || !wraparound {
+                _x = right
+                pendingWrap = true
+                break
+            }
+            right = marginRight
+            wrapCursorToNextLine()
         }
-        return consumed
+        return idx - bytes.startIndex
     }
 
     /// Bulk-inserts borrowed ASCII characters (all width-1, non-combining).
@@ -1809,22 +1872,21 @@ public final class Buffer {
                         payloadCode: UInt16) -> Int {
         guard allowsBulkInsert else { return 0 }
         let semanticCode = CellArena.semanticContentCode(for: semanticContent)
-        let right = marginMode ? _marginRight : _cols - 1
+        // `&-`: cols is at least 1, and the overflow check costs
+        // instructions on each call.
+        let marginRight = marginMode ? _marginRight : _cols &- 1
+        // As xterm: a cursor right of the right margin writes to the last
+        // column of the line. After a wrap the cursor is inside the margins.
+        var right = _x > marginRight ? _cols &- 1 : marginRight
+        if pendingWrap {
+            // With DECAWM reset, the scalar path overwrites the last cell.
+            guard wraparound else { return 0 }
+            pendingWrap = false
+            right = marginRight
+            wrapCursorToNextLine()
+        }
         var consumed = 0
-
-        while consumed < bytes.count {
-            if _x > right {
-                guard wraparound else { break }
-                _x = marginMode ? _marginLeft : 0
-                if _y >= _scrollBottom {
-                    scroll(true)
-                } else {
-                    let paragraphBidiState = _lines[_y + _yBase].bidiState
-                    _y += 1
-                    _lines[_y + _yBase].isWrapped = true
-                    _lines[_y + _yBase].bidiState = paragraphBidiState
-                }
-            }
+        while true {
             let available = right - _x + 1
             let runLength = min(available, bytes.count - consumed)
             // Borrow the line from its slot. The subscript copies the line
@@ -1836,10 +1898,39 @@ public final class Buffer {
                                       at: x, styleID: styleID, payloadCode: payloadCode,
                                       semanticContentCode: semanticCode)
             }
-            _x += runLength
             consumed += runLength
+            if runLength < available {
+                _x += runLength
+                break
+            }
+            // The run fills the line. When more bytes follow, wrap now and
+            // do not store the flag: two more stores after the row fill
+            // stall on the full store buffer.
+            if consumed == bytes.count || !wraparound {
+                _x = right
+                pendingWrap = true
+                break
+            }
+            right = marginRight
+            wrapCursorToNextLine()
         }
         return consumed
+    }
+
+    /// Moves the cursor to the left margin of the next line for an
+    /// autowrap: scrolls at the bottom of the scroll region, else marks the
+    /// next line as wrapped. The caller clears ``pendingWrap``.
+    @inline(__always)
+    func wrapCursorToNextLine() {
+        _x = marginMode ? _marginLeft : 0
+        if _y >= _scrollBottom {
+            scroll(true)
+        } else {
+            let paragraphBidiState = _lines[_y + _yBase].bidiState
+            _y += 1
+            _lines[_y + _yBase].isWrapped = true
+            _lines[_y + _yBase].bidiState = paragraphBidiState
+        }
     }
 
     /// Inserts scalars of width 1 or 2 (`widths`) and wraps as
@@ -1853,17 +1944,23 @@ public final class Buffer {
         var remainingColumns = columns
         let semanticCode = CellArena.semanticContentCode(for: semanticContent)
         let left = marginMode ? _marginLeft : 0
-        let right = marginMode ? _marginRight : _cols - 1
+        let marginRight = marginMode ? _marginRight : _cols - 1
         var consumed = 0
 
         while consumed < scalars.count {
             let width = Int(widths[consumed])
             precondition(width == 1 || width == 2)
+            // As xterm: a cursor right of the right margin writes to the
+            // last column of the line.
+            var right = _x > marginRight ? _cols - 1 : marginRight
             // The scalar fallback owns the behavior when the complete region
             // cannot hold one glyph. Do not change the cursor before the fallback.
             guard right - left + 1 >= width else { break }
-            if _x + width - 1 > right {
+            // A pending wrap, or a wide glyph on the last column.
+            if pendingWrap || _x + width - 1 > right {
                 guard wraparound else { break }
+                pendingWrap = false
+                right = marginRight
                 _x = left
                 if _y >= _scrollBottom {
                     scroll(true)
@@ -1899,7 +1996,14 @@ public final class Buffer {
                 scalars, widths: widths, sourceStart: consumed, count: end - consumed,
                 columns: column - _x, at: _x, styleID: styleID,
                 payloadCode: payloadCode, semanticContentCode: semanticCode)
-            _x = column
+            // A run that fills the line keeps the cursor on its last cell,
+            // with a wrap pending.
+            if column > right {
+                _x = right
+                pendingWrap = true
+            } else {
+                _x = column
+            }
             consumed = end
         }
         return consumed
@@ -1916,17 +2020,20 @@ public final class Buffer {
         }
         var chWidth = Int(cellArena.width(for: cell))
         
-        let right = marginMode ? _marginRight : _cols - 1
-        // goto next line if ch would overflow
+        let marginRight = marginMode ? _marginRight : _cols - 1
+        // As xterm: a cursor right of the right margin writes to the last
+        // column of the line.
+        var right = _x > marginRight ? _cols - 1 : marginRight
+        // A pending wrap goes first. With DECAWM reset it is only cancelled,
+        // and the character overwrites the last cell (xterm `dotext`).
+        // A wide character that does not fit on the last column wraps with
+        // DECAWM set, and is dropped with DECAWM reset (as xterm and Ghostty).
         // TODO: needs a global min terminal width of 2
-        // FIXME: additionally ensure chWidth fits into a line
-        //   -->  maybe forbid cols<xy at higher level as it would
-        //        introduce a bad runtime penalty here
-        if _x + chWidth - 1 > right {
-            // autowrap - DECAWM
-            // automatically wraps to the beginning of the next line
+        if pendingWrap || _x + chWidth - 1 > right {
+            pendingWrap = false
             if wraparound {
                 _x = marginMode ? _marginLeft : 0
+                right = marginRight
                 
                 if _y >= _scrollBottom {
                     scroll (true)
@@ -1939,15 +2046,16 @@ public final class Buffer {
                     _lines [_y + _yBase].bidiState = paragraphBidiState
                 }
                 // row changed, get it again
-            } else {
-                if (chWidth == 2) {
-                    // FIXME: check for xterm behavior
-                    // What to do here? We got a wide char that does not fit into last cell
-                    return
-                }
-                // FIXME: Do we have to set buffer.x to cols - 1, if not wrapping?
-                _x = right
+            } else if _x + chWidth - 1 > right {
+                return
             }
+        }
+        // A wide glyph in a region of one column on the last column has no
+        // cell for its tail, also after the wrap. Drop it, as with DECAWM
+        // reset: a head without a tail makes the line seem one cell longer
+        // than it is, and reflow then reads past the line.
+        if _x + chWidth > _cols {
+            return
         }
         let bufferRow = _lines[_y+_yBase]
 
@@ -1962,13 +2070,10 @@ public final class Buffer {
         }
 
         // Write current char to buffer and advance cursor.
-        if _x >= _cols {
-            _x = _cols-1
-        }
         clearTextOverwrittenImagesFromLine(bufferRow)
         bufferRow.repairSeamsForWrite(at: _x, width: chWidth)
         bufferRow.setPackedCell(cell, at: _x)
-        _x += 1
+        var last = _x
 
         // fullwidth char - also set next cell to placeholder stub and advance cursor
         // for graphemes bigger than fullwidth we can simply loop to zero
@@ -1980,13 +2085,22 @@ public final class Buffer {
                 semanticContentCode: cell.semanticContentCode,
                 isProtected: characterProtection)!
             chWidth -= 1
-            while chWidth != 0 && _x < _cols {
-                bufferRow.setPackedCell(packedWideEmpty, at: _x)
-                _x += 1
+            while chWidth != 0 && last + 1 < _cols {
+                last += 1
+                bufferRow.setPackedCell(packedWideEmpty, at: last)
                 chWidth -= 1
             }
         }
-        
+        // A write that reaches the last column keeps the cursor on it, with
+        // a wrap pending (also with DECAWM reset, as xterm). A wide glyph in a
+        // region of one column puts its tail past the margin; the cursor then
+        // goes after the tail, as before the flag existed.
+        if last == right || last + 1 >= _cols {
+            _x = last
+            pendingWrap = true
+        } else {
+            _x = last + 1
+        }
     }
     
 #if !SWIFTTERM_EMBEDDED

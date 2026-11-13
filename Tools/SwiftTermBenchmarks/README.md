@@ -127,6 +127,117 @@ swift build -c release --product SwiftTermProfile \
 
 Rebuild without `-DSWIFTTERM_SEAM_COUNTER` before measuring throughput.
 
+## Code layout
+
+A change can make a benchmark slower or faster with the same instruction
+count only because functions moved in the binary. The release build does not
+emit functions in source order, so code that is added anywhere in a file can
+move a hot function. Two effects are known:
+
+- **Start inside a 64-byte line.** The start offset of a hot function, such as
+  `parseBorrowed`, changes how many instructions the CPU can fetch in one
+  cycle. Build both sides with `-Xswiftc -Xllvm -Xswiftc -align-all-functions=6`
+  to remove this effect from a comparison.
+- **4 KB alias window.** When `Terminal.cmdCsiM` starts at 3584..4095 mod 4096,
+  `dense_cells` is 1-4% slower. The same offset 4 KB or 16 KB higher is slow
+  too, so the cause is not the page.
+
+### Fetch-redirect stalls
+
+The CPU front end fetches instructions before it knows the result of the
+branches. To do this, it uses predictor tables that it indexes with bits of
+the instruction address. An entry tells the front end "at this address there
+is a taken branch to that target". When an entry is missing, or another branch
+with the same index bits overwrote it, the front end fetches the wrong bytes.
+Some cycles later, it finds the taken branch, stops, and restarts the fetch at
+the correct target. This is a fetch redirect. During the restart, no
+instructions go to the next stage, and the core loses those cycles.
+
+A fetch redirect is not a branch misprediction. The branch direction is
+correct, so no executed work is discarded, and the "Discarded" ratio in CPU
+Counters does not change. It is also not an instruction cache miss: the
+instructions are in the L1I.
+
+Two functions that are 4 KB apart (or a multiple) use the same index bits.
+When both have hot branches, they can push out each other's predictor entries.
+The 4 KB window above is this effect. Apple does not document the predictor
+index, so the partner function of `cmdCsiM` is not known.
+
+Measured on an M3 Ultra, `dense_cells`, with `cmdCsiM` moved into the window
+by dead padding:
+
+| Event | Change |
+|---|---|
+| `MAP_DISPATCH_BUBBLE` | x2.1 (about +1.8% of all cycles) |
+| `FETCH_RESTART` | +6..10% |
+| `MAP_DISPATCH_BUBBLE_IC`, `MAP_DISPATCH_BUBBLE_ITLB` | noise, below 0.05% of cycles |
+| `L1I_CACHE_MISS_DEMAND` | about 35k in 4.4 G cycles in both builds |
+
+Thus, to move cold code out of a hot file does not reduce instruction cache
+misses in these benchmarks: the hot code already fits in the L1I. A move only
+changes which functions alias.
+
+### Layout report
+
+Before an A/B comparison, examine the code layout of both binaries:
+
+```bash
+./layout-report.py A/SwiftTermProfile B/SwiftTermProfile
+```
+
+The report shows the address, size and offsets of the hot functions, tells
+if the build is aligned, and lists the functions that moved. It also tells if
+`Terminal.cmdCsiM` is in the 4 KB alias window. If only one side is in the
+window, a `dense_cells` cycles delta with flat instructions is probably
+layout, not code. The script only reports. The comment at its top has the
+measurements and their limits.
+
+To prove that a delta is layout, add a dead padding function in front of the
+moved function on the faster side, so that the function lands at the same
+offset as on the slower side:
+
+```swift
+@inline(never) @_optimize(none)
+public func layoutPadding(_ p: inout Int) {
+    p &+= 1
+    p &+= 8
+    // ... about 16 bytes of code for each line
+}
+```
+
+If the padded build has the same cost, the cause is the position.
+
+### Front-end counters
+
+The guided CPU Counters mode gives only the bottleneck ratios. To record the
+front-end events, make a template in Instruments one time:
+
+1. Select the CPU Counters template.
+2. In the recording options, select manual events.
+3. Add `CORE_ACTIVE_CYCLE`, `MAP_DISPATCH_BUBBLE`, `MAP_DISPATCH_BUBBLE_IC`,
+   `MAP_DISPATCH_BUBBLE_ITLB`, `FETCH_RESTART` and `L1I_CACHE_MISS_DEMAND`.
+   Do not add `INST_BRANCH_TAKEN`: it conflicts with this set, and the
+   recording fails with "conflicting events".
+4. Use File > Save as Template, for example as `FrontEnd Counters`.
+
+Then record and export:
+
+```bash
+xcrun xctrace record --template 'FrontEnd Counters' \
+    --output /tmp/dense-fe.trace --no-prompt \
+    --launch -- .build/release/SwiftTermProfile dense_cells \
+    --iterations 300 --warmup 4
+xcrun xctrace export --input /tmp/dense-fe.trace \
+    --xpath '//table[@schema="counters-profile"]' \
+    --output /tmp/dense-fe.xml
+```
+
+Each `pmc-events` cell in the export has the counter deltas for one sample,
+in the order of the template. Add the cells of the `SwiftTermProfile`
+process to get the totals. The event names and descriptions for the CPU are
+in `/usr/share/kpep/` (one plist for each CPU family, see `sysctl
+hw.cpufamily`).
+
 ## Hardening workloads
 
 The benchmark executable also includes focused hardening workloads. They test

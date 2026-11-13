@@ -137,9 +137,10 @@ terminal lock themselves, such as ``inputStateSnapshot()``,
 ### Host Input
 
 - ``hostInputModes``
-- ``sendHostKey(key:code:modifiers:eventType:text:shiftedKey:baseLayoutKey:)``
+- ``sendHostKey(key:code:modifiers:eventType:text:shiftedKey:baseLayoutKey:composing:backspaceSendsControlH:)``
 - ``sendHostText(_:)``
 - ``sendHostTextPaste(_:allowUnsafe:)``
+- ``rasterImageSlices(atRow:)``
 
 ### Viewport and Selection
 

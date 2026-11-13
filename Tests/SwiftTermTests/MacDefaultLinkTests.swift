@@ -80,16 +80,24 @@ struct MacDefaultLinkTests {
         #expect(view.urlPreview == nil)
     }
 
-    @Test @MainActor func previewsShowTheOriginalPathWithALocalResolver() {
+    @Test @MainActor func previewsShowTheResolvedFileOrTheUnresolvedPath() throws {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
-        view.localLinkResolver = { _ in
-            Issue.record("Preview must not call the resolver")
-            return nil
+        try withTemporaryFile(named: "local-copy.txt") { file in
+            var resolved: [String] = []
+            view.localLinkResolver = { link in
+                resolved.append(link)
+                return link == "report.txt" ? file : nil
+            }
+            view.previewUrl(payload: ";report.txt")
+            #expect(view.urlPreview?.stringValue == file.standardizedFileURL.resolvingSymlinksInPath().path)
+            view.previewUrl(payload: ";~/missing.txt")
+            #expect(view.urlPreview?.stringValue == "~/missing.txt")
+            view.previewUrl(payload: ";src/report\u{202E}.txt")
+            #expect(view.urlPreview?.stringValue == "src/report\\u{202E}.txt")
+            view.previewUrl(payload: ";custom:123")
+            #expect(view.urlPreview?.stringValue == "custom:123")
+            #expect(resolved == ["report.txt", "~/missing.txt"])
         }
-        view.previewUrl(payload: ";report.txt")
-        #expect(view.urlPreview?.stringValue == "report.txt")
-        view.previewUrl(payload: ";src/report\u{202E}.txt")
-        #expect(view.urlPreview?.stringValue == "src/report\\u{202E}.txt")
     }
 
     @Test @MainActor func customSchemeConfirmationDefaultsToCancel() throws {

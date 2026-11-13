@@ -32,13 +32,30 @@ final class TerminalCoreTests {
     }
 
     @Test func testWideBatchFallsBackBeforeNarrowMarginWrap() {
-        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 4)
-        terminal.feed(text: "\(esc)[?69h\(esc)[3;3s\(esc)[1;3H")
-        terminal.feed(text: "中界")
+        // The narrowest region that DECSLRM accepts has two columns. With the
+        // cursor on the right margin, the first wide glyph does not fit and
+        // the batch is rejected.
+        func run(_ chunks: [String]) -> Terminal {
+            let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 4)
+            terminal.feed(text: "\(esc)[?69h\(esc)[3;4s\(esc)[1;4H")
+            for chunk in chunks {
+                terminal.feed(text: chunk)
+            }
+            return terminal
+        }
+        let batched = run(["中界"])
+        let scalar = run(["中", "界"])
 
-        // The existing scalar behavior wraps each glyph one time. The batch
+        // The scalar behavior wraps each glyph one time. The batch
         // rejection must not add an extra wrap before the scalar fallback.
-        TerminalTestHarness.assertCursor(terminal.buffer, col: 4, row: 2)
+        TerminalTestHarness.assertCursor(batched.buffer, col: 3, row: 2)
+        TerminalTestHarness.assertCursor(scalar.buffer, col: 3, row: 2)
+        for row in 0..<4 {
+            #expect(TerminalTestHarness.lineText(buffer: batched.buffer, row: row) ==
+                    TerminalTestHarness.lineText(buffer: scalar.buffer, row: row))
+        }
+        TerminalTestHarness.assertLineText(batched.buffer, row: 1, equals: "  中")
+        TerminalTestHarness.assertLineText(batched.buffer, row: 2, equals: "  界")
     }
 
     @Test func testBatchableScalarAtChunkEndDoesNotReadPastInput() {

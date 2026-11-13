@@ -130,6 +130,27 @@ extension TerminalView {
         return UntrustedTerminalLink(url.absoluteString)
     }
 
+    /// Uses the same session context for OSC 8 previews and default opening.
+    func linkTarget(_ link: String, isExplicit: Bool) -> UntrustedTerminalLink {
+        if let localLinkResolver {
+            guard !link.isEmpty, !Self.hasURLScheme(link) else { return UntrustedTerminalLink(link) }
+            guard !UntrustedTerminalLink.containsUnsafeCharacters(link),
+                  Self.linkPathBase(hostCurrentDirectory: withTerminal { $0.hostCurrentDirectory }) != .remote,
+                  let url = localLinkResolver(link), url.isFileURL, url.path.hasPrefix("/") else {
+                return UntrustedTerminalLink(link, unresolvedLocalPath: true)
+            }
+            return UntrustedTerminalLink(url.absoluteString)
+        }
+        guard !isExplicit else { return UntrustedTerminalLink(link) }
+        var pathBase = Self.linkPathBase(hostCurrentDirectory: withTerminal { $0.hostCurrentDirectory })
+        // Only the host can tell that the session is local. A remote host in
+        // OSC 7 still blocks local paths.
+        if !resolvesLinksAgainstShellDirectory, pathBase != .remote {
+            pathBase = .processDirectory
+        }
+        return Self.defaultLinkTarget(link, isExplicit: false, pathBase: pathBase)
+    }
+
     /// Gives the link to the delegate as the terminal output has it.
     func activateLink(
         _ link: String,
@@ -166,22 +187,7 @@ extension TerminalView {
             return
         }
         guard allowsLink(isExplicit: isExplicit) else { return }
-        var pathBase = Self.linkPathBase(hostCurrentDirectory: withTerminal { $0.hostCurrentDirectory })
-        // Only the host can tell that the session is local. A remote host in
-        // OSC 7 still blocks local paths.
-        if !resolvesLinksAgainstShellDirectory, pathBase != .remote {
-            pathBase = .processDirectory
-        }
-        let target: UntrustedTerminalLink
-        let original = UntrustedTerminalLink(link)
-        if let localLinkResolver,
-           pathBase != .remote,
-           original.canResolveAsLocalPath {
-            let resolved = localLinkResolver(link).flatMap { $0.isFileURL ? $0.absoluteString : nil }
-            target = resolved.map(UntrustedTerminalLink.init) ?? original
-        } else {
-            target = Self.defaultLinkTarget(link, isExplicit: isExplicit, pathBase: pathBase)
-        }
+        let target = linkTarget(link, isExplicit: isExplicit)
         TerminalLinkOpening.request(target, window: window, presentAlert: presentAlert) { [weak self] url in
             guard let self, allowsLink(isExplicit: isExplicit) else { return }
             approved(url)
@@ -240,15 +246,14 @@ extension TerminalLinkRequest {
     /// Unsafe local files are blocked, and custom URL schemes need confirmation.
     /// For an OSC 8 link, the target must have a scheme unless the view's
     /// `localLinkResolver` resolves it to a file URL. A detected relative
-    /// path resolves against the shell's directory from OSC 7, when the shell
-    /// reports one and the view's `resolvesLinksAgainstShellDirectory` is true.
-    /// A `localLinkResolver` takes precedence over this directory lookup.
+    /// path uses the view's `localLinkResolver` when configured. Otherwise it
+    /// uses the shell's directory from OSC 7 when the view trusts that directory.
     /// Alerts show as a sheet on the window of the view.
     ///
     /// You can call this method after `requestOpenLink(source:request:)` returns,
-    /// for example after an async step. A relative path then resolves against
-    /// the shell's directory at the time of that call. Nothing opens if the
-    /// view is gone or if OSC 8 links were disabled.
+    /// for example after an async step. A relative path uses the session context
+    /// at the time of that call. Nothing opens if the view is gone or if
+    /// OSC 8 links were disabled.
     /// - Parameter link: the link to open. Nil opens ``link``. Give a rewrite of
     ///   ``link`` to open a different target.
     @MainActor

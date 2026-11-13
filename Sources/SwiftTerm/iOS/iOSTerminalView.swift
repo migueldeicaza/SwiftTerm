@@ -2481,13 +2481,14 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             pendingAutoPeriodDeleteWasSpace = false
         }
 
-        switch processPendingKoreanResyllabification(text) {
+        switch processPendingKoreanResyllabification(text, applyModifiers: applyModifiers) {
         case .completed:
             return
         case .prefixReinserted:
             break
         case .none:
-            if tryResyllabifyKoreanFinalBeforeVowel(text) || tryComposeKoreanFinal(text) {
+            if tryResyllabifyKoreanFinalBeforeVowel(text, applyModifiers: applyModifiers) ||
+                tryComposeKoreanSyllable(text, applyModifiers: applyModifiers) {
                 return
             }
         }
@@ -2949,19 +2950,17 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
-    // this is necessary because something in the iOS IME seems to prevent
-    // the sequence  "ㅇ", "ㅜ", "ㅇ" from becoming "웅", and instead
-    // it becomes "우" followed by "ㅇ"
-    private func tryComposeKoreanFinal(_ text: String) -> Bool {
+    // Extend the unmarked Korean fallback to compound vowels and finals as
+    // well as the first final: 도 + ㅣ -> 되, 안 + ㅎ -> 않, 우 + ㅇ -> 웅.
+    private func tryComposeKoreanSyllable(_ text: String, applyModifiers: Bool) -> Bool {
         guard isKoreanTextInput else { return false }
         guard _markedTextRange == nil else { return false }
         guard _selectedTextRange.isEmpty, _selectedTextRange.endPosition.offset == textInputStorage.textInputUTF16Count else { return false }
         guard text.count == 1, let jamo = text.first else { return false }
-        guard let finalIndex = HangulInput.finalIndexByJamo[jamo] else { return false }
         guard let lastChar = textInputStorage.last else { return false }
-        guard let composed = HangulInput.composeSyllable(base: lastChar, finalIndex: finalIndex) else { return false }
+        guard let composed = HangulInput.composeSyllable(base: lastChar, followingJamo: jamo) else { return false }
 
-        uitiLog("koreanComposeFinal base:\(lastChar) jamo:\(jamo) -> \(composed)")
+        uitiLog("koreanComposeSyllable base:\(lastChar) jamo:\(jamo) -> \(composed)")
 
         beginTextInputEdit()
         textInputStorage.removeLast()
@@ -2971,8 +2970,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         _selectedTextRange = TextRange(from: TextPosition(offset: newOffset), to: TextPosition(offset: newOffset))
         endTextInputEdit()
 
-        sendBackspaceKey()
-        send(txt: String(composed))
+        sendKoreanReplacement(charactersToDelete: 1, textToInsert: String(composed), applyModifiers: applyModifiers)
         frameDriver.markDirty()
         return true
     }
@@ -2982,7 +2980,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// the next syllable. When there was a character before the base syllable,
     /// replace UIKit's reinserted prefix with the complete corrected text. At
     /// the start of the input buffer, append the corrected text directly.
-    private func processPendingKoreanResyllabification(_ text: String) -> PendingKoreanResyllabificationResult {
+    private func processPendingKoreanResyllabification(_ text: String, applyModifiers: Bool) -> PendingKoreanResyllabificationResult {
         guard isKoreanTextInput,
               _markedTextRange == nil,
               _selectedTextRange.isEmpty,
@@ -3017,10 +3015,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             _selectedTextRange = TextRange(from: TextPosition(offset: newOffset), to: TextPosition(offset: newOffset))
             endTextInputEdit()
 
-            for _ in 0..<edit.charactersToDelete {
-                sendBackspaceKey()
-            }
-            send(txt: edit.textToInsert)
+            sendKoreanReplacement(charactersToDelete: edit.charactersToDelete,
+                                  textToInsert: edit.textToInsert,
+                                  applyModifiers: applyModifiers)
             frameDriver.markDirty()
             return .completed
         }
@@ -3030,7 +3027,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     // reinterpret that final consonant as the initial consonant of the next
     // syllable. For example, "핫" + "ㅔ" must replace "핫" with "하세",
     // preserving the previous syllable instead of sending only "세".
-    private func tryResyllabifyKoreanFinalBeforeVowel(_ text: String) -> Bool {
+    private func tryResyllabifyKoreanFinalBeforeVowel(_ text: String, applyModifiers: Bool) -> Bool {
         guard isKoreanTextInput else { return false }
         guard _markedTextRange == nil else { return false }
         guard _selectedTextRange.isEmpty, _selectedTextRange.endPosition.offset == textInputStorage.textInputUTF16Count else { return false }
@@ -3051,12 +3048,30 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         _selectedTextRange = TextRange(from: TextPosition(offset: newOffset), to: TextPosition(offset: newOffset))
         endTextInputEdit()
 
-        for _ in 0..<edit.charactersToDelete {
-            sendBackspaceKey()
-        }
-        send(txt: edit.textToInsert)
+        sendKoreanReplacement(charactersToDelete: edit.charactersToDelete,
+                              textToInsert: edit.textToInsert,
+                              applyModifiers: applyModifiers)
         frameDriver.markDirty()
         return true
+    }
+
+    private func sendKoreanReplacement(charactersToDelete: Int, textToInsert: String, applyModifiers: Bool) {
+        let kittyEnabled = !withTerminal { $0.keyboardEnhancementFlags }.isEmpty
+        let pendingEvent = kittyEnabled ? pendingKittyKeyEvent : nil
+        if kittyEnabled {
+            // The backspaces are synthetic. Keep the input key for the text
+            // event so the encoder can report its matching release.
+            pendingKittyKeyEvent = nil
+        }
+        for _ in 0..<charactersToDelete {
+            sendBackspaceKey()
+        }
+        if kittyEnabled {
+            pendingKittyKeyEvent = pendingEvent
+            sendKittyTextInput(textToInsert, applyModifiers: applyModifiers)
+        } else {
+            send(txt: textToInsert)
+        }
     }
 
     private func trackKoreanResyllabificationDeletion(_ deletedText: Substring, range: TextRange) {
