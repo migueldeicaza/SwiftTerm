@@ -73,6 +73,29 @@ final class BlockSelectionTests: TerminalDelegate {
         #expect(selection.getSelectedText() == "cd\n\n w")
     }
 
+    @Test func streamCopiesAWideCharacterItStartsOnTheSecondHalfOf() {
+        // 中 fills columns 1 and 2.
+        let (_, selection) = makeTerminal(text: "a中bc\r\nwxyz")
+
+        // Dragged right from its second half.
+        selection.setSoftStart(bufferPosition: Position(col: 2, row: 0))
+        selection.startSelection()
+        selection.dragExtend(bufferPosition: Position(col: 4, row: 0))
+        #expect(selection.getSelectedText() == "中b")
+
+        // Dragged left onto its second half.
+        selection.setSoftStart(bufferPosition: Position(col: 2, row: 1))
+        selection.startSelection()
+        selection.dragExtend(bufferPosition: Position(col: 2, row: 0))
+        #expect(selection.getSelectedText() == "中bc\nwx")
+
+        // Starting on its first half is unchanged.
+        selection.setSoftStart(bufferPosition: Position(col: 1, row: 0))
+        selection.startSelection()
+        selection.dragExtend(bufferPosition: Position(col: 4, row: 0))
+        #expect(selection.getSelectedText() == "中b")
+    }
+
     @Test func blockCopiesWideCharactersCutByAnEdgeWhole() {
         // 中 fills columns 1 and 2.
         let (_, selection) = makeTerminal(text: "a中bc\r\nwxyz")

@@ -1069,6 +1069,16 @@ public class SelectionService: CustomDebugStringConvertible {
         if selectionMode == .row {
             max.col = terminal.cols
         }
+        // A wide character whose second half starts the selection is drawn
+        // selected, so it is copied whole, as a block does.
+        let buffer = terminal.displayBuffer
+        if min.row >= 0, min.row < buffer.lines.count {
+            let line = buffer.lines [min.row]
+            if min.col > 0, min.col < line.count,
+               line.packedWidth (at: min.col) == 0, line.packedWidth (at: min.col - 1) == 2 {
+                min.col -= 1
+            }
+        }
         let r = terminal.getDisplayText(start: min, end: max)
         return r
     }
