@@ -60,18 +60,33 @@ struct UntrustedTerminalLink: Equatable {
     }
 
     let string: String
+    /// True when the host's `localLinkResolver` owns path resolution for this link.
+    /// Then a bare path is not resolved against the app directory, and a path
+    /// that the resolver did not find is an inaccessible file.
+    let isResolvedByHost: Bool
 
-    init(_ string: String) {
+    init(_ string: String, isResolvedByHost: Bool = false) {
         self.string = string
+        self.isResolvedByHost = isResolvedByHost
     }
 
+    /// True when the link is a path, possibly with a location suffix, and not a URL.
+    /// Uses the same rule as the default policy, so that "Makefile:12" and
+    /// "main.swift:12" are paths and "tel:5551234" is a URL.
     var canResolveAsLocalPath: Bool {
         guard !string.isEmpty, !Self.containsUnsafeCharacters(string) else { return false }
-        guard let scheme = URL(string: string)?.scheme else { return true }
-        return isSourceLocation(scheme: scheme)
+        return !TerminalView.hasURLScheme(string)
     }
 
     var decision: Decision {
+        let decision = baseDecision
+        if isResolvedByHost, decision == .deny(.malformedURL), canResolveAsLocalPath {
+            return .deny(.inaccessibleFile)
+        }
+        return decision
+    }
+
+    private var baseDecision: Decision {
         guard !string.isEmpty else { return .deny(.malformedURL) }
         // Check the source first. URL conversion can encode unsafe characters.
         guard !Self.containsUnsafeCharacters(string) else {
@@ -113,20 +128,17 @@ struct UntrustedTerminalLink: Equatable {
 
     /// Shows the effective target on one line.
     var displayString: String {
-        displayString(normalizeBarePaths: true)
-    }
-
-    func displayString(normalizeBarePaths: Bool) -> String {
         let normalized: String
         if let url = URL(string: string), url.scheme != nil {
             // Use the same path for the preview and the file check.
             normalized = url.isFileURL
                 ? url.standardizedFileURL.resolvingSymlinksInPath().path
                 : string
-        } else if normalizeBarePaths {
-            normalized = URL(fileURLWithPath: string).standardizedFileURL.path
-        } else {
+        } else if isResolvedByHost {
+            // The host did not resolve this path, so the app directory does not apply.
             normalized = string
+        } else {
+            normalized = URL(fileURLWithPath: string).standardizedFileURL.path
         }
 
         // Escape after path conversion, which can decode unsafe characters.
