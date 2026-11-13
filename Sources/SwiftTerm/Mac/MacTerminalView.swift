@@ -3962,7 +3962,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
         if let (target, _) = urlAndParamsFrom(payload: payload) {
-            let url = UntrustedTerminalLink(target).displayString(normalizeBarePaths: localLinkResolver == nil)
+            let url = linkTarget(target, isExplicit: true).displayString
             if let up = urlPreview {
                 up.stringValue = url
                 up.sizeToFit()
@@ -4750,10 +4750,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     public var resolvesLinksAgainstShellDirectory = false
 
     /// Resolves explicit and detected paths using the host's session context.
-    /// Called when a link goes through the view's default opening policy, except when
-    /// OSC 7 names a remote host. Only file URLs are accepted, and they still pass
-    /// through the normal untrusted-link checks. A nil or non-file result leaves
-    /// the target unresolved, without falling back to the app or shell directory.
+    /// Called synchronously on the main thread during OSC 8 hover previews and
+    /// default opening. Use cached session state and avoid blocking work.
+    /// Paths with unsafe characters and paths from a remote OSC 7 host skip
+    /// the resolver. Return an absolute file URL for SwiftTerm to check before
+    /// opening. If the resolver cannot supply one, SwiftTerm blocks the path
+    /// without falling back to the app or shell directory.
     public var localLinkResolver: ((String) -> URL?)?
 }
 
@@ -4879,7 +4881,8 @@ extension TerminalView {
     /// Schemes whose target can be only digits. A file with the same name as
     /// the scheme must not take the link.
     nonisolated static let numericURLSchemes: Set<String> = [
-        "tel", "sms", "facetime", "facetime-audio", "callto", "fax",
+        "http", "https", "mailto", "file", "tel", "sms", "facetime", "facetime-audio",
+        "callto", "fax", "custom", "vscode",
     ]
 
     /// The directory that relative paths in the terminal output resolve against.
