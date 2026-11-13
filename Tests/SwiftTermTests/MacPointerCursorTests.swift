@@ -122,6 +122,7 @@ struct MacPointerCursorTests {
         let view = makeView()
         let window = showInWindow(view)
         defer { window.orderOut(nil) }
+        NSCursor.iBeam.set()
         view.feed(text: "\(esc)[?1000h")
         view.eventQueue.drain()
         #expect(NSCursor.current === NSCursor.arrow)
@@ -148,6 +149,7 @@ struct MacPointerCursorTests {
         let view = makeView()
         let window = showInWindow(view)
         defer { window.orderOut(nil) }
+        NSCursor.iBeam.set()
         view.feed(text: "\(esc)[?1000h")
         view.eventQueue.drain()
         #expect(NSCursor.current === NSCursor.arrow)
@@ -158,24 +160,41 @@ struct MacPointerCursorTests {
         #expect(NSCursor.current === NSCursor.arrow)
     }
 
-    @Test func theFlagsMonitorRunsOnlyWhileReportingInAWindow() {
+    @Test func theViewFollowsShiftOnlyWhileReportingInAWindow() {
         let view = makeView()
         view.feed(text: "\(esc)[?1000h")
         view.eventQueue.drain()
-        #expect(view.pointerFlagsMonitor == nil)
+        #expect(!view.followsPointerFlags)
 
         let window = showInWindow(view)
         defer { window.orderOut(nil) }
-        #expect(view.pointerFlagsMonitor != nil)
+        #expect(view.followsPointerFlags)
 
         view.feed(text: "\(esc)[?1000l")
         view.eventQueue.drain()
-        #expect(view.pointerFlagsMonitor == nil)
+        #expect(!view.followsPointerFlags)
 
         view.feed(text: "\(esc)[?1000h")
         view.eventQueue.drain()
+        view.allowMouseReporting = false
+        #expect(!view.followsPointerFlags)
+
+        view.allowMouseReporting = true
+        #expect(view.followsPointerFlags)
         view.removeFromSuperview()
-        #expect(view.pointerFlagsMonitor == nil)
+        #expect(!view.followsPointerFlags)
+    }
+
+    @Test func closingTheViewStopsFollowingShift() {
+        let view = makeView()
+        let window = showInWindow(view)
+        defer { window.orderOut(nil) }
+        view.feed(text: "\(esc)[?1000h")
+        view.eventQueue.drain()
+        #expect(view.followsPointerFlags)
+
+        #expect(view.updateUiClosed())
+        #expect(!view.followsPointerFlags)
     }
 
     @Test func shiftEscapeUpdatesThePointerAtOnce() {
