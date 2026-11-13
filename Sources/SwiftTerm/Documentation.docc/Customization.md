@@ -195,10 +195,20 @@ When a click/tap lands on an active link, ``TerminalView`` calls
   Custom URL schemes require confirmation, with Cancel as the default. Local
   files must exist and must not be executable files, scripts, applications, or
   other active content. The check resolves symbolic links and rejects remote
-  file hosts. OSC 8 targets must have a scheme; detected paths can become file
-  URLs. Alerts show as a sheet on the window of the view.
-- When `resolvesLinksAgainstShellDirectory` is true, a detected relative path
-  resolves against the shell's directory, when the shell reports it with OSC 7.
+  file hosts. OSC 8 targets need a URL scheme or a file URL from
+  `localLinkResolver`. Alerts show as a sheet on the window of the view.
+- Set `localLinkResolver` on macOS to map OSC 8 and detected paths using
+  the host's session context. It receives the original path, including any
+  tilde or line and column suffix, and returns an absolute file URL for
+  SwiftTerm to check before opening. If the resolver cannot supply one,
+  SwiftTerm blocks the path without looking in the shell or app directory.
+  OSC 7 paths from a remote host
+  skip the resolver. The callback runs synchronously on the main thread
+  during Command-hover previews and default opening, so use cached data
+  and avoid blocking work. The preview shows the resolved file path when
+  the callback returns a file URL.
+- Without a resolver, a detected relative path uses the shell's OSC 7
+  directory when `resolvesLinksAgainstShellDirectory` is true.
   Without OSC 7, or when the property is false, a relative path resolves
   against the directory of the application. When OSC 7 names a different host,
   detected paths are remote files, and SwiftTerm does not open them, with
@@ -209,13 +219,14 @@ When a click/tap lands on an active link, ``TerminalView`` calls
   for a view that shows a remote session. A local shell can still start a
   remote session, for example with ssh; SwiftTerm cannot see that.
 - A custom delegate can give `openDefault` a rewrite of the link. For an OSC 8
-  target, a rewrite must be a URL with a scheme, such as a `file://` URL.
+  target, pass a URL with a scheme, such as a `file://` URL, or a path the
+  view's `localLinkResolver` can resolve.
   It can call `openDefault` later, for example after an async step. Nothing
   opens if the view is gone or if OSC 8 links were disabled.
-- `openDefault` resolves a relative path when you call it. If you keep a request
-  and the shell changes directory before that call, the path can resolve to a
-  different file. Resolve it first and pass an absolute path to `openDefault`
-  when it must refer to the file at click time.
+- `openDefault` resolves paths using the session context at the time of the
+  call. If the context changes after hover or after you keep a request, the
+  path can resolve to a different file. Pass an absolute `file://` URL to
+  `openDefault` when it must refer to the file at click time.
 - On iOS/visionOS, implement `requestOpenLink(source:request:)` to handle link
   taps (for example, with `UIApplication.open`). Without an implementation, a
   tap on a link does nothing. Check the scheme before you open the link.
