@@ -1062,11 +1062,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             stopSelectionAutoScrollTimer()
             stopFocusNotifications()
             stopTextBlinking()
+            updatePointerFlagsMonitor()
         } else {
             setupFocusNotification()
             setupTextBlinking()
             startWindowMouseMovedFallback()
             updateTextBlinkLifecycle()
+            updatePointerFlagsMonitor()
         }
 #if canImport(MetalKit)
         guard useMetalRenderer, let currentWindow = window else { return }
@@ -1259,6 +1261,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         stopWindowMouseMovedFallback()
         stopFocusNotifications()
         stopTextBlinking()
+        updatePointerFlagsMonitor()
         clearProgressReport()
         overlayScrollerHideTimer?.invalidate()
         overlayScrollerHideTimer = nil
@@ -1735,7 +1738,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// need a way of toggling this behavior.
     public var allowMouseReporting: Bool = true {
         didSet {
-            refreshPointer()
+            pointerRuleChanged()
         }
     }
 
@@ -1924,34 +1927,103 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         setPointer()
     }
 
-    /// The pointer shown over the terminal: the arrow while the application
-    /// receives the mouse, as other terminals do, and the I-beam for selecting
-    /// text otherwise, including while Shift bypasses mouse reporting.
-    func pointerCursor(modifiers: NSEvent.ModifierFlags) -> NSCursor {
-        let reportsMouse = allowMouseReporting && currentMouseMode != .off
-        let shiftSelects = modifiers.contains(.shift) && withTerminal { _ in
-            shiftBypassesMouseReportingLocked(modifiers: modifiers)
-        }
-        return reportsMouse && !shiftSelects ? .arrow : .iBeam
+    /// The pointer shown over the terminal while `modifiers` are held: the
+    /// arrow while the application receives the mouse, as other terminals do,
+    /// and the I-beam for selecting text otherwise, including while Shift
+    /// bypasses mouse reporting. The cursor rect asks for it with no modifiers.
+    ///
+    /// Override it to show another pointer. AppKit's cursor callbacks call it
+    /// on the main thread, so it must not take the terminal lock, and it must
+    /// return shared cursors such as `NSCursor.arrow`, since the view compares
+    /// them by identity to skip work when nothing changed.
+    open func pointerCursor(modifiers: NSEvent.ModifierFlags) -> NSCursor {
+        guard allowMouseReporting && currentMouseMode != .off else { return .iBeam }
+        let shiftSelects = modifiers.contains(.shift) && !mouseShiftCaptureState.withLock { $0 }
+        return shiftSelects ? .iBeam : .arrow
     }
 
-    /// Reads the keys held now rather than an event's flags, which can miss a
+    /// Reads the keys held now unless given, since an event's flags can miss a
     /// Shift held since before the cursor update AppKit sends after a rect change.
-    private func setPointer() {
-        let cursor = pointerCursor(modifiers: NSEvent.modifierFlags)
+    private func setPointer(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+        let cursor = pointerCursor(modifiers: modifiers)
         if NSCursor.current != cursor {
             cursor.set()
         }
     }
 
+    /// The cursor the rect was last built with, so that a change of the rule
+    /// makes AppKit build the rects again only when it changes the rect.
+    private var cursorRectPointer: NSCursor?
+
+    /// The pointer's location in `window` when `window` is the topmost window
+    /// under it, `nil` otherwise. Tests replace it, since they cannot move the
+    /// real pointer and their windows are off screen.
+    var pointerLocationInTopmostWindow: (NSWindow) -> NSPoint? = { window in
+        let location = NSEvent.mouseLocation
+        guard NSWindow.windowNumber(at: location, belowWindowWithWindowNumber: 0) == window.windowNumber else {
+            return nil
+        }
+        return window.convertPoint(fromScreen: location)
+    }
+
+    /// Watches Shift while the application receives the mouse, because AppKit
+    /// sends `flagsChanged` only to the first responder, and the pointer can be
+    /// over another terminal view.
+    private(set) var pointerFlagsMonitor: Any?
+
+    /// A window can go away with the view still in it, and then
+    /// `viewDidMoveToWindow` never removes the monitor.
+    isolated deinit {
+        if let pointerFlagsMonitor {
+            NSEvent.removeMonitor(pointerFlagsMonitor)
+        }
+    }
+
+    /// Applies a change of the mouse mode, the shift capture or
+    /// `allowMouseReporting` to the pointer.
+    private func pointerRuleChanged() {
+        updatePointerFlagsMonitor()
+        refreshPointer()
+    }
+
+    private func updatePointerFlagsMonitor() {
+        let wantsMonitor = window != nil && uiShutdownState == .active
+            && allowMouseReporting && currentMouseMode != .off
+        if wantsMonitor, pointerFlagsMonitor == nil {
+            pointerFlagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+                MainActor.assumeIsolated {
+                    self?.refreshPointer(modifiers: event.modifierFlags)
+                }
+                return event
+            }
+        } else if !wantsMonitor, let monitor = pointerFlagsMonitor {
+            NSEvent.removeMonitor(monitor)
+            pointerFlagsMonitor = nil
+        }
+    }
+
     /// Applies a change of the pointer's rule at once when the pointer is over
     /// the terminal, since AppKit only reads the cursor rects again on the next move.
-    private func refreshPointer() {
+    func refreshPointer(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
         guard let window else { return }
-        window.invalidateCursorRects(for: self)
-        if bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) {
-            setPointer()
+        if pointerCursor(modifiers: []) != cursorRectPointer {
+            window.invalidateCursorRects(for: self)
         }
+        if pointerIsOver(window) {
+            setPointer(modifiers: modifiers)
+        }
+    }
+
+    /// Whether the pointer is over this view where it shows: a visible window,
+    /// no hidden ancestor, and no other window or view above it at that point.
+    private func pointerIsOver(_ window: NSWindow) -> Bool {
+        guard window.isVisible, !isHiddenOrHasHiddenAncestor,
+              let contentView = window.contentView,
+              let location = pointerLocationInTopmostWindow(window) else {
+            return false
+        }
+        let point = contentView.superview?.convert(location, from: nil) ?? location
+        return contentView.hitTest(point)?.isDescendant(of: self) == true
     }
     
     func makeFirstResponder ()
@@ -2217,7 +2289,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             turnOffUrlPreview ()
         }
         keyboardRouter.flagsChanged(event)
-        refreshPointer()
         super.flagsChanged(with: event)
     }
     
@@ -2952,12 +3023,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     private func shiftBypassesMouseReportingLocked(for event: NSEvent) -> Bool {
-        shiftBypassesMouseReportingLocked(modifiers: event.modifierFlags)
-    }
-
-    private func shiftBypassesMouseReportingLocked(modifiers: NSEvent.ModifierFlags) -> Bool {
         terminal.terminalLock.preconditionLocked()
-        return modifiers.contains(.shift) && !terminal.mouseShiftCapture
+        return event.modifierFlags.contains(.shift) && !terminal.mouseShiftCapture
     }
 
     private func semanticPromptModifiers(for event: NSEvent) -> SemanticPromptClickModifiers {
@@ -3777,7 +3844,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     public override func resetCursorRects() {
-        addCursorRect(bounds, cursor: pointerCursor(modifiers: NSEvent.modifierFlags))
+        let cursor = pointerCursor(modifiers: [])
+        cursorRectPointer = cursor
+        addCursorRect(bounds, cursor: cursor)
     }
     
     public func resetFontSize ()
@@ -3887,6 +3956,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// terminal lock: `shouldTrackMouse` ran 1 611 times in one measured run.
     nonisolated private let mouseModeState = Locked(Terminal.MouseMode.off)
 
+    /// Last XTSHIFTESCAPE state reported by the terminal, captured with
+    /// `mouseModeState` so that the pointer's AppKit callbacks never take the
+    /// terminal lock.
+    nonisolated private let mouseShiftCaptureState = Locked(false)
+
     /// The mouse reporting mode the program in the terminal last asked for,
     /// `.off` when it has none. Hosts that give a click their own meaning, such
     /// as a control-click context menu, can check it to leave the click to the
@@ -3915,7 +3989,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             } else {
                 deregisterTrackingInterest()
             }
-            refreshPointer()
+            pointerRuleChanged()
         case .bell:
             deliverBell()
         case .programStatusChanged:
@@ -3979,6 +4053,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // Captured here, where the notifying thread holds the terminal lock.
         // The drain then applies it without taking the lock at all.
         mouseModeState.withLock { $0 = source.mouseMode }
+        mouseShiftCaptureState.withLock { $0 = source.mouseShiftCapture }
         eventQueue.post(.mouseModeChanged)
     }
     

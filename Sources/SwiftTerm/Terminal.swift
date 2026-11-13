@@ -133,9 +133,9 @@ public protocol TerminalDelegate: AnyObject {
     func cellSizeInPixels (source: Terminal) -> (width: Int, height: Int)?
     
     /**
-     * This method is invoked when the `mouseMode` property has changed, and gives the UI
-     * a chance to update any tracking capabilities that are required in the toolkit or no longer
-     * required to provide the events.
+     * This method is invoked when the `mouseMode` or `mouseShiftCapture` property has changed,
+     * and gives the UI a chance to update any tracking capabilities that are required in the
+     * toolkit or no longer required to provide the events, and the pointer it shows.
      *
      * The default implementation ignores the mouse change
      */
@@ -1145,7 +1145,14 @@ open class Terminal {
 
     /// Whether the running application has requested shift capture via XTSHIFTESCAPE (`CSI > 1 s`).
     /// When `true`, shift+click is forwarded to the app instead of triggering local text selection.
-    public private(set) var mouseShiftCapture: Bool = false
+    /// A change notifies ``TerminalDelegate/mouseModeChanged(source:)``.
+    public private(set) var mouseShiftCapture: Bool = false {
+        didSet {
+            if mouseShiftCapture != oldValue {
+                tdel?.mouseModeChanged (source: self)
+            }
+        }
+    }
 
     // The next four variables determine whether setting/querying should be done using utf8 or latin1
     // and whether the values should be set or queried using hex digits, rather than actual byte streams
