@@ -12,37 +12,44 @@ import Testing
 @MainActor
 final class MarkedTextOverlayLayoutTests {
 
-    /// The x position of each glyph in the overlay, for text with one glyph per UTF-16 unit.
-    private func glyphPositions(_ view: TerminalView) throws -> [CGFloat] {
+    /// The x position of each character (grapheme cluster) in the overlay.
+    private func characterPositions(_ view: TerminalView) throws -> [CGFloat] {
         let overlay = try #require(view.dictationOverlay)
         let layoutManager = try #require(overlay.layoutManager)
-        return (0..<layoutManager.numberOfGlyphs).map { glyph in
-            layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minX
-                + layoutManager.location(forGlyphAt: glyph).x
+        let string = overlay.string as NSString
+        var positions: [CGFloat] = []
+        string.enumerateSubstrings(in: NSRange(location: 0, length: string.length),
+                                   options: .byComposedCharacterSequences) { _, range, _, _ in
+            let glyph = layoutManager.glyphIndexForCharacter(at: range.location)
+            positions.append(layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minX
+                             + layoutManager.location(forGlyphAt: glyph).x)
         }
+        return positions
     }
 
-    private func steps(_ positions: [CGFloat]) -> [CGFloat] {
-        zip(positions.dropFirst(), positions).map { $0 - $1 }
+    /// Checks that each character of `text` starts at the given column.
+    private func expectColumns(_ text: String, _ columns: [Int],
+                               sourceLocation: SourceLocation = #_sourceLocation) throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        view.setMarkedText(text)
+        let positions = try characterPositions(view)
+        #expect(positions.count == columns.count, sourceLocation: sourceLocation)
+        guard let start = positions.first else { return }
+        let cell = view.cellDimension.width
+        for (position, column) in zip(positions, columns) {
+            #expect(abs(position - start - CGFloat(column) * cell) < 0.5,
+                    "\(text): column \(column) at \(position - start), cell \(cell)",
+                    sourceLocation: sourceLocation)
+        }
     }
 
     @Test func testNarrowCharactersTakeOneCellEach() throws {
-        let view = TerminalView.makeForMarkedTextTests()
-        view.setMarkedText("abc")
-        for step in steps(try glyphPositions(view)) {
-            #expect(abs(step - view.cellDimension.width) < 0.5)
-        }
+        try expectColumns("abc", [0, 1, 2])
     }
 
     /// CJK glyphs are narrower than the two cells the terminal gives them.
     @Test func testWideCharactersTakeTwoCellsEach() throws {
-        let view = TerminalView.makeForMarkedTextTests()
-        view.setMarkedText("a日本b")
-        let cell = view.cellDimension.width
-        let expected: [CGFloat] = [cell, 2 * cell, 2 * cell]
-        for (step, want) in zip(steps(try glyphPositions(view)), expected) {
-            #expect(abs(step - want) < 0.5)
-        }
+        try expectColumns("a日本b", [0, 1, 3, 5])
     }
 }
 #endif
