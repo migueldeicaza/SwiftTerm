@@ -2402,7 +2402,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             let columns = max(1, substring.unicodeScalars.first.map { UnicodeUtil.columnWidth(rune: $0) } ?? 1)
             let advance = text.attributedSubstring(from: range).size().width
             text.addAttribute(.kern,
-                              value: max(0, CGFloat(columns) * cellWidth - advance),
+                              value: CGFloat(columns) * cellWidth - advance,
                               range: range)
         }
     }

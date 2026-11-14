@@ -57,6 +57,12 @@ final class MarkedTextOverlayLayoutTests {
         try expectColumns("a𠮷b", [0, 1, 3])
     }
 
+    /// Glyphs wider than their cells, such as emoji, must not push the text after them.
+    @Test func testGlyphsWiderThanTheirCellsStayOnTheGrid() throws {
+        try expectColumns("a😀b", [0, 1, 3])
+        try expectColumns(String(repeating: "a", count: 30), Array(0..<30))
+    }
+
     /// A kern on a trailing combining mark has no effect.
     @Test func testDecomposedCharactersTakeOneCell() throws {
         try expectColumns("ae\u{301}b", [0, 1, 2])
