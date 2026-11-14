@@ -55,5 +55,17 @@ final class MarkedTextOverlayExtentTests {
         let last = try #require(rects.last)
         #expect(last.width < overlay.frame.width)
     }
+
+    /// A fallback-font glyph such as Hiragino ends inside a cell.
+    @Test func testBackgroundEndsOnACellBoundary() throws {
+        let view = makeView()
+        view.feed(text: "> existing text\r\u{1b}[2C")
+        view.updateCursorPosition()
+        mark(view, "あいう")
+        let overlay = try #require(view.subviews.lazy.compactMap { $0 as? DictationOverlayTextView }.first)
+        let last = try #require(overlay.backgroundRects.last)
+        let cells = (overlay.frame.minX + last.maxX) / view.cellDimension.width
+        #expect(abs(cells - cells.rounded()) < 0.01)
+    }
 }
 #endif

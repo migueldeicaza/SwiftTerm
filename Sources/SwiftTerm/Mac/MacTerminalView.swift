@@ -2467,6 +2467,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // `configureNativeColors()`) when the cell carries no color of its own.
         let caretColors = markedTextColorsAtCaret()
         overlay.overlayBackgroundColor = caretColors.background
+        overlay.cellWidth = cellDimension.width
 
         // Match terminal line metrics so wrapped lines line up with terminal rows.
         // The terminal wraps per character, and moves a wide character that does
@@ -4565,13 +4566,28 @@ final class DictationOverlayTextView: NSTextView {
         var rects: [NSRect] = []
         var lastUsedRect: NSRect?
         layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, usedRect, _, _, _ in
-            rects.append(fragmentRect)
-            lastUsedRect = usedRect
+            rects.append(fragmentRect.offsetBy(dx: origin.x, dy: origin.y))
+            lastUsedRect = usedRect.offsetBy(dx: origin.x, dy: origin.y)
         }
         if let lastUsedRect {
-            rects[rects.count - 1] = lastUsedRect
+            rects[rects.count - 1] = extendedToCellBoundary(lastUsedRect)
         }
-        return rects.map { $0.offsetBy(dx: origin.x, dy: origin.y) }
+        return rects
+    }
+
+    /// The x of the terminal's first column, in this view's coordinates.
+    var cellGridOriginX: CGFloat = 0
+    var cellWidth: CGFloat = 0
+
+    /// Glyphs from a fallback font can end inside a cell; covering only part of
+    /// the next terminal character would leave the rest of it showing.
+    private func extendedToCellBoundary(_ rect: NSRect) -> NSRect {
+        guard cellWidth > 0 else { return rect }
+        // The tolerance keeps a rect that already ends on a boundary from growing by one cell.
+        let cells = ((rect.maxX - cellGridOriginX) / cellWidth - 0.01).rounded(.up)
+        var extended = rect
+        extended.size.width = max(rect.width, cellGridOriginX + cells * cellWidth - rect.minX)
+        return extended
     }
 }
 #endif
