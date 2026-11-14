@@ -70,6 +70,107 @@ final class GhosttyImplicitLinkDetectionTests: TerminalDelegate {
         }
     }
 
+    // None of these inputs has a link. The unanchored regex used to retry
+    // the whole remaining word/component chain at every character, blocking
+    // the caller for seconds on a single long logical line.
+    @Test func testLongNonLinksDoNotRetryEverySuffix() {
+        let inputs = [
+            String(repeating: "a", count: 81_920),
+            String(repeating: "a/", count: 40_960),
+            String(repeating: "a-", count: 40_960) + "/",
+            String(repeating: "a/", count: 40_960) + "$HOME/"
+        ]
+        for input in inputs {
+            let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 24, scrollback: 5_000))
+            terminal.feed(text: input)
+            let start = ProcessInfo.processInfo.systemUptime
+            let link = terminal.link(at: .buffer(Position(col: 20, row: 500)), mode: .explicitAndImplicit)
+            let elapsed = ProcessInfo.processInfo.systemUptime - start
+            #expect(link == nil)
+            // A generous bound catches the multi-second regression without
+            // requiring a microbenchmark's timing on shared CI runners.
+            #expect(elapsed < 2)
+        }
+    }
+
+    @Test func testLongLinksRemainCompleteAcrossWrappedRows() {
+        let inputs = [
+            "https://example.com/" + String(repeating: "a", count: 81_920),
+            "/" + String(repeating: "a/", count: 40_960) + "file",
+            String(repeating: "a/", count: 40_960) + "file.txt",
+            String(repeating: "a/", count: 40_960) + "$HOME/file"
+        ]
+        for input in inputs {
+            let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 24, scrollback: 5_000))
+            terminal.feed(text: input)
+            let link = terminal.link(at: .buffer(Position(col: 20, row: 500)), mode: .explicitAndImplicit)
+            #expect(link == input)
+        }
+    }
+
+    @Test func testLinkAfterLongNonLinkText() {
+        let prefix = String(repeating: "a", count: 81_920) + " \""
+        let expected = "https://example.com/file.txt"
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 80, rows: 24, scrollback: 5_000))
+        terminal.feed(text: prefix + expected + "\"")
+        let offset = prefix.utf8.count + 5
+        let link = terminal.link(at: .buffer(Position(col: offset % 80, row: offset / 80)), mode: .explicitAndImplicit)
+        #expect(link == expected)
+    }
+
+    @Test func testCandidatePrefixesPreserveUnicodeAndBoundaries() {
+        let cases: [(String, String)] = [
+            ("a.\u{301}/file", "a.\u{301}/file"),
+            ("--foo/file.txt", "foo/file.txt"),
+            ("...config/file", ".config/file"),
+            ("中/$HOME/file", "中/$HOME/file"),
+            ("https://x/(word) .config/file", ".config/file"),
+            ("/tmp/a.txt .config/file", "/tmp/a.txt .config/")
+        ]
+        for (input, expected) in cases {
+            assertImplicitMatch(input: input, expected: expected)
+        }
+        assertNoImplicitMatch(input: "foo$HOME/bar")
+        assertNoImplicitMatch(input: "foo~/bar")
+    }
+
+#if DEBUG
+    // The candidate-start search must find the same matches as one unanchored
+    // search with the same regex. Random strings from link fragments catch a
+    // change to the regex's prefixes that the candidate scanner does not copy.
+    @Test func testCandidateSearchMatchesUnanchoredSearch() {
+        struct SeededGenerator: RandomNumberGenerator {
+            var state: UInt64
+            mutating func next() -> UInt64 {
+                state = state &* 6364136223846793005 &+ 1442695040888963407
+                return state
+            }
+        }
+        let fragments = [
+            "a", "b", "1", "_", "é", "中", "😀", "\u{301}", "x.txt", ".", "..", "-", "/", "//", "~", "~/",
+            "./", "../", "$", "$H/", "$1", ":", ":80", ",", " ", "  ", "\t", "(", ")", "[", "]", "[::1]",
+            "\"", "'", "?", "#", "@", "!", "&", "*", "+", ";", "=", "%",
+            "http://", "https://", "file:", "ssh:", "ssh://", "tel:", "news:", "mailto:"
+        ]
+        var generator = SeededGenerator(state: 0x5357_5446_5445_524d)
+        var failures = 0
+        for _ in 0..<5_000 {
+            var text = ""
+            for _ in 0..<Int.random(in: 1...40, using: &generator) {
+                text += fragments[Int.random(in: 0..<fragments.count, using: &generator)]
+            }
+            let ranges = Terminal.testingImplicitLinkMatchRanges(in: text)
+            if ranges.candidates != ranges.unanchored {
+                failures += 1
+                if failures <= 5 {
+                    Issue.record("\(text.debugDescription): candidates \(ranges.candidates), unanchored \(ranges.unanchored)")
+                }
+            }
+        }
+        #expect(failures == 0)
+    }
+#endif
+
     @Test func testGhosttyStyleImplicitPositiveCases() {
         let cases: [(String, String)] = [
             ("hello https://example.com world", "https://example.com"),

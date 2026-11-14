@@ -9860,8 +9860,7 @@ open class Terminal {
             return nil
         }
 
-        let searchRange = NSRange(lineMap.text.startIndex..<lineMap.text.endIndex, in: lineMap.text)
-        let matches = regex.matches(in: lineMap.text, options: [], range: searchRange)
+        let matches = Self.ghosttyImplicitLinkMatches(in: lineMap.text, using: regex)
         for match in matches {
             guard match.range.length > 0,
                   let textRange = Range(match.range, in: lineMap.text)
@@ -9987,11 +9986,130 @@ open class Terminal {
         let lastChar: Character
     }
 
+    private static let ghosttyImplicitURLSchemes = #"https?://|mailto:|ftp://|file:|ssh:|git://|ssh://|tel:|magnet:|ipfs://|ipns://|gemini://|gopher://|news:"#
+    private static let ghosttyImplicitPathCharacters = #"[\w\-.~:\/?#@!$&*+;=%]"#
+
+    private static let ghosttyImplicitDirectPrefixRegex = try? NSRegularExpression(
+        pattern: ghosttyImplicitURLSchemes + #"|\.\.?/|(?<!\w)~/|(?<![\w~/])/(?!/)"#)
+    private static let ghosttyImplicitPathTokenRegex = try? NSRegularExpression(
+        pattern: ghosttyImplicitPathCharacters + "+")
+    private static let ghosttyImplicitComponentRegex = try? NSRegularExpression(
+        pattern: #"[.-]*(\w[\w.-]*)|[.-]+"#)
+    private static let ghosttyImplicitDottedComponentRegex = try? NSRegularExpression(pattern: #"\.\w"#)
+    private static let ghosttyImplicitEnvironmentRegex = try? NSRegularExpression(
+        pattern: #"(?<!\w)\$[A-Za-z_]\w*/"#)
+
+    // An unanchored search retries the path prefix and dotted-path lookahead
+    // at every character. A long word, or a long sequence of undotted path
+    // components, therefore takes quadratic time even when there is no link.
+    // Scan possible starts first, then apply the unchanged grammar only there.
+    private static func ghosttyImplicitLinkMatches(in text: String, using regex: NSRegularExpression) -> [NSTextCheckingResult]
+    {
+        guard let directPrefixRegex = ghosttyImplicitDirectPrefixRegex,
+              let pathTokenRegex = ghosttyImplicitPathTokenRegex,
+              let componentRegex = ghosttyImplicitComponentRegex,
+              let dottedComponentRegex = ghosttyImplicitDottedComponentRegex,
+              let environmentRegex = ghosttyImplicitEnvironmentRegex else {
+            return []
+        }
+        let string = text as NSString
+        let fullRange = NSRange(location: 0, length: string.length)
+        var starts = Set<Int>()
+        directPrefixRegex.enumerateMatches(in: text, range: fullRange) { match, _, _ in
+            if let match {
+                starts.insert(match.range.location)
+            }
+        }
+
+        // Cache the last dot in each run of path characters. Testing the
+        // dotted-path lookahead afresh for every component would be quadratic.
+        // Use literal search: a dot followed by a combining mark is still a dot
+        // to ICU, whereas NSString's default search uses canonical equivalence.
+        let tokens = pathTokenRegex.matches(in: text, range: fullRange).map { match in
+            (range: match.range, lastDot: string.range(of: ".", options: [.literal, .backwards], range: match.range).location)
+        }
+        let environments = environmentRegex.matches(in: text, range: fullRange)
+        var tokenIndex = 0
+        var environmentIndex = 0
+        var previousComponentEnd = -1
+        var chainStart = 0
+        func addEnvironments(before location: Int) {
+            while environmentIndex < environments.count && environments[environmentIndex].range.location < location {
+                let start = environments[environmentIndex].range.location
+                // All contiguous components before $NAME/ belong to the same
+                // prefix. Try the earliest start once, rather than every suffix
+                // of a/a/.../$NAME/ when the required body is missing.
+                starts.insert(previousComponentEnd == start ? chainStart : start)
+                starts.insert(start)
+                environmentIndex += 1
+            }
+        }
+        componentRegex.enumerateMatches(in: text, range: fullRange) { match, _, _ in
+            guard let match else { return }
+            addEnvironments(before: match.range.location)
+            guard NSMaxRange(match.range) < string.length,
+                  string.character(at: NSMaxRange(match.range)) == 47, // "/"
+                  match.range(at: 1).location != NSNotFound else { return }
+
+            // Within a maximal component all later word starts share the same
+            // slash and body. Keep its first word, and its first .word start,
+            // to preserve the earliest match without retrying each suffix.
+            let start = match.range(at: 1).location
+            if previousComponentEnd != start {
+                chainStart = start
+            }
+            previousComponentEnd = NSMaxRange(match.range) + 1
+            while tokenIndex < tokens.count && NSMaxRange(tokens[tokenIndex].range) <= start {
+                tokenIndex += 1
+            }
+            if tokenIndex < tokens.count {
+                let lastDot = tokens[tokenIndex].lastDot
+                if lastDot != NSNotFound && lastDot >= start {
+                    starts.insert(start)
+                }
+            }
+            if string.range(of: ".", options: .literal, range: match.range).location != NSNotFound,
+               let dotted = dottedComponentRegex.firstMatch(in: text, range: match.range) {
+                starts.insert(dotted.range.location)
+            }
+        }
+        addEnvironments(before: string.length)
+
+        var matches: [NSTextCheckingResult] = []
+        var previousMatchEnd = 0
+        for start in starts.sorted() where start >= previousMatchEnd {
+            let range = NSRange(location: start, length: string.length - start)
+            // Transparent bounds preserve lookbehinds at a candidate's start.
+            if let match = regex.firstMatch(in: text, options: [.anchored, .withTransparentBounds], range: range) {
+                matches.append(match)
+                previousMatchEnd = NSMaxRange(match.range)
+            }
+        }
+        return matches
+    }
+
+#if DEBUG
+    /// Match ranges from the candidate-start search and from one unanchored
+    /// search with the same regex. The two must be equal: the candidate
+    /// scanner copies the regex's prefix grammar, and a test compares them
+    /// so that a change to one side cannot silently drop links.
+    static func testingImplicitLinkMatchRanges(in text: String) -> (candidates: [NSRange], unanchored: [NSRange])
+    {
+        guard let regex = ghosttyImplicitLinkRegex else {
+            return ([], [])
+        }
+        let fullRange = NSRange(location: 0, length: (text as NSString).length)
+        let candidates = ghosttyImplicitLinkMatches(in: text, using: regex).map(\.range)
+        let unanchored = regex.matches(in: text, range: fullRange).map(\.range)
+        return (candidates, unanchored)
+    }
+#endif
+
     // Ghostty-style URL/path pattern adapted for ICU regex.
     // Oniguruma uses a variable-length lookbehind in one branch; we keep
     // compatibility by applying an equivalent post-match suppression rule.
     private static let ghosttyImplicitLinkRegex: NSRegularExpression? = {
-        let urlSchemes = #"https?://|mailto:|ftp://|file:|ssh:|git://|ssh://|tel:|magnet:|ipfs://|ipns://|gemini://|gopher://|news:"#
+        let urlSchemes = ghosttyImplicitURLSchemes
         // NOTE: this used to be `\[[:0-9a-fA-F]+(?:[:0-9a-fA-F]*)+\]`. That inner `(?:X*)+` is a
         // classic catastrophic-backtracking construct: on input that opens a bracket but never
         // closes it (e.g. `https://[aaaaaaaa...`), ICU explores exponentially many ways to split
@@ -10001,7 +10119,7 @@ open class Terminal {
         // it is behaviour-preserving. Same inputs now complete in under a millisecond.
         let ipv6URLPattern = #"(?:\[[:0-9a-fA-F]+\](?::[0-9]+)?)"#
         let schemeURLChars = #"[\w\-.~:/?#@!$&*+,;=%]"#
-        let pathChars = #"[\w\-.~:\/?#@!$&*+;=%]"#
+        let pathChars = ghosttyImplicitPathCharacters
         let noTrailingPunctuation = #"(?<![,.])"#
         let noTrailingColon = #"(?<!:)"#
         let trailingSpacesAtEOL = #"(?: +(?= *$))?"#
