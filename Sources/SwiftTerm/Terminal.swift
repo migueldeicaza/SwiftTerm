@@ -10081,6 +10081,23 @@ open class Terminal {
         return matches
     }
 
+#if DEBUG
+    /// Match ranges from the candidate-start search and from one unanchored
+    /// search with the same regex. The two must be equal: the candidate
+    /// scanner copies the regex's prefix grammar, and a test compares them
+    /// so that a change to one side cannot silently drop links.
+    static func testingImplicitLinkMatchRanges(in text: String) -> (candidates: [NSRange], unanchored: [NSRange])
+    {
+        guard let regex = ghosttyImplicitLinkRegex else {
+            return ([], [])
+        }
+        let fullRange = NSRange(location: 0, length: (text as NSString).length)
+        let candidates = ghosttyImplicitLinkMatches(in: text, using: regex).map(\.range)
+        let unanchored = regex.matches(in: text, range: fullRange).map(\.range)
+        return (candidates, unanchored)
+    }
+#endif
+
     // Ghostty-style URL/path pattern adapted for ICU regex.
     // Oniguruma uses a variable-length lookbehind in one branch; we keep
     // compatibility by applying an equivalent post-match suppression rule.

@@ -134,6 +134,43 @@ final class GhosttyImplicitLinkDetectionTests: TerminalDelegate {
         assertNoImplicitMatch(input: "foo~/bar")
     }
 
+#if DEBUG
+    // The candidate-start search must find the same matches as one unanchored
+    // search with the same regex. Random strings from link fragments catch a
+    // change to the regex's prefixes that the candidate scanner does not copy.
+    @Test func testCandidateSearchMatchesUnanchoredSearch() {
+        struct SeededGenerator: RandomNumberGenerator {
+            var state: UInt64
+            mutating func next() -> UInt64 {
+                state = state &* 6364136223846793005 &+ 1442695040888963407
+                return state
+            }
+        }
+        let fragments = [
+            "a", "b", "1", "_", "é", "中", "😀", "\u{301}", "x.txt", ".", "..", "-", "/", "//", "~", "~/",
+            "./", "../", "$", "$H/", "$1", ":", ":80", ",", " ", "  ", "\t", "(", ")", "[", "]", "[::1]",
+            "\"", "'", "?", "#", "@", "!", "&", "*", "+", ";", "=", "%",
+            "http://", "https://", "file:", "ssh:", "ssh://", "tel:", "news:", "mailto:"
+        ]
+        var generator = SeededGenerator(state: 0x5357_5446_5445_524d)
+        var failures = 0
+        for _ in 0..<5_000 {
+            var text = ""
+            for _ in 0..<Int.random(in: 1...40, using: &generator) {
+                text += fragments[Int.random(in: 0..<fragments.count, using: &generator)]
+            }
+            let ranges = Terminal.testingImplicitLinkMatchRanges(in: text)
+            if ranges.candidates != ranges.unanchored {
+                failures += 1
+                if failures <= 5 {
+                    Issue.record("\(text.debugDescription): candidates \(ranges.candidates), unanchored \(ranges.unanchored)")
+                }
+            }
+        }
+        #expect(failures == 0)
+    }
+#endif
+
     @Test func testGhosttyStyleImplicitPositiveCases() {
         let cases: [(String, String)] = [
             ("hello https://example.com world", "https://example.com"),
