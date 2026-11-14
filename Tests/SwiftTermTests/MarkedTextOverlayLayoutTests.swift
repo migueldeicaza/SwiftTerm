@@ -20,9 +20,12 @@ final class MarkedTextOverlayLayoutTests {
         var positions: [CGFloat] = []
         string.enumerateSubstrings(in: NSRange(location: 0, length: string.length),
                                    options: .byComposedCharacterSequences) { _, range, _, _ in
-            let glyph = layoutManager.glyphIndexForCharacter(at: range.location)
-            positions.append(layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minX
-                             + layoutManager.location(forGlyphAt: glyph).x)
+            // A cluster's first glyph is not always its leftmost; Devanagari reorders the vowel sign of कि.
+            let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            positions.append((glyphs.lowerBound..<glyphs.upperBound).map { glyph in
+                layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minX
+                    + layoutManager.location(forGlyphAt: glyph).x
+            }.min() ?? .nan)
         }
         return positions
     }
@@ -61,6 +64,17 @@ final class MarkedTextOverlayLayoutTests {
     @Test func testGlyphsWiderThanTheirCellsStayOnTheGrid() throws {
         try expectColumns("a😀b", [0, 1, 3])
         try expectColumns(String(repeating: "a", count: 30), Array(0..<30))
+    }
+
+    /// The terminal sizes a cell from its whole grapheme, not from the first scalar.
+    @Test func testCharactersTakeTheColumnsOfTheirWholeGrapheme() throws {
+        try expectColumns("a❤️b", [0, 1, 3])
+        try expectColumns("aकिb", [0, 1, 3])
+    }
+
+    /// The terminal writes no cell for a zero-width character.
+    @Test func testZeroWidthCharactersTakeNoCell() throws {
+        try expectColumns("a\u{200B}b", [0, 1, 1])
     }
 
     /// A kern on a trailing combining mark has no effect.

@@ -527,6 +527,57 @@ struct UnicodeUtil {
                       !isVirama(incoming))
     }
 
+    /// True when the terminal makes a narrow cell wide as `incoming` joins it
+    /// after the scalar `previous`: VS16 after an emoji VS16 base, or a scalar
+    /// that ``widensJoinedCell(incoming:properties:width:)`` accepts. Narrow
+    /// regional indicators have a rule of their own.
+    static func widensJoinedCell(previous: UInt32, incoming: Unicode.Scalar) -> Bool {
+        switch incoming.value {
+        case 0xFE0F:
+            return Unicode.Scalar(previous).map { isEmojiVs16Base(rune: $0) } ?? false
+        case 0xFE0E:
+            return false
+        default:
+            return widensJoinedCell(incoming: incoming.value,
+                                    properties: graphemeProperties(incoming.value),
+                                    width: columnWidth(rune: incoming))
+        }
+    }
+
+    /// The number of columns the terminal gives `character` when it writes it
+    /// into a cell of its own, or 0 when it writes no cell for it (a zero-width
+    /// or unprintable character, or a mark with no base). This follows the
+    /// insert path of ``Terminal``, which builds the cell one scalar at a time.
+    static func columnWidth(of character: Character, regionalIndicatorWidth: RegionalIndicatorWidth) -> Int {
+        var width = 0
+        var previous: UInt32 = 0
+        for scalar in character.unicodeScalars {
+            var scalarWidth = columnWidth(rune: scalar)
+            if scalarWidth < 0 {
+                continue
+            }
+            let narrowRegionalIndicator = regionalIndicatorWidth == .narrow && isRegionalIndicator(scalar)
+            if narrowRegionalIndicator && scalarWidth == 2 {
+                scalarWidth = 1
+            }
+            if width == 0 {
+                width = scalarWidth
+            } else if scalar.value == 0xFE0F || scalar.value == 0xFE0E {
+                // The terminal drops a variation selector after a scalar that is not an emoji VS16 base.
+                guard let base = Unicode.Scalar(previous), isEmojiVs16Base(rune: base) else {
+                    continue
+                }
+                width = scalar.value == 0xFE0F ? 2 : 1
+            } else if width == 1 && (narrowRegionalIndicator || widensJoinedCell(previous: previous, incoming: scalar)) {
+                width = 2
+            }
+            if width > 0 {
+                previous = scalar.value
+            }
+        }
+        return width
+    }
+
     /**
      * True for a lone symbol whose Unicode default presentation is text (Emoji=Yes,
      * Emoji_Presentation=No) and that carries no explicit variation selector.

@@ -2395,11 +2395,14 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// font's own advances would drift from the grid.
     private func alignToCells(_ text: NSMutableAttributedString) {
         let cellWidth = cellDimension.width
+        let regionalIndicatorWidth = withTerminal { $0.options.regionalIndicatorWidth }
         let string = text.string as NSString
         string.enumerateSubstrings(in: NSRange(location: 0, length: string.length),
                                    options: .byComposedCharacterSequences) { substring, range, _, _ in
             guard let substring else { return }
-            let columns = max(1, substring.unicodeScalars.first.map { UnicodeUtil.columnWidth(rune: $0) } ?? 1)
+            let columns = substring.reduce(0) {
+                $0 + UnicodeUtil.columnWidth(of: $1, regionalIndicatorWidth: regionalIndicatorWidth)
+            }
             let advance = text.attributedSubstring(from: range).size().width
             text.addAttribute(.kern,
                               value: CGFloat(columns) * cellWidth - advance,
