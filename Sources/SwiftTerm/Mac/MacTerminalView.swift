@@ -2451,8 +2451,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             tv.isRichText = true
             tv.textContainerInset = .zero
             tv.textContainer?.lineFragmentPadding = 0
-            // Our subclass fills the background per-line-fragment instead of
-            // over the whole frame, so turn off NSTextView's built-in fill.
+            // Our subclass fills the background behind the marked text instead
+            // of over the whole frame, so turn off NSTextView's built-in fill.
             tv.drawsBackground = false
             addSubview(tv, positioned: .above, relativeTo: nil)
             markedTextOverlay = tv
@@ -4537,11 +4537,10 @@ extension TerminalViewDelegate {
 
 /// NSTextView subclass used for the dictation / IME marked-text overlay.
 ///
-/// Fills its background only under the laid-out line fragments rather than
-/// across the full frame. Line 1 already has an exclusion path covering the
-/// portion occupied by pre-existing terminal text (e.g. the prompt), so this
-/// drawing strategy leaves that area untouched while still covering wrapped
-/// lines below.
+/// Fills its background behind the marked text rather than across the full
+/// frame; see ``backgroundRects``. Line 1 has an exclusion path covering the
+/// pre-existing terminal text to the left of the caret (e.g. the prompt), so
+/// that area stays untouched.
 final class DictationOverlayTextView: NSTextView {
     var overlayBackgroundColor: NSColor = .clear {
         didSet { needsDisplay = true }
