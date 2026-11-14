@@ -487,6 +487,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var markedTextStorage: NSAttributedString?
     private var markedSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
     private var markedTextOverlay: DictationOverlayTextView?
+    /// The measured advance of each cluster the overlay has shown, for `font`.
+    private var markedTextAdvanceCache: (font: NSFont, advances: [String: CGFloat])?
     private var progressBarView: TerminalProgressBarView?
     private(set) var progressReportTimer: Timer?
     var schedulesProgressReportTimer = true
@@ -2396,6 +2398,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private func alignToCells(_ text: NSMutableAttributedString) {
         let cellWidth = cellDimension.width
         let regionalIndicatorWidth = withTerminal { $0.options.regionalIndicatorWidth }
+        // Each IME keystroke and dictation hypothesis lays out the whole string
+        // again, so measure each distinct cluster once. Core Text cannot measure
+        // it instead: it adds spacing between Latin and CJK runs and picks other
+        // fallback fonts than the overlay's text view.
+        var advances = markedTextAdvanceCache.flatMap { $0.font == font ? $0.advances : nil } ?? [:]
         let string = text.string as NSString
         string.enumerateSubstrings(in: NSRange(location: 0, length: string.length),
                                    options: .byComposedCharacterSequences) { substring, range, _, _ in
@@ -2403,11 +2410,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             let columns = substring.reduce(0) {
                 $0 + UnicodeUtil.columnWidth(of: $1, regionalIndicatorWidth: regionalIndicatorWidth)
             }
-            let advance = text.attributedSubstring(from: range).size().width
+            let advance: CGFloat
+            if let cached = advances[substring] {
+                advance = cached
+            } else {
+                advance = text.attributedSubstring(from: range).size().width
+                advances[substring] = advance
+            }
             text.addAttribute(.kern,
                               value: CGFloat(columns) * cellWidth - advance,
                               range: range)
         }
+        markedTextAdvanceCache = (font, advances)
     }
 
     /// Colors for the marked-text overlay, taken from the cell under the caret.

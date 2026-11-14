@@ -32,8 +32,8 @@ final class MarkedTextOverlayLayoutTests {
 
     /// Checks that each character of `text` starts at the given column.
     private func expectColumns(_ text: String, _ columns: [Int],
+                               in view: TerminalView = TerminalView.makeForMarkedTextTests(),
                                sourceLocation: SourceLocation = #_sourceLocation) throws {
-        let view = TerminalView.makeForMarkedTextTests()
         view.setMarkedText(text)
         let positions = try characterPositions(view)
         #expect(positions.count == columns.count, sourceLocation: sourceLocation)
@@ -75,6 +75,14 @@ final class MarkedTextOverlayLayoutTests {
     /// The terminal writes no cell for a zero-width character.
     @Test func testZeroWidthCharactersTakeNoCell() throws {
         try expectColumns("a\u{200B}b", [0, 1, 1])
+    }
+
+    /// The overlay reuses the advances it measured until the font changes.
+    @Test func testCharactersStayOnTheGridAfterTheFontChanges() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        try expectColumns("a日本b", [0, 1, 3, 5], in: view)
+        view.font = NSFont.monospacedSystemFont(ofSize: 24, weight: .regular)
+        try expectColumns("a日本b", [0, 1, 3, 5], in: view)
     }
 
     /// A kern on a trailing combining mark has no effect.
