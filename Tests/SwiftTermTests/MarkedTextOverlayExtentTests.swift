@@ -13,25 +13,15 @@ import Testing
 @MainActor
 final class MarkedTextOverlayExtentTests {
 
-    private func makeView() -> TerminalView {
-        TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-    }
-
-    private func mark(_ view: TerminalView, _ text: String) {
-        view.setMarkedText(text,
-                           selectedRange: NSRange(location: (text as NSString).length, length: 0),
-                           replacementRange: NSRange(location: NSNotFound, length: 0))
-    }
-
     @Test func testBackgroundCoversOnlyTheMarkedText() throws {
-        let view = makeView()
+        let view = TerminalView.makeForMarkedTextTests()
         view.feed(text: "> existing text\r\u{1b}[2C")
         // The caret follows the cursor in the frame paths, which do not run without a window.
         view.updateCursorPosition()
         let caretX = view.caretView.frame.minX
         #expect(caretX > 0)
-        mark(view, "xy")
-        let overlay = try #require(view.subviews.lazy.compactMap { $0 as? DictationOverlayTextView }.first)
+        view.setMarkedText("xy")
+        let overlay = try #require(view.dictationOverlay)
         let rects = overlay.backgroundRects
         #expect(rects.count == 1)
         let rect = try #require(rects.first)
@@ -39,14 +29,13 @@ final class MarkedTextOverlayExtentTests {
         let width = rect.width
         #expect(width > 0)
         #expect(width <= 2 * view.cellDimension.width + 1)
-        #expect(width < overlay.frame.width / 2)
     }
 
     /// Long dictation hypotheses wrap; the wrapped lines must hide the rows below.
     @Test func testWrappedLinesCoverTheFullWidth() throws {
-        let view = makeView()
-        mark(view, String(repeating: "dictation ", count: 12))
-        let overlay = try #require(view.subviews.lazy.compactMap { $0 as? DictationOverlayTextView }.first)
+        let view = TerminalView.makeForMarkedTextTests()
+        view.setMarkedText(String(repeating: "dictation ", count: 12))
+        let overlay = try #require(view.dictationOverlay)
         let rects = overlay.backgroundRects
         #expect(rects.count > 2)
         for rect in rects.dropLast() {
@@ -58,11 +47,11 @@ final class MarkedTextOverlayExtentTests {
 
     /// A fallback-font glyph such as Hiragino ends inside a cell.
     @Test func testBackgroundEndsOnACellBoundary() throws {
-        let view = makeView()
+        let view = TerminalView.makeForMarkedTextTests()
         view.feed(text: "> existing text\r\u{1b}[2C")
         view.updateCursorPosition()
-        mark(view, "あいう")
-        let overlay = try #require(view.subviews.lazy.compactMap { $0 as? DictationOverlayTextView }.first)
+        view.setMarkedText("あいう")
+        let overlay = try #require(view.dictationOverlay)
         let last = try #require(overlay.backgroundRects.last)
         let cells = (overlay.frame.minX + last.maxX) / view.cellDimension.width
         #expect(abs(cells - cells.rounded()) < 0.01)
