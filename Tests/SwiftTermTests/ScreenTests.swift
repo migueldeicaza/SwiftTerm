@@ -135,6 +135,49 @@ final class ScreenTests {
         TerminalTestHarness.assertLineText(terminal.buffer, row: 3, equals: "")
     }
 
+    // A row below the counted lines (created on first use, or left behind by
+    // a reflow) must be as wide as the terminal after a resize. One that kept
+    // the old width trapped in insertAsciiRun as soon as a program printed a
+    // full row into it.
+    @Test func testResizeWiderWidensRowsBelowTheCountedLines() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24, scrollback: 500)
+        terminal.resize(cols: 3, rows: 43)
+        // One logical line that wraps down to the last row.
+        terminal.feed(text: String(String(repeating: "abcdefghij", count: 13).prefix(127)))
+
+        terminal.resize(cols: 4, rows: 43)
+
+        let narrow = terminal.buffer.lines.getArray().compactMap { $0 }.filter { $0.count < terminal.cols }
+        #expect(narrow.isEmpty, "rows narrower than the terminal: \(narrow.map(\.count))")
+        guard narrow.isEmpty else { return }
+
+        // Printing a full row into every screen row stays inside its cells.
+        for row in 1...terminal.rows {
+            terminal.feed(text: "\u{1b}[\(row);1Hwxyz")
+        }
+        TerminalTestHarness.assertLineText(terminal.buffer, row: terminal.rows - 1, equals: "wxyz")
+    }
+
+    @Test func testResizeWiderWithoutScrollbackWidensRowsBelowTheCountedLines() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24, scrollback: 0)
+        terminal.feed(text: "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghiabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghi\r\nabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghija")
+
+        // Narrow and taller, then wider and one row taller: the new last row
+        // lies below the counted lines.
+        terminal.resize(cols: 4, rows: 59)
+        terminal.resize(cols: 7, rows: 60)
+
+        let narrow = terminal.buffer.lines.getArray().compactMap { $0 }.filter { $0.count < terminal.cols }
+        #expect(narrow.isEmpty, "rows narrower than the terminal: \(narrow.map(\.count))")
+        guard narrow.isEmpty else { return }
+
+        // A full row printed into every screen row stays inside its cells.
+        for row in 1...terminal.rows {
+            terminal.feed(text: "\u{1b}[\(row);1H1234567")
+        }
+        #expect(terminal.buffer.y == terminal.rows - 1)
+    }
+
     @Test func testDeleteCharactersKeepsLTRContinuationForReflow() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(
             cols: 5, rows: 4, scrollback: 10)
