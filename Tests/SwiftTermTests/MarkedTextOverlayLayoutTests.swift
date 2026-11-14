@@ -51,5 +51,15 @@ final class MarkedTextOverlayLayoutTests {
     @Test func testWideCharactersTakeTwoCellsEach() throws {
         try expectColumns("a日本b", [0, 1, 3, 5])
     }
+
+    /// A kern on one half of a surrogate pair breaks the layout of the text after it.
+    @Test func testCharactersOutsideTheBMPKeepTheirWidth() throws {
+        try expectColumns("a𠮷b", [0, 1, 3])
+    }
+
+    /// A kern on a trailing combining mark has no effect.
+    @Test func testDecomposedCharactersTakeOneCell() throws {
+        try expectColumns("ae\u{301}b", [0, 1, 2])
+    }
 }
 #endif

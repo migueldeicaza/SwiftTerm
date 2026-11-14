@@ -2394,17 +2394,16 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// narrower than two cells, and the terminal pixel-snaps cell widths, so the
     /// font's own advances would drift from the grid.
     private func alignToCells(_ text: NSMutableAttributedString) {
-        var location = 0
-        for character in text.string {
-            let length = character.utf16.count
-            let range = NSRange(location: location, length: length)
-            let columns = max(1, character.unicodeScalars.first.map { UnicodeUtil.columnWidth(rune: $0) } ?? 1)
+        let cellWidth = cellDimension.width
+        let string = text.string as NSString
+        string.enumerateSubstrings(in: NSRange(location: 0, length: string.length),
+                                   options: .byComposedCharacterSequences) { substring, range, _, _ in
+            guard let substring else { return }
+            let columns = max(1, substring.unicodeScalars.first.map { UnicodeUtil.columnWidth(rune: $0) } ?? 1)
             let advance = text.attributedSubstring(from: range).size().width
-            // Kern adds space after a glyph, so it goes on the cluster's last unit only.
             text.addAttribute(.kern,
-                              value: max(0, CGFloat(columns) * cellDimension.width - advance),
-                              range: NSRange(location: location + length - 1, length: 1))
-            location += length
+                              value: max(0, CGFloat(columns) * cellWidth - advance),
+                              range: range)
         }
     }
 
