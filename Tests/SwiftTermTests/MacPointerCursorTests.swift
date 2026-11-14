@@ -250,6 +250,33 @@ struct MacPointerCursorTests {
         #expect(NSCursor.current === NSCursor.iBeam)
     }
 
+    @Test func theFindBarLeavesThePointerAlone() throws {
+        let view = makeView()
+        let window = showInWindow(view)
+        defer { window.orderOut(nil) }
+        let showFind = NSMenuItem()
+        showFind.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+        view.performFindPanelAction(showFind)
+        window.contentView?.layoutSubtreeIfNeeded()
+        let bar = try #require(view.subviews.first { $0 is TerminalFindBarView })
+        let field = try #require(searchField(in: bar))
+        let center = field.convert(CGPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil)
+        view.pointerLocationInTopmostWindow = { _ in center }
+        NSCursor.iBeam.set()
+
+        view.feed(text: "\(esc)[?1000h")
+        view.eventQueue.drain()
+        view.refreshPointer(modifiers: [])
+        #expect(NSCursor.current === NSCursor.iBeam)
+    }
+
+    private func searchField(in view: NSView) -> NSSearchField? {
+        if let field = view as? NSSearchField {
+            return field
+        }
+        return view.subviews.lazy.compactMap { searchField(in: $0) }.first
+    }
+
     @Test func aViewInAnotherWindowLeavesThePointerAlone() {
         let view = makeView()
         let window = showInWindow(view)
