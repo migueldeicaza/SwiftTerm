@@ -4844,6 +4844,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
 extension TerminalView: @MainActor NSTextInputClient {}
 
+/// The beep a bell sounds when nobody answers it: the default of
+/// ``TerminalViewDelegate/bell(source:)`` and of
+/// ``LocalProcessTerminalViewDelegate/bellRang(source:)``, and the answer of a
+/// ``LocalProcessTerminalView`` with no process delegate. One place, so a
+/// change to the sound reaches all three.
+@MainActor func defaultBell() {
+    defaultBellSound()
+}
+
+/// What ``defaultBell()`` plays. Tests replace it to count the beeps.
+@MainActor var defaultBellSound: () -> Void = { NSSound.beep() }
+
 
 extension TerminalView {
     /// Opens an explicit URL or an implicit filesystem path with its default handler.
@@ -4903,7 +4915,7 @@ extension TerminalViewDelegate {
 
     public func bell (source: TerminalView)
     {
-        NSSound.beep()
+        defaultBell()
     }
     
     public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {

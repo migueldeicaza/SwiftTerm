@@ -55,12 +55,18 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     /// Receives the current OSC 7501 records on the main actor.
     func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus])
 
-    /// Invoked when the terminal rings the bell (BEL), subject to the view's
-    /// `bellStyle`. The default beeps, as the view did before this seam
-    /// existed; a host that shows the bell some other way overrides it.
+    /// Invoked when the terminal rings the bell (BEL) and the view's
+    /// `bellStyle` sounds it: `.sound` and `.soundAndVisual`. With `.visual`
+    /// the view only flashes and with `.none` it does nothing; neither calls
+    /// this. The default beeps, as the view did before this hook existed. A
+    /// host that shows the bell another way (a badge, a notification while
+    /// its window is not key) implements it, and keeps a sound only if it
+    /// plays one itself; with `.soundAndVisual` the view still flashes.
     ///
-    /// See ``TerminalViewDelegate/bell(source:)``.
-    func bell(source: TerminalView)
+    /// Named apart from ``TerminalViewDelegate/bell(source:)`` so a type that
+    /// conforms to both protocols keeps compiling, and so a `bell(source:)` it
+    /// already has for another view is not taken as the answer here.
+    func bellRang(source: LocalProcessTerminalView)
 
     // MARK: Kitty clipboard protocol, OSC 5522
     //
@@ -107,7 +113,7 @@ public extension LocalProcessTerminalViewDelegate {
     func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {}
     func processFailedToStart(source: TerminalView, error: LocalProcessError) {}
 
-    func bell(source: TerminalView) { NSSound.beep() }
+    func bellRang(source: LocalProcessTerminalView) { defaultBell() }
 
     func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
         []
@@ -241,7 +247,8 @@ private final class LocalProcessTerminalViewProcessAdapter:
  * Note: instances of `LocalProcessTerminalView` will set the `TerminalView`'s `delegate`
  * property and capture and consume the messages.   The messages that are most likely needed for
  * consumer applications are reposted to the `LocalProcessTerminalViewDelegate` in
- * `processDelegate`.   If you override the `delegate` directly, you might inadvertently break
+ * `processDelegate`: the size, the title, the current directory, the bell, the program
+ * status, process termination, and the Kitty clipboard requests.   If you override the `delegate` directly, you might inadvertently break
  * the internal working of `LocalProcessTerminalView`.   If you must change the `delegate`
  * make sure that you proxy the values in your implementation to the values set after initializing this instance.
  *
@@ -316,7 +323,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     /**
      * The `processDelegate` is used to deliver messages and information relevant to
      * the process and the host: window size, title, the current directory, process
-     * termination, and the Kitty clipboard services that the host serves.
+     * termination, the bell, and the Kitty clipboard services that the host serves.
      */
     public weak var processDelegate: LocalProcessTerminalViewDelegate? {
         didSet {
@@ -391,17 +398,16 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
 
     /// The view is its own `terminalDelegate`, so the bell would otherwise
     /// stop at the protocol's default beep with no way for the host to hear
-    /// it. `open`, so a subclass can also answer it directly.
+    /// it; this forwards it to ``LocalProcessTerminalViewDelegate/bellRang(source:)``.
+    /// `open`, so a subclass can also answer it directly; a subclass that
+    /// already declares `bell(source:)` now marks it `override`.
     open func bell(source: TerminalView) {
-        guard let processDelegate else {
-            // No host to hear it, so the view answers the way it did before
-            // this seam existed: `TerminalViewDelegate`'s own default beeps,
-            // and this override would otherwise replace that beep with
-            // silence for every caller that never set a process delegate.
-            NSSound.beep()
-            return
+        // With no host, beep as TerminalViewDelegate's default does.
+        if let processDelegate {
+            processDelegate.bellRang(source: self)
+        } else {
+            defaultBell()
         }
-        processDelegate.bell(source: source)
     }
 
     // MARK: Kitty clipboard protocol, forwarded to the processDelegate
