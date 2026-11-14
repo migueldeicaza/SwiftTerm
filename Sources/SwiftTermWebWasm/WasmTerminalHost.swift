@@ -13,6 +13,9 @@ final class WasmTerminalHost: TerminalDelegate {
     var cursorVisible = true
     let graphics = WasmGraphicsState()
     var synchronizedOutputDeadline: UInt64?
+    /// The mouse mode last sent to JavaScript, since the terminal also calls
+    /// `mouseModeChanged` when only `mouseShiftCapture` changes.
+    private var lastMouseModeValue: UInt32?
 
     func event(_ type: UInt16, _ payload: [UInt8] = []) {
         if !events.append(type: type, payload: payload) { queueFailure = true }
@@ -121,6 +124,8 @@ final class WasmTerminalHost: TerminalDelegate {
         case .buttonEventTracking: value = 3
         case .anyEvent: value = 4
         }
+        guard value != lastMouseModeValue else { return }
+        lastMouseModeValue = value
         words(14, [value])
     }
 }
