@@ -4554,18 +4554,24 @@ final class DictationOverlayTextView: NSTextView {
         super.draw(dirtyRect)
     }
 
-    /// The area behind the marked text on each line. It covers the text only, not
-    /// the rest of the line, so characters to the right of the caret stay visible
-    /// while composing in the middle of a line.
+    /// The area behind the marked text on each line. Wrapped lines span the full
+    /// width so they hide the terminal rows below the caret. The last line covers
+    /// the text only, so characters to the right of the caret stay visible while
+    /// composing in the middle of a line.
     var backgroundRects: [NSRect] {
         guard let layoutManager, let container = textContainer else { return [] }
         let glyphRange = layoutManager.glyphRange(for: container)
         let origin = textContainerOrigin
         var rects: [NSRect] = []
-        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, _, _ in
-            rects.append(usedRect.offsetBy(dx: origin.x, dy: origin.y))
+        var lastUsedRect: NSRect?
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, usedRect, _, _, _ in
+            rects.append(fragmentRect)
+            lastUsedRect = usedRect
         }
-        return rects
+        if let lastUsedRect {
+            rects[rects.count - 1] = lastUsedRect
+        }
+        return rects.map { $0.offsetBy(dx: origin.x, dy: origin.y) }
     }
 }
 #endif

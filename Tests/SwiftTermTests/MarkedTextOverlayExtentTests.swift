@@ -35,5 +35,19 @@ final class MarkedTextOverlayExtentTests {
         #expect(width <= 2 * view.cellDimension.width + 1)
         #expect(width < overlay.frame.width / 2)
     }
+
+    /// Long dictation hypotheses wrap; the wrapped lines must hide the rows below.
+    @Test func testWrappedLinesCoverTheFullWidth() throws {
+        let view = makeView()
+        mark(view, String(repeating: "dictation ", count: 12))
+        let overlay = try #require(view.subviews.lazy.compactMap { $0 as? DictationOverlayTextView }.first)
+        let rects = overlay.backgroundRects
+        #expect(rects.count > 2)
+        for rect in rects.dropLast() {
+            #expect(abs(rect.width - overlay.frame.width) < 0.5)
+        }
+        let last = try #require(rects.last)
+        #expect(last.width < overlay.frame.width)
+    }
 }
 #endif
