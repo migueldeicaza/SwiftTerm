@@ -16,19 +16,9 @@ import Darwin
 import Glibc
 #endif
 
-private struct PipelineDescriptorIdentity: Equatable {
-    let device: dev_t
-    let inode: ino_t
-    let rdev: dev_t
-    let mode: mode_t
-}
-
 private enum PipelineDescriptorTestError: Error {
-    case missingDescriptor(Int32, Int32)
     case couldNotCreateTemporaryFile(String)
     case couldNotOpenFile(String, Int32)
-    case couldNotDuplicateDescriptor(Int32, Int32)
-    case couldNotReserveDescriptor(Int32)
 }
 
 // Serialized: these tests assert scheduling-dependent properties (delivery
@@ -403,16 +393,16 @@ final class TerminalIOPipelineTests {
         // and clears the sink while invalidation is still pending.
         let pty = try Self.makeRawPty()
         let capture = EOFBlockingPipelineCapture()
-        let identity = try Self.descriptorIdentity(pty.master)
+        let identity = try descriptorIdentity(pty.master)
         // Open the unrelated file while the primary is live so this descriptor
         // cannot land on the former primary number. Only the reservation
         // returned by F_DUPFD_CLOEXEC below may be closed before teardown.
         let unrelatedPath = try Self.makeUnrelatedTemporaryFile()
         let unrelated = try Self.openOwnedFile(unrelatedPath)
-        let unrelatedIdentity = try Self.descriptorIdentity(unrelated)
+        let unrelatedIdentity = try descriptorIdentity(unrelated)
         var reserved: Int32 = -1
-        var startDone: PipelineThreadCompletion?
-        var shutdownDone: PipelineThreadCompletion?
+        var startDone: ThreadCompletion?
+        var shutdownDone: ThreadCompletion?
         defer {
             capture.releaseEOF()
             if let startDone {
@@ -435,7 +425,7 @@ final class TerminalIOPipelineTests {
                 delegate: capture,
                 prepareDescriptor: { _ in false })
 
-            let startCompletion = PipelineThreadCompletion()
+            let startCompletion = ThreadCompletion()
             startDone = startCompletion
             let startThread = Thread {
                 pipeline.start()
@@ -446,7 +436,7 @@ final class TerminalIOPipelineTests {
 
             let eofEntered = capture.waitForEOFEntry(timeout: 5)
             #expect(eofEntered)
-            let primaryValidWhilePaused = Self.descriptorRefersToSameOpenFile(
+            let primaryValidWhilePaused = descriptorRefersToSameOpenFile(
                 pty.master,
                 as: identity)
             #expect(primaryValidWhilePaused)
@@ -455,7 +445,7 @@ final class TerminalIOPipelineTests {
             let eofCountWhilePaused = capture.eofCount
             #expect(eofCountWhilePaused == 1)
 
-            let stopCompletion = PipelineThreadCompletion()
+            let stopCompletion = ThreadCompletion()
             shutdownDone = stopCompletion
             let shutdownThread = Thread {
                 pipeline.shutdown()
@@ -466,7 +456,7 @@ final class TerminalIOPipelineTests {
 
             let shutdownFinishedEarly = stopCompletion.wait(timeout: 0.2)
             #expect(!shutdownFinishedEarly)
-            let primaryStillValid = Self.descriptorRefersToSameOpenFile(
+            let primaryStillValid = descriptorRefersToSameOpenFile(
                 pty.master,
                 as: identity)
             #expect(primaryStillValid)
@@ -485,13 +475,13 @@ final class TerminalIOPipelineTests {
             #expect(callbackReturned)
             let stopped = pipeline.waitUntilStopped(timeout: 1)
             #expect(stopped)
-            let primaryClosed = !Self.descriptorRefersToSameOpenFile(
+            let primaryClosed = !descriptorRefersToSameOpenFile(
                 pty.master,
                 as: identity)
             #expect(primaryClosed)
 
-            reserved = try Self.reserveDescriptor(at: pty.master, from: unrelated)
-            let currentReservation = try Self.descriptorIdentity(reserved)
+            reserved = try reserveDescriptor(at: pty.master, from: unrelated)
+            let currentReservation = try descriptorIdentity(reserved)
             #expect(currentReservation == unrelatedIdentity)
 
             // Repeated shutdown, drain and deferred destruction must not close
@@ -502,12 +492,39 @@ final class TerminalIOPipelineTests {
             pipeline.shutdown()
             let stoppedAgain = pipeline.waitUntilStopped(timeout: 1)
             #expect(stoppedAgain)
-            let reservationSurvived = try Self.descriptorIdentity(reserved) == currentReservation
+            let reservationSurvived = try descriptorIdentity(reserved) == currentReservation
             #expect(reservationSurvived)
         }
 
-        let reservationAfterDestruction = try Self.descriptorIdentity(reserved)
+        let reservationAfterDestruction = try descriptorIdentity(reserved)
         #expect(reservationAfterDestruction == unrelatedIdentity)
+    }
+
+    @Test func startupFailureEOFCallbackCanShutDown() throws {
+        // Break caught: start() calls the EOF callback while it still counts
+        // two workers, on a thread that is not a worker. A shutdown() from
+        // the callback then waits for itself and start() never returns.
+        let pty = try Self.makeRawPty()
+        defer { close(pty.slave) }
+        let capture = ShutdownOnEOFCapture()
+        let pipeline = TerminalIOPipeline(
+            fd: pty.master,
+            delegate: capture,
+            prepareDescriptor: { _ in false })
+        capture.pipeline = pipeline
+
+        let startDone = ThreadCompletion()
+        let startThread = Thread {
+            pipeline.start()
+            startDone.signal()
+        }
+        startThread.name = "swiftterm-test-startup-failure-shutdown-in-eof"
+        startThread.start()
+
+        let returned = startDone.wait(timeout: 5)
+        #expect(returned)
+        #expect(capture.eofCount == 1)
+        #expect(pipeline.waitUntilStopped(timeout: 1))
     }
 
     @Test func shutdownBeforeStartClosesOwnedPrimaryOnlyOnce() throws {
@@ -515,10 +532,10 @@ final class TerminalIOPipelineTests {
         // descriptor that reused the primary's old number.
         let pty = try Self.makeRawPty()
         let capture = PipelineCapture()
-        let identity = try Self.descriptorIdentity(pty.master)
+        let identity = try descriptorIdentity(pty.master)
         let unrelatedPath = try Self.makeUnrelatedTemporaryFile()
         let unrelated = try Self.openOwnedFile(unrelatedPath)
-        let unrelatedIdentity = try Self.descriptorIdentity(unrelated)
+        let unrelatedIdentity = try descriptorIdentity(unrelated)
         var reserved: Int32 = -1
         defer {
             if reserved >= 0 {
@@ -533,13 +550,13 @@ final class TerminalIOPipelineTests {
             let pipeline = TerminalIOPipeline(fd: pty.master, delegate: capture)
             pipeline.shutdown()
             pipeline.shutdown()
-            let primaryClosed = !Self.descriptorRefersToSameOpenFile(
+            let primaryClosed = !descriptorRefersToSameOpenFile(
                 pty.master,
                 as: identity)
             #expect(primaryClosed)
 
-            reserved = try Self.reserveDescriptor(at: pty.master, from: unrelated)
-            let currentReservation = try Self.descriptorIdentity(reserved)
+            reserved = try reserveDescriptor(at: pty.master, from: unrelated)
+            let currentReservation = try descriptorIdentity(reserved)
             #expect(currentReservation == unrelatedIdentity)
 
             pipeline.shutdown()
@@ -548,11 +565,11 @@ final class TerminalIOPipelineTests {
             pipeline.shutdown()
             let stopped = pipeline.waitUntilStopped(timeout: 1)
             #expect(stopped)
-            let reservationSurvived = try Self.descriptorIdentity(reserved) == currentReservation
+            let reservationSurvived = try descriptorIdentity(reserved) == currentReservation
             #expect(reservationSurvived)
         }
 
-        let reservationAfterDestruction = try Self.descriptorIdentity(reserved)
+        let reservationAfterDestruction = try descriptorIdentity(reserved)
         #expect(reservationAfterDestruction == unrelatedIdentity)
         let didReachEOF = capture.didReachEOF
         #expect(!didReachEOF)
@@ -563,10 +580,10 @@ final class TerminalIOPipelineTests {
         // more than once or closes a later reservation at its old number.
         let pty = try Self.makeRawPty()
         let capture = PipelineCapture()
-        let identity = try Self.descriptorIdentity(pty.master)
+        let identity = try descriptorIdentity(pty.master)
         let unrelatedPath = try Self.makeUnrelatedTemporaryFile()
         let unrelated = try Self.openOwnedFile(unrelatedPath)
-        let unrelatedIdentity = try Self.descriptorIdentity(unrelated)
+        let unrelatedIdentity = try descriptorIdentity(unrelated)
         var reserved: Int32 = -1
         defer {
             if reserved >= 0 {
@@ -581,13 +598,13 @@ final class TerminalIOPipelineTests {
             let pipeline = TerminalIOPipeline(fd: pty.master, delegate: capture)
             let firstDrain = pipeline.drainAvailableAndShutdown(timeout: 0.5)
             #expect(firstDrain)
-            let primaryClosed = !Self.descriptorRefersToSameOpenFile(
+            let primaryClosed = !descriptorRefersToSameOpenFile(
                 pty.master,
                 as: identity)
             #expect(primaryClosed)
 
-            reserved = try Self.reserveDescriptor(at: pty.master, from: unrelated)
-            let currentReservation = try Self.descriptorIdentity(reserved)
+            reserved = try reserveDescriptor(at: pty.master, from: unrelated)
+            let currentReservation = try descriptorIdentity(reserved)
             #expect(currentReservation == unrelatedIdentity)
 
             let secondDrain = pipeline.drainAvailableAndShutdown(timeout: 0.2)
@@ -595,11 +612,11 @@ final class TerminalIOPipelineTests {
             pipeline.shutdown()
             let stopped = pipeline.waitUntilStopped(timeout: 1)
             #expect(stopped)
-            let reservationSurvived = try Self.descriptorIdentity(reserved) == currentReservation
+            let reservationSurvived = try descriptorIdentity(reserved) == currentReservation
             #expect(reservationSurvived)
         }
 
-        let reservationAfterDestruction = try Self.descriptorIdentity(reserved)
+        let reservationAfterDestruction = try descriptorIdentity(reserved)
         #expect(reservationAfterDestruction == unrelatedIdentity)
         let didReachEOF = capture.didReachEOF
         #expect(!didReachEOF)
@@ -888,28 +905,6 @@ final class TerminalIOPipelineTests {
         return (master, slave)
     }
 
-    private static func descriptorIdentity(_ fd: Int32) throws -> PipelineDescriptorIdentity {
-        var info = stat()
-        guard fstat(fd, &info) == 0 else {
-            throw PipelineDescriptorTestError.missingDescriptor(fd, errno)
-        }
-        return PipelineDescriptorIdentity(
-            device: info.st_dev,
-            inode: info.st_ino,
-            rdev: info.st_rdev,
-            mode: info.st_mode)
-    }
-
-    private static func descriptorRefersToSameOpenFile(
-        _ fd: Int32,
-        as identity: PipelineDescriptorIdentity
-    ) -> Bool {
-        guard let current = try? descriptorIdentity(fd) else {
-            return false
-        }
-        return current == identity
-    }
-
     private static func makeUnrelatedTemporaryFile() throws -> String {
         let path = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("swiftterm-pipeline-reservation-\(UUID().uuidString).dat")
@@ -928,29 +923,6 @@ final class TerminalIOPipelineTests {
             throw PipelineDescriptorTestError.couldNotOpenFile(path, errno)
         }
         return fd
-    }
-
-    /// Reserves exactly `target` from an owned, unrelated descriptor. Only a
-    /// duplicate returned by F_DUPFD_CLOEXEC is closed while retrying; the
-    /// source descriptor and any other number are never touched.
-    private static func reserveDescriptor(
-        at target: Int32,
-        from source: Int32
-    ) throws -> Int32 {
-        for _ in 0..<200 {
-            let duplicate = fcntl(source, F_DUPFD_CLOEXEC, target)
-            if duplicate < 0 {
-                throw PipelineDescriptorTestError.couldNotDuplicateDescriptor(
-                    source,
-                    errno)
-            }
-            if duplicate == target {
-                return duplicate
-            }
-            close(duplicate)
-            Thread.sleep(forTimeInterval: 0.001)
-        }
-        throw PipelineDescriptorTestError.couldNotReserveDescriptor(target)
     }
 
     private static func countingPattern(byteCount: Int) -> [UInt8] {
@@ -1276,28 +1248,18 @@ private final class BlockingPipelineCapture: TerminalIOPipelineDelegate {
     }
 }
 
-private final class PipelineThreadCompletion {
-    private let condition = NSCondition()
-    private var done = false
+/// Shuts the pipeline down from its EOF callback.
+private final class ShutdownOnEOFCapture: TerminalIOPipelineDelegate, @unchecked Sendable {
+    weak var pipeline: TerminalIOPipeline?
+    private let count = Locked(0)
 
-    func signal() {
-        condition.lock()
-        done = true
-        condition.broadcast()
-        condition.unlock()
-    }
+    var eofCount: Int { count.withLock { $0 } }
 
-    func wait(timeout: TimeInterval) -> Bool {
-        let limit = Date().addingTimeInterval(timeout)
-        condition.lock()
-        while !done {
-            if !condition.wait(until: limit) {
-                condition.unlock()
-                return false
-            }
-        }
-        condition.unlock()
-        return true
+    func pipeline(_ pipeline: TerminalIOPipeline, received data: Span<UInt8>) {}
+
+    func pipelineDidReachEOF(_ pipeline: TerminalIOPipeline) {
+        count.withLock { $0 += 1 }
+        pipeline.shutdown()
     }
 }
 

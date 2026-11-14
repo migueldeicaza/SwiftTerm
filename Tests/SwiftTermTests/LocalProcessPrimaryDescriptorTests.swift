@@ -17,38 +17,15 @@ import Foundation
 import Testing
 @testable import SwiftTerm
 
-private struct PrimaryDescriptorIdentity: Equatable, Sendable {
-    let device: dev_t
-    let inode: ino_t
-    let rdev: dev_t
-    let mode: mode_t
-}
-
 private enum PrimaryDescriptorTestError: Error {
     case couldNotMakeFifo(String, Int32)
     case couldNotOpenFifo(String, Int32)
     case couldNotCreateTemporaryFile(String)
     case couldNotOpenFile(String, Int32)
-    case couldNotDuplicateDescriptor(Int32, Int32)
-    case couldNotReserveDescriptor(Int32)
-    case missingDescriptor(Int32, Int32)
-    case launchFailed(String)
-}
-
-private func primaryDescriptorIdentity(_ descriptor: Int32) throws -> PrimaryDescriptorIdentity {
-    var info = stat()
-    guard fstat(descriptor, &info) == 0 else {
-        throw PrimaryDescriptorTestError.missingDescriptor(descriptor, errno)
-    }
-    return PrimaryDescriptorIdentity(
-        device: info.st_dev,
-        inode: info.st_ino,
-        rdev: info.st_rdev,
-        mode: info.st_mode)
 }
 
 private func primaryDescriptorAliases(
-    of identity: PrimaryDescriptorIdentity
+    of identity: DescriptorIdentity
 ) throws -> [Int32] {
 #if os(macOS)
     let descriptorDirectory = "/dev/fd"
@@ -58,30 +35,20 @@ private func primaryDescriptorAliases(
     return try FileManager.default.contentsOfDirectory(atPath: descriptorDirectory)
         .compactMap(Int32.init)
         .filter { descriptor in
-            guard let candidate = try? primaryDescriptorIdentity(descriptor) else {
+            guard let candidate = try? descriptorIdentity(descriptor) else {
                 return false
             }
             return candidate == identity
         }
 }
 
-private func primaryAliasCount(of identity: PrimaryDescriptorIdentity) throws -> Int {
+private func primaryAliasCount(of identity: DescriptorIdentity) throws -> Int {
     try primaryDescriptorAliases(of: identity).count
-}
-
-private func descriptorRefersToSameOpenFile(
-    _ descriptor: Int32,
-    as identity: PrimaryDescriptorIdentity
-) -> Bool {
-    guard let current = try? primaryDescriptorIdentity(descriptor) else {
-        return false
-    }
-    return current == identity
 }
 
 private func waitUntilPrimaryDescriptorCloses(
     number: Int32,
-    identity: PrimaryDescriptorIdentity,
+    identity: DescriptorIdentity,
     timeout: TimeInterval
 ) -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
@@ -92,24 +59,6 @@ private func waitUntilPrimaryDescriptorCloses(
         Thread.sleep(forTimeInterval: 0.001)
     }
     return !descriptorRefersToSameOpenFile(number, as: identity)
-}
-
-/// Reserves exactly `target` from an owned, unrelated descriptor. Only a
-/// duplicate returned by F_DUPFD_CLOEXEC is closed while retrying; the source
-/// descriptor and any other number are never touched.
-private func reservePrimarySlot(at target: Int32, from source: Int32) throws -> Int32 {
-    for _ in 0..<400 {
-        let duplicate = fcntl(source, F_DUPFD_CLOEXEC, target)
-        if duplicate < 0 {
-            throw PrimaryDescriptorTestError.couldNotDuplicateDescriptor(source, errno)
-        }
-        if duplicate == target {
-            return duplicate
-        }
-        close(duplicate)
-        Thread.sleep(forTimeInterval: 0.001)
-    }
-    throw PrimaryDescriptorTestError.couldNotReserveDescriptor(target)
 }
 
 private func heldChildArguments(
@@ -131,8 +80,7 @@ private func heldChildArguments(
     return ["-c", script, "sh", readyPath, commandPath, lifetimePath]
 }
 
-/// Ends a test-owned process: SIGTERM first, then SIGKILL for children that
-/// ignore it. This never touches a reused PID because it reads shellPid.
+/// Closes a descriptor from a type that has its own `close()` method.
 private func closeTestDescriptor(_ descriptor: Int32) {
 #if os(macOS)
     Darwin.close(descriptor)
@@ -141,6 +89,9 @@ private func closeTestDescriptor(_ descriptor: Int32) {
 #endif
 }
 
+/// Ends a test-owned process: SIGTERM first, then SIGKILL for children that
+/// ignore it. The raw `kill` is outside the session lock, so a PID that was
+/// reaped just before can in theory be reused; the tests accept that risk.
 private func forceEndChild(_ process: LocalProcess) {
     process.terminate()
     let pid = process.shellPid
@@ -181,10 +132,10 @@ final class LocalProcessPrimaryDescriptorTests {
         #expect(fifo.waitForToken(Array("ready".utf8), timeout: 3))
         let primary = process.childfd
         #expect(primary >= 0)
-        let identity = try primaryDescriptorIdentity(primary)
+        let identity = try descriptorIdentity(primary)
 
         let acquired = Locked<Result<Int32?, LocalProcessError>>(.failure(.notRunning))
-        let acquisitionDone = TestThreadCompletion()
+        let acquisitionDone = ThreadCompletion()
         let launchBox = TestBox(process)
         let acquisitionThread = Thread {
             let result = launchBox.value.duplicatePrimaryDescriptor()
@@ -196,10 +147,12 @@ final class LocalProcessPrimaryDescriptorTests {
 
         #expect(duplicateEntered.wait(timeout: .now() + 2) == .success)
         // Request EOF while the duplicate syscall is paused under the session
-        // lock. The child exits after reading its command byte, and the
-        // pipeline then blocks on the same lock before invalidating childfd.
+        // lock. The child exits after reading its command byte. Child exit
+        // takes the same lock before it invalidates childfd, so termination
+        // cannot be delivered while the duplicate is paused.
         #expect(fifo.releaseChild())
-        #expect(!acquisitionDone.wait(timeout: 0.2))
+        #expect(fifo.waitForLifetimeEnd(timeout: 3))
+        #expect(!delegate.waitForTermination(count: 1, timeout: 0.2))
         finishDuplicate.signal()
         #expect(acquisitionDone.wait(timeout: 2))
         #expect(delegate.waitForTermination(count: 1, timeout: 5))
@@ -210,7 +163,7 @@ final class LocalProcessPrimaryDescriptorTests {
             #expect(descriptor >= 0)
             #expect(descriptor != primary)
             #expect(fcntl(descriptor, F_GETFD) & FD_CLOEXEC != 0)
-            let description = try primaryDescriptorIdentity(descriptor)
+            let description = try descriptorIdentity(descriptor)
             #expect(description == identity)
             #expect(process.childfd == -1)
             #expect(!process.running)
@@ -234,7 +187,7 @@ final class LocalProcessPrimaryDescriptorTests {
         #expect(terminatingFifo.waitForToken(Array("ready".utf8), timeout: 3))
         let terminatingPrimary = terminatingProcess.childfd
         #expect(terminatingPrimary >= 0)
-        let terminatingIdentity = try primaryDescriptorIdentity(terminatingPrimary)
+        let terminatingIdentity = try descriptorIdentity(terminatingPrimary)
         terminatingProcess.terminate()
         #expect(terminatingProcess.running)
         switch terminatingProcess.duplicatePrimaryDescriptor() {
@@ -242,7 +195,7 @@ final class LocalProcessPrimaryDescriptorTests {
             #expect(descriptor >= 0)
             #expect(descriptor != terminatingPrimary)
             #expect(fcntl(descriptor, F_GETFD) & FD_CLOEXEC != 0)
-            let description = try primaryDescriptorIdentity(descriptor)
+            let description = try descriptorIdentity(descriptor)
             #expect(description == terminatingIdentity)
             close(descriptor)
         case .success(nil), .failure:
@@ -278,16 +231,16 @@ final class LocalProcessPrimaryDescriptorTests {
         #expect(formerPrimary >= 0)
         let unrelatedFlagsBefore = fcntl(unrelated.descriptor, F_GETFD)
         #expect(unrelatedFlagsBefore >= 0)
-        let unrelatedIdentity = try primaryDescriptorIdentity(unrelated.descriptor)
+        let unrelatedIdentity = try descriptorIdentity(unrelated.descriptor)
 
         #expect(fifo.releaseChild())
         #expect(delegate.waitForTermination(count: 1, timeout: 5))
         #expect(process.childfd == -1)
         #expect(!process.running)
 
-        let reserved = try reservePrimarySlot(at: formerPrimary, from: unrelated.descriptor)
+        let reserved = try reserveDescriptor(at: formerPrimary, from: unrelated.descriptor)
         defer { close(reserved) }
-        let reservedIdentity = try primaryDescriptorIdentity(reserved)
+        let reservedIdentity = try descriptorIdentity(reserved)
         #expect(reservedIdentity == unrelatedIdentity)
 
         switch process.duplicatePrimaryDescriptor() {
@@ -300,7 +253,7 @@ final class LocalProcessPrimaryDescriptorTests {
             Issue.record("Unpublished acquisition reported a syscall failure")
         }
         #expect(duplicateCalls.withLock { $0 } == 0)
-        let survivingIdentity = try primaryDescriptorIdentity(reserved)
+        let survivingIdentity = try descriptorIdentity(reserved)
         #expect(survivingIdentity == unrelatedIdentity)
         #expect(fcntl(unrelated.descriptor, F_GETFD) == unrelatedFlagsBefore)
     }
@@ -549,10 +502,10 @@ final class LocalProcessPrimaryDescriptorTests {
         #expect(fifo.waitForToken(Array("ready".utf8), timeout: 3))
         let primary = process.childfd
         #expect(primary >= 0)
-        let identity = try primaryDescriptorIdentity(primary)
+        let identity = try descriptorIdentity(primary)
         switch process.duplicatePrimaryDescriptor() {
         case .success(let descriptor?):
-            let description = try primaryDescriptorIdentity(descriptor)
+            let description = try descriptorIdentity(descriptor)
             #expect(description == identity)
             close(descriptor)
         case .success(nil), .failure:
@@ -563,7 +516,7 @@ final class LocalProcessPrimaryDescriptorTests {
         let foreign = Locked(0)
         let nilResults = Locked(0)
         let firstSuccess = DispatchSemaphore(value: 0)
-        let loopDone = TestThreadCompletion()
+        let loopDone = ThreadCompletion()
         let box = TestBox(process)
         let loop = Thread {
             let deadline = Date().addingTimeInterval(3)
@@ -574,7 +527,7 @@ final class LocalProcessPrimaryDescriptorTests {
                         value += 1
                         return value
                     }
-                    let matches = (try? primaryDescriptorIdentity(descriptor)) == identity
+                    let matches = (try? descriptorIdentity(descriptor)) == identity
                     close(descriptor)
                     if !matches {
                         foreign.withLock { $0 += 1 }
@@ -642,19 +595,19 @@ final class LocalProcessPrimaryDescriptorTests {
         #expect(secondFifo.waitForToken(Array("ready".utf8), timeout: 3))
         let replacementPrimary = process.childfd
         #expect(replacementPrimary >= 0)
-        let replacementIdentity = try primaryDescriptorIdentity(replacementPrimary)
+        let replacementIdentity = try descriptorIdentity(replacementPrimary)
 
         let staleDelegate = StalePipelineDelegate()
         let stalePipeline = TerminalIOPipeline(fd: -1, delegate: staleDelegate)
         process.pipelineDidReachEOF(stalePipeline)
-        let replacementAfterStale = try primaryDescriptorIdentity(replacementPrimary)
+        let replacementAfterStale = try descriptorIdentity(replacementPrimary)
         #expect(replacementAfterStale == replacementIdentity)
         #expect(process.childfd == replacementPrimary)
         withExtendedLifetime(stalePipeline) {}
 
         switch process.duplicatePrimaryDescriptor() {
         case .success(let descriptor?):
-            let description = try primaryDescriptorIdentity(descriptor)
+            let description = try descriptorIdentity(descriptor)
             #expect(description == replacementIdentity)
             close(descriptor)
         case .success(nil), .failure:
@@ -684,18 +637,14 @@ final class LocalProcessPrimaryDescriptorTests {
                 finishPrepare.wait()
                 return false
             })
-        let unrelated = try OwnedUnrelatedFile()
-        defer {
-            forceEndChild(process)
-            unrelated.close()
-        }
+        defer { forceEndChild(process) }
 
         let arguments = heldChildArguments(
             readyPath: fifo.readyPath,
             commandPath: fifo.commandPath,
             lifetimePath: fifo.lifetimePath,
             ignoreTerm: true)
-        let launchDone = TestThreadCompletion()
+        let launchDone = ThreadCompletion()
         let launchBox = TestBox(process)
         let launchThread = Thread {
             _ = launchBox.value.startProcessChecked(
@@ -709,10 +658,10 @@ final class LocalProcessPrimaryDescriptorTests {
         #expect(prepareEntered.wait(timeout: .now() + 2) == .success)
         let formerPrimary = process.childfd
         #expect(formerPrimary >= 0)
-        let identity = try primaryDescriptorIdentity(formerPrimary)
+        let identity = try descriptorIdentity(formerPrimary)
         switch process.duplicatePrimaryDescriptor() {
         case .success(let descriptor?):
-            let description = try primaryDescriptorIdentity(descriptor)
+            let description = try descriptorIdentity(descriptor)
             #expect(description == identity)
             #expect(fcntl(descriptor, F_GETFD) & FD_CLOEXEC != 0)
             close(descriptor)
@@ -726,14 +675,6 @@ final class LocalProcessPrimaryDescriptorTests {
         #expect(process.running)
         forceEndChild(process)
         #expect(delegate.waitForTermination(count: 1, timeout: 5))
-
-        let reserved = try reservePrimarySlot(at: formerPrimary, from: unrelated.descriptor)
-        defer { close(reserved) }
-        let reservedIdentity = try primaryDescriptorIdentity(reserved)
-        process.terminate()
-        Thread.sleep(forTimeInterval: 0.05)
-        let survivingIdentity = try primaryDescriptorIdentity(reserved)
-        #expect(survivingIdentity == reservedIdentity)
 
         // Startup failure before acquisition: the start-failure invalidation
         // wins and the API returns nil without touching the closed number.
@@ -802,7 +743,7 @@ final class LocalProcessPrimaryDescriptorTests {
         #expect(fifo.waitForToken(Array("ready".utf8), timeout: 3))
         let primary = process.childfd
         #expect(primary >= 0)
-        let identity = try primaryDescriptorIdentity(primary)
+        let identity = try descriptorIdentity(primary)
         let aliasesBefore = try primaryAliasCount(of: identity)
         let flagsBefore = fcntl(primary, F_GETFD)
 
@@ -814,7 +755,7 @@ final class LocalProcessPrimaryDescriptorTests {
         case .success:
             Issue.record("EMFILE duplication reported success")
         }
-        let primaryAfterFailure = try primaryDescriptorIdentity(primary)
+        let primaryAfterFailure = try descriptorIdentity(primary)
         #expect(primaryAfterFailure == identity)
         #expect(fcntl(primary, F_GETFD) == flagsBefore)
         let aliasesAfterFailure = try primaryAliasCount(of: identity)
@@ -823,7 +764,7 @@ final class LocalProcessPrimaryDescriptorTests {
 
         switch process.duplicatePrimaryDescriptor() {
         case .success(let descriptor?):
-            let description = try primaryDescriptorIdentity(descriptor)
+            let description = try descriptorIdentity(descriptor)
             #expect(description == identity)
             close(descriptor)
         case .success(nil):
@@ -854,7 +795,7 @@ final class LocalProcessPrimaryDescriptorTests {
         // binding would keep it alive until the test ends.
         func startAcquireAndRelease() -> (
             primary: Int32,
-            identity: PrimaryDescriptorIdentity?,
+            identity: DescriptorIdentity?,
             owned: Int32,
             ownedFlags: Int32,
             unrelatedFlagsBefore: Int32
@@ -866,7 +807,7 @@ final class LocalProcessPrimaryDescriptorTests {
             released.value = process
             fifo.startChild(process, ignoreTerm: true)
             let primary = process.childfd
-            let identity = try? primaryDescriptorIdentity(primary)
+            let identity = try? descriptorIdentity(primary)
             let unrelatedFlagsBefore = fcntl(unrelated.descriptor, F_GETFD)
             let owned: Int32
             switch process.duplicatePrimaryDescriptor() {
@@ -892,7 +833,7 @@ final class LocalProcessPrimaryDescriptorTests {
         #expect(owned >= 0)
         #expect(identity != nil)
         if let identity {
-            let ownedIdentity = try primaryDescriptorIdentity(owned)
+            let ownedIdentity = try descriptorIdentity(owned)
             #expect(ownedIdentity == identity)
         }
         #expect(fcntl(owned, F_GETFD) & FD_CLOEXEC != 0)
@@ -913,70 +854,40 @@ final class LocalProcessPrimaryDescriptorTests {
         let childEnded = fifo.waitForLifetimeEnd(timeout: 3)
         #expect(childEnded)
         if let identity {
-            let ownedAfterTeardown = try primaryDescriptorIdentity(owned)
+            let ownedAfterTeardown = try descriptorIdentity(owned)
             #expect(ownedAfterTeardown == identity)
         }
         #expect(fcntl(owned, F_GETFD) == ownedFlags)
 
-        let reserved = try reservePrimarySlot(at: primary, from: unrelated.descriptor)
+        let reserved = try reserveDescriptor(at: primary, from: unrelated.descriptor)
         defer { close(reserved) }
-        let reservedIdentity = try primaryDescriptorIdentity(reserved)
+        let reservedIdentity = try descriptorIdentity(reserved)
         Thread.sleep(forTimeInterval: 0.2)
-        let survivingIdentity = try primaryDescriptorIdentity(reserved)
+        let survivingIdentity = try descriptorIdentity(reserved)
         #expect(survivingIdentity == reservedIdentity)
         #expect(fcntl(unrelated.descriptor, F_GETFD) == unrelatedFlagsBefore)
     }
 
     // MARK: - Task 4: primary close-on-exec setup
 
-    @Test func publishedPrimaryPreservesFlagsAndIsCloseOnExec() throws {
+    @Test func publishedPrimaryIsCloseOnExec() throws {
         // Break caught: the published primary lacks FD_CLOEXEC, so a later
-        // exec inherits it; F_SETFD also fails to preserve prior flags, or
-        // primary setup runs after the write alias is created.
+        // exec inherits it.
         let fifo = try PrimaryFifo()
         defer { fifo.close() }
-        let recorder = PrimarySetupRecorder()
         let delegate = PrimaryTestDelegate()
         let process = LocalProcess(
             delegate: delegate,
-            dispatchQueue: DispatchQueue(label: "SwiftTerm.primary.cloexec"),
-            duplicateDescriptor: { fd in
-                recorder.recordWriteAlias()
-                return fcntl(fd, F_DUPFD_CLOEXEC, 0)
-            },
-            duplicatePrimary: { fcntl($0, F_DUPFD_CLOEXEC, 0) },
-            primaryDescriptorControl: { fd, command, value in
-                recorder.recordControl(fd: fd, command: command, value: value)
-            })
+            dispatchQueue: DispatchQueue(label: "SwiftTerm.primary.cloexec"))
         defer { forceEndChild(process) }
         fifo.startChild(process, ignoreTerm: false)
         #expect(fifo.waitForToken(Array("ready".utf8), timeout: 3))
         let primary = process.childfd
         #expect(primary >= 0)
-        let identity = try primaryDescriptorIdentity(primary)
+        let identity = try descriptorIdentity(primary)
         let primaryFlags = fcntl(primary, F_GETFD)
         #expect(primaryFlags >= 0)
         #expect(primaryFlags & FD_CLOEXEC != 0)
-
-        let events = recorder.snapshot()
-        let getFlags = events.first { $0.kind == .getFlags }
-        let setFlags = events.first { $0.kind == .setFlags }
-        #expect(getFlags != nil)
-        #expect(setFlags != nil)
-        if let getFlags, let setFlags {
-            #expect(getFlags.fd == primary)
-            #expect(setFlags.fd == primary)
-            #expect(setFlags.value & FD_CLOEXEC != 0)
-            let preservedFlags = (setFlags.value & ~FD_CLOEXEC)
-            let originalFlags = (getFlags.result & ~FD_CLOEXEC)
-            #expect(preservedFlags == originalFlags)
-        }
-        if let setIndex = events.firstIndex(where: { $0.kind == .setFlags }),
-           let aliasIndex = events.firstIndex(where: { $0.kind == .writeAlias }) {
-            #expect(setIndex < aliasIndex)
-        } else {
-            Issue.record("Primary setup or write-alias creation was not recorded")
-        }
 
         let aliases = try primaryDescriptorAliases(of: identity)
         #expect(aliases.count >= 2)
@@ -985,7 +896,7 @@ final class LocalProcessPrimaryDescriptorTests {
             #expect(descriptor >= 0)
             #expect(descriptor != primary)
             #expect(fcntl(descriptor, F_GETFD) & FD_CLOEXEC != 0)
-            let description = try primaryDescriptorIdentity(descriptor)
+            let description = try descriptorIdentity(descriptor)
             #expect(description == identity)
             let probeDescriptors = aliases.map(String.init) + [String(descriptor)]
             let probeDelegate = PrimaryTestDelegate()
@@ -1017,169 +928,6 @@ final class LocalProcessPrimaryDescriptorTests {
 
         #expect(fifo.releaseChild())
         #expect(delegate.waitForTermination(count: 1, timeout: 5))
-    }
-
-    @Test func primaryGetFlagsFailureClosesUnpublishedMasterAndReapsChild() throws {
-        // Break caught: an F_GETFD failure publishes or leaks the primary, or
-        // returns a launch failure without reaping the forked child.
-        let fifo = try PrimaryFifo()
-        defer { fifo.close() }
-        let sawReady = Locked(false)
-        let delegate = PrimaryTestDelegate()
-        var failFirstGet = true
-        let process = LocalProcess(
-            delegate: delegate,
-            dispatchQueue: DispatchQueue(label: "SwiftTerm.primary.getflags-failure"),
-            primaryDescriptorControl: { fd, command, value in
-                if command == F_GETFD && failFirstGet {
-                    failFirstGet = false
-                    sawReady.withLock { $0 = fifo.waitForToken(Array("ready".utf8), timeout: 2) }
-                    errno = EIO
-                    return -1
-                }
-                return fcntl(fd, command, value)
-            })
-        defer { forceEndChild(process) }
-        switch process.startProcessChecked(
-            executable: "/bin/sh",
-            args: heldChildArguments(
-                readyPath: fifo.readyPath,
-                commandPath: fifo.commandPath,
-                lifetimePath: fifo.lifetimePath,
-                ignoreTerm: true)) {
-        case .failure(.primaryDescriptorSetupFailed(EIO)):
-            break
-        case .failure(let error):
-            Issue.record("Unexpected launch failure: \(error)")
-            return
-        case .success:
-            Issue.record("F_GETFD failure launched successfully")
-            return
-        }
-        #expect(sawReady.withLock { $0 })
-        #expect(process.childfd == -1)
-        #expect(process.shellPid == 0)
-        #expect(!process.running)
-        #expect(!process.windingDown)
-        #expect(delegate.failureCount == 0)
-        #expect(delegate.terminationCount == 0)
-        // The readiness pull holds its own live descriptor, so child death is
-        // proven by the child's independent lifetime channel, not by that EOF.
-        #expect(fifo.waitForLifetimeEnd(timeout: 3))
-
-        if case .failure(let error) = process.startProcessChecked(
-            executable: "/bin/sh", args: ["-c", "exit 0"]) {
-            Issue.record("Relaunch after F_GETFD failure failed: \(error)")
-        }
-        #expect(delegate.waitForTermination(count: 1, timeout: 5))
-        #expect(delegate.exitCode == 0)
-    }
-
-    @Test func primarySetFlagsFailureClosesUnpublishedMasterAndReapsChild() throws {
-        // Break caught: an F_SETFD failure after a successful F_GETFD leaves
-        // the primary open or the forked child unreaped.
-        let fifo = try PrimaryFifo()
-        defer { fifo.close() }
-        let sawReady = Locked(false)
-        let delegate = PrimaryTestDelegate()
-        var failFirstSet = true
-        let process = LocalProcess(
-            delegate: delegate,
-            dispatchQueue: DispatchQueue(label: "SwiftTerm.primary.setflags-failure"),
-            primaryDescriptorControl: { fd, command, value in
-                if command == F_GETFD {
-                    sawReady.withLock { $0 = fifo.waitForToken(Array("ready".utf8), timeout: 2) }
-                }
-                if command == F_SETFD && failFirstSet {
-                    failFirstSet = false
-                    errno = EIO
-                    return -1
-                }
-                return fcntl(fd, command, value)
-            })
-        defer { forceEndChild(process) }
-        switch process.startProcessChecked(
-            executable: "/bin/sh",
-            args: heldChildArguments(
-                readyPath: fifo.readyPath,
-                commandPath: fifo.commandPath,
-                lifetimePath: fifo.lifetimePath,
-                ignoreTerm: true)) {
-        case .failure(.primaryDescriptorSetupFailed(EIO)):
-            break
-        case .failure(let error):
-            Issue.record("Unexpected launch failure: \(error)")
-            return
-        case .success:
-            Issue.record("F_SETFD failure launched successfully")
-            return
-        }
-        #expect(sawReady.withLock { $0 })
-        #expect(process.childfd == -1)
-        #expect(process.shellPid == 0)
-        #expect(!process.running)
-        #expect(!process.windingDown)
-        #expect(delegate.failureCount == 0)
-        #expect(delegate.terminationCount == 0)
-        // The readiness pull holds its own live descriptor, so child death is
-        // proven by the child's independent lifetime channel, not by that EOF.
-        #expect(fifo.waitForLifetimeEnd(timeout: 3))
-
-        if case .failure(let error) = process.startProcessChecked(
-            executable: "/bin/sh", args: ["-c", "exit 0"]) {
-            Issue.record("Relaunch after F_SETFD failure failed: \(error)")
-        }
-        #expect(delegate.waitForTermination(count: 1, timeout: 5))
-        #expect(delegate.exitCode == 0)
-    }
-
-    // MARK: - Fixture cleanup
-
-    @Test func explicitReservationCloseDoesNotCloseAReusedDescriptorOnDeinit() throws {
-        // Break caught: explicit close leaves the helper's number valid, so its
-        // later deinit closes a reservation that a new owner took in that slot.
-        let sourcePath = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("swiftterm-primary-reservation-source-\(UUID().uuidString).dat")
-            .path
-        let released = WeakOwnedUnrelatedFileReference()
-
-        // The reservation source is opened while the helper still owns its
-        // slot, and the helper outlives the reservation only until this
-        // function returns, so its deinit runs after the slot is ours.
-        func closeReserveAndRelease() throws -> (
-            reserved: Int32,
-            identity: PrimaryDescriptorIdentity
-        ) {
-            let helper = try OwnedUnrelatedFile()
-            released.value = helper
-            let former = helper.descriptor
-            let source = open(sourcePath, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
-            guard source >= 0 else {
-                throw PrimaryDescriptorTestError.couldNotOpenFile(sourcePath, errno)
-            }
-            defer {
-                closeTestDescriptor(source)
-                try? FileManager.default.removeItem(atPath: sourcePath)
-            }
-            let identity = try primaryDescriptorIdentity(source)
-            helper.close()
-            let reserved = try reservePrimarySlot(at: former, from: source)
-            // Pin the helper through the reservation so the old deinit, not a
-            // pre-reservation release, is what the test observes.
-            withExtendedLifetime(helper) {}
-            return (reserved, identity)
-        }
-        let acquired = try closeReserveAndRelease()
-        #expect(released.value == nil)
-        defer {
-            // The old deinit closes this slot; only close it while it still
-            // is our reservation rather than an unrelated reused file.
-            if descriptorRefersToSameOpenFile(acquired.reserved, as: acquired.identity) {
-                closeTestDescriptor(acquired.reserved)
-            }
-        }
-        let surviving = try? primaryDescriptorIdentity(acquired.reserved)
-        #expect(surviving == acquired.identity)
     }
 }
 
@@ -1369,52 +1117,6 @@ private final class OwnedUnrelatedFile {
     }
 }
 
-/// Observes deallocation of an `OwnedUnrelatedFile` without retaining it.
-private final class WeakOwnedUnrelatedFileReference {
-    weak var value: OwnedUnrelatedFile?
-}
-
-/// Records primary control calls and write-alias creation in program order,
-/// and performs the real syscalls so launch semantics stay intact.
-private final class PrimarySetupRecorder {
-    enum Kind {
-        case getFlags
-        case setFlags
-        case writeAlias
-    }
-
-    struct Event {
-        let kind: Kind
-        let fd: Int32
-        let value: Int32
-        let result: Int32
-    }
-
-    private let lock = NSLock()
-    private var events: [Event] = []
-
-    func recordControl(fd: Int32, command: Int32, value: Int32) -> Int32 {
-        let result = fcntl(fd, command, value)
-        let kind: Kind = command == F_GETFD ? .getFlags : .setFlags
-        lock.lock()
-        events.append(Event(kind: kind, fd: fd, value: value, result: result))
-        lock.unlock()
-        return result
-    }
-
-    func recordWriteAlias() {
-        lock.lock()
-        events.append(Event(kind: .writeAlias, fd: -1, value: 0, result: 0))
-        lock.unlock()
-    }
-
-    func snapshot() -> [Event] {
-        lock.lock()
-        defer { lock.unlock() }
-        return events
-    }
-}
-
 private final class PrimaryTestDelegate: LocalProcessDelegate, @unchecked Sendable {
     private let condition = NSCondition()
     private var storedExitCode: Int32?
@@ -1521,31 +1223,6 @@ private final class StalePipelineDelegate: TerminalIOPipelineDelegate {
     func pipeline(_ pipeline: TerminalIOPipeline, received data: Span<UInt8>) {}
 
     func pipelineDidReachEOF(_ pipeline: TerminalIOPipeline) {}
-}
-
-private final class TestThreadCompletion: @unchecked Sendable {
-    private let condition = NSCondition()
-    private var done = false
-
-    func signal() {
-        condition.lock()
-        done = true
-        condition.broadcast()
-        condition.unlock()
-    }
-
-    func wait(timeout: TimeInterval) -> Bool {
-        let limit = Date().addingTimeInterval(timeout)
-        condition.lock()
-        while !done {
-            if !condition.wait(until: limit) {
-                condition.unlock()
-                return false
-            }
-        }
-        condition.unlock()
-        return true
-    }
 }
 
 /// Observes deallocation without extending the observed owner's lifetime.

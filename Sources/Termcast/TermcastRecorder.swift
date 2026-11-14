@@ -177,9 +177,7 @@ class TermcastRecorder {
             var newWinsize = winsize()
             newWinsize.ws_col = UInt16(newSize.width)
             newWinsize.ws_row = UInt16(newSize.height)
-            if let masterFd = self?.process?.childfd {
-                _ = PseudoTerminalHelpers.setWinSize(masterPtyDescriptor: masterFd, windowSize: &newWinsize)
-            }
+            self?.process?.updateWindowSize(&newWinsize)
         }
         signal(SIGWINCH, SIG_IGN)
         source.activate()
@@ -248,11 +246,13 @@ class TermcastRecorder {
         // Wait a moment for the process to be fully started
         usleep(100000) // 100ms
         
-        // Get the pty file descriptor from the process
-        guard let masterFd = process?.childfd else {
+        // Get an owned copy of the pty descriptor; the process can close
+        // its own at any time.
+        guard case .success(let masterFd?) = process?.duplicatePrimaryDescriptor() else {
             debugMessage("[DEBUG] Warning: Could not get master pty fd\n")
             return
         }
+        defer { close(masterFd) }
         
         // Get terminal settings from the pty
         var ptyTermios = termios()
