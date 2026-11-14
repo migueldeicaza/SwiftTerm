@@ -2122,11 +2122,14 @@ final class MetalTerminalRenderer {
                 var anchorX: CGFloat = 0
                 let glyphRuns = run.shaperRun.glyphRuns
                 for (glyphRunIndex, glyphRun) in glyphRuns.enumerated() {
-                    // Single-cell glyphs are only fitted when CoreText took
-                    // them from a fallback font, mirroring the CoreGraphics path.
-                    let fitsFallbackGlyphs = glyphPolicy == nil
+                    // Single-cell glyphs are fitted only when CoreText took
+                    // them from a fallback font, or when the primary font
+                    // draws them wider than the cell, mirroring the
+                    // CoreGraphics path.
+                    let loneFitting: LoneGlyphFitting = glyphPolicy == nil
                         && shaped.segment.columnWidth == 1
-                        && !context.fonts.contains(glyphRun.font)
+                        ? context.fonts.loneGlyphFitting(for: glyphRun.font) : .none
+                    let fitsLone = !loneFitting.isNone
                     func cellOrdinal(ofGlyph i: Int) -> Int {
                         shaped.segment.cellOrdinal(forUTF16: run.utf16Offset + glyphRun.stringIndices[i])
                     }
@@ -2163,7 +2166,7 @@ final class MetalTerminalRenderer {
                         // combining marks stay on their base, and a conjunct
                         // keeps its multi-cell span.
                         var isAlone = false
-                        if fitsFallbackGlyphs {
+                        if fitsLone && loneFitting.fits(glyph) {
                             let previousOrdinal: Int? = i > 0
                                 ? cellOrdinal(ofGlyph: i - 1)
                                 : glyphRunIndex > 0 ? glyphRuns[glyphRunIndex - 1].stringIndices.last
@@ -2202,7 +2205,7 @@ final class MetalTerminalRenderer {
                                                metricsFont: &metricsFont,
                                                policy: glyphPolicy,
                                                iconHeight: policyIconHeight,
-                                               fitsFallbackToCell: fitsFallbackGlyphs && isAlone)
+                                               fitsLoneGlyphToCell: isAlone)
                         let basePosX = lineOriginX + (cellWidth * CGFloat(glyphColumn)) + intraCluster + fit.dx
                         let pxX = basePosX * scale + entry.bearing.x * fit.scaleX
 
@@ -2362,7 +2365,9 @@ final class MetalTerminalRenderer {
 
         // Per face, resolved once a row rather than once a run.
         var scaledFonts: [CTFont?] = [nil, nil, nil, nil]
-        var fitsFallback: [Bool] = [false, false, false, false]
+        var loneFitting: [LoneGlyphFitting] = [.none, .none, .none, .none]
+        // A face with nothing to fit skips the per-glyph test.
+        var fitsLone: [Bool] = [false, false, false, false]
         var rasterTokens: [UInt32] = [0, 0, 0, 0]
         var fullTokens: [UInt32] = [0, 0, 0, 0]
         var metricsFonts: [GlyphMetricsFont?] = [nil, nil, nil, nil]
@@ -2380,9 +2385,12 @@ final class MetalTerminalRenderer {
                 scaledFont = scaledFontFor(font: font.shapedFont, scale: scale)
                 scaledFonts[face] = scaledFont
                 // The shaped path fits a single-cell glyph to its cell when
-                // Core Text drew it from a font outside the frame's set. Every
-                // plain glyph is alone in its cell, so only the font decides.
-                fitsFallback[face] = !context.fonts.contains(font.shapedFont)
+                // Core Text drew it from a font outside the frame's set, or
+                // when the primary font draws it wider than the cell. Every
+                // plain glyph is alone in its cell, so only the font and the
+                // glyph decide.
+                loneFitting[face] = context.fonts.loneGlyphFitting(for: font.shapedFont)
+                fitsLone[face] = !loneFitting[face].isNone
                 rasterTokens[face] = rasterFontToken(for: scaledFont)
                 fullTokens[face] = profileFullFontToken(rasterFont: scaledFont,
                                                         fittingFont: font.shapedFont,
@@ -2417,7 +2425,7 @@ final class MetalTerminalRenderer {
                                        fittingFont: font.shapedFont,
                                        renderingScale: scale,
                                        metricsFont: &metricsFonts[face],
-                                       fitsFallbackToCell: fitsFallback[face])
+                                       fitsLoneGlyphToCell: fitsLone[face] && loneFitting[face].fits(glyph))
                 // One glyph per cell, so no offset within a cluster.
                 let intraCluster: CGFloat = 0
                 let basePosX = lineOriginX + (cellWidth * CGFloat(column)) + intraCluster + fit.dx
@@ -3171,9 +3179,9 @@ final class MetalTerminalRenderer {
                               metricsFont: inout GlyphMetricsFont?,
                               policy: TerminalGlyphPlacementPolicy? = nil,
                               iconHeight: CGFloat = 0,
-                              fitsFallbackToCell: Bool = false) -> GlyphSlotFit {
+                              fitsLoneGlyphToCell: Bool = false) -> GlyphSlotFit {
         let resolution = resolvedGlyph.fitMetrics(columnWidth: columnWidth,
-                                                  required: policy != nil || fitsFallbackToCell) {
+                                                  required: policy != nil || fitsLoneGlyphToCell) {
             resolvedGlyphMetrics(font: font,
                                  fittingFont: fittingFont,
                                  renderingScale: renderingScale,
@@ -3202,10 +3210,12 @@ final class MetalTerminalRenderer {
                                           iconHeight: iconHeight,
                                           renderingScale: renderingScale)
         }
-        if fitsFallbackToCell {
-            return GlyphSlotFit.fitFallbackToCell(metrics: metrics,
-                                                  cellWidth: cellDimension.width,
-                                                  renderingScale: renderingScale)
+        if fitsLoneGlyphToCell {
+            // The metrics are in pixels, so one pixel is 1.
+            return GlyphSlotFit.fitLoneGlyphToCell(metrics: metrics,
+                                                   cellWidth: cellDimension.width,
+                                                   renderingScale: renderingScale,
+                                                   edgeInset: 1)
         }
         return GlyphSlotFit.calculate(metrics: metrics,
                                       columnWidth: columnWidth,

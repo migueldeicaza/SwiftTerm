@@ -104,12 +104,105 @@ struct ImmutableFontReference: @unchecked Sendable {
     var value: TTFont { storage }
 }
 
+/// The glyphs of one primary font whose advance is wider than one cell.
+///
+/// The width table, not the font, decides how many columns a character
+/// takes. Some fonts disagree with the table: D2Coding draws the East Asian
+/// Ambiguous circled digits U+2460…U+2473 with a two-cell advance, but the
+/// table gives them one column, as `wcwidth` does for applications. Such a
+/// glyph paints over the next cell unless the renderer fits it to its own
+/// cell. See issue #827.
+///
+/// The set is built once for each font, when the frame's font set is made,
+/// so the renderers test one bit for each glyph. A font with no glyph wider
+/// than its cell (Menlo, SF Mono) gets no set, and its text keeps the fast
+/// path with no added cost.
+final class OverflowGlyphSet: Sendable {
+    private let words: [UInt64]
+    /// How many glyphs of the font are in the set (diagnostics).
+    let count: Int
+
+    /// The tolerance for the pixel snap of the cell width: the grid rounds the
+    /// cell width to device pixels, so an advance can be that much wider than
+    /// the cell and still not paint over the next cell.
+    static let tolerance: CGFloat = 0.5
+
+    /// Returns nil when no glyph of `font` is wider than `cellWidth`.
+    init? (font: CTFont, cellWidth: CGFloat) {
+        let glyphCount = CTFontGetGlyphCount(font)
+        guard glyphCount > 0, cellWidth > 0 else { return nil }
+        var glyphs = [CGGlyph](unsafeUninitializedCapacity: glyphCount) { buffer, initialized in
+            for i in 0..<glyphCount { buffer[i] = CGGlyph(truncatingIfNeeded: i) }
+            initialized = glyphCount
+        }
+        var advances = [CGSize](repeating: .zero, count: glyphCount)
+        CTFontGetAdvancesForGlyphs(font, .horizontal, &glyphs, &advances, glyphCount)
+        let limit = cellWidth + Self.tolerance
+        var words = [UInt64](repeating: 0, count: (glyphCount + 63) / 64)
+        var count = 0
+        for i in 0..<glyphCount where advances[i].width > limit {
+            words[i >> 6] |= 1 << UInt64(i & 63)
+            count += 1
+        }
+        guard count > 0 else { return nil }
+        self.words = words
+        self.count = count
+    }
+
+    @inline(__always)
+    func contains (_ glyph: CGGlyph) -> Bool {
+        let index = Int(glyph)
+        let word = index >> 6
+        return word < words.count && words[word] & (1 << UInt64(index & 63)) != 0
+    }
+
+    /// The unsnapped cell width of a font: the advance of "W", as the views
+    /// measure it for the grid.
+    static func cellAdvance (of font: CTFont) -> CGFloat {
+        var characters: [UniChar] = [0x57]
+        var glyphs: [CGGlyph] = [0]
+        guard CTFontGetGlyphsForCharacters(font, &characters, &glyphs, 1) else { return 0 }
+        var advance = CGSize.zero
+        CTFontGetAdvancesForGlyphs(font, .horizontal, &glyphs, &advance, 1)
+        return advance.width
+    }
+}
+
+/// How the renderers fit a glyph that is alone in a one-column cell, by the
+/// font CoreText drew it from.
+enum LoneGlyphFitting {
+    /// A primary font with no glyph wider than its cell: draw unchanged.
+    case none
+    /// A primary font: fit only the glyphs in the set.
+    case overflowing(OverflowGlyphSet)
+    /// A font CoreText substituted from its fallback cascade: fit any glyph
+    /// that is wider than its cell.
+    case fallback
+
+    @inline(__always)
+    func fits (_ glyph: CGGlyph) -> Bool {
+        switch self {
+        case .none: return false
+        case .overflowing(let set): return set.contains(glyph)
+        case .fallback: return true
+        }
+    }
+
+    var isNone: Bool {
+        if case .none = self { return true }
+        return false
+    }
+}
+
 /// The four immutable fonts used by one frame.
 struct FrameFontSet: Sendable {
     private let normalReference: ImmutableFontReference
     private let boldReference: ImmutableFontReference
     private let italicReference: ImmutableFontReference
     private let boldItalicReference: ImmutableFontReference
+    /// The over-wide glyphs of each face, in the order normal, bold, italic,
+    /// bold italic. Nil for a face with no glyph wider than the cell.
+    private let overflowGlyphs: [OverflowGlyphSet?]
 
     @MainActor
     init (_ fonts: TerminalView.FontSet) {
@@ -117,6 +210,10 @@ struct FrameFontSet: Sendable {
         boldReference = ImmutableFontReference(fonts.bold)
         italicReference = ImmutableFontReference(fonts.italic)
         boldItalicReference = ImmutableFontReference(fonts.boldItalic)
+        let cellWidth = OverflowGlyphSet.cellAdvance(of: fonts.normal)
+        overflowGlyphs = [fonts.normal, fonts.bold, fonts.italic, fonts.boldItalic].map {
+            OverflowGlyphSet(font: $0, cellWidth: cellWidth)
+        }
     }
 
     var normal: TTFont { normalReference.value }
@@ -129,6 +226,17 @@ struct FrameFontSet: Sendable {
     func contains (_ font: CTFont) -> Bool {
         CFEqual(font, normal) || CFEqual(font, bold)
             || CFEqual(font, italic) || CFEqual(font, boldItalic)
+    }
+
+    /// Which glyphs of `font` to fit when each is alone in a one-column cell.
+    func loneGlyphFitting (for font: CTFont) -> LoneGlyphFitting {
+        let index: Int
+        if CFEqual(font, normal) { index = 0 }
+        else if CFEqual(font, bold) { index = 1 }
+        else if CFEqual(font, italic) { index = 2 }
+        else if CFEqual(font, boldItalic) { index = 3 }
+        else { return .fallback }
+        return overflowGlyphs[index].map { .overflowing($0) } ?? .none
     }
 
     func underlinePosition () -> CGFloat {
@@ -956,17 +1064,52 @@ struct GlyphSlotFit {
                             scale: scale)
     }
 
-    /// Shrinks a glyph that CoreText substituted from a fallback font when its
-    /// advance is wider than the single cell it occupies. U+FB03 `ﬃ` from
-    /// Lucida Grande is about 1.6 cells wide under Menlo and would otherwise
-    /// paint over the next cell. The scale is anchored at the pen origin, so
-    /// the glyph keeps its baseline and cell edge. Glyphs that fit are left
-    /// untouched.
-    static func fitFallbackToCell (metrics: GlyphMetrics, cellWidth: CGFloat,
-                                   renderingScale: CGFloat) -> GlyphSlotFit {
+    /// Keeps the ink of a glyph that is alone in a one-column cell inside
+    /// that cell, when the glyph's advance is wider than the cell.
+    ///
+    /// Two kinds of glyph get here: a glyph that CoreText substituted from a
+    /// fallback font (U+FB03 `ﬃ` from Lucida Grande is about 1.6 cells wide
+    /// under Menlo), and a glyph of the primary font that the font draws wider
+    /// than the column count the width table gives it (D2Coding draws U+2460
+    /// `①` two cells wide; see ``OverflowGlyphSet``).
+    ///
+    /// The fit uses the ink, not the advance:
+    /// - Ink that is already inside the cell is left unchanged.
+    /// - Ink that is wider than the cell is scaled down to the cell width. A
+    ///   D2Coding `①` has ink 1.75 cells wide in a 2-cell advance, so it
+    ///   scales to about 0.57, not 0.5.
+    /// - Ink that is narrow but off the cell (D2Coding U+02BC `ʼ`, centered
+    ///   in a 2-cell advance) is moved, not scaled.
+    ///
+    /// The glyph's advance box is centered in the cell, as the font placed
+    /// the ink in its own box, and then the ink is clamped into the cell. A
+    /// scaled glyph keeps the vertical center of its ink.
+    ///
+    /// A glyph that is moved or scaled keeps its ink `edgeInset` away from
+    /// each cell edge (one device pixel, in the units of `metrics`).
+    /// Antialiasing spreads an edge into the next pixel, so ink that ends
+    /// exactly on the cell edge still paints over the next cell, and two
+    /// adjacent fitted glyphs such as `①②` touch.
+    static func fitLoneGlyphToCell (metrics: GlyphMetrics, cellWidth: CGFloat,
+                                    renderingScale: CGFloat,
+                                    edgeInset: CGFloat) -> GlyphSlotFit {
         let slotWidth = cellWidth * renderingScale
-        guard slotWidth > 0, metrics.horizontalAdvance > slotWidth else { return .identity }
-        return GlyphSlotFit(scale: slotWidth / metrics.horizontalAdvance)
+        let advance = metrics.horizontalAdvance
+        guard slotWidth > 0, advance > slotWidth else { return .identity }
+        let ink = metrics.fitInkBounds
+        guard ink.width > 0, ink.height > 0 else { return .identity }
+        if ink.minX >= 0 && ink.maxX <= slotWidth { return .identity }
+
+        let inset = min(max(0, edgeInset), slotWidth / 4)
+        let allowedWidth = slotWidth - 2 * inset
+        let scale = ink.width > allowedWidth ? allowedWidth / ink.width : 1
+        var dx = (slotWidth - advance * scale) / 2
+        let inkLeft = dx + ink.minX * scale
+        if inkLeft < inset { dx += inset - inkLeft }
+        let inkRight = dx + ink.maxX * scale
+        if inkRight > slotWidth - inset { dx -= inkRight - (slotWidth - inset) }
+        let dy = scale < 1 ? ink.midY * (1 - scale) : 0
+        return GlyphSlotFit(dx: dx / renderingScale, dy: dy / renderingScale, scale: scale)
     }
 
     /// Internal tuning knob for the one-column icon-height limit; 1.0 leaves
@@ -1362,6 +1505,11 @@ final class AppleKittyClipboardBridge: Sendable {
 }
 
 extension TerminalView {
+
+    /// The immutable font snapshot of `fontSet`, cached until the fonts change.
+    func frameFonts () -> FrameFontSet {
+        frameCaptureCache.fonts(for: self)
+    }
 
     /// Refreshes capabilities after the current delegate changes its host policy.
     ///
@@ -3046,23 +3194,22 @@ extension CoreGraphicsPaintHost {
                                       normalFont: fontSet.normal)
     }
 
-    /// ``GlyphSlotFit/fitFallbackToCell(metrics:cellWidth:renderingScale:)``
+    /// Which glyphs of `font` to fit when each is alone in a one-column cell.
+    func loneGlyphFitting (for font: CTFont) -> LoneGlyphFitting
+    {
+        frameFonts().loneGlyphFitting(for: font)
+    }
+
+    /// ``GlyphSlotFit/fitLoneGlyphToCell(metrics:cellWidth:renderingScale:)``
     /// in point space, for the CoreGraphics draw path and the caret.
-    func fallbackGlyphFit (font: CTFont, glyph: CGGlyph) -> GlyphSlotFit
+    func loneGlyphFit (font: CTFont, glyph: CGGlyph) -> GlyphSlotFit
     {
         let currentCellDimension: TerminalView.CellDimension? = cellDimension
         guard let currentCellDimension else { return .identity }
-        return GlyphSlotFit.fitFallbackToCell(metrics: GlyphMetrics.measure(font: font, glyph: glyph),
-                                              cellWidth: currentCellDimension.width,
-                                              renderingScale: 1)
-    }
-
-    /// True when `font` is one of the view's fonts; false for a font
-    /// CoreText substituted from its fallback cascade.
-    func isPrimaryFont (_ font: CTFont) -> Bool
-    {
-        CFEqual(font, fontSet.normal) || CFEqual(font, fontSet.bold)
-            || CFEqual(font, fontSet.italic) || CFEqual(font, fontSet.boldItalic)
+        return GlyphSlotFit.fitLoneGlyphToCell(metrics: GlyphMetrics.measure(font: font, glyph: glyph),
+                                               cellWidth: currentCellDimension.width,
+                                               renderingScale: 1,
+                                               edgeInset: 1 / max(1, backingScaleFactor()))
     }
 
     /// Policy-aware variant for host glyph-fallback runs: applies the run's
@@ -3812,13 +3959,15 @@ extension CoreGraphicsPaintHost {
                     var glyphPositions = positions
                     var scaledFits: [GlyphSlotFit]? = nil
                     let glyphPolicy = preparedRun.glyphPolicy
-                    // Single-cell glyphs are only fitted when CoreText took
-                    // them from a fallback font, so primary-font text keeps
-                    // the fast path.
-                    let fitsFallbackGlyphs = glyphPolicy == nil
+                    // Single-cell glyphs are fitted only when CoreText took
+                    // them from a fallback font, or when the primary font
+                    // draws them wider than the cell. A primary font with no
+                    // such glyph keeps the fast path.
+                    let loneFitting: LoneGlyphFitting = glyphPolicy == nil
                         && prepared.segment.columnWidth == 1
-                        && !isPrimaryFont(ctRunFont)
-                    if glyphPolicy != nil || prepared.segment.columnWidth >= 2 || fitsFallbackGlyphs {
+                        ? renderContext.fonts.loneGlyphFitting(for: ctRunFont) : .none
+                    let fitsLoneGlyphs = !loneFitting.isNone
+                    if glyphPolicy != nil || prepared.segment.columnWidth >= 2 || fitsLoneGlyphs {
                         var computed = [GlyphSlotFit](repeating: .identity, count: runGlyphsCount)
                         var anyScaled = false
                         for i in 0..<runGlyphsCount {
@@ -3827,15 +3976,18 @@ extension CoreGraphicsPaintHost {
                                 fit = glyphSlotFit(font: ctRunFont, glyph: runGlyphs[i],
                                                    columnWidth: prepared.segment.columnWidth,
                                                    policy: glyphPolicy)
-                            } else if fitsFallbackGlyphs {
+                            } else if fitsLoneGlyphs {
                                 // Only a glyph that is alone in exactly one
                                 // cell: combining marks stay on their base,
                                 // and a conjunct keeps its multi-cell span.
+                                guard loneFitting.fits(runGlyphs[i]) else {
+                                    continue
+                                }
                                 let ordinal = cellOrdinal(ofGlyph: i)
                                 let isAlone = (i == 0 || cellOrdinal(ofGlyph: i - 1) != ordinal)
                                     && (i + 1 < runGlyphsCount ? cellOrdinal(ofGlyph: i + 1)
                                                                : preparedRun.sourceCells.upperBound) == ordinal + 1
-                                fit = isAlone ? fallbackGlyphFit(font: ctRunFont, glyph: runGlyphs[i]) : .identity
+                                fit = isAlone ? loneGlyphFit(font: ctRunFont, glyph: runGlyphs[i]) : .identity
                             } else {
                                 fit = glyphSlotFit(font: ctRunFont, glyph: runGlyphs[i], columnWidth: prepared.segment.columnWidth)
                             }
