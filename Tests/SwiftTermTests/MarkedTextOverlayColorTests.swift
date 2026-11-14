@@ -15,20 +15,6 @@ import Testing
 @MainActor
 final class MarkedTextOverlayColorTests {
 
-    private func makeView() -> TerminalView {
-        TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
-    }
-
-    private func mark(_ view: TerminalView, _ text: String) {
-        view.setMarkedText(text,
-                           selectedRange: NSRange(location: (text as NSString).length, length: 0),
-                           replacementRange: NSRange(location: NSNotFound, length: 0))
-    }
-
-    private func overlay(in view: TerminalView) -> DictationOverlayTextView? {
-        view.subviews.lazy.compactMap { $0 as? DictationOverlayTextView }.first
-    }
-
     private func foreground(of overlay: DictationOverlayTextView) -> NSColor? {
         overlay.textStorage?.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
     }
@@ -56,9 +42,9 @@ final class MarkedTextOverlayColorTests {
     }
 
     @Test func testOverlayUsesTheDefaultColorsOnAnUncoloredCell() throws {
-        let view = makeView()
-        mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        let view = TerminalView.makeForMarkedTextTests()
+        view.setMarkedText("ce shi")
+        let overlay = try #require(view.dictationOverlay)
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(view.effectiveNativeBackgroundColor))
         #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeForegroundColor))
     }
@@ -66,40 +52,40 @@ final class MarkedTextOverlayColorTests {
     /// Codex fills its input line with an explicit background and parks the
     /// caret on it.
     @Test func testOverlayTakesTheBackgroundOfTheCellUnderTheCaret() throws {
-        let view = makeView()
+        let view = TerminalView.makeForMarkedTextTests()
         view.feed(text: "\u{1b}[48;2;64;64;64m          \u{1b}[0m\r")
-        mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        view.setMarkedText("ce shi")
+        let overlay = try #require(view.dictationOverlay)
         #expect(rgb(overlay.overlayBackgroundColor) == [64, 64, 64])
     }
 
     /// The cell under the caret of an empty prompt often holds a dimmed
     /// placeholder; adopting its foreground would dim the marked text too.
     @Test func testOverlayKeepsTheDefaultForegroundOverAColoredCell() throws {
-        let view = makeView()
+        let view = TerminalView.makeForMarkedTextTests()
         view.feed(text: "\u{1b}[38;2;100;100;100;48;2;64;64;64mplaceholder\u{1b}[0m\r")
-        mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        view.setMarkedText("ce shi")
+        let overlay = try #require(view.dictationOverlay)
         #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeForegroundColor))
     }
 
     /// Reverse video swaps the default pair; keeping the default foreground
     /// would paint the marked text in the overlay's own background color.
     @Test func testOverlaySwapsTheDefaultPairUnderReverseVideo() throws {
-        let view = makeView()
+        let view = TerminalView.makeForMarkedTextTests()
         view.feed(text: "\u{1b}[7m          \u{1b}[0m\r")
-        mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        view.setMarkedText("ce shi")
+        let overlay = try #require(view.dictationOverlay)
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(view.effectiveNativeForegroundColor))
         #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeBackgroundColor))
     }
 
     /// Bold brightens a cell's foreground but never its background.
     @Test func testOverlayIgnoresBoldOnAnAnsiBackground() throws {
-        let view = makeView()
+        let view = TerminalView.makeForMarkedTextTests()
         view.feed(text: "\u{1b}[1;41m          \u{1b}[0m\r")
-        mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        view.setMarkedText("ce shi")
+        let overlay = try #require(view.dictationOverlay)
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(try #require(renderedBackgroundAtCaret(in: view))))
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(ansiColor(1, in: view)))
     }
@@ -107,10 +93,10 @@ final class MarkedTextOverlayColorTests {
     /// Under reverse video the background comes from the cell's foreground
     /// color, which bold still must not brighten.
     @Test func testOverlayIgnoresBoldUnderReverseVideo() throws {
-        let view = makeView()
+        let view = TerminalView.makeForMarkedTextTests()
         view.feed(text: "\u{1b}[1;7;31m          \u{1b}[0m\r")
-        mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        view.setMarkedText("ce shi")
+        let overlay = try #require(view.dictationOverlay)
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(try #require(renderedBackgroundAtCaret(in: view))))
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(ansiColor(1, in: view)))
     }
@@ -118,11 +104,11 @@ final class MarkedTextOverlayColorTests {
     /// With bright colors disabled the renderer collapses a bright background
     /// to its base color; the overlay has to follow it.
     @Test func testOverlayFollowsTheRendererWithBrightColorsDisabled() throws {
-        let view = makeView()
+        let view = TerminalView.makeForMarkedTextTests()
         view.useBrightColors = false
         view.feed(text: "\u{1b}[101m          \u{1b}[0m\r")
-        mark(view, "ce shi")
-        let overlay = try #require(overlay(in: view))
+        view.setMarkedText("ce shi")
+        let overlay = try #require(view.dictationOverlay)
         #expect(rgb(overlay.overlayBackgroundColor) == rgb(try #require(renderedBackgroundAtCaret(in: view))))
     }
 }
