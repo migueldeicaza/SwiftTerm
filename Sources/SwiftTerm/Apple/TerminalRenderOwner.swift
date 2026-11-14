@@ -461,6 +461,14 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    func semanticCommandOutputRows(forPromptAt promptRow: Int?) -> ClosedRange<Int>? {
+        guard let terminal = currentSession()?.terminal else { return nil }
+        return terminal.terminalLock.withLock {
+            guard !terminal.isCurrentBufferAlternate else { return nil }
+            return terminal.buffer.semanticCommandOutputRows(forPromptAt: promptRow)
+        }
+    }
+
     func ansi256PaletteStrategy() -> Ansi256PaletteStrategy {
         guard let terminal = currentSession()?.terminal else { return .base16Lab }
         return terminal.terminalLock.withLock {

@@ -741,6 +741,23 @@ public class SelectionService: CustomDebugStringConvertible {
         setActiveAndNotify()
     }
 
+    /// Selects whole rows, as a triple-click and a drag do. The copied text
+    /// covers the last column of the last row, which a character selection
+    /// that ends in that column does not. The rows are clamped to the buffer.
+    func select(rows: ClosedRange<Int>)
+    {
+        let lastRow = max(0, terminal.displayBuffer.lines.count - 1)
+        let first = max(0, min(rows.lowerBound, lastRow))
+        let last = max(0, min(rows.upperBound, lastRow))
+        selectingRows = true
+        selectionMode = .row
+        wordSelectionAnchor = nil
+        rowSelectionAnchor = first
+        isBlock = false
+        setRowSelection(from: first, through: last)
+        setActiveAndNotify()
+    }
+
     private func extendRowSelection(through row: Int) {
         setRowSelection(from: rowSelectionAnchor ?? start.row, through: row)
     }

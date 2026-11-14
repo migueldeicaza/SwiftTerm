@@ -1914,6 +1914,26 @@ extension TerminalView {
         renderOwner.semanticPromptRow(searchingUpward: false)
     }
 
+    /// Returns the buffer rows that hold the output of one OSC 133 command,
+    /// scrollback included.
+    ///
+    /// The range starts at the first row after the prompt that has output,
+    /// and ends at the last row before the next prompt that has output. Blank
+    /// lines between the two are part of the range. The command's input rows
+    /// and trailing blank lines are not.
+    ///
+    /// A host can use this to enable a "Select Command Output" command, and
+    /// ``selectSemanticCommandOutput(forPromptAt:)`` to do it.
+    ///
+    /// - Parameter promptRow: A buffer row that opens a primary prompt, as
+    ///   ``previousSemanticPromptRow()`` or ``nextSemanticPromptRow()`` return
+    ///   it. When nil, the newest command that has output is used.
+    /// - Returns: nil when `promptRow` does not open a primary prompt, when
+    ///   the command has no output, or while the alternate buffer is shown.
+    public nonisolated func semanticCommandOutputRows(forPromptAt promptRow: Int? = nil) -> ClosedRange<Int>? {
+        renderOwner.semanticCommandOutputRows(forPromptAt: promptRow)
+    }
+
     /// Performs DECSTR through the normal parser feed path.
     public nonisolated func softReset() {
         feedSender.feed(text: "\u{1b}[!p")
@@ -5229,6 +5249,44 @@ extension TerminalView {
     public func selectNone () {
         withTerminal { _ in
             selection.selectNone()
+        }
+    }
+
+    /// Sets the selection to the given buffer positions, scrollback included.
+    ///
+    /// A host can use this to highlight a region without a drag gesture, for
+    /// example the cells of a search match. The selection looks and copies
+    /// the same as one the user made. The end is exclusive, except that an
+    /// end in the last column includes that column. Positions outside the
+    /// buffer are clamped to it.
+    public func setSelectionRange(start: Position, end: Position) {
+        withTerminal { _ in
+            selection.setSelection(start: start, end: end)
+        }
+    }
+
+    /// Selects the output of one OSC 133 command, as whole rows.
+    ///
+    /// The selection is a row selection, as a triple-click makes: the copy
+    /// includes the last column, and Shift-click extends it by whole rows.
+    /// The search and the selection occur in one hold of the terminal lock,
+    /// so output that arrives during the call cannot move the rows. The rows
+    /// are the ones ``semanticCommandOutputRows(forPromptAt:)`` returns.
+    ///
+    /// - Parameter promptRow: A buffer row that opens a primary prompt. When
+    ///   nil, the newest command that has output is used.
+    /// - Returns: true when the output is selected. false when there is no
+    ///   such output, or while the alternate buffer is shown. The current
+    ///   selection does not change.
+    @discardableResult
+    public func selectSemanticCommandOutput(forPromptAt promptRow: Int? = nil) -> Bool {
+        withTerminal { terminal in
+            guard !terminal.isCurrentBufferAlternate,
+                  let rows = terminal.buffer.semanticCommandOutputRows(forPromptAt: promptRow) else {
+                return false
+            }
+            selection.select(rows: rows)
+            return true
         }
     }
 
