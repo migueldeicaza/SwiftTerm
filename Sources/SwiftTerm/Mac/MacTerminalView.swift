@@ -2343,11 +2343,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         overlay.overlayBackgroundColor = caretColors.background
 
         // Match terminal line metrics so wrapped lines line up with terminal rows.
+        // The terminal wraps per character, and moves a wide character that does
+        // not fit in the last column to the next row; character wrapping does both.
         let lineHeight = cellDimension.height
         let para = NSMutableParagraphStyle()
         para.minimumLineHeight = lineHeight
         para.maximumLineHeight = lineHeight
-        para.lineBreakMode = .byWordWrapping
+        para.lineBreakMode = .byCharWrapping
 
         // Match the terminal's effective foreground color. This preserves
         // host-selected themes and terminal foreground-color changes.
@@ -2361,18 +2363,19 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         alignToCells(display)
         overlay.textStorage?.setAttributedString(display)
 
-        // The overlay spans the full content width. Line 1 skips the portion
-        // already occupied by text to the left of the caret (e.g. the prompt)
-        // via an exclusion path; wrapped lines 2+ start from the left edge.
-        let horizontalInset: CGFloat = 4
-        let rightInset: CGFloat = 4
-        let overlayX = horizontalInset
-        let overlayWidth = max(cellDimension.width, bounds.width - horizontalInset - rightInset)
-        let caretX = max(horizontalInset, caretView.frame.origin.x)
+        // The overlay spans the terminal's columns, so it wraps where the
+        // terminal does. Line 1 skips the portion already occupied by text to
+        // the left of the caret (e.g. the prompt) via an exclusion path; wrapped
+        // lines 2+ start from the first column.
+        let overlayX: CGFloat = 0
+        let cols = withTerminal { $0.cols }
+        let overlayWidth = CGFloat(max(1, cols)) * cellDimension.width
+        let caretX = caretView.frame.origin.x
         let exclusionWidth = max(0, caretX - overlayX)
 
         if let container = overlay.textContainer {
-            container.containerSize = NSSize(width: overlayWidth, height: .greatestFiniteMagnitude)
+            // The slack absorbs rounding in the kerned advances; it is too narrow for any character.
+            container.containerSize = NSSize(width: overlayWidth + 0.5, height: .greatestFiniteMagnitude)
             container.exclusionPaths = exclusionWidth > 0
                 ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: exclusionWidth, height: lineHeight + 1))]
                 : []

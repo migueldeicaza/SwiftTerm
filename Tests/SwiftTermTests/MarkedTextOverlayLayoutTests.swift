@@ -12,20 +12,22 @@ import Testing
 @MainActor
 final class MarkedTextOverlayLayoutTests {
 
-    /// The x position of each character (grapheme cluster) in the overlay.
-    private func characterPositions(_ view: TerminalView) throws -> [CGFloat] {
+    /// The position of each character (grapheme cluster) in the overlay.
+    private func characterPositions(_ view: TerminalView) throws -> [CGPoint] {
         let overlay = try #require(view.dictationOverlay)
         let layoutManager = try #require(overlay.layoutManager)
         let string = overlay.string as NSString
-        var positions: [CGFloat] = []
+        var positions: [CGPoint] = []
         string.enumerateSubstrings(in: NSRange(location: 0, length: string.length),
                                    options: .byComposedCharacterSequences) { _, range, _, _ in
             // A cluster's first glyph is not always its leftmost; Devanagari reorders the vowel sign of कि.
             let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-            positions.append((glyphs.lowerBound..<glyphs.upperBound).map { glyph in
+            let line = layoutManager.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+            let x = (glyphs.lowerBound..<glyphs.upperBound).map { glyph in
                 layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minX
                     + layoutManager.location(forGlyphAt: glyph).x
-            }.min() ?? .nan)
+            }.min() ?? .nan
+            positions.append(CGPoint(x: x, y: line.minY))
         }
         return positions
     }
@@ -35,7 +37,7 @@ final class MarkedTextOverlayLayoutTests {
                                in view: TerminalView = TerminalView.makeForMarkedTextTests(),
                                sourceLocation: SourceLocation = #_sourceLocation) throws {
         view.setMarkedText(text)
-        let positions = try characterPositions(view)
+        let positions = try characterPositions(view).map(\.x)
         #expect(positions.count == columns.count, sourceLocation: sourceLocation)
         guard let start = positions.first else { return }
         let cell = view.cellDimension.width
@@ -43,6 +45,17 @@ final class MarkedTextOverlayLayoutTests {
             #expect(abs(position - start - CGFloat(column) * cell) < 0.5,
                     "\(text): column \(column) at \(position - start), cell \(cell)",
                     sourceLocation: sourceLocation)
+        }
+    }
+
+    /// The terminal cell (row, column) where each character of `text` starts when
+    /// it is marked with the caret in the first column.
+    private func cells(_ text: String, in view: TerminalView) throws -> [(row: Int, column: Int)] {
+        view.setMarkedText(text)
+        let overlay = try #require(view.dictationOverlay)
+        return try characterPositions(view).map { position in
+            (row: Int((position.y / view.cellDimension.height).rounded()),
+             column: Int(((overlay.frame.minX + position.x) / view.cellDimension.width).rounded()))
         }
     }
 
@@ -88,6 +101,26 @@ final class MarkedTextOverlayLayoutTests {
     /// A kern on a trailing combining mark has no effect.
     @Test func testDecomposedCharactersTakeOneCell() throws {
         try expectColumns("ae\u{301}b", [0, 1, 2])
+    }
+
+    /// The terminal wraps per character at its last column, not at a word boundary.
+    @Test func testTextWrapsAtTheLastColumn() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        let cells = try cells(String(repeating: "x", count: cols - 2) + " yyyy", in: view)
+        #expect(cells.count == cols + 3)
+        #expect(cells[cols - 1] == (row: 0, column: cols - 1))
+        #expect(cells[cols] == (row: 1, column: 0))
+    }
+
+    /// A wide character that does not fit in the last column goes to the next row.
+    @Test func testWideCharacterMovesToTheNextRowWhenOneColumnRemains() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        let cells = try cells(String(repeating: "x", count: cols - 1) + "日b", in: view)
+        #expect(cells.count == cols + 1)
+        #expect(cells[cols - 1] == (row: 1, column: 0))
+        #expect(cells[cols] == (row: 1, column: 2))
     }
 }
 #endif
