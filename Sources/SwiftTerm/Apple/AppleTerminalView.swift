@@ -1914,6 +1914,25 @@ extension TerminalView {
         renderOwner.semanticPromptRow(searchingUpward: false)
     }
 
+    /// Whether the normal buffer, scrollback included, holds any primary
+    /// semantic-prompt mark. Always false while the alternate buffer is shown.
+    ///
+    /// A host can use this to enable or disable prompt-navigation commands.
+    /// The scan stops at the first prompt it finds.
+    public nonisolated var hasSemanticPrompts: Bool {
+        renderOwner.hasSemanticPrompts()
+    }
+
+    /// Classifies every row of the normal buffer, scrollback included, along
+    /// with the viewport geometry, so a host can locate the output of a
+    /// command. Returns nil while the alternate buffer is shown.
+    ///
+    /// The cost is proportional to the number of cells in the buffer, so call
+    /// it on demand rather than per frame.
+    public nonisolated func semanticRowMap() -> SemanticRowMap? {
+        renderOwner.semanticRowMap()
+    }
+
     /// Performs DECSTR through the normal parser feed path.
     public nonisolated func softReset() {
         feedSender.feed(text: "\u{1b}[!p")
@@ -5229,6 +5248,21 @@ extension TerminalView {
     public func selectNone () {
         withTerminal { _ in
             selection.selectNone()
+        }
+    }
+
+    /// Selects whole buffer rows, from the first column of the first row to
+    /// the last column of the last row. Rows are indexes into the buffer,
+    /// scrollback included, and are clamped to it.
+    public func selectBufferRows (_ rows: ClosedRange<Int>) {
+        withTerminal { terminal in
+            let lastRow = terminal.displayBuffer.lines.count - 1
+            guard lastRow >= 0, rows.upperBound >= 0, rows.lowerBound <= lastRow else {
+                return
+            }
+            selection.setSelection(
+                start: Position(col: 0, row: max(0, rows.lowerBound)),
+                end: Position(col: max(0, terminal.cols - 1), row: min(lastRow, rows.upperBound)))
         }
     }
 
