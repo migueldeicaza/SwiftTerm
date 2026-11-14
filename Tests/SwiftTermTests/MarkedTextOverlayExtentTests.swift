@@ -26,11 +26,17 @@ final class MarkedTextOverlayExtentTests {
     @Test func testBackgroundCoversOnlyTheMarkedText() throws {
         let view = makeView()
         view.feed(text: "> existing text\r\u{1b}[2C")
+        // The caret follows the cursor in the frame paths, which do not run without a window.
+        view.updateCursorPosition()
+        let caretX = view.caretView.frame.minX
+        #expect(caretX > 0)
         mark(view, "xy")
         let overlay = try #require(view.subviews.lazy.compactMap { $0 as? DictationOverlayTextView }.first)
         let rects = overlay.backgroundRects
         #expect(rects.count == 1)
-        let width = try #require(rects.first).width
+        let rect = try #require(rects.first)
+        #expect(abs(overlay.frame.minX + rect.minX - caretX) < 0.5)
+        let width = rect.width
         #expect(width > 0)
         #expect(width <= 2 * view.cellDimension.width + 1)
         #expect(width < overlay.frame.width / 2)
