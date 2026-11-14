@@ -1932,6 +1932,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// on the main thread, so it must not take the terminal lock, and it must
     /// return shared cursors such as `NSCursor.arrow`, since the view compares
     /// them by identity to skip work when nothing changed.
+    ///
+    /// The view refreshes the pointer when a modifier changes only while the
+    /// application receives the mouse. An override that uses `modifiers` while
+    /// mouse reporting is off, such as a pointing hand while Command is held
+    /// over a link, gets no refresh until the next mouse move.
     open func pointerCursor(modifiers: NSEvent.ModifierFlags) -> NSCursor {
         guard allowMouseReporting && currentMouseMode != .off else { return .iBeam }
         let shiftSelects = modifiers.contains(.shift) && !mouseShiftCaptureState.withLock { $0 }
