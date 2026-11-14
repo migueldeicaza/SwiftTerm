@@ -57,6 +57,7 @@ public class PseudoTerminalHelpers {
      * - Parameter desiredWindowSize: the window size that will be set on the pseudo terminal.
      *
      * - Returns: nil on error, or a tuple containing the process ID, and the file descriptor to the primary side of the newly created pseudo-terminal.
+     * The primary descriptor is close-on-exec. On nil, `errno` has the cause.
      */
     public static func fork (andExec: String, args: [String], env: [String], currentDirectory: String? = nil, desiredWindowSize: inout winsize) -> (pid: pid_t, masterFd: Int32)?
     {
@@ -136,6 +137,17 @@ public class PseudoTerminalHelpers {
             
             _ = execve(cExecutable, cArgs.base, cEnv.base)
             _exit(127)
+        }
+        // forkpty cannot create the primary close-on-exec atomically. Set it
+        // before any caller can publish the descriptor, so later spawns do
+        // not inherit it. A concurrent fork in this short window still can.
+        if let failure = DescriptorFlags.setCloseOnExec(master) {
+            close(master)
+            kill(pid, SIGKILL)
+            var status: Int32 = 0
+            while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+            errno = failure
+            return nil
         }
         return (pid, master)
     }

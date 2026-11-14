@@ -123,6 +123,16 @@ private struct LocalProcessSessionState {
     var logFileCounter = 0
     var debugIO = false
     var totalRead = 0
+
+    /// The primary descriptor while it is published, else nil. Every
+    /// invalidation takes the session lock before the descriptor closes,
+    /// so a caller can use this number only while it holds the lock.
+    var publishedPrimary: Int32? {
+        guard phase == .running || phase == .terminating, childfd >= 0 else {
+            return nil
+        }
+        return childfd
+    }
 }
 
 private struct LocalProcessCounters {
@@ -137,6 +147,7 @@ public enum LocalProcessError: Error, Equatable, Sendable {
     case forkFailed(Int32)
     case writeChannelFailed(Int32)
     case writeFailed(code: Int32, bytesWritten: Int)
+    case descriptorDuplicationFailed(Int32)
 }
 
 /// Delegate that is invoked by the ``LocalProcess`` class in response to various
@@ -203,16 +214,24 @@ protocol LocalProcessBorrowedDataDelegate: AnyObject {
  * to it using the `kill` API.
  *
  * The `childfd` property has the Unix file descriptor for the primary side of the created pseudo-terminal.
+ * To operate on that descriptor, use `duplicatePrimaryDescriptor()` or `updateWindowSize(_:)`.
  *
  * This implementation uses forkpty for pseudo-terminal support.
  */
 public class LocalProcess {
     private let session = Locked(LocalProcessSessionState())
     private let duplicateDescriptor: (Int32) -> Int32
+    private let duplicatePrimary: (Int32) -> Int32
+    private let preparePipelineDescriptor: @Sendable (Int32) -> Bool
     private let counters = Locked(LocalProcessCounters())
     private let delegateReference = Locked(WeakLocalProcessDelegateReference())
 
     /// The current primary pseudo-terminal descriptor, or `-1` when inactive.
+    ///
+    /// This is a snapshot. When the child exits, the descriptor closes and
+    /// the kernel can give the number to an unrelated file at any time, so
+    /// do not pass it to a system call. Use `duplicatePrimaryDescriptor()`
+    /// to get a descriptor you own, or `updateWindowSize(_:)` to resize.
     public var childfd: Int32 { session.withLock { $0.childfd } }
 
     /// The current child process identifier, or zero when inactive.
@@ -244,10 +263,9 @@ public class LocalProcess {
     /// is active or when the settings cannot be read.
     public func terminalControlBytesForPaste() -> Set<UInt8>? {
         session.withLock { state in
-            guard state.phase == .running || state.phase == .terminating,
-                  state.childfd >= 0 else { return nil }
+            guard let primary = state.publishedPrimary else { return nil }
             return PseudoTerminalHelpers.terminalControlBytesForPaste(
-                masterPtyDescriptor: state.childfd)
+                masterPtyDescriptor: primary)
         }
     }
 
@@ -279,8 +297,8 @@ public class LocalProcess {
      * pipeline parse thread instead of synchronously hopping to `dispatchQueue`.
      */
     public convenience init (delegate: LocalProcessDelegate, dispatchQueue: DispatchQueue? = nil, directDelivery: Bool = false) {
-        // Embedders can protect childfd, but cannot reach this private alias,
-        // so it must not leak into later child processes.
+        // The write alias must not leak into later child processes. The
+        // explicit argument also selects the designated initializer.
         self.init(delegate: delegate, dispatchQueue: dispatchQueue, directDelivery: directDelivery,
                   duplicateDescriptor: { fcntl($0, F_DUPFD_CLOEXEC, 0) })
     }
@@ -288,8 +306,14 @@ public class LocalProcess {
     // Separate descriptor acquisition so launch failure can be tested without
     // exhausting the host process descriptor table.
     init(delegate: LocalProcessDelegate, dispatchQueue: DispatchQueue? = nil,
-         directDelivery: Bool = false, duplicateDescriptor: @escaping (Int32) -> Int32) {
+         directDelivery: Bool = false,
+         duplicateDescriptor: @escaping (Int32) -> Int32 = { fcntl($0, F_DUPFD_CLOEXEC, 0) },
+         duplicatePrimary: @escaping (Int32) -> Int32 = { fcntl($0, F_DUPFD_CLOEXEC, 0) },
+         preparePipelineDescriptor: @escaping @Sendable (Int32) -> Bool
+            = TerminalIOPipeline.defaultPrepareDescriptor) {
         self.duplicateDescriptor = duplicateDescriptor
+        self.duplicatePrimary = duplicatePrimary
+        self.preparePipelineDescriptor = preparePipelineDescriptor
         self.dispatchQueue = Self.effectiveDeliveryQueue(dispatchQueue)
         self.directDelivery = directDelivery
         delegateReference.withLock { $0.value = delegate }
@@ -314,6 +338,39 @@ public class LocalProcess {
             if case .failure(.writeFailed(let code, _)) = result {
                 print("Error writing data to the child, errno=\(code)")
             }
+        }
+    }
+
+    /// Duplicates the published primary for the caller, or reports no
+    /// publication.
+    ///
+    /// A successful descriptor is caller-owned and close-on-exec; close it
+    /// exactly once. `.success(nil)` means no primary is published and is
+    /// not proof that the child exited. Publication, the duplication syscall
+    /// and its failing errno are checked under the same session lock that
+    /// invalidates the primary, so this never touches a reused number.
+    ///
+    /// The duplicate refers to the same open file as the primary that
+    /// `LocalProcess` reads from:
+    /// - File status flags are shared. The reader needs `O_NONBLOCK`; do not
+    ///   clear it with `F_SETFL`.
+    /// - Do not read from it. Bytes you read do not reach the terminal.
+    /// - While it is open, the pseudo-terminal stays open after the session
+    ///   ends, and processes that still use it get no hangup. Close it when
+    ///   you are done, at the latest in `processTerminated`.
+    ///
+    /// Use it for calls such as `tcgetattr`, `tcgetpgrp` or `ptsname`.
+    public func duplicatePrimaryDescriptor() -> Result<Int32?, LocalProcessError> {
+        session.withLock { state -> Result<Int32?, LocalProcessError> in
+            // Publication, the syscall and its errno share this lock with
+            // every primary invalidation, so a retired number is never
+            // re-duplicated and a completed duplicate stays owned.
+            guard let primary = state.publishedPrimary else { return .success(nil) }
+            let descriptor = duplicatePrimary(primary)
+            guard descriptor >= 0 else {
+                return .failure(.descriptorDuplicationFailed(errno))
+            }
+            return .success(descriptor)
         }
     }
 
@@ -648,7 +705,8 @@ public class LocalProcess {
             return (state.generation, reaper, terminateRequested)
         }
 
-        let pipeline = TerminalIOPipeline(fd: childfd, delegate: self)
+        let pipeline = TerminalIOPipeline(
+            fd: childfd, delegate: self, prepareDescriptor: preparePipelineDescriptor)
         session.withLock { $0.pipeline = pipeline }
         pipeline.start()
 
@@ -749,10 +807,9 @@ public class LocalProcess {
     @discardableResult
     public func updateWindowSize(_ size: inout winsize) -> Bool {
         session.withLock { state in
-            guard state.phase == .running || state.phase == .terminating,
-                  state.childfd >= 0 else { return false }
+            guard let primary = state.publishedPrimary else { return false }
             return PseudoTerminalHelpers.setWinSize(
-                masterPtyDescriptor: state.childfd, windowSize: &size) == 0
+                masterPtyDescriptor: primary, windowSize: &size) == 0
         }
     }
 }
