@@ -60,38 +60,29 @@ struct UntrustedTerminalLink: Equatable {
     }
 
     let string: String
-    /// True when the host's `localLinkResolver` owns path resolution for this link.
-    /// Then a bare path is not resolved against the app directory, and a path
-    /// that the resolver did not find is an inaccessible file.
-    let isResolvedByHost: Bool
+    private let unresolvedLocalPath: Bool
+    private static let resolverNumericURLSchemes: Set<String> = [
+        "http", "https", "mailto", "file", "custom", "vscode",
+    ]
 
-    init(_ string: String, isResolvedByHost: Bool = false) {
+    init(_ string: String, unresolvedLocalPath: Bool = false) {
         self.string = string
-        self.isResolvedByHost = isResolvedByHost
+        self.unresolvedLocalPath = unresolvedLocalPath
     }
 
-    /// True when the link is a path, possibly with a location suffix, and not a URL.
-    /// Uses the same rule as the default policy, so that "Makefile:12" and
-    /// "main.swift:12" are paths and "tel:5551234" is a URL.
+    /// Uses the detected-path rule while preserving known opaque URLs.
     var canResolveAsLocalPath: Bool {
         guard !string.isEmpty, !Self.containsUnsafeCharacters(string) else { return false }
-        return !TerminalView.hasURLScheme(string)
+        return !TerminalView.hasURLScheme(string, additionalNumericSchemes: Self.resolverNumericURLSchemes)
     }
 
     var decision: Decision {
-        let decision = baseDecision
-        if isResolvedByHost, decision == .deny(.malformedURL), canResolveAsLocalPath {
-            return .deny(.inaccessibleFile)
-        }
-        return decision
-    }
-
-    private var baseDecision: Decision {
         guard !string.isEmpty else { return .deny(.malformedURL) }
         // Check the source first. URL conversion can encode unsafe characters.
         guard !Self.containsUnsafeCharacters(string) else {
             return .deny(.unsafeCharacters)
         }
+        guard !unresolvedLocalPath else { return .deny(.inaccessibleFile) }
         guard let url = URL(string: string),
               let scheme = url.scheme?.lowercased(),
               !scheme.isEmpty else {
@@ -127,16 +118,18 @@ struct UntrustedTerminalLink: Equatable {
     }
 
     /// Shows the effective target on one line.
-    var displayString: String {
+    var displayString: String { displayString(normalizePath: !unresolvedLocalPath) }
+
+    func displayString(normalizePath: Bool) -> String {
+        guard !string.isEmpty else { return "" }
         let normalized: String
-        if let url = URL(string: string), url.scheme != nil {
+        if !normalizePath {
+            normalized = string
+        } else if let url = URL(string: string), url.scheme != nil {
             // Use the same path for the preview and the file check.
             normalized = url.isFileURL
                 ? url.standardizedFileURL.resolvingSymlinksInPath().path
                 : string
-        } else if isResolvedByHost {
-            // The host did not resolve this path, so the app directory does not apply.
-            normalized = string
         } else {
             normalized = URL(fileURLWithPath: string).standardizedFileURL.path
         }

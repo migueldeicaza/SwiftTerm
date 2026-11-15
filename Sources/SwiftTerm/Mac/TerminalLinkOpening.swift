@@ -188,15 +188,12 @@ extension TerminalView {
         guard let localLinkResolver, pathBase != .remote else {
             return Self.defaultLinkTarget(link, isExplicit: isExplicit, pathBase: pathBase)
         }
-        let original = UntrustedTerminalLink(link, isResolvedByHost: true)
-        guard original.canResolveAsLocalPath else {
-            return original
-        }
-        if let url = localLinkResolver(link), url.isFileURL {
+        let original = UntrustedTerminalLink(link)
+        guard original.canResolveAsLocalPath else { return original }
+        if let url = localLinkResolver(link), url.isFileURL, url.path.hasPrefix("/") {
             return UntrustedTerminalLink(url.absoluteString)
         }
-        // "custom:123" can be a URL. If the host has no file for it, keep the URL.
-        return original
+        return UntrustedTerminalLink(link, unresolvedLocalPath: true)
     }
 
     /// A checked URL, and how to open it, for the deprecated delegate method.
