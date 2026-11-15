@@ -211,11 +211,14 @@ When a click/tap lands on an active link, ``TerminalView`` calls
 - On macOS, set `localLinkResolver` when the host knows where the session's
   files are, for example in a container or a project directory. The view
   gives the resolver each explicit or detected path, as the terminal output
-  has it, such as `main.swift:12` or `~/notes.txt`. Return a file URL. It
+  has it, such as `main.swift:12` or `~/notes.txt`. Return an absolute file URL. It
   still goes through the checks above. When the resolver returns nil, the
   path is blocked, and SwiftTerm does not use the shell or app directory.
-  The resolver is not called for URLs, or when OSC 7 names a different host.
-  It runs on the main thread, also for the OSC 8 preview, so it must be fast.
+  Recognized URLs and paths from a different OSC 7 host skip the resolver.
+  A bare name with a numeric suffix, such as `Makefile:3`, is a path unless
+  the scheme is recognized, as in `tel:5551234` or `vscode:123`.
+  The resolver runs on the main thread when opening a link. OSC 8 previews
+  show the original target when a resolver is configured.
 - A custom delegate can give `openDefault` a rewrite of the link. For an OSC 8
   target, a rewrite must be a URL with a scheme, such as a `file://` URL.
   It can call `openDefault` later, for example after an async step. Nothing

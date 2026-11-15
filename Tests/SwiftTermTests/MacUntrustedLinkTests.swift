@@ -24,6 +24,10 @@ struct MacUntrustedLinkTests {
         #expect(UntrustedTerminalLink(value).decision == .deny(.malformedURL))
     }
 
+    @Test func emptyTargetHasNoDisplayPath() {
+        #expect(UntrustedTerminalLink("").displayString.isEmpty)
+    }
+
     @Test(arguments: ["vscode://file/tmp/example.swift", "ssh://example.com", "custom:payload"])
     func requiresConfirmationForCustomSchemes(_ value: String) throws {
         let url = try #require(URL(string: value))
