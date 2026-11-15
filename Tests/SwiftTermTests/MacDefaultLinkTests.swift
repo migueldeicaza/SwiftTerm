@@ -80,36 +80,19 @@ struct MacDefaultLinkTests {
         #expect(view.urlPreview == nil)
     }
 
-    @Test @MainActor func previewsShowTheTargetFromTheLocalResolver() throws {
-        let file = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString).appendingPathExtension("txt")
-        try Data("x".utf8).write(to: file)
-        defer { try? FileManager.default.removeItem(at: file) }
+    @Test @MainActor func previewsShowTheOriginalTargetWithoutCallingTheResolver() {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
-        var calls: [String] = []
-        view.localLinkResolver = { link in
-            calls.append(link)
-            return link == "report.txt" ? file : nil
+        view.localLinkResolver = { _ in
+            Issue.record("Hover must not call the resolver")
+            return URL(fileURLWithPath: "/project/report.txt")
         }
-        let resolvedPath = file.standardizedFileURL.resolvingSymlinksInPath().path
 
-        // Mouse moves repeat the preview. The resolver runs once for the link.
         view.previewUrl(payload: ";report.txt")
         view.previewUrl(payload: ";report.txt")
-        #expect(view.urlPreview?.stringValue == resolvedPath)
-        #expect(calls == ["report.txt"])
+        #expect(view.urlPreview?.stringValue == "report.txt")
 
-        // A path that the host does not resolve is not shown in the app directory.
-        view.previewUrl(payload: ";missing.txt")
-        #expect(view.urlPreview?.stringValue == "missing.txt")
         view.previewUrl(payload: ";src/report\u{202E}.txt")
         #expect(view.urlPreview?.stringValue == "src/report\\u{202E}.txt")
-        #expect(calls == ["report.txt", "missing.txt"])
-
-        // After the preview closes, the next preview asks the resolver again.
-        view.removePreviewUrl()
-        view.previewUrl(payload: ";report.txt")
-        #expect(calls == ["report.txt", "missing.txt", "report.txt"])
     }
 
     @Test @MainActor func customSchemeConfirmationDefaultsToCancel() throws {

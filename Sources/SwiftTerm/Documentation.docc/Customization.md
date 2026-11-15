@@ -225,10 +225,10 @@ When a click/tap lands on an active link, ``TerminalView`` calls
   Custom URL schemes require confirmation, with Cancel as the default. Local
   files must exist and must not be executable files, scripts, applications, or
   other active content. The check resolves symbolic links and rejects remote
-  file hosts. OSC 8 targets must have a scheme, unless `localLinkResolver`
-  resolves them; detected paths can become file URLs. Alerts show as a sheet on the window of the view.
-- When `resolvesLinksAgainstShellDirectory` is true, a detected relative path
-  resolves against the shell's directory, when the shell reports it with OSC 7.
+  file hosts. OSC 8 targets need a URL scheme or a file URL from
+  `localLinkResolver`. Alerts show as a sheet on the window of the view.
+- Without a resolver, a detected relative path uses the shell's OSC 7
+  directory when `resolvesLinksAgainstShellDirectory` is true.
   Without OSC 7, or when the property is false, a relative path resolves
   against the directory of the application. When OSC 7 names a different host,
   detected paths are remote files, and SwiftTerm does not open them, with
@@ -241,13 +241,17 @@ When a click/tap lands on an active link, ``TerminalView`` calls
 - On macOS, set `localLinkResolver` when the host knows where the session's
   files are, for example in a container or a project directory. The view
   gives the resolver each explicit or detected path, as the terminal output
-  has it, such as `main.swift:12` or `~/notes.txt`. Return a file URL. It
+  has it, such as `main.swift:12` or `~/notes.txt`. Return an absolute file URL. It
   still goes through the checks above. When the resolver returns nil, the
   path is blocked, and SwiftTerm does not use the shell or app directory.
-  The resolver is not called for URLs, or when OSC 7 names a different host.
-  It runs on the main thread, also for the OSC 8 preview, so it must be fast.
+  Recognized URLs and paths from a different OSC 7 host skip the resolver.
+  A bare name with a numeric suffix, such as `Makefile:3`, is a path unless
+  the scheme is recognized, as in `tel:5551234` or `vscode:123`.
+  The resolver runs on the main thread when opening a link. OSC 8 previews
+  show the original target when a resolver is configured.
 - A custom delegate can give `openDefault` a rewrite of the link. For an OSC 8
-  target, a rewrite must be a URL with a scheme, such as a `file://` URL.
+  target, pass a URL with a scheme, such as a `file://` URL, or a path the
+  view's `localLinkResolver` can resolve.
   It can call `openDefault` later, for example after an async step. Nothing
   opens if the view is gone or if OSC 8 links were disabled.
 - `openDefault` resolves a relative path when you call it. If you keep a request

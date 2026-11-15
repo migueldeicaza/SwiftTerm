@@ -3954,7 +3954,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     var urlPreview: NSTextField?
-    private var urlPreviewTarget: (link: String, display: String)?
     private var lastReportedLink: String?
     func previewUrl (payload: String)
     {
@@ -3963,16 +3962,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
         if let (target, _) = urlAndParamsFrom(payload: payload) {
-            let url: String
-            if let cached = urlPreviewTarget, cached.link == target {
-                url = cached.display
-            } else {
-                // Show the target that a click opens. Mouse moves repeat this
-                // call, so keep the result and do not call the resolver again.
-                url = linkTarget(target, isExplicit: true).displayString
-                urlPreviewTarget = (target, url)
-            }
+            // A host resolver can map the same link to different files over time.
+            let url = UntrustedTerminalLink(target).displayString(normalizePath: localLinkResolver == nil)
             if let up = urlPreview {
+                guard up.stringValue != url else { return }
                 up.stringValue = url
                 up.sizeToFit()
             } else {
@@ -3996,7 +3989,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     
     func removePreviewUrl ()
     {
-        urlPreviewTarget = nil
         if let urlPreview = self.urlPreview {
             urlPreview.removeFromSuperview()
             self.urlPreview = nil
@@ -4764,17 +4756,16 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// The view calls this closure when a link goes through its default opening
     /// policy, except when OSC 7 names a remote host. The argument is the link
     /// text as the terminal output has it, for example "main.swift:12",
-    /// "Makefile:3" or "~/notes.txt". URLs such as "https://example.com" and
-    /// "tel:5551234" do not come to the resolver.
+    /// "Makefile:3" or "~/notes.txt". Standard URL schemes and recognized
+    /// numeric URLs such as "tel:5551234" and "vscode:123" skip the resolver.
+    /// Other bare names with a numeric suffix are treated as paths.
     ///
-    /// Return a file URL. It still goes through the normal untrusted-link checks.
+    /// Return an absolute file URL. It still goes through the normal untrusted-link checks.
     /// When you return nil or a URL that is not a file URL, the path is blocked,
-    /// and SwiftTerm does not use the app or shell directory. A text such as
-    /// "custom:123" can also be a URL: when you return nil for it, SwiftTerm
-    /// handles it as a URL with a custom scheme.
+    /// and SwiftTerm does not use the app or shell directory.
     ///
-    /// The view calls the resolver on the main thread, and also for the OSC 8
-    /// preview while the Command key is down. Keep it fast and do not block.
+    /// The view calls the resolver on the main thread when opening a link.
+    /// OSC 8 previews show the original target. Keep the resolver fast.
     /// To resolve a path with an async step, implement
     /// `requestOpenLink(source:request:)` and call `request.openDefault(_:)` later.
     public var localLinkResolver: ((String) -> URL?)?
@@ -4890,10 +4881,12 @@ extension TerminalView {
     /// True when the link is a URL. Foundation parses "main.swift:12" as a URL
     /// with the scheme "main.swift", so a name with a location suffix is a path.
     /// A known scheme with a numeric target, such as "tel:5551234", stays a URL.
-    nonisolated static func hasURLScheme (_ link: String) -> Bool
+    nonisolated static func hasURLScheme (
+        _ link: String, additionalNumericSchemes: Set<String> = []
+    ) -> Bool
     {
-        guard let scheme = URL(string: link)?.scheme else { return false }
-        if numericURLSchemes.contains(scheme.lowercased()) {
+        guard let scheme = URL(string: link)?.scheme?.lowercased() else { return false }
+        if numericURLSchemes.contains(scheme) || additionalNumericSchemes.contains(scheme) {
             return true
         }
         return link.range(of: #"^[^:/]+:[0-9]+(?::[0-9]+)?$"#, options: .regularExpression) == nil

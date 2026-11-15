@@ -389,7 +389,7 @@ struct TerminalLinkOpeningTests {
             resolved.append(link)
             return file
         }
-        let links = ["main.txt", "main.txt:12:4", "/project/main.txt"]
+        let links = ["main.txt", "main.txt:12:4", "README:12", "/project/main.txt"]
         var opened: [URL] = []
         for link in links {
             view.activateLink(link, params: [:], isExplicit: isExplicit) { _, _, _ in
@@ -400,7 +400,7 @@ struct TerminalLinkOpeningTests {
         #expect(opened == Array(repeating: file.resolvingSymlinksInPath(), count: links.count))
     }
 
-    @Test(arguments: [true, false], [nil, URL(string: "https://example.com")] as [URL?])
+    @Test(arguments: [true, false], [nil, URL(string: "https://example.com"), URL(string: "file:main.txt")] as [URL?])
     func unresolvedLocalLinksDoNotFallBack(isExplicit: Bool, result: URL?) async throws {
         let (directory, file) = try makeTemporaryFile()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -492,41 +492,14 @@ struct TerminalLinkOpeningTests {
         var alerts = 0
         view.activateLink(link, params: [:], isExplicit: isExplicit) { alert, _, completion in
             alerts += 1
-            if link == "README:12" {
-                // Without a file, this text is also a URL with the scheme "README",
-                // as it is without a resolver. Cancel is the default.
-                #expect(alert.buttons.map(\.title) == ["Cancel", "Open Link"])
-            } else {
-                #expect(alert.informativeText == UntrustedTerminalLink.DenialReason.inaccessibleFile.message)
-            }
+            #expect(alert.informativeText == UntrustedTerminalLink.DenialReason.inaccessibleFile.message)
             completion(.alertFirstButtonReturn)
         } open: { _ in Issue.record("An unresolved path must not open") }
         await waitUntil { alerts == 1 }
         #expect(resolved == [link])
     }
 
-    @Test(arguments: ["custom:123", "vscode:123"], [true, false])
-    func unresolvedSchemeLikeNamesStayURLs(link: String, isExplicit: Bool) async throws {
-        let view = TerminalView(frame: .zero)
-        let delegate = DefaultDelegate()
-        view.terminalDelegate = delegate
-        defer { withExtendedLifetime(delegate) {} }
-        var resolved: [String] = []
-        view.localLinkResolver = { link in
-            resolved.append(link)
-            return nil
-        }
-        var opened: [URL] = []
-        view.activateLink(link, params: [:], isExplicit: isExplicit) { alert, _, completion in
-            #expect(alert.buttons.map(\.title) == ["Cancel", "Open Link"])
-            completion(.alertSecondButtonReturn)
-        } open: { opened.append($0) }
-        await waitUntil { opened.count == 1 }
-        #expect(resolved == [link])
-        #expect(opened == [URL(string: link)!])
-    }
-
-    @Test(arguments: ["https://example.com", "tel:5551234"], [true, false])
+    @Test(arguments: ["https://example.com", "tel:5551234", "custom:123", "vscode:123"], [true, false])
     func urlsDoNotReachTheLocalResolver(link: String, isExplicit: Bool) async throws {
         let (directory, file) = try makeTemporaryFile()
         defer { try? FileManager.default.removeItem(at: directory) }
