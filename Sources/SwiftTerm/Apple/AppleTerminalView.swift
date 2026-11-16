@@ -1647,18 +1647,39 @@ extension TerminalView {
     {
         resetCaches()
         self.cellDimension = computeFontDimensions ()
+        applyCellDimensionChange()
+    }
+
+    /// Applies a new `cellDimension` to the terminal and the screen.
+    ///
+    /// Used by `resetFont` and `remeasureCellDimensionIfBackingScaleChanged`.
+    /// It goes through `processSizeChange`, not `resize(cols:rows:)`: the
+    /// soft reset in `resize(cols:rows:)` would clear the modes, scroll region
+    /// and attributes of the program that is running. `processSizeChange`
+    /// also uses `getEffectiveWidth`, so the scroller width is not counted as
+    /// columns, and zooming in and back out does not drift the column count.
+    func applyCellDimensionChange ()
+    {
         refreshCachedViewState()
         if (frame.width > 0) && (frame.height > 0) {
-            // Use getEffectiveWidth so the scroller's reserved width is taken
-            // into account, matching processSizeChange(). Computing columns from
-            // the raw frame width here would over-count by the scroller width,
-            // so zooming the font in and back out would drift the column count.
-            let newCols = Int(getEffectiveWidth(size: frame.size) / cellDimension.width)
-            let newRows = Int(frame.height / cellDimension.height)
-            resize(cols: newCols, rows: newRows)
+            processSizeChange(newSize: frame.size)
+            // The renderers draw from the frame snapshot. If the grid keeps
+            // the same row and column counts, a size change leaves no dirty
+            // rows; request a full frame after the snapshot has the new cell
+            // geometry.
+            withTerminal { $0.updateFullScreen() }
+            // A live resize may have queued counts measured with the old cell
+            // size (or a frame may already be applying them), and the next
+            // frame would restore them over the ones just set. Queue the
+            // corrected counts in their place; if they match, the frame only
+            // updates the pixel geometry.
+            queueSizeChange(newSize: frame.size)
         }
+        // `needsDisplay` alone repaints the previous snapshot, and the GPU
+        // renderers ignore it. Mark the frame driver so a frame with the new
+        // cell geometry is drawn even when the terminal is idle.
+        invalidateTerminalContents()
         updateCaretView()
-        
         #if os(macOS)
         needsDisplay = true
         #else
@@ -2052,6 +2073,7 @@ extension TerminalView {
         let cellPixels = currentCellPixelSize()
         
         var didResize = false
+        var pixelsChanged = false
         withTerminal { terminal in
             if newCols != terminal.cols || newRows != terminal.rows {
                 selection.active = false
@@ -2063,9 +2085,11 @@ extension TerminalView {
                 search.invalidate ()
                 didResize = true
             } else {
+                let previous = terminal.pixelGeometry
                 terminal.updatePixelGeometry(
                     cellWidth: cellPixels.width,
                     cellHeight: cellPixels.height)
+                pixelsChanged = terminal.pixelGeometry != previous
             }
         }
         if didResize {
@@ -2073,6 +2097,13 @@ extension TerminalView {
             terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
             updateScroller()
             return true
+        }
+        if pixelsChanged {
+            // A font or line-spacing change can alter the cell pixels and keep
+            // the rows and columns. The host must still get the new size: for
+            // example, `LocalProcessTerminalView` sends `ws_xpixel` and
+            // `ws_ypixel` to the PTY from this callback.
+            terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
         }
         return false
     }
@@ -2212,11 +2243,9 @@ extension TerminalView {
     /// Only runs while the view has a window: a detached view would measure
     /// against `NSScreen.main`, so it keeps its grid until it is attached.
     ///
-    /// Unlike `resetFont`, this does not go through `resize(cols:rows:)`,
-    /// whose `softReset()` would clear modes set by the running program.
-    /// `processSizeChange` resizes the terminal only when the rows or columns
-    /// change, and otherwise just updates the pixel geometry. Returns whether
-    /// the grid was re-measured.
+    /// Like `resetFont`, this uses `applyCellDimensionChange`, so the modes
+    /// that the running program set are kept. Returns whether the grid was
+    /// re-measured.
     @discardableResult
     func remeasureCellDimensionIfBackingScaleChanged () -> Bool
     {
@@ -2224,24 +2253,7 @@ extension TerminalView {
             return false
         }
         cellDimension = computeFontDimensions()
-        refreshCachedViewState()
-        processSizeChange(newSize: frame.size)
-        // Core Graphics draws from the frame snapshot. If the grid still has
-        // the same row and column counts, a size change leaves no dirty rows;
-        // request a full frame after the snapshot has the new cell geometry.
-        withTerminal { $0.updateFullScreen() }
-        // A live resize may have queued counts measured with the old cell
-        // size (or a frame may already be applying them), and the next frame
-        // would restore them over the ones just set. Queue the corrected
-        // counts in their place; if they match, the frame only updates the
-        // pixel geometry.
-        queueSizeChange(newSize: frame.size)
-        updateCaretView()
-        #if os(macOS)
-        needsDisplay = true
-        #else
-        setNeedsDisplay(frame)
-        #endif
+        applyCellDimensionChange()
         return true
     }
 
