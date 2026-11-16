@@ -2538,6 +2538,11 @@ open class Terminal {
                 continue
             }
 
+            // UnicodeUtil.columnWidth(of:regionalIndicatorWidth:) repeats the
+            // width rules below for a whole grapheme, so the macOS marked-text
+            // overlay can lay out text before it is inserted. Keep the two in
+            // step; GraphemeColumnWidthTests compares them.
+            //
             // When regionalIndicatorWidth is .narrow, override individual RI width to 1.
             // The combining logic below will widen the pair to 2 when they form a flag.
             let narrowRI = options.regionalIndicatorWidth == .narrow

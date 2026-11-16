@@ -487,6 +487,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var markedTextStorage: NSAttributedString?
     private var markedSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
     private var markedTextOverlay: DictationOverlayTextView?
+    /// The measured advance of each cluster the overlay has shown, for `font`.
+    private var markedTextAdvanceCache: (font: NSFont, advances: [String: CGFloat])?
     private var progressBarView: TerminalProgressBarView?
     private(set) var progressReportTimer: Timer?
     var schedulesProgressReportTimer = true
@@ -2435,6 +2437,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         guard let markedTextStorage, markedTextStorage.length > 0 else {
             markedTextOverlay?.removeFromSuperview()
             markedTextOverlay = nil
+            markedTextAdvanceCache = nil
             return
         }
 
@@ -2466,44 +2469,42 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         overlay.overlayBackgroundColor = caretColors.background
 
         // Match terminal line metrics so wrapped lines line up with terminal rows.
+        // The terminal wraps per character, and moves a wide character that does
+        // not fit in the last column to the next row; character wrapping does both.
         let lineHeight = cellDimension.height
         let para = NSMutableParagraphStyle()
         para.minimumLineHeight = lineHeight
         para.maximumLineHeight = lineHeight
-        para.lineBreakMode = .byWordWrapping
+        para.lineBreakMode = .byCharWrapping
 
         // Match the terminal's effective foreground color. This preserves
         // host-selected themes and terminal foreground-color changes.
-        //
-        // The terminal pixel-snaps each cell's width, so the effective per-cell
-        // advance is slightly wider than the font's natural advance. Apply a
-        // matching `.kern` so overlay characters line up with the terminal grid.
-        let glyphW = font.glyph(withName: "W")
-        let naturalAdvance = font.advancement(forGlyph: glyphW).width
-        let kern = max(0, cellDimension.width - naturalAdvance)
-
         let display = NSMutableAttributedString(attributedString: markedTextStorage)
         let fullRange = NSRange(location: 0, length: display.length)
         display.addAttributes([
             .font: font,
             .foregroundColor: caretColors.foreground,
             .paragraphStyle: para,
-            .kern: kern,
         ], range: fullRange)
+        alignToCells(display)
         overlay.textStorage?.setAttributedString(display)
 
-        // The overlay spans the full content width. Line 1 skips the portion
-        // already occupied by text to the left of the caret (e.g. the prompt)
-        // via an exclusion path; wrapped lines 2+ start from the left edge.
-        let horizontalInset: CGFloat = 4
-        let rightInset: CGFloat = 4
-        let overlayX = horizontalInset
-        let overlayWidth = max(cellDimension.width, bounds.width - horizontalInset - rightInset)
-        let caretX = max(horizontalInset, caretView.frame.origin.x)
+        // The overlay spans the terminal's columns, so it wraps where the
+        // terminal does. Line 1 skips the portion already occupied by text to
+        // the left of the caret (e.g. the prompt) via an exclusion path; wrapped
+        // lines 2+ start from the first column.
+        let overlayX: CGFloat = 0
+        let cols = withTerminal { $0.cols }
+        let overlayWidth = CGFloat(max(1, cols)) * cellDimension.width
+        let caretX = caretView.frame.origin.x
         let exclusionWidth = max(0, caretX - overlayX)
 
         if let container = overlay.textContainer {
-            container.containerSize = NSSize(width: overlayWidth, height: .greatestFiniteMagnitude)
+            // The kerned advances add up to whole cells, and cellDimension.width
+            // is pixel-snapped, so a full row fills the width almost exactly.
+            // The slack absorbs the floating-point rounding in that sum; it is
+            // too narrow for any character.
+            container.containerSize = NSSize(width: overlayWidth + 0.5, height: .greatestFiniteMagnitude)
             container.exclusionPaths = exclusionWidth > 0
                 ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: exclusionWidth, height: lineHeight + 1))]
                 : []
@@ -2519,6 +2520,45 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             width: overlayWidth,
             height: overlayHeight
         )
+    }
+
+    /// Kerns each character of the marked text so it spans the columns the
+    /// terminal gives it once committed: one cell for most characters, two for
+    /// wide ones such as CJK. Their glyphs, often from a fallback font, are
+    /// narrower than two cells, and the terminal pixel-snaps cell widths, so the
+    /// font's own advances would drift from the grid.
+    private func alignToCells(_ text: NSMutableAttributedString) {
+        let cellWidth = cellDimension.width
+        let regionalIndicatorWidth = withTerminal { $0.options.regionalIndicatorWidth }
+        // Each IME keystroke and dictation hypothesis lays out the whole string
+        // again, so measure each distinct cluster once. Core Text cannot measure
+        // it instead: it adds spacing between Latin and CJK runs and picks other
+        // fallback fonts than the overlay's text view.
+        var advances = markedTextAdvanceCache.flatMap { $0.font == font ? $0.advances : nil } ?? [:]
+        let string = text.string as NSString
+        string.enumerateSubstrings(in: NSRange(location: 0, length: string.length),
+                                   options: .byComposedCharacterSequences) { substring, range, _, _ in
+            guard let substring else { return }
+            let columns = substring.reduce(0) {
+                $0 + UnicodeUtil.columnWidth(of: $1, regionalIndicatorWidth: regionalIndicatorWidth)
+            }
+            // The IME can send a .glyphInfo that replaces the glyph and its
+            // width, so the string alone does not identify such a cluster.
+            let cacheable = text.attribute(.glyphInfo, at: range.location, longestEffectiveRange: nil, in: range) == nil
+            let advance: CGFloat
+            if cacheable, let cached = advances[substring] {
+                advance = cached
+            } else {
+                advance = text.attributedSubstring(from: range).size().width
+                if cacheable {
+                    advances[substring] = advance
+                }
+            }
+            text.addAttribute(.kern,
+                              value: CGFloat(columns) * cellWidth - advance,
+                              range: range)
+        }
+        markedTextAdvanceCache = (font, advances)
     }
 
     /// Colors for the marked-text overlay, taken from the cell under the caret.

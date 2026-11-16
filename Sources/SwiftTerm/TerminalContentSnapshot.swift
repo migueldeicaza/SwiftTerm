@@ -426,20 +426,8 @@ private struct TerminalExportPiece {
         for scalar in text.unicodeScalars {
             defer { previous = scalar.value }
             guard let previous else { continue }
-            switch scalar.value {
-            case 0xFE0F:
-                if let base = Unicode.Scalar(previous), UnicodeUtil.isEmojiVs16Base(rune: base) {
-                    return true
-                }
-            case 0xFE0E:
-                continue
-            default:
-                if UnicodeUtil.widensJoinedCell(
-                    incoming: scalar.value,
-                    properties: UnicodeUtil.graphemeProperties(scalar.value),
-                    width: UnicodeUtil.columnWidth(rune: scalar)) {
-                    return true
-                }
+            if UnicodeUtil.widensJoinedCell(previous: previous, incoming: scalar) {
+                return true
             }
         }
         return false
