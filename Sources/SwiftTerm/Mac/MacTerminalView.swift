@@ -2312,6 +2312,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         guard let markedTextStorage, markedTextStorage.length > 0 else {
             markedTextOverlay?.removeFromSuperview()
             markedTextOverlay = nil
+            markedTextAdvanceCache = nil
             return
         }
 
@@ -2374,7 +2375,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let exclusionWidth = max(0, caretX - overlayX)
 
         if let container = overlay.textContainer {
-            // The slack absorbs rounding in the kerned advances; it is too narrow for any character.
+            // The kerned advances add up to whole cells, and cellDimension.width
+            // is pixel-snapped, so a full row fills the width almost exactly.
+            // The slack absorbs the floating-point rounding in that sum; it is
+            // too narrow for any character.
             container.containerSize = NSSize(width: overlayWidth + 0.5, height: .greatestFiniteMagnitude)
             container.exclusionPaths = exclusionWidth > 0
                 ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: exclusionWidth, height: lineHeight + 1))]
@@ -2413,12 +2417,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             let columns = substring.reduce(0) {
                 $0 + UnicodeUtil.columnWidth(of: $1, regionalIndicatorWidth: regionalIndicatorWidth)
             }
+            // The IME can send a .glyphInfo that replaces the glyph and its
+            // width, so the string alone does not identify such a cluster.
+            let cacheable = text.attribute(.glyphInfo, at: range.location, longestEffectiveRange: nil, in: range) == nil
             let advance: CGFloat
-            if let cached = advances[substring] {
+            if cacheable, let cached = advances[substring] {
                 advance = cached
             } else {
                 advance = text.attributedSubstring(from: range).size().width
-                advances[substring] = advance
+                if cacheable {
+                    advances[substring] = advance
+                }
             }
             text.addAttribute(.kern,
                               value: CGFloat(columns) * cellWidth - advance,
