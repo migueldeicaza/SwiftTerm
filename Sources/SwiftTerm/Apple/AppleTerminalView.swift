@@ -5250,6 +5250,43 @@ extension TerminalView {
         }
     }
     
+    /// Records the selection at the start of a user gesture.
+    func beginUserSelectionGesture () {
+        guard terminal != nil else { return }
+        selectionRevisionAtGestureStart = withTerminal { _ in selection.revision }
+    }
+
+    /// Reports the selection as finished if it changed after
+    /// ``beginUserSelectionGesture()``. A second call with no new gesture
+    /// does nothing.
+    func endUserSelectionGesture () {
+        guard terminal != nil else { return }
+        let revision = withTerminal { _ in selection.revision }
+        guard revision != selectionRevisionAtGestureStart else { return }
+        selectionRevisionAtGestureStart = revision
+        userSelectionFinished ()
+    }
+
+    /// Runs a user gesture that completes in one step, such as a tap or a
+    /// menu command, and reports the selection if the gesture changed it.
+    func userSelectionGesture (_ body: () -> Void) {
+        beginUserSelectionGesture ()
+        body ()
+        endUserSelectionGesture ()
+    }
+
+    /// Notifies the delegate, then copies the text as ``copyOnSelect`` specifies.
+    /// Does nothing when no range is selected.
+    private func userSelectionFinished () {
+        guard withTerminal({ _ in selection.active && selection.hasSelectionRange }) else { return }
+        terminalDelegate?.selectionFinished (source: self)
+        // Read the text after the delegate call, because the host can change
+        // or clear the selection there. Build it only when it is necessary.
+        guard copyOnSelect != .off, let text = getSelection (),
+              !text.allSatisfy(\.isWhitespace) else { return }
+        writeCopyOnSelectText (text)
+    }
+
     /// Selects the entire buffer
     public func selectAll () {
         withTerminal { _ in

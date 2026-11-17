@@ -222,6 +222,34 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    /// Where the view copies the selected text each time the user completes
+    /// a selection gesture. iOS and visionOS have no primary selection, thus
+    /// only ``CopyOnSelectMode/clipboard`` and ``CopyOnSelectMode/both`` copy,
+    /// and they write the general pasteboard.
+    ///
+    /// The copy occurs at the end of the gesture (a double tap, a triple tap,
+    /// the Select and Select All commands, and the end of a selection drag),
+    /// not during the drag. Selections that the search functions or the host
+    /// API make are not copied, and a selection of only white space is not
+    /// copied. The default is ``CopyOnSelectMode/off``.
+    ///
+    /// The delegate method ``TerminalViewDelegate/selectionFinished(source:)``
+    /// reports the same event, for hosts that use a different policy.
+    public var copyOnSelect: CopyOnSelectMode = .off
+
+    func writeCopyOnSelectText (_ text: String) {
+        if copyOnSelect == .clipboard || copyOnSelect == .both {
+            writeSelectionToPasteboard(text)
+        }
+    }
+
+    /// The selection revision when the current user gesture started.
+    var selectionRevisionAtGestureStart: UInt64 = 0
+
+    func writeSelectionToPasteboard (_ text: String) {
+        UIPasteboard.general.string = text
+    }
+
     /// Controls how link tracking resolves hovered links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
     public var linkReporting: LinkReporting = .implicit
@@ -728,25 +756,29 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     @objc open override func copy(_ sender: Any?) {
-        UIPasteboard.general.string = withTerminal { _ in
+        writeSelectionToPasteboard(withTerminal { _ in
             let text = selection.getSelectedText()
             selection.selectNone()
             return text
-        }
+        })
         disableSelectionPanGesture()
     }
         
     @objc open override func selectAll(_ sender: Any?) {
-        withTerminal { _ in selection.selectAll() }
+        userSelectionGesture {
+            withTerminal { _ in selection.selectAll() }
+        }
         enableSelectionPanGesture()
     }
     
     /// Invoked when the user has long-pressed and then clicked "Select"
     @objc public override func select (_ sender: Any?)  {
         if let loc = lastLongSelect {
-            withTerminal { terminal in
-                selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.displayBuffer)
-                selection.selectionMode = .character
+            userSelectionGesture {
+                withTerminal { terminal in
+                    selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.displayBuffer)
+                    selection.selectionMode = .character
+                }
             }
             enableSelectionPanGesture()
             DispatchQueue.main.async {
@@ -1122,9 +1154,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         if tapAction(tapCount: 2, gestureRecognizer: gestureRecognizer) == .selectWord {
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
-            withTerminal { terminal in
-                selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
-                selection.selectionMode = .character
+            userSelectionGesture {
+                withTerminal { terminal in
+                    selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
+                    selection.selectionMode = .character
+                }
             }
             enableSelectionPanGesture()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
@@ -1142,7 +1176,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         if tapAction(tapCount: 3, gestureRecognizer: gestureRecognizer) == .selectLine {
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
-            withTerminal { _ in selection.select(row: hit.row) }
+            userSelectionGesture {
+                withTerminal { _ in selection.select(row: hit.row) }
+            }
             enableSelectionPanGesture()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
             frameDriver.markDirty()
@@ -1402,6 +1438,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         
         switch gestureRecognizer.state {
         case .began:
+            beginUserSelectionGesture()
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
             let extended = withTerminal { _ -> Bool in
                 if selection.active {
@@ -1455,6 +1492,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case .ended:
             stopSelectionTimer()
             if withTerminal({ _ in selection.active }) {
+                endUserSelectionGesture()
                 showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: calculateTapHit(gesture: gestureRecognizer).grid)
             }
             break

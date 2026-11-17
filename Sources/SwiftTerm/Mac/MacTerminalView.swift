@@ -1744,6 +1744,49 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    /// Where the view copies the selected text each time the user completes
+    /// a selection gesture: the system clipboard, the primary selection that
+    /// ``pastePrimarySelection()`` reads, or the two of them.
+    ///
+    /// The copy occurs at the end of the gesture (mouse up after a drag, a
+    /// double-click, a triple-click or a Shift-click, and the Select All
+    /// command), not during the drag. Selections that the search functions or
+    /// the host API make are not copied, and a selection of only white space
+    /// is not copied. The default is ``CopyOnSelectMode/off``.
+    ///
+    /// The view does not wait for a possible subsequent click, thus a
+    /// triple-click copies the word first and then the row.
+    ///
+    /// The delegate method ``TerminalViewDelegate/selectionFinished(source:)``
+    /// reports the same event, for hosts that use a different policy.
+    public var copyOnSelect: CopyOnSelectMode = .off
+
+    /// The system clipboard that the Copy and Paste commands use. Tests
+    /// replace it.
+    var selectionPasteboard: NSPasteboard = .general
+
+    /// The primary selection that ``pastePrimarySelection()`` reads. Tests
+    /// replace it.
+    var primarySelectionPasteboard = NSPasteboard(name: NSPasteboard.Name("NSSelectionPboard"))
+
+    func writeCopyOnSelectText (_ text: String) {
+        if copyOnSelect == .clipboard || copyOnSelect == .both {
+            writeSelectionToPasteboard(text)
+        }
+        if copyOnSelect == .primarySelection || copyOnSelect == .both {
+            primarySelectionPasteboard.clearContents()
+            primarySelectionPasteboard.setString(text, forType: .string)
+        }
+    }
+
+    /// The selection revision when the current user gesture started.
+    var selectionRevisionAtGestureStart: UInt64 = 0
+
+    func writeSelectionToPasteboard (_ text: String) {
+        selectionPasteboard.clearContents()
+        selectionPasteboard.setString(text, forType: .string)
+    }
+
     /// Controls how link tracking resolves hovered links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
     public var linkReporting: LinkReporting = .implicit
@@ -2908,14 +2951,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             selection.getSelectedText()
         }
         
-        let clipboard = NSPasteboard.general
-        clipboard.clearContents()
-        clipboard.setString(str, forType: .string)
+        writeSelectionToPasteboard(str)
     }
     
     public override func selectAll(_ sender: Any?)
     {
-        selectAll ()
+        userSelectionGesture { selectAll () }
     }
     
     //func undo (sender: Any) {}
@@ -3162,6 +3203,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         optionDragIsLocal = false
         pressSelectsBlock = event.modifierFlags.contains(.option) && event.clickCount == 1
         let shouldSendButtonPress = withTerminal { terminal in
+            selectionRevisionAtGestureStart = selection.revision
             pointerPressSnapshot = SemanticPromptPointerSnapshot(
                 selectionWasActive: selection.active,
                 didDrag: false,
@@ -3327,6 +3369,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     
     open override func mouseUp(with event: NSEvent) {
         defer {
+            // The press was the view's own, not one that the application
+            // got as a mouse report.
+            let pressWasLocal = pointerPressSnapshot.pressWasSemanticEligible || optionDragIsLocal
             didSelectionDrag = false
             pointerPressSnapshot.pressWasSemanticEligible = false
             pointerPressPoint = nil
@@ -3338,6 +3383,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             pressSelectsBlock = false
             withTerminal { terminal in
                 terminal.endPrimaryPointerPress()
+            }
+            if pressWasLocal {
+                endUserSelectionGesture ()
             }
         }
         stopSelectionAutoScrollTimer()
@@ -4266,9 +4314,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     @MainActor
     private func kittyPasteboard(_ location: KittyClipboardLocation) -> NSPasteboard {
-        location == .primary
-            ? NSPasteboard(name: NSPasteboard.Name("NSSelectionPboard"))
-            : .general
+        location == .primary ? primarySelectionPasteboard : selectionPasteboard
     }
 
     /// The platform type identifiers at one location, or `nil` when the

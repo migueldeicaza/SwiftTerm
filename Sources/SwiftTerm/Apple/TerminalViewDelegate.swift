@@ -212,9 +212,30 @@ public protocol TerminalViewDelegate: AnyObject {
     /// Updates can be combined before delivery. Text is untrusted plain text.
     func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus])
 
+    /// Tells the host that the user completed a selection gesture.
+    ///
+    /// The view calls this once at the end of a gesture that left a selection
+    /// that is not empty: a drag, a word or line selection, a selection
+    /// extension, or the Select All command. The view does not call it during
+    /// the drag, and does not call it for selections that the program, the
+    /// search functions or the host API make.
+    ///
+    /// Each click of a multiple click is a gesture, and the view does not
+    /// wait for a possible subsequent click. Thus a triple-click gives two
+    /// calls: one for the word after the second click, and one for the row
+    /// after the third click.
+    ///
+    /// Use ``TerminalView/getSelection()`` to get the text. The call occurs
+    /// with any value of ``TerminalView/copyOnSelect``, thus a host can keep
+    /// that property at ``CopyOnSelectMode/off`` and apply its own policy here.
+    ///
+    /// The default implementation does nothing.
+    func selectionFinished(source: TerminalView)
+
 }
 
 public extension TerminalViewDelegate {
+    func selectionFinished(source: TerminalView) {}
     func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {}
 }
 #endif

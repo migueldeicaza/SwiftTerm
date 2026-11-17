@@ -55,6 +55,10 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     /// Receives the current OSC 7501 records on the main actor.
     func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus])
 
+    /// Tells the host that the user completed a selection gesture. See
+    /// ``TerminalViewDelegate/selectionFinished(source:)``.
+    func selectionFinished(source: TerminalView)
+
     // MARK: Kitty clipboard protocol, OSC 5522
     //
     // ``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so the
@@ -98,6 +102,7 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
 
 public extension LocalProcessTerminalViewDelegate {
     func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {}
+    func selectionFinished(source: TerminalView) {}
     func processFailedToStart(source: TerminalView, error: LocalProcessError) {}
 
     func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
@@ -507,6 +512,10 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
 
     open func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {
         processDelegate?.programStatusChanged(source: source, records: records)
+    }
+
+    open func selectionFinished(source: TerminalView) {
+        processDelegate?.selectionFinished(source: source)
     }
     
     /// Left over from SwiftTerm 1.0, when this view was the process delegate.
