@@ -54,16 +54,18 @@ final class MarkedTextOverlayExtentTests {
         #expect(abs(last.width - 3 * view.cellDimension.width) < 0.5)
     }
 
-    /// A fallback-font glyph such as Hiragino ends inside a cell.
-    @Test func testBackgroundEndsOnACellBoundary() throws {
+    /// One cell of marked text over a wide character covers both of its columns,
+    /// so no half of the character shows next to the text.
+    @Test func testBackgroundCoversAWideCharacterAfterTheMarkedText() throws {
         let view = TerminalView.makeForMarkedTextTests()
-        view.feed(text: "> existing text\r\u{1b}[2C")
+        view.feed(text: "> 日本語\r\u{1b}[2C")
         view.updateCursorPosition()
-        view.setMarkedText("あいう")
+        view.setMarkedText("k")
         let overlay = try #require(view.dictationOverlay)
         let last = try #require(overlay.backgroundRects.last)
-        let cells = (overlay.frame.minX + last.maxX) / view.cellDimension.width
-        #expect(abs(cells - cells.rounded()) < 0.01)
+        let cellWidth = view.cellDimension.width
+        #expect(abs(overlay.frame.minX + last.minX - 2 * cellWidth) < 0.5)
+        #expect(abs(overlay.frame.minX + last.maxX - 4 * cellWidth) < 0.5)
     }
 }
 #endif

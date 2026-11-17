@@ -2467,7 +2467,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // `configureNativeColors()`) when the cell carries no color of its own.
         let caretColors = markedTextColorsAtCaret()
         overlay.overlayBackgroundColor = caretColors.background
-        overlay.cellWidth = cellDimension.width
+        overlay.coverEnd = { [weak self] line, textEnd in
+            self?.markedTextCoverEnd(line: line, textEnd: textEnd) ?? textEnd
+        }
 
         // Match terminal line metrics so wrapped lines line up with terminal rows.
         // The terminal wraps per character, and moves a wide character that does
@@ -2521,6 +2523,25 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             width: overlayWidth,
             height: overlayHeight
         )
+    }
+
+    /// The end of the terminal cells under a line of marked text that ends at
+    /// `textEnd`. The overlay starts at the first column and `alignToCells` ends
+    /// each character on a cell boundary, so the text covers whole cells; when
+    /// the cell after them is a wide character's second column, the end moves
+    /// past it so no half of that character shows.
+    private func markedTextCoverEnd(line: Int, textEnd: CGFloat) -> CGFloat {
+        let cellWidth = cellDimension.width
+        guard cellWidth > 0 else { return textEnd }
+        var column = Int((textEnd / cellWidth).rounded())
+        withTerminal { terminal in
+            let buffer = terminal.displayBuffer
+            let row = buffer.yBase + buffer.y + line
+            if row < buffer.lines.count, column > 0, column < buffer.cols, buffer.lines[row][column].width == 0 {
+                column += 1
+            }
+        }
+        return CGFloat(column) * cellWidth
     }
 
     /// Kerns each character of the marked text so it spans the columns the
@@ -4546,12 +4567,22 @@ final class DictationOverlayTextView: NSTextView {
         didSet { needsDisplay = true }
     }
 
+    /// Where the background of a line that ends inside a row stops, given the
+    /// line's index and the x where its text ends: past every terminal cell the
+    /// text covers, including both columns of a wide character it covers in part.
+    var coverEnd: (_ line: Int, _ textEnd: CGFloat) -> CGFloat = { $1 }
+
     override func draw(_ dirtyRect: NSRect) {
+        let rects = backgroundRects
         overlayBackgroundColor.setFill()
-        for rect in backgroundRects where rect.intersects(dirtyRect) {
+        for rect in rects where rect.intersects(dirtyRect) {
             rect.fill()
         }
+        // A glyph wider than its cells would otherwise draw over the terminal character next to it.
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath.clip(rects)
         super.draw(dirtyRect)
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     /// The area behind the marked text on each line. Wrapped lines span the full
@@ -4568,25 +4599,19 @@ final class DictationOverlayTextView: NSTextView {
             rects.append(fragmentRect.offsetBy(dx: origin.x, dy: origin.y))
             lastUsedRect = usedRect.offsetBy(dx: origin.x, dy: origin.y)
         }
-        if let lastUsedRect {
-            rects[rects.count - 1] = extendedToCellBoundary(lastUsedRect)
+        if var last = lastUsedRect {
+            last.size.width = coverEnd(rects.count - 1, last.maxX) - last.minX
+            rects[rects.count - 1] = last
         }
         return rects
     }
+}
 
-    /// The x of the terminal's first column, in this view's coordinates.
-    var cellGridOriginX: CGFloat = 0
-    var cellWidth: CGFloat = 0
-
-    /// Glyphs from a fallback font can end inside a cell; covering only part of
-    /// the next terminal character would leave the rest of it showing.
-    private func extendedToCellBoundary(_ rect: NSRect) -> NSRect {
-        guard cellWidth > 0 else { return rect }
-        // The tolerance keeps a rect that already ends on a boundary from growing by one cell.
-        let cells = ((rect.maxX - cellGridOriginX) / cellWidth - 0.01).rounded(.up)
-        var extended = rect
-        extended.size.width = max(rect.width, cellGridOriginX + cells * cellWidth - rect.minX)
-        return extended
+private extension NSBezierPath {
+    static func clip(_ rects: [NSRect]) {
+        let path = NSBezierPath()
+        rects.forEach { path.appendRect($0) }
+        path.addClip()
     }
 }
 #endif
