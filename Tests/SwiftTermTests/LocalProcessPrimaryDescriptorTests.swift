@@ -421,10 +421,8 @@ final class LocalProcessPrimaryDescriptorTests {
         queue.resume()
         #expect(windingDelegate.waitForFailure(timeout: 5))
 
-        // EOF while the phase remains running: the pipeline's identity-checked
-        // EOF callback unpublishes the primary while the exit transaction is
-        // still queued on a suspended delivery queue. The child has ended, but
-        // publication, not a claimed exit, is what the API observes.
+        // EOF unpublishes the primary. The reaper can record child exit first,
+        // so the phase and PID can differ by the time this test reads them.
         let eofQueue = DispatchQueue(label: "SwiftTerm.primary.eof-running")
         eofQueue.suspend()
         let eofResumed = Locked(false)
@@ -467,10 +465,6 @@ final class LocalProcessPrimaryDescriptorTests {
         }
         let eofPrimaryUnpublished = eofProcess.childfd == -1
         #expect(eofPrimaryUnpublished)
-        let eofStillRunning = eofProcess.running
-        #expect(eofStillRunning)
-        let eofPidPublished = eofProcess.shellPid > 0
-        #expect(eofPidPublished)
         switch eofProcess.duplicatePrimaryDescriptor() {
         case .success(nil):
             break
