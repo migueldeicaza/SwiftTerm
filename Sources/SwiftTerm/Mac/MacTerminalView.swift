@@ -2421,9 +2421,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             let line = buffer.lines[row]
             let cell = line[buffer.x]
             let attribute = cell.attribute
-            // A wide character's second column carries its attributes, so look past it.
-            let next = buffer.x + max(1, Int(cell.width))
-            let neighbor = next < buffer.cols ? next : buffer.x - 1
+            // The neighbor is the cell past the character under the caret, or the one before it at the
+            // end of the row. A wide character's second column (width 0) belongs to its first.
+            let start = cell.width == 0 && buffer.x > 0 ? buffer.x - 1 : buffer.x
+            let end = start + max(1, Int(line[start].width))
+            let neighbor = end < buffer.cols ? end : start - 1
             let isDrawnCursor = attribute.style.contains(.inverse)
                 && neighbor >= 0 && !line[neighbor].attribute.style.contains(.inverse)
             let isBold = attribute.style.contains(.bold)
