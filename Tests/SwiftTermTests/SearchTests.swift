@@ -325,6 +325,34 @@ final class SearchTests {
         #expect(limited.count == 2)
     }
 
+    /// The summary tells exactly `limit` matches from more than `limit`, and
+    /// only numbers a current match that is among the counted ones.
+    @Test func testSearchServiceMatchSummaryCapsAndLocates() {
+        let terminal = makeTerminal()
+        let service = SearchService(terminal: terminal)
+
+        terminal.feed(text: "Hello Hello Hello")
+
+        let second = Position(col: 6, row: 0)
+        let third = Position(col: 12, row: 0)
+        let exact = service.matchSummary(term: "Hello", options: SearchOptions(), limit: 3, current: second)
+        #expect(exact.index == 2)
+        #expect(exact.total == 3)
+        #expect(!exact.capped)
+
+        let capped = service.matchSummary(term: "Hello", options: SearchOptions(), limit: 2, current: third)
+        #expect(capped.index == 0)
+        #expect(capped.total == 2)
+        #expect(capped.capped)
+
+        // New content is counted again.
+        let before = service.generation
+        service.invalidate()
+        terminal.feed(text: " Hello")
+        #expect(service.generation != before)
+        #expect(service.matchSummary(term: "Hello", options: SearchOptions(), limit: 10, current: nil).total == 4)
+    }
+
     /// Every match of a line counts past a wide character that wrapped to
     /// the next row and left the row before it a cell short.
     @Test func testSearchServiceFindAllCountsEveryMatchPastAWrappedWideCharacter() {

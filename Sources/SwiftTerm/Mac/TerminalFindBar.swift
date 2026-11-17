@@ -14,9 +14,14 @@ import AppKit
 public enum TerminalFindStatus: Equatable {
     /// There is no search: the query is empty.
     case none
+    /// A match is selected and its position is not known: the bar does not
+    /// ask for a count (``TerminalFindBar/showsMatchCount``), or the count
+    /// follows shortly in a ``matches(current:total:capped:)``.
+    case found
     /// The query matches. `current` is the 1-based position of the selected
-    /// match (0 if it is not known) and `total` the number of matches. When
-    /// `capped` is true the count stopped at `total` and there may be more.
+    /// match and `total` the number of matches. When `capped` is true the
+    /// count stopped at `total` and there are more; `current` is 0 when the
+    /// selected match is one of those.
     case matches(current: Int, total: Int, capped: Bool)
     /// The query does not match anything.
     case notFound
@@ -31,6 +36,11 @@ public enum TerminalFindStatus: Equatable {
 /// subview, pins it to its top trailing corner and becomes its
 /// ``findBarDelegate``; the view decides its own size and appearance and
 /// reports what the user does to the delegate.
+///
+/// The terminal positions the view with Auto Layout, and for that turns off
+/// its `translatesAutoresizingMaskIntoConstraints` while it shows it. Give
+/// the view its size with constraints or an intrinsic content size; a view
+/// that only has a frame keeps that frame's size.
 @MainActor
 public protocol TerminalFindBar: NSView {
     /// The terminal sets this; hold it weakly.
@@ -43,11 +53,21 @@ public protocol TerminalFindBar: NSView {
     var options: SearchOptions { get }
     /// Moves the keyboard focus to the field that holds the query.
     func focusSearchField()
-    /// Called after every search with its outcome. The default does nothing.
+    /// Whether the bar shows how many matches there are. Counting reads the
+    /// whole scrollback, so the terminal only does it for a bar that asks.
+    /// The default is `false`.
+    var showsMatchCount: Bool { get }
+    /// Called with the outcome of a search. While the user types, the count
+    /// arrives a moment after the match is selected, and it is sent again
+    /// when new output changes it. The default does nothing.
     func setFindStatus(_ status: TerminalFindStatus)
 }
 
 extension TerminalFindBar {
+    public var showsMatchCount: Bool {
+        false
+    }
+
     public func setFindStatus(_ status: TerminalFindStatus) {
     }
 }

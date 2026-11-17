@@ -25,7 +25,16 @@ terminalView.findBarProvider = { MyFindBar() }
 The terminal places the view at its top trailing corner and becomes its
 ``TerminalFindBar/findBarDelegate``. Your view reports edits, option changes, next/previous and
 close through ``TerminalFindBarDelegate``, and receives a ``TerminalFindStatus`` after each
-search, which it can use to show a "2/14" counter or a "Not found" message.
+search, which it can use to show a "Not found" message.
+
+Counting the matches reads the whole scrollback, so the terminal only does it for a bar that
+returns `true` from ``TerminalFindBar/showsMatchCount``. Such a bar receives
+``TerminalFindStatus/matches(current:total:capped:)`` for a "2/14" counter: at once when the
+user goes to the next or previous match, shortly after they stop typing, and again when new
+output changes the count.
+
+The terminal lays the bar out with Auto Layout. Size it with constraints or an intrinsic
+content size; a view that only has a frame keeps that frame's size.
 
 ## Custom Search UI
 

@@ -288,25 +288,33 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     var accessibilitySelection: SnapshotSelectionState = .empty
     var search: SearchService!
     private var findBar: (any TerminalFindBar)?
-    private var findBarTerm: String = ""
-    private var findBarOptions: SearchOptions = SearchOptions()
+    /// What showing the find bar changed in it, to undo when it is discarded.
+    private var findBarConstraints: [NSLayoutConstraint] = []
+    private var findBarTranslatedAutoresizingMask = true
+    /// The delayed count of matches for the find bar.
+    private var findCountTimer: Timer?
+    /// The find bar's count is older than the search it describes.
+    private var findCountPending = false
+    /// The search generation the find bar's count was taken at.
+    private var findCountGeneration: Int?
+    /// Shares the query with other applications. Tests use a private one.
+    var findPasteboard = NSPasteboard(name: .find)
     /// Makes the find bar this view shows; `nil` selects the built-in one.
     ///
     /// The view calls this the first time it needs a find bar and keeps the
-    /// result. Setting the property discards a find bar made earlier.
+    /// result. Setting the property discards a find bar made earlier; if that
+    /// one was showing, the new one takes its place with the same query.
     public var findBarProvider: (() -> any TerminalFindBar)? {
         didSet {
-            let wasVisible = findBar?.isHidden == false
-            findBar?.findBarDelegate = nil
-            findBar?.removeFromSuperview()
-            findBar = nil
-            if wasVisible {
-                window?.makeFirstResponder(self)
-            }
+            replaceFindBar()
         }
     }
     /// The most matches counted for the find bar's status.
     static let findBarMatchLimit = 1000
+    /// How long typing must pause before the matches are counted.
+    static let findCountDelay: TimeInterval = 0.15
+    /// How often a showing count is checked against new output.
+    static let findCountRefreshInterval: TimeInterval = 0.5
     var debug: TerminalDebugView?
     let viewStateLock = NSLock()
     /// Cropped bitmaps for the Kitty placements on screen, reused between
@@ -2824,33 +2832,98 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    private var visibleFindBar: (any TerminalFindBar)? {
+        guard let findBar, !findBar.isHidden else {
+            return nil
+        }
+        return findBar
+    }
+
     private func performFind(next: Bool) {
-        let termFromBar = (findBar?.isHidden == false) ? findBar?.searchText : nil
-        guard let term = termFromBar ?? findPasteboardString(), !term.isEmpty else {
+        let bar = visibleFindBar
+        guard let term = bar?.searchText ?? findPasteboardString(), !term.isEmpty else {
             return
         }
         updateFindPasteboard(term)
-        let options = findBar?.options ?? SearchOptions()
-        let found = next ? findNext(term, options: options) : findPrevious(term, options: options)
-        reportFindStatus(term: term, options: options, found: found)
+        runFind(term, options: bar?.options ?? SearchOptions(), forward: next, deferCount: false)
     }
 
-    /// Tells the find bar how the search for `term` went.
-    private func reportFindStatus(term: String, options: SearchOptions, found: Bool) {
-        guard let findBar, !findBar.isHidden else {
+    /// Selects the next or previous match and tells the find bar the outcome.
+    /// With `deferCount` the matches are counted once the user stops typing.
+    private func runFind(_ term: String, options: SearchOptions, forward: Bool, deferCount: Bool) {
+        cancelFindCount()
+        let bar = visibleFindBar
+        let wantsCount = bar?.showsMatchCount == true
+        let outcome = find(term, options: options, forward: forward,
+                           countLimit: wantsCount && !deferCount ? TerminalView.findBarMatchLimit : nil)
+        guard let bar else {
             return
         }
+        guard outcome.found else {
+            bar.setFindStatus(findFailureStatus(term, options: options))
+            return
+        }
+        if let count = outcome.count {
+            findCountGeneration = count.generation
+            bar.setFindStatus(.matches(current: count.index, total: count.total, capped: count.capped))
+        } else {
+            bar.setFindStatus(.found)
+        }
+        if wantsCount {
+            findCountPending = outcome.count == nil
+            scheduleFindCount(after: deferCount ? TerminalView.findCountDelay : TerminalView.findCountRefreshInterval)
+        }
+    }
+
+    private func findFailureStatus(_ term: String, options: SearchOptions) -> TerminalFindStatus {
+        if options.regex, (try? NSRegularExpression(pattern: term)) == nil {
+            return .message("Invalid regular expression")
+        }
+        return .notFound
+    }
+
+    private func cancelFindCount() {
+        findCountTimer?.invalidate()
+        findCountTimer = nil
+        findCountPending = false
+        findCountGeneration = nil
+    }
+
+    private func scheduleFindCount(after delay: TimeInterval) {
+        findCountTimer?.invalidate()
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.refreshFindCount()
+            }
+        }
+        findCountTimer = timer
+        // Common modes: the count also arrives during a resize or a menu.
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    /// Counts the matches again if the count is due or output changed the
+    /// content since, and keeps checking for as long as the bar shows one.
+    private func refreshFindCount() {
+        findCountTimer = nil
+        guard let bar = visibleFindBar, bar.showsMatchCount else {
+            return
+        }
+        let term = bar.searchText
         guard !term.isEmpty else {
-            findBar.setFindStatus(.none)
             return
         }
-        guard found else {
-            findBar.setFindStatus(.notFound)
-            return
+        if findCountPending || searchGeneration() != findCountGeneration {
+            let options = bar.options
+            let count = searchMatchCount(term, options: options, limit: TerminalView.findBarMatchLimit)
+            findCountPending = false
+            findCountGeneration = count.generation
+            if count.total == 0 {
+                bar.setFindStatus(findFailureStatus(term, options: options))
+            } else {
+                bar.setFindStatus(.matches(current: count.index, total: count.total, capped: count.capped))
+            }
         }
-        let limit = TerminalView.findBarMatchLimit
-        let summary = searchMatchSummary(term, options: options, limit: limit)
-        findBar.setFindStatus(.matches(current: summary.index, total: summary.total, capped: summary.total >= limit))
+        scheduleFindCount(after: TerminalView.findCountRefreshInterval)
     }
 
     private func setFindPasteboardFromSelection() {
@@ -2860,20 +2933,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         guard !selected.isEmpty else {
             return
         }
-        let pasteboard = NSPasteboard(name: .find)
-        pasteboard.clearContents()
-        pasteboard.setString(selected, forType: .string)
+        findPasteboard.clearContents()
+        findPasteboard.setString(selected, forType: .string)
     }
 
     private func findPasteboardString() -> String? {
-        let pasteboard = NSPasteboard(name: .find)
-        return pasteboard.string(forType: .string)
+        findPasteboard.string(forType: .string)
     }
 
     private func updateFindPasteboard(_ term: String) {
-        let pasteboard = NSPasteboard(name: .find)
-        pasteboard.clearContents()
-        pasteboard.setString(term, forType: .string)
+        guard findPasteboard.string(forType: .string) != term else {
+            return
+        }
+        findPasteboard.clearContents()
+        findPasteboard.setString(term, forType: .string)
     }
 
     private func ensureFindBar() -> any TerminalFindBar {
@@ -2881,18 +2954,85 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return findBar
         }
         let bar: any TerminalFindBar = findBarProvider?() ?? TerminalFindBarView()
+        // A bar that only has a frame keeps its size; constraints of its own win.
+        let size = bar.frame.size
+        findBarTranslatedAutoresizingMask = bar.translatesAutoresizingMaskIntoConstraints
         bar.translatesAutoresizingMaskIntoConstraints = false
         bar.isHidden = true
         bar.findBarDelegate = self
 
         addSubview(bar)
-        NSLayoutConstraint.activate([
+        // A bar too wide for the view sticks out on the left instead of
+        // breaking its own width.
+        let leading = bar.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8)
+        leading.priority = NSLayoutConstraint.Priority(999)
+        var constraints = [
             bar.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             bar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            bar.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8)
-        ])
+            leading
+        ]
+        if size.width > 0 {
+            let width = bar.widthAnchor.constraint(equalToConstant: size.width)
+            width.priority = .defaultLow
+            constraints.append(width)
+        }
+        if size.height > 0 {
+            let height = bar.heightAnchor.constraint(equalToConstant: size.height)
+            height.priority = .defaultLow
+            constraints.append(height)
+        }
+        NSLayoutConstraint.activate(constraints)
+        findBarConstraints = constraints
         findBar = bar
         return bar
+    }
+
+    /// Whether the keyboard focus is in the find bar.
+    private func findBarHasFocus(_ bar: any TerminalFindBar) -> Bool {
+        guard let responder = window?.firstResponder as? NSView else {
+            return false
+        }
+        return responder === bar || responder.isDescendant(of: bar)
+    }
+
+    /// Drops the find bar and gives the application its view back as it was.
+    private func discardFindBar() {
+        guard let bar = findBar else {
+            return
+        }
+        cancelFindCount()
+        NSLayoutConstraint.deactivate(findBarConstraints)
+        findBarConstraints = []
+        bar.removeFromSuperview()
+        bar.translatesAutoresizingMaskIntoConstraints = findBarTranslatedAutoresizingMask
+        bar.isHidden = false
+        if bar.findBarDelegate === self {
+            bar.findBarDelegate = nil
+        }
+        findBar = nil
+    }
+
+    /// The provider changed: a showing bar is replaced by one from the new
+    /// provider, which starts the search over with its own options.
+    private func replaceFindBar() {
+        guard let old = findBar else {
+            return
+        }
+        let wasVisible = !old.isHidden
+        let hadFocus = wasVisible && findBarHasFocus(old)
+        let term = old.searchText
+        discardFindBar()
+        guard wasVisible else {
+            return
+        }
+        let bar = ensureFindBar()
+        bar.isHidden = false
+        bar.searchText = term
+        clearSearch()
+        handleFindBarSearchChanged(bar)
+        if hadFocus {
+            bar.focusSearchField()
+        }
     }
 
     private func showFindBar(prefillSelection: Bool) {
@@ -2902,33 +3042,33 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let initial = (selectedText?.isEmpty == false) ? selectedText : findPasteboardString()
         if let initial {
             bar.searchText = initial
-            handleFindBarSearchChanged(initial)
+            handleFindBarSearchChanged(bar)
         }
         bar.focusSearchField()
     }
 
     private func hideFindBar() {
+        cancelFindCount()
         findBar?.isHidden = true
         window?.makeFirstResponder(self)
     }
 
-    private func handleFindBarSearchChanged(_ term: String) {
-        findBarTerm = term
+    private func handleFindBarSearchChanged(_ bar: any TerminalFindBar) {
+        let term = bar.searchText
         if term.isEmpty {
+            cancelFindCount()
             clearSearch()
-            findBar?.setFindStatus(.none)
+            bar.setFindStatus(.none)
             return
         }
         updateFindPasteboard(term)
-        let found = findNext(term, options: findBarOptions)
-        reportFindStatus(term: term, options: findBarOptions, found: found)
+        runFind(term, options: bar.options, forward: true, deferCount: true)
     }
 
-    private func handleFindBarOptionsChanged(_ options: SearchOptions) {
-        findBarOptions = options
-        if !findBarTerm.isEmpty {
-            let found = findNext(findBarTerm, options: options)
-            reportFindStatus(term: findBarTerm, options: options, found: found)
+    private func handleFindBarOptionsChanged(_ bar: any TerminalFindBar) {
+        let term = bar.searchText
+        if !term.isEmpty {
+            runFind(term, options: bar.options, forward: true, deferCount: false)
         }
     }
 
@@ -4632,19 +4772,34 @@ final class DictationOverlayTextView: NSTextView {
 }
 
 extension TerminalView: TerminalFindBarDelegate {
+    // Only the bar this view shows drives its search: a bar the view has
+    // discarded, or one that belongs to another view, is ignored.
+
     public func findBarSearchTextChanged(_ bar: TerminalFindBar) {
-        handleFindBarSearchChanged(bar.searchText)
+        guard bar === visibleFindBar else {
+            return
+        }
+        handleFindBarSearchChanged(bar)
     }
 
     public func findBarOptionsChanged(_ bar: TerminalFindBar) {
-        handleFindBarOptionsChanged(bar.options)
+        guard bar === visibleFindBar else {
+            return
+        }
+        handleFindBarOptionsChanged(bar)
     }
 
     public func findBar(_ bar: TerminalFindBar, findNext forward: Bool) {
+        guard bar === visibleFindBar else {
+            return
+        }
         performFind(next: forward)
     }
 
     public func findBarClose(_ bar: TerminalFindBar) {
+        guard bar === visibleFindBar else {
+            return
+        }
         hideFindBar()
     }
 }

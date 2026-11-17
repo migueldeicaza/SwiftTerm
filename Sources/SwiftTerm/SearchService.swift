@@ -21,6 +21,12 @@ final class SearchService {
     private var lastSelection: SearchSelection?
 
     private(set) var lastResult: SearchResult?
+    /// Goes up whenever the buffer's content or size may have changed, so a
+    /// caller can tell that a count it took earlier is out of date.
+    private(set) var generation = 0
+    /// The matches of the last count, kept until the content changes: going
+    /// from one match to the next then costs no further pass over the buffer.
+    private var countedMatches: (term: String, options: SearchOptions, limit: Int, results: [SearchResult])?
 #if DEBUG
     var testingSearchRowVisits: Int { engine.testingRowVisits }
 #endif
@@ -39,12 +45,16 @@ final class SearchService {
     */
     func invalidate () {
         lineCache.invalidate()
+        generation &+= 1
+        countedMatches = nil
         lastResult = nil
         lastSelection = nil
     }
 
     func reset () {
         lineCache.invalidate()
+        generation &+= 1
+        countedMatches = nil
         state.reset()
         lastResult = nil
         lastSelection = nil
@@ -96,6 +106,31 @@ final class SearchService {
         }
 
         return engine.findAll(term: term, searchOptions: options, limit: limit)
+    }
+
+    /// Counts the matches for `term`, up to `limit`, and locates the match
+    /// that starts at `current` among them.
+    /// - Returns: `index` is the 1-based position of that match, or 0 when
+    ///   `current` is nil or is not one of the first `limit` matches.
+    ///   `capped` is true when there are more than `limit` matches.
+    func matchSummary (term: String, options: SearchOptions, limit: Int, current: Position?) -> (index: Int, total: Int, capped: Bool) {
+        guard state.isValidSearchTerm(term), limit > 0 else {
+            return (0, 0, false)
+        }
+        let results: [SearchResult]
+        if let countedMatches, countedMatches.term == term, countedMatches.options == options, countedMatches.limit == limit {
+            results = countedMatches.results
+        } else {
+            // One more than the limit tells "exactly the limit" from "more".
+            results = engine.findAll(term: term, searchOptions: options, limit: limit + 1)
+            countedMatches = (term, options, limit, results)
+        }
+        let total = min(results.count, limit)
+        var index = 0
+        if let current, let found = results.prefix(total).firstIndex(where: { $0.row == current.row && $0.col == current.col }) {
+            index = found + 1
+        }
+        return (index, total, results.count > limit)
     }
 
     func selectionRange (for result: SearchResult) -> (start: Position, end: Position) {
