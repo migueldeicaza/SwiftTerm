@@ -32,17 +32,26 @@ final class MarkedTextOverlayExtentTests {
     }
 
     /// Long dictation hypotheses wrap; the wrapped lines must hide the rows below.
+    /// Line 1 starts at the caret, and every later line at the first column.
     @Test func testWrappedLinesCoverTheFullWidth() throws {
         let view = TerminalView.makeForMarkedTextTests()
-        view.setMarkedText(String(repeating: "dictation ", count: 12))
+        view.feed(text: "> existing text\r\u{1b}[2C")
+        view.updateCursorPosition()
+        let caretX = view.caretView.frame.minX
+        let cols = view.withTerminal { $0.cols }
+        // Fills the rest of the caret's row and the next row, and ends 3 columns into the row after.
+        view.setMarkedText(String(repeating: "x", count: cols - 2 + cols + 3))
         let overlay = try #require(view.dictationOverlay)
         let rects = overlay.backgroundRects
-        #expect(rects.count > 2)
-        for rect in rects.dropLast() {
-            #expect(abs(rect.width - overlay.frame.width) < 0.5)
-        }
+        #expect(rects.count == 3)
+        let first = try #require(rects.first)
+        #expect(abs(overlay.frame.minX + first.minX - caretX) < 0.5)
+        #expect(abs(first.maxX - overlay.frame.width) < 0.5)
+        #expect(abs(rects[1].minX) < 0.5)
+        #expect(abs(rects[1].width - overlay.frame.width) < 0.5)
         let last = try #require(rects.last)
-        #expect(last.width < overlay.frame.width)
+        #expect(abs(last.minX) < 0.5)
+        #expect(abs(last.width - 3 * view.cellDimension.width) < 0.5)
     }
 
     /// A fallback-font glyph such as Hiragino ends inside a cell.

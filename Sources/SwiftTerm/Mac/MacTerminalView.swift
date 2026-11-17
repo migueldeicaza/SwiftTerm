@@ -2507,7 +2507,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             // too narrow for any character.
             container.containerSize = NSSize(width: overlayWidth + 0.5, height: .greatestFiniteMagnitude)
             container.exclusionPaths = exclusionWidth > 0
-                ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: exclusionWidth, height: lineHeight + 1))]
+                ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: exclusionWidth, height: lineHeight))]
                 : []
         }
 
