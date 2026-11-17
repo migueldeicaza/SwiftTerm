@@ -125,8 +125,34 @@ public protocol TerminalViewDelegate: AnyObject {
     
     /**
      * This method will be invoked when the host beeps.
+     *
+     * The default implementation of ``bell(source:style:)`` calls this method
+     * for the `.sound` and `.soundAndVisual` bell styles. The default
+     * implementation of this method calls `TerminalView.playDefaultBell()`.
      */
     func bell (source: TerminalView)
+
+    /// Tells the delegate that the view delivered a bell (BEL). It runs on
+    /// the main actor.
+    ///
+    /// The view calls this method for the `.sound`, `.visual` and
+    /// `.soundAndVisual` bell styles. It does not call it for `.none`.
+    ///
+    /// The delegate plays the sound. The view does not. The default
+    /// implementation calls ``bell(source:)`` if `style.playsSound` is true.
+    /// A delegate that implements this method and wants the default sound
+    /// calls `source.playDefaultBell()`.
+    ///
+    /// If `style.flashes` is true, the view flashes after this call.
+    ///
+    /// The view drops a bell that comes less than 100 ms after the last
+    /// delivered bell. A burst of BEL characters thus gives one call. Do not
+    /// use the number of calls as a count of BEL characters.
+    ///
+    /// - Parameters:
+    ///   - source: The view that rang the bell.
+    ///   - style: The bell style of the view. It is never `.none`.
+    func bell (source: TerminalView, style: BellStyle)
     
     /**
      * This method is invoked when the client application has issued a OSC 52
@@ -235,6 +261,12 @@ public protocol TerminalViewDelegate: AnyObject {
 }
 
 public extension TerminalViewDelegate {
+    func bell (source: TerminalView, style: BellStyle) {
+        if style.playsSound {
+            bell (source: source)
+        }
+    }
+
     func selectionFinished(source: TerminalView) {}
     func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {}
 }
