@@ -67,5 +67,24 @@ final class MarkedTextOverlayExtentTests {
         #expect(abs(overlay.frame.minX + last.minX - 2 * cellWidth) < 0.5)
         #expect(abs(overlay.frame.minX + last.maxX - 4 * cellWidth) < 0.5)
     }
+
+    /// Dictation can put a newline in the marked text. A line that ends in one
+    /// does not wrap onto the next row, so it covers its text only.
+    @Test func testALineEndingInANewlineCoversItsTextOnly() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        view.feed(text: "> existing text\r\u{1b}[2C")
+        view.updateCursorPosition()
+        view.setMarkedText("ab\ncd")
+        let overlay = try #require(view.dictationOverlay)
+        let rects = overlay.backgroundRects
+        #expect(rects.count == 2)
+        let cellWidth = view.cellDimension.width
+        let first = try #require(rects.first)
+        #expect(abs(overlay.frame.minX + first.minX - 2 * cellWidth) < 0.5)
+        #expect(abs(overlay.frame.minX + first.maxX - 4 * cellWidth) < 0.5)
+        let last = try #require(rects.last)
+        #expect(abs(overlay.frame.minX + last.minX) < 0.5)
+        #expect(abs(overlay.frame.minX + last.maxX - 2 * cellWidth) < 0.5)
+    }
 }
 #endif

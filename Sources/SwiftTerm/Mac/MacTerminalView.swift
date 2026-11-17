@@ -4585,23 +4585,28 @@ final class DictationOverlayTextView: NSTextView {
         NSGraphicsContext.restoreGraphicsState()
     }
 
-    /// The area behind the marked text on each line. Wrapped lines span the full
-    /// width so they hide the terminal rows below the caret. The last line covers
-    /// the text only, so characters to the right of the caret stay visible while
-    /// composing in the middle of a line.
+    /// The area behind the marked text on each line. Soft-wrapped lines span the
+    /// full width so they hide the terminal rows below the caret. The last line,
+    /// and a line that ends in a newline, cover the text only, so characters to
+    /// the right of it stay visible while composing in the middle of a line.
     var backgroundRects: [NSRect] {
         guard let layoutManager, let container = textContainer else { return [] }
         let glyphRange = layoutManager.glyphRange(for: container)
+        let string = (textStorage?.string ?? "") as NSString
         let origin = textContainerOrigin
         var rects: [NSRect] = []
-        var lastUsedRect: NSRect?
-        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, usedRect, _, _, _ in
-            rects.append(fragmentRect.offsetBy(dx: origin.x, dy: origin.y))
-            lastUsedRect = usedRect.offsetBy(dx: origin.x, dy: origin.y)
-        }
-        if var last = lastUsedRect {
-            last.size.width = coverEnd(rects.count - 1, last.maxX) - last.minX
-            rects[rects.count - 1] = last
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, usedRect, _, lineGlyphs, _ in
+            let characters = layoutManager.characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
+            let isLast = NSMaxRange(lineGlyphs) >= NSMaxRange(glyphRange)
+            let endsInNewline = characters.length > 0
+                && CharacterSet.newlines.contains(UnicodeScalar(string.character(at: NSMaxRange(characters) - 1)) ?? " ")
+            guard isLast || endsInNewline else {
+                rects.append(fragmentRect.offsetBy(dx: origin.x, dy: origin.y))
+                return
+            }
+            var rect = usedRect.offsetBy(dx: origin.x, dy: origin.y)
+            rect.size.width = self.coverEnd(rects.count, rect.maxX) - rect.minX
+            rects.append(rect)
         }
         return rects
     }
