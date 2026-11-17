@@ -64,13 +64,13 @@ final class SearchEngine {
     /// has one.
     private func findDeadline (for options: SearchOptions?) -> UInt64? {
         guard options?.regex == true else { return nil }
-        return DispatchTime.now().uptimeNanoseconds &+ findTimeLimit
+        return TerminalEventTime.now().uptimeNanoseconds &+ findTimeLimit
     }
 
     /// True when the find in progress is past its time limit.
     private func findIsLate () -> Bool {
         guard let findDeadline else { return false }
-        return DispatchTime.now().uptimeNanoseconds >= findDeadline
+        return TerminalEventTime.now().uptimeNanoseconds >= findDeadline
     }
 
     init (terminal: Terminal, lineCache: SearchLineCache) {
@@ -175,14 +175,14 @@ final class SearchEngine {
         let windowLast = min(lineCount, endRow + Self.visibleMatchMargin) - 1
         let options = searchOptions ?? SearchOptions()
         var rows = [[Range<Int>]](repeating: [], count: endRow - firstRow)
-        let deadline = DispatchTime.now().uptimeNanoseconds &+ visibleMatchTimeLimit
+        let deadline = TerminalEventTime.now().uptimeNanoseconds &+ visibleMatchTimeLimit
 
         var row = firstRow
         while row > windowTop && buffer.lines[row].isWrapped {
             row -= 1
         }
         while row < endRow {
-            if DispatchTime.now().uptimeNanoseconds >= deadline {
+            if TerminalEventTime.now().uptimeNanoseconds >= deadline {
                 return nil
             }
             let entry = lineCache.translateBufferLineToStringWithWrap(
@@ -271,7 +271,7 @@ final class SearchEngine {
         func isLate () -> Bool {
             guard let deadline else { return false }
             matchCount &+= 1
-            return matchCount & 63 == 0 && DispatchTime.now().uptimeNanoseconds >= deadline
+            return matchCount & 63 == 0 && TerminalEventTime.now().uptimeNanoseconds >= deadline
         }
         var lower = line.startIndex
         var lowerOffset = 0
@@ -289,29 +289,33 @@ final class SearchEngine {
             var late = false
             // `reportProgress` calls the block with no match during a long
             // match attempt, which is the only place to stop such an attempt.
-            regex.enumerateMatches(in: line, options: deadline == nil ? [] : [.reportProgress],
-                                   range: NSRange(lower..<line.endIndex, in: line)) { match, flags, stop in
-                if let deadline, flags.contains(.progress) || match == nil {
-                    if DispatchTime.now().uptimeNanoseconds >= deadline {
+            // On Linux, Foundation declares this block as escaping. It does
+            // not escape: `enumerateMatches` calls it only before it returns.
+            withoutActuallyEscaping(body) { body in
+                regex.enumerateMatches(in: line, options: deadline == nil ? [] : [.reportProgress],
+                                       range: NSRange(lower..<line.endIndex, in: line)) { match, flags, stop in
+                    if let deadline, flags.contains(.progress) || match == nil {
+                        if TerminalEventTime.now().uptimeNanoseconds >= deadline {
+                            late = true
+                            stop.pointee = true
+                        }
+                        return
+                    }
+                    if isLate() {
                         late = true
                         stop.pointee = true
+                        return
                     }
-                    return
-                }
-                if isLate() {
-                    late = true
-                    stop.pointee = true
-                    return
-                }
-                // A match that is not on character boundaries, or that
-                // overlaps the match before it, has no place in the line.
-                guard let match, match.range.length > 0, let found = Range(match.range, in: line),
-                      found.lowerBound >= lower,
-                      !options.wholeWord || isWholeWord(found, in: line) else {
-                    return
-                }
-                if !body(found, offset(of: found)) {
-                    stop.pointee = true
+                    // A match that is not on character boundaries, or that
+                    // overlaps the match before it, has no place in the line.
+                    guard let match, match.range.length > 0, let found = Range(match.range, in: line),
+                          found.lowerBound >= lower,
+                          !options.wholeWord || self.isWholeWord(found, in: line) else {
+                        return
+                    }
+                    if !body(found, offset(of: found)) {
+                        stop.pointee = true
+                    }
                 }
             }
             return !late
