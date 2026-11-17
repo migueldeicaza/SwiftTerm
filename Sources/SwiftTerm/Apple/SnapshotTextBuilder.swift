@@ -462,6 +462,7 @@ final class SnapshotTextBuilder {
         }
         let cols = context.cols
         let selectionColumns = context.selection.columns(forRow: absoluteRow)
+        var searchMatches = SearchMatchCursor(context.searchMatchColumns(forRow: absoluteRow))
         var col = 0
         var builder: TerminalView.ViewLineSegmentBuilder?
 
@@ -481,7 +482,7 @@ final class SnapshotTextBuilder {
         var pendingAttrs: SnapshotTextAttributes? = nil
         var lastStyleKey: PackedAttributeKey?
         var lastHasUrl = false
-        var lastIsSelected = false
+        var lastHighlight = CellHighlight.none
         var lastTextHidden = false
         var lastUsesShapeColor = false
         var lastGlyphFallbackFont: TTFont?
@@ -558,7 +559,9 @@ final class SnapshotTextBuilder {
                 builder = TerminalView.ViewLineSegmentBuilder(column: visualCol, columnWidth: width)
             }
 
-            let isSelected = isColumnSelected(selectionColumns, column: col, width: width)
+            let highlight: CellHighlight =
+                isColumnSelected(selectionColumns, column: col, width: width) ? .selection
+                : searchMatches.contains(column: col, width: width) ? .searchMatch : .none
             let textHidden = attr.style.contains(.invisible) || (!context.textBlinkVisible && attr.style.contains(.blink))
 
             let text: String
@@ -594,7 +597,7 @@ final class SnapshotTextBuilder {
             // Flush batch when attributes change; the batch dictionary is only
             // rebuilt at these boundaries, so unchanged cells append without
             // copying it.
-            if styleKey != lastStyleKey || hasUrl != lastHasUrl || isSelected != lastIsSelected
+            if styleKey != lastStyleKey || hasUrl != lastHasUrl || highlight != lastHighlight
                 || textHidden != lastTextHidden
                 || usesShapeColor != lastUsesShapeColor
                 || glyphFallback?.font !== lastGlyphFallbackFont
@@ -603,25 +606,30 @@ final class SnapshotTextBuilder {
                 flushPending()
                 lastStyleKey = styleKey
                 lastHasUrl = hasUrl
-                lastIsSelected = isSelected
+                lastHighlight = highlight
                 lastTextHidden = textHidden
                 lastUsesShapeColor = usesShapeColor
                 lastGlyphFallbackFont = glyphFallback?.font
                 lastGlyphFallbackPolicy = glyphFallback?.policy
-                if isSelected || textHidden || usesShapeColor || glyphFallback != nil {
+                let highlightColors = context.highlightColors(highlight)
+                if highlightColors != nil || textHidden || usesShapeColor || glyphFallback != nil {
                     var batchAttributes = attributes.values
                     if usesShapeColor {
                         batchAttributes[.foregroundColor] = shapeColor(of: attributes, context: context)
                     }
-                    if isSelected {
-                        batchAttributes[.selectionBackgroundColor] = context.selectionFillColor
-                        batchAttributes[.foregroundColor] = context.selectedTextForegroundColor
-                        batchAttributes[SwiftTermShapeColorKey] = context.selectedTextForegroundColor
-                        if batchAttributes[.underlineColor] != nil {
-                            batchAttributes[.underlineColor] = context.selectedTextForegroundColor
-                        }
-                        if batchAttributes[.strikethroughColor] != nil {
-                            batchAttributes[.strikethroughColor] = context.selectedTextForegroundColor
+                    if let highlightColors {
+                        // The selection and the search matches use the same
+                        // key, so the two renderers fill them in one way.
+                        batchAttributes[.selectionBackgroundColor] = highlightColors.fill
+                        if let foreground = highlightColors.foreground {
+                            batchAttributes[.foregroundColor] = foreground
+                            batchAttributes[SwiftTermShapeColorKey] = foreground
+                            if batchAttributes[.underlineColor] != nil {
+                                batchAttributes[.underlineColor] = foreground
+                            }
+                            if batchAttributes[.strikethroughColor] != nil {
+                                batchAttributes[.strikethroughColor] = foreground
+                            }
                         }
                     }
                     if textHidden {
@@ -783,6 +791,7 @@ final class SnapshotTextBuilder {
         let line = snapshotRow.line
         let cols = context.cols
         let selectionColumns = context.selection.columns(forRow: absoluteRow)
+        var searchMatches = SearchMatchCursor(context.searchMatchColumns(forRow: absoluteRow))
         var codes: [UInt8] = []
         codes.reserveCapacity(cols)
         var runs: [PlainRun] = []
@@ -790,7 +799,7 @@ final class SnapshotTextBuilder {
         var decodedAttribute = CharData.defaultAttr
         var lastStyleKey: PackedAttributeKey?
         var lastHasUrl = false
-        var lastIsSelected = false
+        var lastHighlight = CellHighlight.none
         var lastTextHidden = false
         for col in 0..<cols {
             let cell = line.packedView(at: col)
@@ -808,27 +817,32 @@ final class SnapshotTextBuilder {
             }
             let hasUrl = shouldUnderlineLink(row: absoluteRow, column: col, width: 1,
                                              cell: cell, context: context)
-            let isSelected = isColumnSelected(selectionColumns, column: col, width: 1)
+            let highlight: CellHighlight =
+                isColumnSelected(selectionColumns, column: col, width: 1) ? .selection
+                : searchMatches.contains(column: col, width: 1) ? .searchMatch : .none
             let textHidden = attribute.style.contains(.invisible) || (!context.textBlinkVisible && attribute.style.contains(.blink))
             codes.append(textHidden || code == 0 ? 0x20 : UInt8(code))
             if let last = runs.indices.last, styleKey == lastStyleKey, hasUrl == lastHasUrl,
-               isSelected == lastIsSelected, textHidden == lastTextHidden {
+               highlight == lastHighlight,
+               textHidden == lastTextHidden {
                 runs[last].end = col + 1
                 continue
             }
             lastStyleKey = styleKey
             lastHasUrl = hasUrl
-            lastIsSelected = isSelected
+            lastHighlight = highlight
             lastTextHidden = textHidden
             var style = plainStyle(attribute, withUrl: hasUrl, context: context)
             // The same adjustments `buildAttributedString` makes to a batch.
-            if isSelected {
-                style.selectionBackground = context.selectionFillColor
-                style.foreground = .color(context.selectedTextForegroundColor)
-                style.shapeColor = .color(context.selectedTextForegroundColor)
-                style.underline?.color = .color(context.selectedTextForegroundColor)
-                if style.strikethrough != nil {
-                    style.strikethrough = .color(context.selectedTextForegroundColor)
+            if let highlightColors = context.highlightColors(highlight) {
+                style.selectionBackground = highlightColors.fill
+                if let foreground = highlightColors.foreground {
+                    style.foreground = .color(foreground)
+                    style.shapeColor = .color(foreground)
+                    style.underline?.color = .color(foreground)
+                    if style.strikethrough != nil {
+                        style.strikethrough = .color(foreground)
+                    }
                 }
             }
             if textHidden {
@@ -1079,6 +1093,34 @@ final class SnapshotTextBuilder {
         }
         let endColumn = column + width
         return selectionRange.lowerBound < endColumn && column < selectionRange.upperBound
+    }
+}
+
+/// Tests the cells of one row against the row's search match columns.
+///
+/// The ranges are in ascending order and cells usually come left to right,
+/// so the test keeps its place in the list. A cell to the left of the last
+/// one (a bidi row) starts the scan again.
+struct SearchMatchCursor {
+    private let ranges: [Range<Int>]
+    private var index = 0
+
+    init (_ ranges: [Range<Int>]) {
+        self.ranges = ranges
+    }
+
+    @inline(__always)
+    mutating func contains (column: Int, width: Int) -> Bool {
+        if ranges.isEmpty {
+            return false
+        }
+        if index > 0 && ranges[index - 1].upperBound > column {
+            index = 0
+        }
+        while index < ranges.count && ranges[index].upperBound <= column {
+            index += 1
+        }
+        return index < ranges.count && ranges[index].lowerBound < column + width
     }
 }
 

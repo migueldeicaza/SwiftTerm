@@ -475,6 +475,41 @@ struct MetalRowCacheTests {
         await expectParity(harness, with: cleared)
     }
 
+    /// "Highlight all matches" rebuilds the rows whose matches change and no
+    /// others.
+    @Test(.enabled(if: MetalRowCacheTests.metalIsUsable)) func searchHighlightsRebuildTheRowsWithMatches() async throws {
+        let harness = try #require(Harness())
+        harness.view.highlightsAllSearchMatches = true
+        // "needle" on row 0, and on rows 2 and 3 across the wrap.
+        let cols = harness.view.withTerminal { $0.cols }
+        harness.view.feed(text: "needle one\r\nplain\r\n" + String(repeating: "x", count: cols - 3) + "needle")
+        let before = try #require(await harness.frame())
+
+        #expect(harness.view.findNext("needle", scrollToResult: false))
+        let found = try #require(await harness.frame())
+        #expect(found.rebuilt == 3)
+        #expect(found.rows[1] == before.rows[1])
+        #expect(found.rows[2] != before.rows[2])
+        #expect(!Self.sameBytes(found.pixels, before.pixels))
+        await expectParity(harness, with: found)
+
+        // Output changes only row 3 and the wrapped match goes away. Row 2
+        // has no new content, but it must be built again.
+        harness.view.feed(text: "\rzzz")
+        let gone = try #require(await harness.frame())
+        #expect(gone.rebuilt == 2)
+        #expect(gone.rows[2] == before.rows[2])
+        await expectParity(harness, with: gone)
+
+        // Row 0 holds only the current match. The selection paints it, so
+        // the pixels stay, but its match range goes away with the pattern.
+        harness.view.clearSearchHighlights()
+        let cleared = try #require(await harness.frame())
+        #expect(cleared.rebuilt == 1)
+        #expect(Self.sameBytes(cleared.pixels, gone.pixels))
+        await expectParity(harness, with: cleared)
+    }
+
     /// A new font, scale, palette, contrast ratio or terminal size changes
     /// every row.
     @Test(.enabled(if: MetalRowCacheTests.metalIsUsable)) func frameWideChangesRebuildEveryRow() async throws {

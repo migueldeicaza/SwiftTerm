@@ -146,6 +146,7 @@ extension FrameViewState {
         commandActive = false
         textBlinkVisible = true
         notifyUpdateChanges = false
+        highlightsAllSearchMatches = false
         fonts = view.frameFonts()
         cellDimension = view.cellDimension
         viewBounds = view.bounds

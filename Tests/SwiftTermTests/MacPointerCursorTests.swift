@@ -17,7 +17,10 @@ struct MacPointerCursorTests {
     private let esc = "\u{1b}"
 
     private func makeView() -> TerminalView {
-        TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        // Not the real keys: a Shift that the user holds must not change a result.
+        view.heldModifierFlags = { [] }
+        return view
     }
 
     @Test func plainOutputShowsTheIBeam() {

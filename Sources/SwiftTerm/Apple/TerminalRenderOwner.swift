@@ -102,6 +102,8 @@ struct TerminalRenderSnapshotInspection: Sendable {
     let cols: Int
     let selectionActive: Bool
     let selectedRows: [Int]
+    /// The search match columns of each visible row.
+    var searchMatchRows: [[Range<Int>]] = []
 }
 
 /// Retains one terminal session after the lifecycle lock is released.
@@ -518,6 +520,32 @@ final class TerminalRenderOwner: Sendable {
         return prepareFrame(request)
     }
 
+#if os(macOS)
+    /// The view rectangle that Core Graphics draws again for the screen
+    /// rows `rows`. It includes one more row below, or the bottom margin
+    /// when `rows` ends at the last row.
+    private static func dirtyRegion (rows: ClosedRange<Int>, terminalRows: Int,
+                                     viewState: FrameViewState) -> CGRect {
+        let cellHeight = viewState.cellDimension.height
+        let width = viewState.viewBounds.width
+        let dirtyRegion = CGRect(
+            x: 0,
+            y: viewState.viewFrameHeight -
+                (cellHeight + CGFloat(rows.upperBound) * cellHeight),
+            width: width,
+            height: CGFloat(rows.count) * cellHeight)
+        if rows.upperBound == terminalRows - 1 {
+            return CGRect(
+                x: 0, y: 0, width: width,
+                height: dirtyRegion.height + dirtyRegion.origin.y)
+        }
+        let newY = max(0, dirtyRegion.origin.y - cellHeight)
+        return CGRect(
+            x: 0, y: newY, width: width,
+            height: dirtyRegion.maxY - newY)
+    }
+#endif
+
     private func prepareFrame (_ request: FramePreparationRequest)
         -> TerminalView.PreparedFrame?
     {
@@ -549,6 +577,7 @@ final class TerminalRenderOwner: Sendable {
                 terminal: terminal,
                 viewState: request.viewState,
                 selection: selectionState,
+                search: session.search,
                 deferBidiTypesetting: true) == .refreshed else {
                 guard let resizedTo else { return nil }
                 var frozen = TerminalView.PreparedFrame(
@@ -596,28 +625,20 @@ final class TerminalRenderOwner: Sendable {
                         dependencies.upperBound - buffer.yDisp)
                 }
 
+                // A change of search highlights can be on rows that have
+                // no new content. The update range reports only content, so
+                // the region gets these rows but `rangeChanged` does not.
+                if let matchRows = session.snapshot.searchMatchChangedRows {
+                    redrawStart = min(redrawStart, matchRows.lowerBound)
+                    redrawEnd = max(redrawEnd, matchRows.upperBound)
+                }
+
                 if buffer.yDisp != buffer.yBase {
                     region = request.viewState.viewBounds
                 } else {
-                    let cellHeight = request.viewState.cellDimension.height
-                    let width = request.viewState.viewBounds.width
-                    var dirtyRegion = CGRect(
-                        x: 0,
-                        y: request.viewState.viewFrameHeight -
-                            (cellHeight + CGFloat(redrawEnd) * cellHeight),
-                        width: width,
-                        height: CGFloat(redrawEnd - redrawStart + 1) * cellHeight)
-                    if redrawEnd == terminal.rows - 1 {
-                        dirtyRegion = CGRect(
-                            x: 0, y: 0, width: width,
-                            height: dirtyRegion.height + dirtyRegion.origin.y)
-                    } else {
-                        let newY = max(0, dirtyRegion.origin.y - cellHeight)
-                        dirtyRegion = CGRect(
-                            x: 0, y: newY, width: width,
-                            height: dirtyRegion.maxY - newY)
-                    }
-                    region = dirtyRegion
+                    region = Self.dirtyRegion(
+                        rows: redrawStart...max(redrawStart, redrawEnd),
+                        terminalRows: terminal.rows, viewState: request.viewState)
                 }
 #else
                 region = request.viewState.viewBounds
@@ -632,8 +653,20 @@ final class TerminalRenderOwner: Sendable {
                     cursor: session.snapshot.cursor,
                     cursorRowCount: session.snapshot.rowCount,
                     scrollPosition: capturedScrollPosition)
-            } else if session.snapshot.appearanceChanged {
+            } else if session.snapshot.appearanceChanged ||
+                        session.snapshot.searchMatchChangedRows != nil {
+#if os(macOS)
+                let region: CGRect
+                if !session.snapshot.appearanceChanged, buffer.yDisp == buffer.yBase,
+                   let matchRows = session.snapshot.searchMatchChangedRows {
+                    region = Self.dirtyRegion(rows: matchRows, terminalRows: terminal.rows,
+                                              viewState: request.viewState)
+                } else {
+                    region = request.viewState.viewBounds
+                }
+#else
                 let region = request.viewState.viewBounds
+#endif
                 session.snapshot.cgRegion = region
                 session.snapshot.rangeChanged = nil
                 result = TerminalView.PreparedFrame(
@@ -660,6 +693,10 @@ final class TerminalRenderOwner: Sendable {
                     scrollPosition: capturedScrollPosition)
             }
             result.resizedTo = resizedTo.map { (cols: $0.cols, rows: $0.rows) }
+            // A small margin puts the frame after the retry time.
+            result.mainEffects.searchRetryDelay = session.snapshot.takeSearchRetryDelay().map {
+                TimeInterval($0) / 1_000_000_000 + 0.02
+            }
 #if os(macOS)
             result.scroller = scrollerState
             result.mainEffects.selection = selectionState
@@ -787,7 +824,8 @@ final class TerminalRenderOwner: Sendable {
                 session.snapshot.refresh(
                     terminal: terminal,
                     viewState: viewState,
-                    selection: SnapshotSelectionState(selection: session.selection))
+                    selection: SnapshotSelectionState(selection: session.selection),
+                    search: session.search)
             }
             body(session.snapshot.cursor, session.snapshot.rowCount)
         }
@@ -822,7 +860,8 @@ final class TerminalRenderOwner: Sendable {
                 rowRevisions: snapshot.rows.map(\.revision),
                 cols: snapshot.cols,
                 selectionActive: snapshot.style.selectionActive,
-                selectedRows: selectedRows)
+                selectedRows: selectedRows,
+                searchMatchRows: snapshot.searchMatchRows)
         }
     }
 
@@ -877,7 +916,8 @@ final class TerminalRenderOwner: Sendable {
                 session.snapshot.refresh(
                     terminal: terminal,
                     viewState: viewState,
-                    selection: SnapshotSelectionState(selection: session.selection))
+                    selection: SnapshotSelectionState(selection: session.selection),
+                    search: session.search)
             }
             prepareMetalSnapshot(renderer: renderer, snapshot: session.snapshot)
             return session.snapshot.renderContext != nil
@@ -898,7 +938,8 @@ final class TerminalRenderOwner: Sendable {
                 session.snapshot.refresh(
                     terminal: terminal,
                     viewState: viewState,
-                    selection: SnapshotSelectionState(selection: session.selection))
+                    selection: SnapshotSelectionState(selection: session.selection),
+                    search: session.search)
             }
             guard let context = session.snapshot.renderContext else { return false }
             renderer.prepareSnapshotForImmediateDraw(

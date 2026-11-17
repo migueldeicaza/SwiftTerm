@@ -241,6 +241,11 @@ struct FrameAppearance: Sendable, Equatable {
     let linkColor: FrameColor?
     /// Overrides only the underline of highlighted links.
     let linkUnderlineColor: FrameColor?
+    /// The background of the cells that "highlight all matches" paints, or
+    /// `nil` for a view that has no search.
+    var searchMatchBackgroundColor: FrameColor? = nil
+    /// The text color of those cells; `nil` keeps the cell's own color.
+    var searchMatchForegroundColor: FrameColor? = nil
 }
 
 /// Caches main-actor font copies and dynamic-color resolution for frame input.
@@ -255,6 +260,8 @@ final class FrameCaptureCache {
     private var sourceColors: [TTColor] = []
     private var sourceLinkColor: TTColor?
     private var sourceLinkUnderlineColor: TTColor?
+    private var sourceSearchMatchBackgroundColor: TTColor?
+    private var sourceSearchMatchForegroundColor: TTColor?
     private var appearanceSignature = 0
     private var cachedAppearance: FrameAppearance?
 
@@ -292,6 +299,8 @@ final class FrameCaptureCache {
         ]
         let linkColor = view.linkColor
         let linkUnderlineColor = view.linkUnderlineColor
+        let searchMatchBackgroundColor = view.searchMatchBackgroundColor
+        let searchMatchForegroundColor = view.searchMatchForegroundColor
 #if os(macOS)
         let signature = view.effectiveAppearance.name.rawValue.hashValue
 #else
@@ -302,7 +311,10 @@ final class FrameCaptureCache {
            sourceColors.count == current.count,
            zip(sourceColors, current).allSatisfy({ $0.0.isEqual($0.1) }),
            sourceLinkColor?.isEqual(linkColor) ?? (linkColor == nil),
-           sourceLinkUnderlineColor?.isEqual(linkUnderlineColor) ?? (linkUnderlineColor == nil) {
+           sourceLinkUnderlineColor?.isEqual(linkUnderlineColor) ?? (linkUnderlineColor == nil),
+           sourceSearchMatchBackgroundColor?.isEqual(searchMatchBackgroundColor) ?? false,
+           sourceSearchMatchForegroundColor?.isEqual(searchMatchForegroundColor)
+               ?? (searchMatchForegroundColor == nil) {
             return cachedAppearance
         }
 
@@ -314,7 +326,11 @@ final class FrameCaptureCache {
             caretColor: FrameColor(current[4], view: view),
             caretTextColor: FrameColor(current[5], view: view),
             linkColor: linkColor.map { FrameColor($0, view: view) },
-            linkUnderlineColor: linkUnderlineColor.map { FrameColor($0, view: view) })
+            linkUnderlineColor: linkUnderlineColor.map { FrameColor($0, view: view) },
+            searchMatchBackgroundColor: FrameColor(searchMatchBackgroundColor, view: view),
+            searchMatchForegroundColor: searchMatchForegroundColor.map { FrameColor($0, view: view) })
+        sourceSearchMatchBackgroundColor = searchMatchBackgroundColor
+        sourceSearchMatchForegroundColor = searchMatchForegroundColor
         sourceColors = current
         sourceLinkColor = linkColor
         sourceLinkUnderlineColor = linkUnderlineColor
@@ -539,6 +555,9 @@ struct FrameViewState: Sendable {
     let commandActive: Bool
     let textBlinkVisible: Bool
     let notifyUpdateChanges: Bool
+    /// The view's "highlight all matches" option. The render owner reads the
+    /// option only from here.
+    let highlightsAllSearchMatches: Bool
 
     // What SnapshotRenderContext reads, plus the geometry the frame tick uses
     // to compute its dirty region.
@@ -579,6 +598,7 @@ struct FrameViewState: Sendable {
         commandActive = view.commandActive
         textBlinkVisible = view.textBlinkVisible
         notifyUpdateChanges = view.notifyUpdateChanges
+        highlightsAllSearchMatches = view.highlightsAllSearchMatches
 
         fonts = view.frameCaptureCache.fonts(for: view)
         cellDimension = view.cellDimension
@@ -634,6 +654,9 @@ struct MainFrameEffects: Sendable {
     var scrollPosition: Double
     var blinkRows: [Int] = []
     var resizedTo: FrameTerminalSize? = nil
+    /// Not nil when the "highlight all matches" search was too slow: ask
+    /// for a frame after this time, in seconds, to search again.
+    var searchRetryDelay: TimeInterval? = nil
 #if os(macOS)
     var scroller: TerminalView.ScrollerState? = nil
     /// The selection the frame shows, so VoiceOver hears of a change to it
@@ -653,6 +676,16 @@ struct SnapshotNativeColors {
     let linkColor: TTColor?
     let linkUnderlineColor: TTColor?
     let ansiColors: [TTColor]
+    var searchMatchBackgroundColor: TTColor? = nil
+    var searchMatchForegroundColor: TTColor? = nil
+}
+
+/// The highlight that covers a cell. The selection, which holds the current
+/// search match, has priority.
+enum CellHighlight {
+    case none
+    case selection
+    case searchMatch
 }
 
 struct SnapshotRenderContext {
@@ -701,6 +734,15 @@ struct SnapshotRenderContext {
     /// default background, so the selection color arrives already composited
     /// over it; the pixels match the highlight drawn over the default background.
     let selectionFillColor: TTColor
+    /// The columns of the search matches, by screen row; see
+    /// `TerminalSnapshot.searchMatchRows`.
+    let searchMatchRows: [[Range<Int>]]
+    let searchMatchFirstRow: Int
+    /// The search match highlight as it is painted, composited in the same
+    /// way as `selectionFillColor`. `nil` paints no match.
+    let searchMatchFillColor: TTColor?
+    /// The text color of a search match; `nil` keeps the cell's own color.
+    let searchMatchForegroundColor: TTColor?
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
     let cols: Int
@@ -714,7 +756,9 @@ struct SnapshotRenderContext {
     init (viewState: FrameViewState, snapshot: TerminalSnapshot) {
         self.init(viewState: viewState, style: snapshot.style,
                   nativeColors: snapshot.nativeColors(for: viewState.appearance),
-                  cols: snapshot.cols)
+                  cols: snapshot.cols,
+                  searchMatchRows: snapshot.searchMatchRows,
+                  searchMatchFirstRow: snapshot.firstRow)
     }
 
     init (viewState: FrameViewState, style: SnapshotStyle, ansiColors: [Color],
@@ -732,12 +776,15 @@ struct SnapshotRenderContext {
                 caretTextColor: appearance.caretTextColor.nativeColor,
                 linkColor: appearance.linkColor?.nativeColor,
                 linkUnderlineColor: appearance.linkUnderlineColor?.nativeColor,
-                ansiColors: ansiColors.map(TTColor.make(color:))),
+                ansiColors: ansiColors.map(TTColor.make(color:)),
+                searchMatchBackgroundColor: appearance.searchMatchBackgroundColor?.nativeColor,
+                searchMatchForegroundColor: appearance.searchMatchForegroundColor?.nativeColor),
             cols: cols)
     }
 
     private init (viewState: FrameViewState, style: SnapshotStyle,
-                  nativeColors: SnapshotNativeColors, cols: Int) {
+                  nativeColors: SnapshotNativeColors, cols: Int,
+                  searchMatchRows: [[Range<Int>]] = [], searchMatchFirstRow: Int = 0) {
         fonts = viewState.fonts
         cellDimension = viewState.cellDimension
         viewBounds = viewState.viewBounds
@@ -771,10 +818,19 @@ struct SnapshotRenderContext {
             translucentCellBackgroundAlpha = defaultBackgroundAlpha
             selectionFillColor = compositedColor(selectedTextBackgroundColor,
                                                  over: effectiveBackgroundColor)
+            if let matchColor = nativeColors.searchMatchBackgroundColor {
+                searchMatchFillColor = compositedColor(matchColor, over: effectiveBackgroundColor)
+            } else {
+                searchMatchFillColor = nil
+            }
         } else {
             translucentCellBackgroundAlpha = nil
             selectionFillColor = selectedTextBackgroundColor
+            searchMatchFillColor = nativeColors.searchMatchBackgroundColor
         }
+        searchMatchForegroundColor = nativeColors.searchMatchForegroundColor
+        self.searchMatchRows = searchMatchFillColor == nil ? [] : searchMatchRows
+        self.searchMatchFirstRow = searchMatchFirstRow
         bidiHostPolicy = viewState.bidiHostPolicy
         glyphFallbackProvider = viewState.glyphFallbackProvider
         self.cols = cols
@@ -793,6 +849,8 @@ struct SnapshotRenderContext {
         identityHasher.combine(caretTextColor.hash)
         identityHasher.combine(linkColor?.hash)
         identityHasher.combine(linkUnderlineColor?.hash)
+        identityHasher.combine(searchMatchFillColor?.hash)
+        identityHasher.combine(searchMatchForegroundColor?.hash)
         for color in self.ansiColors {
             identityHasher.combine(color.hash)
         }
@@ -801,6 +859,29 @@ struct SnapshotRenderContext {
         identityHasher.combine(minimumContrastRatio)
         identityHasher.combine(translucentCellBackgroundAlpha)
         identity = UInt64(bitPattern: Int64(identityHasher.finalize()))
+    }
+
+    /// The colors that a highlighted cell gets in place of its own.
+    /// A nil `foreground` keeps the cell's text color.
+    @inline(__always)
+    func highlightColors (_ highlight: CellHighlight) -> (fill: TTColor, foreground: TTColor?)? {
+        switch highlight {
+        case .none:
+            return nil
+        case .selection:
+            return (selectionFillColor, selectedTextForegroundColor)
+        case .searchMatch:
+            return searchMatchFillColor.map { ($0, searchMatchForegroundColor) }
+        }
+    }
+
+    /// The search match columns of the buffer row `absoluteRow`, in ascending
+    /// order. Empty for a row with no match.
+    @inline(__always)
+    func searchMatchColumns (forRow absoluteRow: Int) -> [Range<Int>] {
+        let index = absoluteRow - searchMatchFirstRow
+        guard index >= 0, index < searchMatchRows.count else { return [] }
+        return searchMatchRows[index]
     }
 
     /// ``CellGeometry/baselineOffset(normalFont:cellHeight:)`` for the fonts and
@@ -4213,6 +4294,12 @@ extension TerminalView {
 #endif
         updateTextBlinkLifecycle(blinkRows: effects.blinkRows)
 
+        if let delay = effects.searchRetryDelay {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.frameDriver?.markDirty()
+            }
+        }
+
         if let changed = effects.rangeChanged {
             terminalDelegate?.rangeChanged(source: self, startY: changed.start,
                                            endY: changed.end)
@@ -4877,6 +4964,8 @@ extension TerminalView {
                 cellWidth: cellPixels.width,
                 cellHeight: cellPixels.height)
             terminal.softReset()
+            // Search positions and highlight ranges are for the old layout.
+            search?.invalidate()
         }
         terminalDelegate?.sizeChanged(source: self, newCols: cols, newRows: rows)
         updateScroller()

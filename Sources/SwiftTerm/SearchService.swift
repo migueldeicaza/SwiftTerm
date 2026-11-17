@@ -8,6 +8,14 @@
 #if !SWIFTTERM_EMBEDDED
 import Foundation
 
+/// Who made a "highlight all matches" pattern active.
+enum SearchHighlightOwner {
+    /// The host application, through the public find functions.
+    case host
+    /// The view's built-in find bar.
+    case findBar
+}
+
 /// Search state is guarded by `terminal.terminalLock`; callers must hold it.
 final class SearchService {
     private enum Constants {
@@ -22,14 +30,57 @@ final class SearchService {
 
     private(set) var lastResult: SearchResult?
     /// Goes up whenever the buffer's content or size may have changed, so a
-    /// caller can tell that a count it took earlier is out of date.
+    /// caller can tell that a count it took earlier is out of date. The
+    /// frame path compares it when a visible match can depend on rows that
+    /// are not visible.
     private(set) var generation = 0
     /// The matches of the last count, kept until the content changes: going
     /// from one match to the next then costs no further pass over the buffer.
     private var countedMatches: (term: String, options: SearchOptions, limit: Int, results: [SearchResult])?
+    /// The highlight pattern of each owner. A find sets only its owner's
+    /// pattern, so the find bar does not remove the highlights of the host.
+    private var highlightPatterns: [SearchHighlightOwner: (term: String, options: SearchOptions)] = [:]
 #if DEBUG
     var testingSearchRowVisits: Int { engine.testingRowVisits }
+    var testingVisibleRowsTranslated: Int { engine.testingVisibleRowsTranslated }
 #endif
+
+    /// The pattern that "highlight all matches" paints: the find bar's
+    /// pattern while it has one, or else the host's. `invalidate()` keeps
+    /// it. `reset()` and `clearHighlightPattern()` remove it.
+    var activePattern: (term: String, options: SearchOptions)? {
+        highlightPatterns[.findBar] ?? highlightPatterns[.host]
+    }
+
+    /// Removes the highlight pattern of `owner`, or of all owners for nil.
+    /// The find state stays, so the next `findNext` continues from the
+    /// current match.
+    func clearHighlightPattern (owner: SearchHighlightOwner? = nil) {
+        if let owner {
+            highlightPatterns[owner] = nil
+        } else {
+            highlightPatterns.removeAll()
+        }
+    }
+
+    /// See `SearchEngine.findTimeLimit`.
+    var findTimeLimit: UInt64 {
+        get { engine.findTimeLimit }
+        set { engine.findTimeLimit = newValue }
+    }
+
+    /// See `SearchEngine.visibleMatchTimeLimit`.
+    var visibleMatchTimeLimit: UInt64 {
+        get { engine.visibleMatchTimeLimit }
+        set { engine.visibleMatchTimeLimit = newValue }
+    }
+
+    /// The match columns of the rows `firstRow ..< firstRow + rowCount`, or
+    /// nil for a search that used too much time. See
+    /// `SearchEngine.visibleMatches` for the limits of this search.
+    func visibleMatches (term: String, options: SearchOptions, firstRow: Int, rowCount: Int) -> [[Range<Int>]]? {
+        engine.visibleMatches(term: term, searchOptions: options, firstRow: firstRow, rowCount: rowCount)
+    }
 
     init (terminal: Terminal) {
         self.terminal = terminal
@@ -51,7 +102,10 @@ final class SearchService {
         lastSelection = nil
     }
 
-    func reset () {
+    /// - Parameter keepingHostHighlights: true removes only the find bar's
+    ///   highlight pattern.
+    func reset (keepingHostHighlights: Bool = false) {
+        clearHighlightPattern(owner: keepingHostHighlights ? .findBar : nil)
         lineCache.invalidate()
         generation &+= 1
         countedMatches = nil
@@ -64,15 +118,24 @@ final class SearchService {
         lastSelection = selection
     }
 
+    /// - Parameter highlights: the owner whose highlight pattern becomes
+    ///   this term. Nil changes no highlight pattern.
     @discardableResult
-    func findNext (term: String, options: SearchOptions = SearchOptions()) -> SearchResult? {
+    func findNext (term: String, options: SearchOptions = SearchOptions(),
+                   highlights: SearchHighlightOwner? = .host) -> SearchResult? {
         guard state.isValidSearchTerm(term) else {
             lastResult = nil
             lastSelection = nil
             state.reset()
+            if let highlights {
+                highlightPatterns[highlights] = nil
+            }
             return nil
         }
 
+        if let highlights {
+            highlightPatterns[highlights] = (term, options)
+        }
         state.lastSearchOptions = options
         let result = engine.findNextWithSelection(term: term, searchOptions: options, cachedSearchTerm: state.cachedSearchTerm, previousSelection: lastSelection)
         state.cachedSearchTerm = term
@@ -83,14 +146,21 @@ final class SearchService {
     }
 
     @discardableResult
-    func findPrevious (term: String, options: SearchOptions = SearchOptions()) -> SearchResult? {
+    func findPrevious (term: String, options: SearchOptions = SearchOptions(),
+                       highlights: SearchHighlightOwner? = .host) -> SearchResult? {
         guard state.isValidSearchTerm(term) else {
             lastResult = nil
             lastSelection = nil
             state.reset()
+            if let highlights {
+                highlightPatterns[highlights] = nil
+            }
             return nil
         }
 
+        if let highlights {
+            highlightPatterns[highlights] = (term, options)
+        }
         state.lastSearchOptions = options
         let result = engine.findPreviousWithSelection(term: term, searchOptions: options, cachedSearchTerm: state.cachedSearchTerm, previousSelection: lastSelection)
         state.cachedSearchTerm = term

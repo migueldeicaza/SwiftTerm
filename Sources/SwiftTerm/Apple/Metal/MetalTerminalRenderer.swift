@@ -493,11 +493,14 @@ struct RowCacheInputs {
     var selection: Range<Int>?
     /// The hovered link's columns, in the hover highlight modes.
     var link: Range<Int>?
+    /// The columns of the search matches, for "highlight all matches".
+    var searchMatches: [Range<Int>]
     var images: [SnapshotImage]
     var hasBidiLayout: Bool
 
     init(row: TerminalSnapshot.Row, absoluteRow: Int, context: SnapshotRenderContext) {
         selection = context.selection.columns(forRow: absoluteRow)
+        searchMatches = context.searchMatchColumns(forRow: absoluteRow)
         switch context.linkHighlightMode {
         case .always, .alwaysWithModifier:
             // Decided by the cells' own link payloads and the modifier, which
@@ -516,6 +519,7 @@ struct RowCacheInputs {
 
     func matches(_ other: RowCacheInputs) -> Bool {
         selection == other.selection && link == other.link &&
+            searchMatches == other.searchMatches &&
             hasBidiLayout == other.hasBidiLayout &&
             images.count == other.images.count &&
             zip(images, other.images).allSatisfy { $0.hasSameValue(as: $1) }

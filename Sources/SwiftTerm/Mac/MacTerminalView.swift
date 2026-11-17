@@ -1588,6 +1588,45 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    /// Paints all matches of the current search pattern at the same time.
+    ///
+    /// The pattern is the term and the options of the last
+    /// ``findNext(_:options:scrollToResult:)`` or
+    /// ``findPrevious(_:options:scrollToResult:)``. The matches on the visible
+    /// rows are painted with ``searchMatchBackgroundColor``. The current match
+    /// stays as the selection and keeps the selection colors.
+    /// ``clearSearchHighlights()`` and ``clearSearch()`` remove the highlights.
+    /// The default is `false`.
+    ///
+    /// The highlights are found again for the visible rows when the content
+    /// changes. For a line that wraps across more rows than the view shows, a
+    /// match far from the visible rows can be different from the match that
+    /// `findNext` selects.
+    public var highlightsAllSearchMatches: Bool = false {
+        didSet {
+            if highlightsAllSearchMatches != oldValue {
+                frameDriver?.markDirty()
+            }
+        }
+    }
+
+    /// The background color of the matches that ``highlightsAllSearchMatches`` paints.
+    public var searchMatchBackgroundColor: NSColor = NSColor(srgbRed: 1, green: 0.84, blue: 0.2, alpha: 1) {
+        didSet {
+            withTerminal { $0.updateFullScreen() }
+            frameDriver?.markDirty()
+        }
+    }
+
+    /// The text color of the matches that ``highlightsAllSearchMatches`` paints,
+    /// or `nil` to keep the color of each cell. The default is black.
+    public var searchMatchForegroundColor: NSColor? = .black {
+        didSet {
+            withTerminal { $0.updateFullScreen() }
+            frameDriver?.markDirty()
+        }
+    }
+
     func backingScaleFactor () -> CGFloat
     {
         window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
@@ -2010,7 +2049,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     /// Reads the keys held now unless given, since an event's flags can miss a
     /// Shift held since before the cursor update AppKit sends after a rect change.
-    private func setPointer(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+    private func setPointer(modifiers: NSEvent.ModifierFlags? = nil) {
+        let modifiers = modifiers ?? heldModifierFlags()
         // AppKit calls cursorUpdate on every mouse move over the view and on every display
         // cycle that re-evaluates cursor rects. With a customized pointer (size or
         // colour in Accessibility settings) each set() re-renders the cursor image,
@@ -2024,6 +2064,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// The cursor the rect was last built with, so that a change of the rule
     /// makes AppKit build the rects again only when it changes the rect.
     private var cursorRectPointer: NSCursor?
+
+    /// The modifier keys that are held now. Tests replace it: without that, a
+    /// Shift key that the user holds while the tests run changes the result.
+    var heldModifierFlags: () -> NSEvent.ModifierFlags = { NSEvent.modifierFlags }
 
     /// The pointer's location in `window` when the application is active and
     /// `window` is the topmost window under it, `nil` otherwise, also under a
@@ -2095,7 +2139,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     /// Applies a change of the pointer's rule at once when the pointer is over
     /// the terminal, since AppKit only reads the cursor rects again on the next move.
-    func refreshPointer(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+    func refreshPointer(modifiers: NSEvent.ModifierFlags? = nil) {
         guard let window else { return }
         if pointerCursor(modifiers: []) != cursorRectPointer {
             window.invalidateCursorRects(for: self)
@@ -2854,8 +2898,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         cancelFindCount()
         let bar = visibleFindBar
         let wantsCount = bar?.showsMatchCount == true
+        // With no find bar on screen, there is no control to remove the
+        // highlights. A find then changes no highlight pattern: the host's
+        // highlights stay, with the host's term.
         let outcome = find(term, options: options, forward: forward,
-                           countLimit: wantsCount && !deferCount ? TerminalView.findBarMatchLimit : nil)
+                           countLimit: wantsCount && !deferCount ? TerminalView.findBarMatchLimit : nil,
+                           highlights: bar != nil ? .findBar : nil)
         guard let bar else {
             return
         }
@@ -3035,7 +3083,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let bar = ensureFindBar()
         bar.isHidden = false
         bar.searchText = term
-        clearSearch()
+        clearSearch(keepingHostHighlights: true)
         handleFindBarSearchChanged(bar)
         if hadFocus {
             bar.focusSearchField()
@@ -3057,6 +3105,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private func hideFindBar() {
         cancelFindCount()
         findBar?.isHidden = true
+        // The highlights that the bar made active go away with it. The
+        // selection stays, and so do highlights from the host's own search.
+        clearSearchHighlights(owner: .findBar)
         window?.makeFirstResponder(self)
     }
 
@@ -3064,7 +3115,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let term = bar.searchText
         if term.isEmpty {
             cancelFindCount()
-            clearSearch()
+            clearSearch(keepingHostHighlights: true)
             bar.setFindStatus(.none)
             return
         }
