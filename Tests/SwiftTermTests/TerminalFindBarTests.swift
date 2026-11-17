@@ -149,6 +149,13 @@ struct TerminalFindBarTests {
         try #require(wait { bar.statuses.last == .matches(current: 1, total: 3, capped: false) })
         view.feed(text: "\r\nneedle four")
         try #require(wait { bar.statuses.last == .matches(current: 1, total: 4, capped: false) })
+
+        // A query without matches is looked for again in later output. No
+        // match is selected then, so there is no current one.
+        bar.type("thimble")
+        #expect(bar.statuses.last == .notFound)
+        view.feed(text: "\r\nthimble")
+        try #require(wait { bar.statuses.last == .matches(current: 0, total: 1, capped: false) })
     }
 
     /// A new provider replaces a showing bar: the old view goes back to the
@@ -210,6 +217,22 @@ struct TerminalFindBarTests {
         view.layoutSubtreeIfNeeded()
         #expect(bar.frame.size == NSSize(width: 300, height: 30))
         #expect(bar.frame.maxX == view.bounds.maxX - 8)
+
+        // A frame does not compete with sizing the bar has of its own.
+        let hugging = FakeFindBar(frame: NSRect(x: 0, y: 0, width: 300, height: 30))
+        let label = NSTextField(labelWithString: "Find")
+        label.translatesAutoresizingMaskIntoConstraints = false
+        hugging.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: hugging.leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: hugging.trailingAnchor),
+            label.topAnchor.constraint(equalTo: hugging.topAnchor),
+            label.bottomAnchor.constraint(equalTo: hugging.bottomAnchor)
+        ])
+        view.findBarProvider = { hugging }
+        view.layoutSubtreeIfNeeded()
+        #expect(hugging.frame.size == label.intrinsicContentSize)
+        #expect(!hugging.hasAmbiguousLayout)
 
         let wide = FakeFindBar()
         wide.translatesAutoresizingMaskIntoConstraints = false

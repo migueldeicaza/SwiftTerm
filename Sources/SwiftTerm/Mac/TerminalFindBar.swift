@@ -20,8 +20,10 @@ public enum TerminalFindStatus: Equatable {
     case found
     /// The query matches. `current` is the 1-based position of the selected
     /// match and `total` the number of matches. When `capped` is true the
-    /// count stopped at `total` and there are more; `current` is 0 when the
-    /// selected match is one of those.
+    /// count stopped at `total` and there are more. `current` is 0 when the
+    /// selected match is one of those, and when no match is selected: after
+    /// the view was resized, or when output brought the first matches of a
+    /// query that had none. Show the total alone then.
     case matches(current: Int, total: Int, capped: Bool)
     /// The query does not match anything.
     case notFound

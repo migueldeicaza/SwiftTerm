@@ -2861,6 +2861,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         guard outcome.found else {
             bar.setFindStatus(findFailureStatus(term, options: options))
+            if wantsCount {
+                // Later output may contain the term.
+                scheduleFindCount(after: TerminalView.findCountRefreshInterval)
+            }
             return
         }
         if let count = outcome.count {
@@ -2954,8 +2958,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return findBar
         }
         let bar: any TerminalFindBar = findBarProvider?() ?? TerminalFindBarView()
-        // A bar that only has a frame keeps its size; constraints of its own win.
+        // A bar that only has a frame keeps its size. The constraints for that
+        // are the weakest there are, below any content hugging, so whatever
+        // sizing the bar has of its own wins.
         let size = bar.frame.size
+        let frameSizePriority = NSLayoutConstraint.Priority(1)
         findBarTranslatedAutoresizingMask = bar.translatesAutoresizingMaskIntoConstraints
         bar.translatesAutoresizingMaskIntoConstraints = false
         bar.isHidden = true
@@ -2973,12 +2980,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         ]
         if size.width > 0 {
             let width = bar.widthAnchor.constraint(equalToConstant: size.width)
-            width.priority = .defaultLow
+            width.priority = frameSizePriority
             constraints.append(width)
         }
         if size.height > 0 {
             let height = bar.heightAnchor.constraint(equalToConstant: size.height)
-            height.priority = .defaultLow
+            height.priority = frameSizePriority
             constraints.append(height)
         }
         NSLayoutConstraint.activate(constraints)
