@@ -2409,7 +2409,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     ///
     /// TUIs that hide the hardware cursor and draw their own (Claude Code, for
     /// one) leave a single reverse-video cell under the caret. That cell is the
-    /// cursor, not the row, so the overlay reads the neighboring cell instead.
+    /// cursor, not the row. The TUI draws it by reversing the row's own colors,
+    /// so the overlay reads the cell's colors without the reversal.
     private func markedTextColorsAtCaret() -> (foreground: NSColor, background: NSColor) {
         withTerminal { terminal in
             let buffer = terminal.displayBuffer
@@ -2419,15 +2420,14 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             }
             let line = buffer.lines[row]
             let cell = line[buffer.x]
-            var attribute = cell.attribute
+            let attribute = cell.attribute
             // A wide character's second column carries its attributes, so look past it.
             let next = buffer.x + max(1, Int(cell.width))
             let neighbor = next < buffer.cols ? next : buffer.x - 1
-            if attribute.style.contains(.inverse), neighbor >= 0, !line[neighbor].attribute.style.contains(.inverse) {
-                attribute = line[neighbor].attribute
-            }
+            let isDrawnCursor = attribute.style.contains(.inverse)
+                && neighbor >= 0 && !line[neighbor].attribute.style.contains(.inverse)
             let isBold = attribute.style.contains(.bold)
-            guard attribute.style.contains(.inverse) else {
+            guard attribute.style.contains(.inverse), !isDrawnCursor else {
                 return (effectiveNativeForegroundColor,
                         mapColor(color: attribute.bg, isFg: false, isBold: false, useBrightColors: useBrightColors))
             }

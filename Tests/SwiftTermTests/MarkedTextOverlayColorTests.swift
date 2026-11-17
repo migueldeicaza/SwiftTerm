@@ -124,6 +124,17 @@ final class MarkedTextOverlayColorTests {
         #expect(rgb(overlay.overlayBackgroundColor) == [64, 64, 64])
     }
 
+    /// A TUI may color only the cursor cell and reset right after it, so the
+    /// cells after the cursor have the default background.
+    @Test func testOverlayKeepsTheBackgroundUnderADrawnCursorBeforeDefaultCells() throws {
+        let view = makeView()
+        view.feed(text: "\u{1b}[48;2;64;64;64m> \u{1b}[7m \u{1b}[0m          \r\u{1b}[2C")
+        mark(view, "ce shi")
+        let overlay = try #require(overlay(in: view))
+        #expect(rgb(overlay.overlayBackgroundColor) == [64, 64, 64])
+        #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeForegroundColor))
+    }
+
     /// Bold brightens a cell's foreground but never its background.
     @Test func testOverlayIgnoresBoldOnAnAnsiBackground() throws {
         let view = makeView()
