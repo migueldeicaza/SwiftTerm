@@ -317,6 +317,37 @@ final class BidiRenderTests {
         #expect(delegate.sent == EscapeSequences.moveLeftNormal)
     }
 
+    @Test func optionArrowsFollowTheBidiSwap() throws {
+        let view = makeView(feed: "אב")
+        let delegate = CapturingDelegate()
+        view.terminalDelegate = delegate
+        let left = try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero,
+            modifierFlags: [.option, .function, .numericPad], timestamp: 0,
+            windowNumber: 0, context: nil, characters: "\u{F702}",
+            charactersIgnoringModifiers: "\u{F702}", isARepeat: false, keyCode: 123))
+        let right = try #require(NSEvent.keyEvent(
+            with: .keyDown, location: .zero,
+            modifierFlags: [.option, .function, .numericPad], timestamp: 0,
+            windowNumber: 0, context: nil, characters: "\u{F703}",
+            charactersIgnoringModifiers: "\u{F703}", isARepeat: false, keyCode: 124))
+
+        for optionAsMeta in [false, true] {
+            view.optionAsMetaKey = optionAsMeta
+            delegate.sent.removeAll()
+            view.keyDown(with: left)
+            view.keyDown(with: right)
+            #expect(delegate.sent == EscapeSequences.emacsBack + EscapeSequences.emacsForward)
+
+            view.withTerminal { $0.bidiArrowKeySwap = true }
+            delegate.sent.removeAll()
+            view.keyDown(with: left)
+            view.keyDown(with: right)
+            #expect(delegate.sent == EscapeSequences.emacsForward + EscapeSequences.emacsBack)
+            view.withTerminal { $0.bidiArrowKeySwap = false }
+        }
+    }
+
     @Test func forcedDirectionsRenderAllRows() throws {
         let prefixes = ["", "\u{1b}[?2501l\u{1b}[1 k", "\u{1b}[?2501l\u{1b}[2 k"]
         for prefix in prefixes {

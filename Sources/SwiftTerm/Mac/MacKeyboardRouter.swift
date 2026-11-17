@@ -332,10 +332,12 @@ public final class TerminalKeyboardRouter {
            eventFlags.intersection([.shift, .control, .option, .command]) == .option {
             switch event.keyCode {
             case UInt16(kVK_LeftArrow):
-                host.keyboardRouter(send: EscapeSequences.emacsBack)
+                host.keyboardRouter(send: host.swapsHorizontalArrowKeys
+                    ? EscapeSequences.emacsForward : EscapeSequences.emacsBack)
                 return
             case UInt16(kVK_RightArrow):
-                host.keyboardRouter(send: EscapeSequences.emacsForward)
+                host.keyboardRouter(send: host.swapsHorizontalArrowKeys
+                    ? EscapeSequences.emacsBack : EscapeSequences.emacsForward)
                 return
             case UInt16(kVK_UpArrow):
                 sendCursorKey(.up)
