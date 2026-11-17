@@ -14,18 +14,13 @@ import Testing
 @testable import SwiftTerm
 
 @MainActor
-private final class ClipboardHost: LocalProcessTerminalViewDelegate {
+private final class ClipboardHost: LocalProcessHostStubs {
     let capabilities: KittyClipboardCapabilities
     var permissionRequests = 0
 
     init(capabilities: KittyClipboardCapabilities) {
         self.capabilities = capabilities
     }
-
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-    func processTerminated(source: TerminalView, exitCode: Int32?) {}
 
     func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
         capabilities
@@ -38,15 +33,6 @@ private final class ClipboardHost: LocalProcessTerminalViewDelegate {
         permissionRequests += 1
         return .allow(rememberPassword: false)
     }
-}
-
-/// A host that only implements the four process hooks gets the defaults.
-@MainActor
-private final class MinimalHost: LocalProcessTerminalViewDelegate {
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-    func processTerminated(source: TerminalView, exitCode: Int32?) {}
 }
 
 /// Captures what the core sends to the process instead of writing to a PTY.
@@ -112,7 +98,7 @@ private final class CapturingLocalProcessTerminalView: LocalProcessTerminalView 
 
     @MainActor @Test func defaultHostDeniesEverything() async {
         let view = makeView()
-        let host = MinimalHost()
+        let host = MinimalLocalProcessHost()
         view.processDelegate = host
         #expect(view.kittyClipboardCapabilities(source: view.terminal) == [])
         #expect(await decrqm5522(view) == "\(esc)[?5522;0$y")

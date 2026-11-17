@@ -30,13 +30,9 @@ private final class SelectionDelegate: TerminalViewDelegate {
     }
 }
 
-private final class ProcessDelegate: LocalProcessTerminalViewDelegate {
+private final class ProcessDelegate: LocalProcessHostStubs {
     var finished: [String?] = []
 
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
-    func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
-    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-    func processTerminated(source: TerminalView, exitCode: Int32?) {}
     func selectionFinished(source: TerminalView) {
         finished.append(source.getSelection())
     }

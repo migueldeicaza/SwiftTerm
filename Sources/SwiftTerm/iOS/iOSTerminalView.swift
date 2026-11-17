@@ -3720,8 +3720,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
-    /// Controls how this view responds to the bell character; `.sound`
-    /// preserves the historical behavior of invoking the delegate's `bell`
+    /// Controls how this view responds to the bell character. The default
+    /// is `.sound`.
+    ///
+    /// For each style but `.none`, the view calls
+    /// ``TerminalViewDelegate/bell(source:style:)``.
     public var bellStyle: BellStyle = .sound {
         didSet {
             bellPolicy.setStyle(bellStyle)
@@ -3759,15 +3762,27 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     private func deliverBell () {
+        // The policy drops each bell when the style is `.none`.
         guard bellPolicy.shouldDeliver() else { return }
-        switch bellStyle {
-        case .none: break
-        case .sound: terminalDelegate?.bell(source: self)
-        case .visual: flashVisualBell()
-        case .soundAndVisual:
-            terminalDelegate?.bell(source: self)
+        let style = bellStyle
+        // The delegate comes first and the flash second.
+        terminalDelegate?.bell(source: self, style: style)
+        if style.flashes {
             flashVisualBell()
         }
+    }
+
+    /// Plays the default bell. On iOS, it gives haptic feedback. On visionOS,
+    /// it does nothing.
+    ///
+    /// The default implementation of ``TerminalViewDelegate/bell(source:)``
+    /// calls this method. A delegate that gets a bell and wants the default
+    /// bell also calls it.
+    public func playDefaultBell () {
+        #if os(iOS)
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.warning)
+        #endif
     }
 
     /// Briefly flashes the view with the foreground color, the "visual bell"
@@ -4005,10 +4020,7 @@ extension TerminalViewDelegate {
 
     public func bell (source: TerminalView)
     {
-        #if os(iOS)
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(.warning)
-        #endif
+        source.playDefaultBell()
     }
     
     public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {

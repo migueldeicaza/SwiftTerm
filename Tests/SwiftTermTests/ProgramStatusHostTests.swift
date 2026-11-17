@@ -10,6 +10,8 @@ struct ProgramStatusHostTests {
         var snapshots: [[TerminalProgramStatus]] = []
         var lockHeldDuringCallback = false
         var recordsAtExit: [TerminalProgramStatus] = []
+        // This host implements a required method, so it does not use
+        // LocalProcessHostStubs. The compiler then finds a signature error.
         func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
         func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
