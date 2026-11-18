@@ -217,6 +217,15 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
         terminal.metalBufferingMode =
             ProcessInfo.processInfo.environment["SWIFTTERM_BUFFERING"] == "perRowPersistent"
             ? .perRowPersistent : .perFrameAggregated
+        // For measurement: SWIFTTERM_HIGHLIGHT=<term> starts with the highlight
+        // of all search matches on and <term> as the pattern.
+        // SWIFTTERM_HIGHLIGHT_REGEX=1 makes the term a regex.
+        if let term = ProcessInfo.processInfo.environment["SWIFTTERM_HIGHLIGHT"], !term.isEmpty {
+            let regex = ProcessInfo.processInfo.environment["SWIFTTERM_HIGHLIGHT_REGEX"] == "1"
+            terminal.highlightsAllSearchMatches = true
+            _ = terminal.findNext(term, options: SearchOptions(caseSensitive: true, regex: regex),
+                                  scrollToResult: false)
+        }
         // Metal is on by default so ordinary use exercises the render loop
         // (io-gaps.md WO-F5). Baselines still need both paths — G1's
         // before-picture is the Core Graphics one — so the switch is
@@ -592,6 +601,12 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
     {
         terminal.optionAsMetaKey.toggle ()
     }
+
+    @objc @IBAction
+    func toggleHighlightAllMatches (_ source: AnyObject)
+    {
+        terminal.highlightsAllSearchMatches.toggle ()
+    }
     
     @objc @IBAction
     func biggerFont (_ source: AnyObject)
@@ -687,6 +702,11 @@ class ViewController: NSViewController, @MainActor LocalProcessTerminalViewDeleg
         if item.action == #selector(toggleOptionAsMetaKey(_:)) {
             if let m = item as? NSMenuItem {
                 m.state = terminal.optionAsMetaKey ? NSControl.StateValue.on : NSControl.StateValue.off
+            }
+        }
+        if item.action == #selector(toggleHighlightAllMatches(_:)) {
+            if let m = item as? NSMenuItem {
+                m.state = terminal.highlightsAllSearchMatches ? .on : .off
             }
         }
         if item.action == #selector(toggleMetalRenderer(_:)) {

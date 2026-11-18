@@ -1982,6 +1982,45 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             frameDriver.markDirty()
         }
     }
+
+    /// Paints all matches of the current search pattern at the same time.
+    ///
+    /// The pattern is the term and the options of the last
+    /// ``findNext(_:options:scrollToResult:)`` or
+    /// ``findPrevious(_:options:scrollToResult:)``. The matches on the visible
+    /// rows are painted with ``searchMatchBackgroundColor``. The current match
+    /// stays as the selection and keeps the selection colors.
+    /// ``clearSearchHighlights()`` and ``clearSearch()`` remove the highlights.
+    /// The default is `false`.
+    ///
+    /// The highlights are found again for the visible rows when the content
+    /// changes. For a line that wraps across more rows than the view shows, a
+    /// match far from the visible rows can be different from the match that
+    /// `findNext` selects.
+    public var highlightsAllSearchMatches: Bool = false {
+        didSet {
+            if highlightsAllSearchMatches != oldValue {
+                frameDriver?.markDirty()
+            }
+        }
+    }
+
+    /// The background color of the matches that ``highlightsAllSearchMatches`` paints.
+    public var searchMatchBackgroundColor: UIColor = UIColor(red: 1, green: 0.84, blue: 0.2, alpha: 1) {
+        didSet {
+            withTerminal { $0.updateFullScreen() }
+            frameDriver?.markDirty()
+        }
+    }
+
+    /// The text color of the matches that ``highlightsAllSearchMatches`` paints,
+    /// or `nil` to keep the color of each cell. The default is black.
+    public var searchMatchForegroundColor: UIColor? = .black {
+        didSet {
+            withTerminal { $0.updateFullScreen() }
+            frameDriver?.markDirty()
+        }
+    }
     
     var _selectionHandleColor: UIColor = UIColor.systemBlue
     /// The color used to render the selection handles

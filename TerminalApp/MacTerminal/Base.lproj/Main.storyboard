@@ -226,6 +226,13 @@
                                                             <action selector="centerSelectionInVisibleArea:" target="Ady-hI-5gd" id="IOG-6D-g5B"/>
                                                         </connections>
                                                     </menuItem>
+                                                    <menuItem isSeparatorItem="YES" id="hAm-s0-SMa"/>
+                                                    <menuItem title="Highlight All Matches" id="hAm-s1-SMa">
+                                                        <modifierMask key="keyEquivalentModifierMask"/>
+                                                        <connections>
+                                                            <action selector="toggleHighlightAllMatches:" target="Ady-hI-5gd" id="hAm-s2-SMa"/>
+                                                        </connections>
+                                                    </menuItem>
                                                 </items>
                                             </menu>
                                         </menuItem>
