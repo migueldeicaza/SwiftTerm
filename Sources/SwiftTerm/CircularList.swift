@@ -449,10 +449,10 @@ internal final class CircularBufferLineList {
     /// retain that a load of the stored `owner` property needs.
     @inline(__always)
     func recycle(owner: borrowing Buffer, clearCell: PackedCell, isWrapped: Bool,
-                 bidiState: BidiPresentationState)
+                 screenEdge: Bool = false, bidiState: BidiPresentationState)
     {
         let hadImages = recycleOldestLine(clearCell: clearCell, isWrapped: isWrapped,
-                                          bidiState: bidiState)
+                                          screenEdge: screenEdge, bidiState: bidiState)
         if isLive { owner.lineWillRecycle(hadImages: hadImages) }
     }
 
@@ -460,6 +460,7 @@ internal final class CircularBufferLineList {
     /// row. Returns `true` when that row had images.
     @inline(__always)
     private func recycleOldestLine(clearCell: PackedCell, isWrapped: Bool,
+                                   screenEdge: Bool = false,
                                    bidiState: BidiPresentationState) -> Bool
     {
         assert(startIndex < capacity)
@@ -473,7 +474,8 @@ internal final class CircularBufferLineList {
         // The line object is being destroyed for reuse. Clear its cells and
         // metadata with one generation change.
         return Self.borrowSlot(&storage[index]) { line in
-            line.recycle(with: clearCell, isWrapped: isWrapped, bidiState: bidiState)
+            line.recycle(with: clearCell, isWrapped: isWrapped, screenEdge: screenEdge,
+                         bidiState: bidiState)
         }
     }
 
@@ -610,11 +612,13 @@ internal final class CircularBufferLineList {
     @inline(__always)
     func shiftUpAndRecycle(owner: borrowing Buffer, top: Int, bottom: Int,
                            clearCell: PackedCell, isWrapped: Bool,
+                           screenEdge: Bool = false,
                            bidiState: BidiPresentationState) -> Bool
     {
         guard let hadImages = shiftUpAndRecycleLines(top: top, bottom: bottom,
                                                      clearCell: clearCell,
                                                      isWrapped: isWrapped,
+                                                     screenEdge: screenEdge,
                                                      bidiState: bidiState) else {
             return false
         }
@@ -626,6 +630,7 @@ internal final class CircularBufferLineList {
     /// is not valid.
     private func shiftUpAndRecycleLines(top: Int, bottom: Int, clearCell: PackedCell,
                                         isWrapped: Bool,
+                                        screenEdge: Bool = false,
                                         bidiState: BidiPresentationState) -> Bool?
     {
         func dumpState (_ message: String) -> Bool? {
@@ -700,13 +705,15 @@ internal final class CircularBufferLineList {
         // the line.
         if lines[bottomSlot] != nil {
             return Self.borrowSlot(&lines[bottomSlot]) { line in
-                line.recycle(with: clearCell, isWrapped: isWrapped, bidiState: bidiState)
+                line.recycle(with: clearCell, isWrapped: isWrapped, screenEdge: screenEdge,
+                             bidiState: bidiState)
             }
         }
 
         // The recycled row was never created. `withLine` creates it.
         return withLine(bottom) { line in
-            line.recycle(with: clearCell, isWrapped: isWrapped, bidiState: bidiState)
+            line.recycle(with: clearCell, isWrapped: isWrapped, screenEdge: screenEdge,
+                         bidiState: bidiState)
         }
     }
 

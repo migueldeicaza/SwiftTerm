@@ -2301,6 +2301,7 @@ open class Terminal {
             if x + 1 <= right && x + 1 < cols {
                 let line = buffer.lines[lineIndex]
                 if insertMode {
+                    buffer.resetScreenEdgeWrap(after: lineIndex)
                     line.insertPackedCells(
                         pos: x + 1, n: 1, rightMargin: right,
                         fill: cell.packed.demotedToNarrowBlank())
@@ -4480,6 +4481,7 @@ open class Terminal {
         }
         let buffer = self.buffer
         buffer.pendingWrap = false
+        buffer.resetScreenEdgeWrapAfterCursorRow()
         
         buffer.lines[buffer.y + buffer.yBase].insertPackedCells(
             pos: buffer.x, n: pars.count > 0 ? max(pars[0], 1) : 1,
@@ -4943,6 +4945,13 @@ open class Terminal {
                                 fill: currentEraseBlankCell)
         if clearWrap {
             line.isWrapped = false
+        }
+        // As Ghostty's `cursorResetWrap` for EL: text that ends in erased
+        // cells does not continue on the next row. The mark of this row
+        // stays: zsh and less send CR and EL on a continuation row before
+        // they write its text.
+        if end >= cols {
+            buffer.resetScreenEdgeWrap(after: buffer.yBase + y)
         }
         if clearRenderMode {
             line.renderMode = .single
@@ -7636,6 +7645,7 @@ open class Terminal {
         let p = max (pars.count == 0 ? 1 : pars [0], 1)
         // As xterm (ClearRight) and Ghostty.
         buffer.pendingWrap = false
+        buffer.resetScreenEdgeWrapAfterCursorRow()
 
         // ECH keeps protected cells only for ISO protection.
         if characterProtectionMode == .iso {
@@ -7827,6 +7837,7 @@ open class Terminal {
                 p = buffer.marginRight - buffer.x + 1
             }
         }
+        buffer.resetScreenEdgeWrapAfterCursorRow()
         buffer.lines[buffer.y + buffer.yBase].deletePackedCells(
             pos: buffer.x, n: p,
             rightMargin: marginMode ? buffer.marginRight : cols - 1,
@@ -8609,16 +8620,18 @@ open class Terminal {
 
     /// Scrolls the active buffer after a terminal operation.
     /// View clients use the public view scrolling API.
-    final func scroll (isWrapped: Bool = false)
+    /// `screenEdge` is true when a full-width automatic wrap causes the
+    /// scroll. The new row then has the screen-edge wrap mark.
+    final func scroll (isWrapped: Bool = false, screenEdge: Bool = false)
     {
         // Start the borrow from storage. A computed getter would return an
         // owned reference before the borrowed helper receives it.
-        scroll(buffer: _buffer, isWrapped: isWrapped)
+        scroll(buffer: _buffer, isWrapped: isWrapped, screenEdge: screenEdge)
     }
 
-    private func scroll (buffer: borrowing Buffer, isWrapped: Bool)
+    private func scroll (buffer: borrowing Buffer, isWrapped: Bool, screenEdge: Bool = false)
     {
-        scroll(buffer: buffer, lines: buffer.lines, isWrapped: isWrapped)
+        scroll(buffer: buffer, lines: buffer.lines, isWrapped: isWrapped, screenEdge: screenEdge)
     }
 
     /// Keep this ownership boundary out of line. It lets the caller lend the
@@ -8627,7 +8640,7 @@ open class Terminal {
     @inline(never)
     private func scroll (buffer: borrowing Buffer,
                          lines: borrowing CircularBufferLineList,
-                         isWrapped: Bool)
+                         isWrapped: Bool, screenEdge: Bool)
     {
         // The steady-state normal-screen case only rotates one full scrollback
         // ring and clears the recycled row. Keep it out of the general region
@@ -8648,7 +8661,7 @@ open class Terminal {
                 ? lines[lines.count - 1].bidiState
                 : currentBidiState
             lines.recycle(owner: buffer, clearCell: currentEraseBlankCell,
-                          isWrapped: isWrapped,
+                          isWrapped: isWrapped, screenEdge: screenEdge,
                           bidiState: newLineState)
             buffer.linesTop += 1
             buffer.yDisp = buffer.yBase
@@ -8673,11 +8686,12 @@ open class Terminal {
             scrollInPlaceRegionFast(buffer: buffer, lines: lines,
                                     scrollTop: scrollTop, scrollBottom: scrollBottom,
                                     topRow: topRow, bottomRow: bottomRow,
-                                    isWrapped: isWrapped)
+                                    isWrapped: isWrapped, screenEdge: screenEdge)
             return
         }
 
         scrollGeneral(buffer: buffer, lines: lines, isWrapped: isWrapped,
+                      screenEdge: screenEdge,
                       scrollTop: scrollTop, scrollBottom: scrollBottom,
                       topRow: topRow, bottomRow: bottomRow)
     }
@@ -8687,7 +8701,7 @@ open class Terminal {
     @inline(never)
     private func scrollGeneral(buffer: borrowing Buffer,
                                lines: borrowing CircularBufferLineList,
-                               isWrapped: Bool,
+                               isWrapped: Bool, screenEdge: Bool,
                                scrollTop: Int, scrollBottom: Int,
                                topRow: Int, bottomRow: Int)
     {
@@ -8757,16 +8771,19 @@ open class Terminal {
             if bottomRow == lines.count - 1 {
                 if willBufferBeTrimmed {
                     lines.recycle(owner: buffer, clearCell: eraseBlank, isWrapped: isWrapped,
-                                  bidiState: newLineState)
+                                  screenEdge: screenEdge, bidiState: newLineState)
                 } else {
-                    lines.push(buffer.getBlankLine(packedBlank: eraseBlank,
-                                                   isWrapped: isWrapped,
-                                                   bidiState: newLineState))
+                    let newLine = buffer.getBlankLine(packedBlank: eraseBlank,
+                                                      isWrapped: isWrapped,
+                                                      bidiState: newLineState)
+                    if screenEdge { newLine.markScreenEdgeWrap() }
+                    lines.push(newLine)
                 }
             } else {
                 let newLine = buffer.getBlankLine(packedBlank: eraseBlank,
                                                   isWrapped: isWrapped,
                                                   bidiState: newLineState)
+                if screenEdge { newLine.markScreenEdgeWrap() }
                 lines.splice (start: bottomRow + 1, deleteCount: 0,
                                      items: [newLine],
                                      change: { line in updateRange (line)})
@@ -8808,7 +8825,7 @@ open class Terminal {
 
             if !lines.shiftUpAndRecycle(owner: buffer, top: topRow, bottom: bottomRow,
                                         clearCell: eraseBlank,
-                                        isWrapped: isWrapped,
+                                        isWrapped: isWrapped, screenEdge: screenEdge,
                                         bidiState: newLineState) {
                 print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
             }
@@ -8857,14 +8874,14 @@ open class Terminal {
                                          lines: borrowing CircularBufferLineList,
                                          scrollTop: Int, scrollBottom: Int,
                                          topRow: Int, bottomRow: Int,
-                                         isWrapped: Bool)
+                                         isWrapped: Bool, screenEdge: Bool)
     {
         let newLineState = isWrapped
             ? lines[bottomRow].bidiState
             : _currentBidiState
         if !lines.shiftUpAndRecycle(owner: buffer, top: topRow, bottom: bottomRow,
                                     clearCell: currentEraseBlankCell,
-                                    isWrapped: isWrapped,
+                                    isWrapped: isWrapped, screenEdge: screenEdge,
                                     bidiState: newLineState) {
             print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
         }
@@ -9961,13 +9978,21 @@ open class Terminal {
         if cell.hasPayload {
             return cell.payloadCode
         }
-        if line.packedCode(at: col) == 0 && col > 0 && line.packedWidth(at: col - 1) == 2 {
+        if isWideTail(line, col: col) {
             let base = line.packedCell(at: col - 1)
             if base.hasPayload {
                 return base.payloadCode
             }
         }
         return nil
+    }
+
+    /// The tail cell of a wide character. It has no text, no payload, and
+    /// no role of its own.
+    @inline(__always)
+    private func isWideTail(_ line: BufferLine, col: Int) -> Bool
+    {
+        col > 0 && line.packedCode(at: col) == 0 && line.packedWidth(at: col - 1) == 2
     }
 
 #if !SWIFTTERM_EMBEDDED
@@ -9982,13 +10007,6 @@ open class Terminal {
         let cells: [GhosttyImplicitCellRef]
         let targetRow: Int
         let targetCol: Int
-    }
-
-    private struct LinkRowEdgeInfo: Sendable {
-        let firstCol: Int
-        let firstChar: Character
-        let lastCol: Int
-        let lastChar: Character
     }
 
     private static let ghosttyImplicitURLSchemes = #"https?://|mailto:|ftp://|file:|ssh:|git://|ssh://|tel:|magnet:|ipfs://|ipns://|gemini://|gopher://|news:"#
@@ -10187,10 +10205,37 @@ open class Terminal {
         return try? NSRegularExpression(pattern: regex, options: [])
     }()
 
-    private static let ghosttyContinuationCharacters = CharacterSet(
-        charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~:/?#[]@!$&*+,;=%()"
-    )
+    /// The OSC 133 role of a cell as Ghostty's `selectLine` compares it:
+    /// output, prompt, or input. A cell with no role is output, so text
+    /// from a shell that does not send OSC 133 has one role only.
+    @inline(__always)
+    private static func implicitLinkRole(_ cell: PackedCell) -> UInt8
+    {
+        switch cell.semanticContentCode {
+        case 1...4: return 1
+        case 5: return 2
+        default: return 0
+        }
+    }
 
+    /// Builds the text that implicit link lookup searches, and the cell of
+    /// each character, for the logical line that contains `position`.
+    ///
+    /// This is Ghostty's `selectLine` and `selectionStringMap` for a link
+    /// (`Surface.linkAtPin`). The logical line crosses only a recorded
+    /// automatic wrap at the last column of the screen. A hard line break,
+    /// a row that a program draws with cursor movement, and a wrap at an
+    /// internal right margin each end the line. The shape of the text does
+    /// not join rows. The line also ends where the OSC 133 role of the
+    /// cells changes.
+    ///
+    /// Each row gives its cells up to the last cell that has a character.
+    /// Spaces are characters, so they stay and they are a link boundary. A
+    /// row before a recorded wrap had a character in the last column when
+    /// the wrap occurred. Blank cells at its end are thus not text: they
+    /// are the cell that a wide character did not fit in (Ghostty's spacer
+    /// head, with or without a background color), or cells that a resize
+    /// without reflow added.
     private func buildGhosttyImplicitLineMap(at position: Position, in buffer: Buffer) -> GhosttyImplicitLineMap?
     {
         guard position.row >= 0 && position.row < buffer.lines.count else {
@@ -10205,53 +10250,44 @@ open class Terminal {
         }
 
         var targetCol = max(0, min(position.col, targetRawLimit - 1))
-        if targetCol > 0 && targetLine.packedCode(at: targetCol) == 0 &&
-            targetLine.packedWidth(at: targetCol - 1) == 2 {
+        if isWideTail(targetLine, col: targetCol) {
             targetCol -= 1
         }
 
+        // A buffer without reflow keeps the cells after a narrower width.
+        // A row that has text there is cut on the screen, so its text does
+        // not continue on the next row.
+        let continues = { (row: Int) -> Bool in
+            guard buffer.lines[row + 1].isScreenEdgeWrapped else { return false }
+            let line = buffer.lines[row]
+            return line.count <= self.cols || line.getTrimmedLength() <= self.cols
+        }
         var startRow = targetRow
-        while startRow > 0 && buffer.lines[startRow].isWrapped {
+        while startRow > 0 && continues(startRow - 1) {
             startRow -= 1
         }
         var endRow = targetRow
-        while endRow + 1 < buffer.lines.count && buffer.lines[endRow + 1].isWrapped {
+        while endRow + 1 < buffer.lines.count && continues(endRow) {
             endRow += 1
         }
-        if startRow == targetRow && endRow == targetRow,
-           let (heuristicStart, heuristicEnd) = heuristicImplicitGroup(around: targetRow, in: buffer)
-        {
-            startRow = heuristicStart
-            endRow = heuristicEnd
-        }
 
+        // One pass over the rows. The role of each cell is kept, so that a
+        // line with one role (the usual case) needs no second pass.
         var text = ""
         var cells: [GhosttyImplicitCellRef] = []
+        var roles: [UInt8] = []
         cells.reserveCapacity((endRow - startRow + 1) * cols)
-        var targetIsInsideTrimmedContent = false
+        roles.reserveCapacity((endRow - startRow + 1) * cols)
+        var targetIndex: Int?
+        var hasOneRole = true
 
         for row in startRow...endRow {
             let line = buffer.lines[row]
-            let rawLimit = min(cols, line.count)
-            if rawLimit <= 0 {
-                continue
-            }
-            let lineLimit = min(rawLimit, line.getTrimmedLength())
-            if lineLimit <= 0 {
-                continue
-            }
-            let isContinuationRow = isImplicitContinuationRow(row, startRow: startRow, in: buffer)
-            let startCol = isContinuationRow ? firstNonWhitespaceColumn(in: line, lineLimit: lineLimit) : 0
-            guard startCol < lineLimit else {
-                continue
-            }
-            if row == targetRow && targetCol >= startCol && targetCol < lineLimit {
-                targetIsInsideTrimmedContent = true
-            }
-
-            for col in startCol..<lineLimit {
-                if col > 0 && line.packedCode(at: col) == 0 &&
-                    line.packedWidth(at: col - 1) == 2 {
+            let limit = min(min(cols, line.count), line.getTrimmedLength())
+            var col = 0
+            while col < limit {
+                defer { col += 1 }
+                if isWideTail(line, col: col) {
                     continue
                 }
                 let cell = line.packedView(at: col)
@@ -10259,7 +10295,15 @@ open class Terminal {
                 if character == "\u{0}" {
                     character = " "
                 }
+                let role = Self.implicitLinkRole(line.packedCell(at: col))
+                if let first = roles.first, first != role {
+                    hasOneRole = false
+                }
+                if row == targetRow && col == targetCol {
+                    targetIndex = cells.count
+                }
                 text.append(character)
+                roles.append(role)
                 cells.append(
                     GhosttyImplicitCellRef(
                         row: row,
@@ -10270,8 +10314,31 @@ open class Terminal {
             }
         }
 
-        guard !text.isEmpty, !cells.isEmpty, targetIsInsideTrimmedContent else {
+        // A target after the last character of its row has no text.
+        guard let targetIndex else {
             return nil
+        }
+
+        if !hasOneRole {
+            // Keep only the cells around the target that have its role.
+            let role = roles[targetIndex]
+            var first = targetIndex
+            while first > 0 && roles[first - 1] == role {
+                first -= 1
+            }
+            var end = targetIndex + 1
+            while end < roles.count && roles[end] == role {
+                end += 1
+            }
+            cells = Array(cells[first..<end])
+            // Read the characters again. An offset into `text` is not a
+            // cell index when a combining mark joined the character before
+            // it.
+            text = ""
+            for cell in cells {
+                let character = buffer.lines[cell.row].packedView(at: cell.col).getCharacter()
+                text.append(character == "\u{0}" ? " " : character)
+            }
         }
 
         return GhosttyImplicitLineMap(
@@ -10280,240 +10347,6 @@ open class Terminal {
             targetRow: targetRow,
             targetCol: targetCol
         )
-    }
-
-    private func isImplicitContinuationRow(_ row: Int, startRow: Int, in buffer: Buffer) -> Bool
-    {
-        guard row > startRow else {
-            return false
-        }
-        if buffer.lines[row].isWrapped {
-            return true
-        }
-        return canJoinImplicitRows(upper: row - 1, lower: row, in: buffer)
-    }
-
-    private func heuristicImplicitGroup(around row: Int, in buffer: Buffer) -> (start: Int, end: Int)?
-    {
-        var start = row
-        var end = row
-
-        while start > 0 && canJoinImplicitRows(upper: start - 1, lower: start, in: buffer) {
-            start -= 1
-        }
-        while end + 1 < buffer.lines.count && canJoinImplicitRows(upper: end, lower: end + 1, in: buffer) {
-            end += 1
-        }
-
-        return (start == row && end == row) ? nil : (start, end)
-    }
-
-    private func canJoinImplicitRows(upper: Int, lower: Int, in buffer: Buffer) -> Bool
-    {
-        guard let upperInfo = linkRowEdgeInfo(row: upper, in: buffer),
-              let lowerInfo = linkRowEdgeInfo(row: lower, in: buffer)
-        else {
-            return false
-        }
-
-        // Heuristic for editor-rendered wraps: the upper segment should reach
-        // near the visual right edge and the seam should form a valid link.
-        let continuationThreshold = max(0, cols - max(2, cols / 5))
-        guard upperInfo.lastCol >= continuationThreshold else {
-            return false
-        }
-
-        let upperScalars = upperInfo.lastChar.unicodeScalars
-        let lowerScalars = lowerInfo.firstChar.unicodeScalars
-        guard !upperScalars.isEmpty, !lowerScalars.isEmpty else {
-            return false
-        }
-        guard upperScalars.allSatisfy({ Self.ghosttyContinuationCharacters.contains($0) }),
-              lowerScalars.allSatisfy({ Self.ghosttyContinuationCharacters.contains($0) })
-        else {
-            return false
-        }
-
-        return seamContainsGhosttyImplicitLink(
-            upper: upper,
-            lower: lower,
-            upperLastCol: upperInfo.lastCol,
-            lowerFirstCol: lowerInfo.firstCol,
-            in: buffer
-        )
-    }
-
-    private func linkRowEdgeInfo(row: Int, in buffer: Buffer) -> LinkRowEdgeInfo?
-    {
-        guard row >= 0 && row < buffer.lines.count else {
-            return nil
-        }
-        let line = buffer.lines[row]
-        let rawLimit = min(cols, line.count)
-        guard rawLimit > 0 else {
-            return nil
-        }
-        let lineLimit = min(rawLimit, line.getTrimmedLength())
-        guard lineLimit > 0 else {
-            return nil
-        }
-
-        var first: (col: Int, char: Character)?
-        var col = 0
-        while col < lineLimit {
-            if let ch = linkCharacterAt(line: line, col: col), !ch.isWhitespace {
-                first = (col, ch)
-                break
-            }
-            col += 1
-        }
-        guard let first else {
-            return nil
-        }
-
-        var last: (col: Int, char: Character)?
-        var rcol = lineLimit - 1
-        while rcol >= first.col {
-            if let ch = linkCharacterAt(line: line, col: rcol), !ch.isWhitespace {
-                last = (rcol, ch)
-                break
-            }
-            if rcol == 0 { break }
-            rcol -= 1
-        }
-        guard let last else {
-            return nil
-        }
-
-        return LinkRowEdgeInfo(
-            firstCol: first.col,
-            firstChar: first.char,
-            lastCol: last.col,
-            lastChar: last.char
-        )
-    }
-
-    private func seamContainsGhosttyImplicitLink(
-        upper: Int,
-        lower: Int,
-        upperLastCol: Int,
-        lowerFirstCol: Int,
-        in buffer: Buffer
-    ) -> Bool
-    {
-        guard let regex = Self.ghosttyImplicitLinkRegex else {
-            return false
-        }
-        guard upper >= 0, upper < buffer.lines.count, lower >= 0, lower < buffer.lines.count else {
-            return false
-        }
-
-        let upperLine = buffer.lines[upper]
-        let upperLimit = min(min(cols, upperLine.count), upperLastCol + 1)
-        guard upperLimit > 0 else {
-            return false
-        }
-        let upperStart = max(0, upperLimit - 96)
-        let upperText = implicitLineSegmentText(line: upperLine, startCol: upperStart, endCol: upperLimit)
-        guard !upperText.isEmpty else {
-            return false
-        }
-
-        let lowerLine = buffer.lines[lower]
-        let lowerLimit = min(min(cols, lowerLine.count), lowerLine.getTrimmedLength())
-        guard lowerFirstCol < lowerLimit else {
-            return false
-        }
-        let lowerEnd = min(lowerLimit, lowerFirstCol + 96)
-        let lowerText = implicitLineSegmentText(line: lowerLine, startCol: lowerFirstCol, endCol: lowerEnd)
-        guard !lowerText.isEmpty else {
-            return false
-        }
-
-        let candidate = upperText + lowerText
-        let seamOffset = upperText.utf16.count
-        let searchRange = NSRange(candidate.startIndex..<candidate.endIndex, in: candidate)
-        for match in regex.matches(in: candidate, options: [], range: searchRange) {
-            let matchStart = match.range.location
-            let matchEnd = match.range.location + match.range.length
-            guard matchStart < seamOffset, matchEnd > seamOffset else {
-                continue
-            }
-            guard let textRange = Range(match.range, in: candidate) else {
-                continue
-            }
-            if suppressGhosttyLikeMatch(textRange, in: candidate) {
-                continue
-            }
-            return true
-        }
-
-        return false
-    }
-
-    private func implicitLineSegmentText(line: BufferLine, startCol: Int, endCol: Int) -> String
-    {
-        let boundedStart = max(0, startCol)
-        let boundedEnd = min(line.count, endCol)
-        guard boundedStart < boundedEnd else {
-            return ""
-        }
-
-        var result = ""
-        result.reserveCapacity(boundedEnd - boundedStart)
-        for col in boundedStart..<boundedEnd {
-            if col > 0 && line.packedCode(at: col) == 0 &&
-                line.packedWidth(at: col - 1) == 2 {
-                continue
-            }
-            var character = line.packedCharacter(at: col)
-            if character == "\u{0}" {
-                character = " "
-            }
-            result.append(character)
-        }
-        return result
-    }
-
-    private func linkCharacterAt(line: BufferLine, col: Int) -> Character?
-    {
-        guard col >= 0 && col < line.count else {
-            return nil
-        }
-        let cell = line.packedView(at: col)
-        if cell.code != 0 {
-            return cell.getCharacter()
-        }
-        if col > 0 && line.packedWidth(at: col - 1) == 2 {
-            let base = line.packedView(at: col - 1)
-            if base.code != 0 {
-                return base.getCharacter()
-            }
-        }
-        return nil
-    }
-
-    private func firstNonWhitespaceColumn(in line: BufferLine, lineLimit: Int) -> Int
-    {
-        guard lineLimit > 0 else {
-            return 0
-        }
-        var col = 0
-        while col < lineLimit {
-            let cell = line.packedView(at: col)
-            if cell.code != 0 {
-                if !cell.getCharacter().isWhitespace {
-                    return col
-                }
-            } else if col > 0 && line.packedWidth(at: col - 1) == 2 {
-                let base = line.packedView(at: col - 1)
-                if base.code != 0 && !base.getCharacter().isWhitespace {
-                    return col
-                }
-            }
-            col += 1
-        }
-        return lineLimit
     }
 
     private func suppressGhosttyLikeMatch(_ range: Range<String.Index>, in text: String) -> Bool

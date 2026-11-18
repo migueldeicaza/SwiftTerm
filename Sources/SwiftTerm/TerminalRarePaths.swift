@@ -40,7 +40,7 @@ extension Terminal {
     @inline(never)
     func tabWrapForMoreFix ()
     {
-        buffer.wrapCursorToNextLine()
+        buffer.wrapCursorToNextLine(screenEdge: buffer.x == cols - 1)
         buffer.pendingWrap = false
     }
 }
