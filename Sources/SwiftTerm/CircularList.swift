@@ -434,7 +434,7 @@ internal final class CircularBufferLineList {
     func recycle(clearCell: PackedCell, isWrapped: Bool,
                  bidiState: BidiPresentationState)
     {
-        let hadImages = recycleOldestLine(clearCell: clearCell, isWrapped: isWrapped,
+        let hadImages = recycleOldestLine(clearCell: clearCell, wrapCause: isWrapped ? .soft : .none,
                                           bidiState: bidiState)
 #if SWIFTTERM_EMBEDDED
         if isLive { owner?.lineWillRecycle(hadImages: hadImages) }
@@ -448,19 +448,18 @@ internal final class CircularBufferLineList {
     /// The scroll path already borrows its buffer. Passing it here avoids the
     /// retain that a load of the stored `owner` property needs.
     @inline(__always)
-    func recycle(owner: borrowing Buffer, clearCell: PackedCell, isWrapped: Bool,
-                 screenEdge: Bool = false, bidiState: BidiPresentationState)
+    func recycle(owner: borrowing Buffer, clearCell: PackedCell, wrapCause: BufferLine.WrapCause,
+                 bidiState: BidiPresentationState)
     {
-        let hadImages = recycleOldestLine(clearCell: clearCell, isWrapped: isWrapped,
-                                          screenEdge: screenEdge, bidiState: bidiState)
+        let hadImages = recycleOldestLine(clearCell: clearCell, wrapCause: wrapCause,
+                                          bidiState: bidiState)
         if isLive { owner.lineWillRecycle(hadImages: hadImages) }
     }
 
     /// Moves the start of the full ring forward and clears the former first
     /// row. Returns `true` when that row had images.
     @inline(__always)
-    private func recycleOldestLine(clearCell: PackedCell, isWrapped: Bool,
-                                   screenEdge: Bool = false,
+    private func recycleOldestLine(clearCell: PackedCell, wrapCause: BufferLine.WrapCause,
                                    bidiState: BidiPresentationState) -> Bool
     {
         assert(startIndex < capacity)
@@ -474,7 +473,7 @@ internal final class CircularBufferLineList {
         // The line object is being destroyed for reuse. Clear its cells and
         // metadata with one generation change.
         return Self.borrowSlot(&storage[index]) { line in
-            line.recycle(with: clearCell, isWrapped: isWrapped, screenEdge: screenEdge,
+            line.recycle(with: clearCell, wrapCause: wrapCause,
                          bidiState: bidiState)
         }
     }
@@ -593,7 +592,7 @@ internal final class CircularBufferLineList {
     {
         guard let hadImages = shiftUpAndRecycleLines(top: top, bottom: bottom,
                                                      clearCell: clearCell,
-                                                     isWrapped: isWrapped,
+                                                     wrapCause: isWrapped ? .soft : .none,
                                                      bidiState: bidiState) else {
             return false
         }
@@ -611,14 +610,12 @@ internal final class CircularBufferLineList {
     /// See `recycle(owner:clearCell:isWrapped:bidiState:)`.
     @inline(__always)
     func shiftUpAndRecycle(owner: borrowing Buffer, top: Int, bottom: Int,
-                           clearCell: PackedCell, isWrapped: Bool,
-                           screenEdge: Bool = false,
+                           clearCell: PackedCell, wrapCause: BufferLine.WrapCause,
                            bidiState: BidiPresentationState) -> Bool
     {
         guard let hadImages = shiftUpAndRecycleLines(top: top, bottom: bottom,
                                                      clearCell: clearCell,
-                                                     isWrapped: isWrapped,
-                                                     screenEdge: screenEdge,
+                                                     wrapCause: wrapCause,
                                                      bidiState: bidiState) else {
             return false
         }
@@ -629,8 +626,7 @@ internal final class CircularBufferLineList {
     /// Returns whether the recycled row had images, or `nil` when the region
     /// is not valid.
     private func shiftUpAndRecycleLines(top: Int, bottom: Int, clearCell: PackedCell,
-                                        isWrapped: Bool,
-                                        screenEdge: Bool = false,
+                                        wrapCause: BufferLine.WrapCause,
                                         bidiState: BidiPresentationState) -> Bool?
     {
         func dumpState (_ message: String) -> Bool? {
@@ -705,14 +701,14 @@ internal final class CircularBufferLineList {
         // the line.
         if lines[bottomSlot] != nil {
             return Self.borrowSlot(&lines[bottomSlot]) { line in
-                line.recycle(with: clearCell, isWrapped: isWrapped, screenEdge: screenEdge,
+                line.recycle(with: clearCell, wrapCause: wrapCause,
                              bidiState: bidiState)
             }
         }
 
         // The recycled row was never created. `withLine` creates it.
         return withLine(bottom) { line in
-            line.recycle(with: clearCell, isWrapped: isWrapped, screenEdge: screenEdge,
+            line.recycle(with: clearCell, wrapCause: wrapCause,
                          bidiState: bidiState)
         }
     }

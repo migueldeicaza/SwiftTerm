@@ -681,11 +681,20 @@ public final class BufferLine: CustomDebugStringConvertible {
         bump()
     }
 
+    /// `recycle(with:wrapCause:bidiState:)` for a wrap with no recorded
+    /// cause.
+    @discardableResult
+    @inline(__always)
+    func recycle(with empty: PackedCell, isWrapped: Bool,
+                 bidiState: BidiPresentationState) -> Bool {
+        recycle(with: empty, wrapCause: isWrapped ? .soft : .none, bidiState: bidiState)
+    }
+
     /// Resets a line object for reuse. This is one logical mutation, so it
     /// bypasses the individual metadata setters and changes `generation` once.
     @discardableResult
     @inline(__always)
-    func recycle(with empty: PackedCell, isWrapped: Bool, screenEdge: Bool = false,
+    func recycle(with empty: PackedCell, wrapCause: WrapCause,
                  bidiState: BidiPresentationState) -> Bool {
         let hadImages = imagesValue != nil
         clearCellState(with: empty)
@@ -693,7 +702,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             semanticMarksValue.removeAll(keepingCapacity: true)
         }
         semanticHardContinuationGroupValue = nil
-        wrapValue = isWrapped ? (screenEdge ? .screenEdge : .soft) : .none
+        wrapValue = wrapCause
         bidiStateValue = bidiState
         renderModeValue = .single
         recycleGeneration &+= 1
@@ -995,6 +1004,23 @@ public final class BufferLine: CustomDebugStringConvertible {
             }
         }
         return 0
+    }
+
+    /// True when `getTrimmedLength (limit: cols) >= cols - 1`. Only the
+    /// last three cells can give that length, so the cost has a limit.
+    @inline(__always)
+    func textReachesCellBeforeLast (cols: Int) -> Bool
+    {
+        let count = min (cols, storage.count)
+        var i = count - 1
+        let first = max (cols - 3, 0)
+        while i >= first {
+            if storage.logicalCode(at: i) != 0 {
+                return min (i + Int(storage.width(at: i)), count) >= cols - 1
+            }
+            i -= 1
+        }
+        return false
     }
 
     /// Copies a range of CharData elements from another bufferline into this one

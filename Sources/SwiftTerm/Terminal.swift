@@ -2888,7 +2888,7 @@ open class Terminal {
         let canScroll = !marginMode || (buffer.x >= buffer.marginLeft && buffer.x <= buffer.marginRight)
         if by == buffer.scrollBottom {
             if canScroll {
-                scroll(buffer: buffer, isWrapped: false)
+                scroll(buffer: buffer, wrapCause: .none)
                 movedToNextLine = true
             }
         } else if by == _rows - 1 {
@@ -8620,18 +8620,26 @@ open class Terminal {
 
     /// Scrolls the active buffer after a terminal operation.
     /// View clients use the public view scrolling API.
-    /// `screenEdge` is true when a full-width automatic wrap causes the
-    /// scroll. The new row then has the screen-edge wrap mark.
-    final func scroll (isWrapped: Bool = false, screenEdge: Bool = false)
+    /// A wrapped row that this method makes has no recorded cause.
+    final func scroll (isWrapped: Bool = false)
+    {
+        scroll(buffer: _buffer, wrapCause: isWrapped ? .soft : .none)
+    }
+
+    /// Scrolls the active buffer and gives `wrapCause` to the new row.
+    /// `.screenEdge` is for a scroll that a full-width automatic wrap
+    /// causes. One value, and not two flags, goes through the scroll path:
+    /// a second argument added instructions to each line feed that scrolls.
+    final func scroll (wrapCause: BufferLine.WrapCause)
     {
         // Start the borrow from storage. A computed getter would return an
         // owned reference before the borrowed helper receives it.
-        scroll(buffer: _buffer, isWrapped: isWrapped, screenEdge: screenEdge)
+        scroll(buffer: _buffer, wrapCause: wrapCause)
     }
 
-    private func scroll (buffer: borrowing Buffer, isWrapped: Bool, screenEdge: Bool = false)
+    private func scroll (buffer: borrowing Buffer, wrapCause: BufferLine.WrapCause)
     {
-        scroll(buffer: buffer, lines: buffer.lines, isWrapped: isWrapped, screenEdge: screenEdge)
+        scroll(buffer: buffer, lines: buffer.lines, wrapCause: wrapCause)
     }
 
     /// Keep this ownership boundary out of line. It lets the caller lend the
@@ -8640,8 +8648,9 @@ open class Terminal {
     @inline(never)
     private func scroll (buffer: borrowing Buffer,
                          lines: borrowing CircularBufferLineList,
-                         isWrapped: Bool, screenEdge: Bool)
+                         wrapCause: BufferLine.WrapCause)
     {
+        let isWrapped = wrapCause != .none
         // The steady-state normal-screen case only rotates one full scrollback
         // ring and clears the recycled row. Keep it out of the general region
         // path below, which also handles margins, selections, images, viewport
@@ -8661,7 +8670,7 @@ open class Terminal {
                 ? lines[lines.count - 1].bidiState
                 : currentBidiState
             lines.recycle(owner: buffer, clearCell: currentEraseBlankCell,
-                          isWrapped: isWrapped, screenEdge: screenEdge,
+                          wrapCause: wrapCause,
                           bidiState: newLineState)
             buffer.linesTop += 1
             buffer.yDisp = buffer.yBase
@@ -8686,12 +8695,11 @@ open class Terminal {
             scrollInPlaceRegionFast(buffer: buffer, lines: lines,
                                     scrollTop: scrollTop, scrollBottom: scrollBottom,
                                     topRow: topRow, bottomRow: bottomRow,
-                                    isWrapped: isWrapped, screenEdge: screenEdge)
+                                    wrapCause: wrapCause)
             return
         }
 
-        scrollGeneral(buffer: buffer, lines: lines, isWrapped: isWrapped,
-                      screenEdge: screenEdge,
+        scrollGeneral(buffer: buffer, lines: lines, wrapCause: wrapCause,
                       scrollTop: scrollTop, scrollBottom: scrollBottom,
                       topRow: topRow, bottomRow: bottomRow)
     }
@@ -8701,10 +8709,12 @@ open class Terminal {
     @inline(never)
     private func scrollGeneral(buffer: borrowing Buffer,
                                lines: borrowing CircularBufferLineList,
-                               isWrapped: Bool, screenEdge: Bool,
+                               wrapCause: BufferLine.WrapCause,
                                scrollTop: Int, scrollBottom: Int,
                                topRow: Int, bottomRow: Int)
     {
+        let isWrapped = wrapCause != .none
+        let screenEdge = wrapCause == .screenEdge
         let bMarginLeft = buffer.marginLeft
         let bMarginRight = buffer.marginRight
         let hasScrollback = buffer.hasScrollback
@@ -8770,8 +8780,8 @@ open class Terminal {
             // Insert the line using the fastest method
             if bottomRow == lines.count - 1 {
                 if willBufferBeTrimmed {
-                    lines.recycle(owner: buffer, clearCell: eraseBlank, isWrapped: isWrapped,
-                                  screenEdge: screenEdge, bidiState: newLineState)
+                    lines.recycle(owner: buffer, clearCell: eraseBlank, wrapCause: wrapCause,
+                                  bidiState: newLineState)
                 } else {
                     let newLine = buffer.getBlankLine(packedBlank: eraseBlank,
                                                       isWrapped: isWrapped,
@@ -8825,7 +8835,7 @@ open class Terminal {
 
             if !lines.shiftUpAndRecycle(owner: buffer, top: topRow, bottom: bottomRow,
                                         clearCell: eraseBlank,
-                                        isWrapped: isWrapped, screenEdge: screenEdge,
+                                        wrapCause: wrapCause,
                                         bidiState: newLineState) {
                 print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
             }
@@ -8874,14 +8884,14 @@ open class Terminal {
                                          lines: borrowing CircularBufferLineList,
                                          scrollTop: Int, scrollBottom: Int,
                                          topRow: Int, bottomRow: Int,
-                                         isWrapped: Bool, screenEdge: Bool)
+                                         wrapCause: BufferLine.WrapCause)
     {
-        let newLineState = isWrapped
+        let newLineState = wrapCause != .none
             ? lines[bottomRow].bidiState
             : _currentBidiState
         if !lines.shiftUpAndRecycle(owner: buffer, top: topRow, bottom: bottomRow,
                                     clearCell: currentEraseBlankCell,
-                                    isWrapped: isWrapped, screenEdge: screenEdge,
+                                    wrapCause: wrapCause,
                                     bidiState: newLineState) {
             print ("Assertion on scroll, state was: bottomRow=\(bottomRow) topRow=\(topRow) yDisp=\(buffer.yDisp) linesTop=\(buffer.linesTop) isAlternate=\(isCurrentBufferAlternate)")
         }

@@ -799,17 +799,17 @@ public final class Buffer {
 
     /// Scrolls the terminal that owns this buffer.
     @inline(__always)
-    func scroll (_ isWrapped: Bool, screenEdge: Bool = false) {
+    func scroll (_ wrapCause: BufferLine.WrapCause) {
 #if SWIFTTERM_EMBEDDED
         // Embedded uses a breakable optional back-reference so `Terminal.close()`
         // can release its object graph.
-        terminal?.scroll (isWrapped: isWrapped, screenEdge: screenEdge)
+        terminal?.scroll (wrapCause: wrapCause)
 #else
         // This is a row-level hot path. Keep the normal-build back-reference
         // direct: using the Embedded optional dispatch here caused a measurable
         // scrolling regression. The buffer is owned by its terminal, so the
         // `unowned(unsafe)` reference above is valid for this build.
-        terminal.scroll (isWrapped: isWrapped, screenEdge: screenEdge)
+        terminal.scroll (wrapCause: wrapCause)
 #endif
     }
 
@@ -1467,7 +1467,8 @@ public final class Buffer {
     @inline(never)
     func cursorRowTextReachesLastColumn () -> Bool
     {
-        _lines [_y + _yBase].getTrimmedLength (limit: _cols) >= _cols - 1
+        let cols = _cols
+        return _lines.withLine (_y + _yBase) { $0.textReachesCellBeforeLast (cols: cols) }
     }
 
     func getLinesToRemove (oldCols: Int, newCols: Int, bufferAbsoluteY: Int,
@@ -2090,16 +2091,21 @@ public final class Buffer {
     /// of the margin are not part of the text.
     @inline(__always)
     func wrapCursorToNextLine(screenEdge: Bool) {
-        _x = marginMode ? _marginLeft : 0
-        let fullWidth = screenEdge && _x == 0
+        var cause: BufferLine.WrapCause = screenEdge ? .screenEdge : .soft
+        if marginMode {
+            _x = _marginLeft
+            if _x != 0 { cause = .soft }
+        } else {
+            _x = 0
+        }
         if _y >= _scrollBottom {
             // Below the scroll region the cursor stays on its line, and the
             // new line of the region does not continue it.
-            scroll(true, screenEdge: fullWidth && _y == _scrollBottom)
+            if _y != _scrollBottom { cause = .soft }
+            scroll(cause)
         } else {
             let paragraphBidiState = _lines[_y + _yBase].bidiState
             _y += 1
-            let cause: BufferLine.WrapCause = fullWidth ? .screenEdge : .soft
             _lines.withLine(_y + _yBase) { line in
                 line.wrapCause = cause
                 line.bidiState = paragraphBidiState
@@ -2113,13 +2119,16 @@ public final class Buffer {
     /// character printed in insert mode), because the text of the row then
     /// does not continue on the next row. `isWrapped` does not change, so
     /// reflow keeps the paragraph.
+    @inline(__always)
     func resetScreenEdgeWrap(after row: Int) {
-        if row + 1 < _lines.count {
-            _lines[row + 1].clearScreenEdgeWrap()
+        let next = row + 1
+        if next < _lines.count {
+            _lines.withLine(next) { $0.clearScreenEdgeWrap() }
         }
     }
 
     /// `resetScreenEdgeWrap(after:)` for the row that contains the cursor.
+    @inline(__always)
     func resetScreenEdgeWrapAfterCursorRow() {
         resetScreenEdgeWrap(after: _y + _yBase)
     }
