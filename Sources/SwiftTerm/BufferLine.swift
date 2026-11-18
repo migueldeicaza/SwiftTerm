@@ -60,7 +60,7 @@ public final class BufferLine: CustomDebugStringConvertible {
     /// for each value other than `.none`.
     var wrapCause: WrapCause {
         get { wrapValue }
-        set {
+        @inline(__always) set {
             guard newValue != wrapValue else { return }
             let wrapChanged = (newValue != .none) != (wrapValue != .none)
             wrapValue = newValue

@@ -2099,8 +2099,11 @@ public final class Buffer {
         } else {
             let paragraphBidiState = _lines[_y + _yBase].bidiState
             _y += 1
-            _lines[_y + _yBase].wrapCause = fullWidth ? .screenEdge : .soft
-            _lines[_y + _yBase].bidiState = paragraphBidiState
+            let cause: BufferLine.WrapCause = fullWidth ? .screenEdge : .soft
+            _lines.withLine(_y + _yBase) { line in
+                line.wrapCause = cause
+                line.bidiState = paragraphBidiState
+            }
         }
     }
 
