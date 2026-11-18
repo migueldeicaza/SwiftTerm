@@ -681,6 +681,27 @@ final class LinkLookupTests: TerminalDelegate {
         #expect(implicitLink(terminal, col: 5, row: 1) != "./a.txt日本.txt")
     }
 
+    // Issue #850: `swift package preview-documentation` prints an address
+    // line and then a row of `=` characters. The URL ends near the right
+    // edge of a narrow window.
+    @Test func testImplicitUrlDoesNotAbsorbBannerRuleOnNextLine() {
+        let url = "http://localhost:8080/documentation/tecolot"
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 60, rows: 4))
+        terminal.feed(text: "  Address: \(url)\r\n========================================\r\n")
+
+        #expect(implicitLink(terminal, col: 20, row: 0) == url)
+        #expect(implicitLink(terminal, col: 5, row: 1) == nil)
+    }
+
+    // Issue #850.
+    @Test func testImplicitUrlDoesNotAbsorbWordOnNextLineAfterRealNewline() {
+        let url = "http://localhost:8080/documentation/tecolot"
+        let terminal = Terminal(delegate: self, options: TerminalOptions(cols: url.count + 2, rows: 4))
+        terminal.feed(text: "\(url)\r\nStarting\r\n")
+
+        #expect(implicitLink(terminal, col: 10, row: 0) == url)
+    }
+
     @Test func testImplicitUrlLookupDoesNotJoinUnrelatedRows() {
         let terminal = Terminal(delegate: self, options: TerminalOptions(cols: 92, rows: 3))
         write("https://example.com", terminal: terminal, row: 0)
