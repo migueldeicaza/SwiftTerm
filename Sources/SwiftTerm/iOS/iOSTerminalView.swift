@@ -1060,6 +1060,21 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    /// Whether a single tap can skip waiting for the double tap to fail: the view is
+    /// not first responder, no application tracks the mouse and no link is under the
+    /// tap, so `singleTap(_:)` would only make the view first responder.
+    func singleTapSkipsDoubleTapWait(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Same test as doubleTap(_:): while a tracking application is active, an unfocused
+        // double tap must reach doubleTap(_:) still unfocused so that it only focuses,
+        // even when shift or a selection keeps the single tap from forwarding a click.
+        guard !isFirstResponder,
+              !(allowMouseReporting && withTerminal({ $0.mouseMode.sendButtonPress() })) else {
+            return false
+        }
+        let hit = calculateTapHit(gesture: gestureRecognizer).grid
+        return linkForClick(at: hit, hasCommandModifier: commandActive) == nil
+    }
+
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
         guard gestureRecognizer.view != nil,
@@ -1560,7 +1575,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         tripleTap.numberOfTapsRequired = 3
         addGestureRecognizer(tripleTap)
 
-        singleTap.require(toFail: doubleTap)
+        // A tap that only focuses the terminal does not wait for the double
+        // tap to fail; the delegate keeps that wait for every other tap.
+        let tapDelegate = SingleTapGestureDelegate(terminalView: self, doubleTap: doubleTap)
+        singleTapDelegate = tapDelegate
+        singleTap.delegate = tapDelegate
         doubleTap.require(toFail: tripleTap)
     }
 
@@ -4030,6 +4049,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     nonisolated let kittyClipboardBridge = AppleKittyClipboardBridge()
     private var pointerScrollAccumulator = WheelDistanceAccumulator<ProgramScrollRoute>()
     private var pointerScrollDelegate: PointerScrollGestureDelegate?
+    private var singleTapDelegate: SingleTapGestureDelegate?
 }
 
 @MainActor
@@ -4042,6 +4062,23 @@ private final class PointerScrollGestureDelegate: NSObject, UIGestureRecognizerD
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         terminalView?.shouldCapturePointerScroll(gestureRecognizer) ?? false
+    }
+}
+
+@MainActor
+private final class SingleTapGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+    private weak var terminalView: TerminalView?
+    private weak var doubleTap: UIGestureRecognizer?
+
+    init(terminalView: TerminalView, doubleTap: UIGestureRecognizer) {
+        self.terminalView = terminalView
+        self.doubleTap = doubleTap
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard otherGestureRecognizer === doubleTap else { return false }
+        return !(terminalView?.singleTapSkipsDoubleTapWait(gestureRecognizer) ?? false)
     }
 }
 
