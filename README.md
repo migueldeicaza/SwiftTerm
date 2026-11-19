@@ -105,6 +105,51 @@ For iTerm2 images, the Apple views use the system image decoder. Other image
 formats that the target platform can decode can also work, but PNG and JPEG
 are the tested formats.
 
+### Performance
+
+This section compares the MacTerminal sample app with Ghostty on the 12
+default [vtebench](https://github.com/alacritty/vtebench) workloads done on November 18, 2026 (Ghostty build: 542611b3d, . vtebench
+measures how fast a terminal reads from the PTY. It does not measure frame
+rate, latency, or power use. Each value is the mean time for one sample of at
+least 1 MiB. A smaller value is better.
+
+![vtebench mean sample time for MacTerminal and Ghostty](Docs/vtebench-2026-11-18.svg)
+
+| Workload | MacTerminal (ms) | Ghostty (ms) | MacTerminal / Ghostty |
+| --- | ---: | ---: | ---: |
+| `cursor_motion` | 6.0 | 5.8 | 1.02 |
+| `dense_cells` | 4.8 | 4.9 | 0.99 |
+| `light_cells` | 3.2 | 3.2 | 1.01 |
+| `medium_cells` | 5.2 | 5.2 | 1.00 |
+| `scrolling` | 11.4 | 13.3 | 0.86 |
+| `scrolling_bottom_region` | 14.9 | 13.0 | 1.15 |
+| `scrolling_bottom_small_region` | 14.0 | 12.1 | 1.16 |
+| `scrolling_fullscreen` | 3.6 | 5.9 | 0.61 |
+| `scrolling_top_region` | 14.4 | 12.6 | 1.14 |
+| `scrolling_top_small_region` | 14.0 | 12.0 | 1.16 |
+| `sync_medium_cells` | 5.4 | 5.4 | 1.00 |
+| `unicode` | 4.0 | 3.7 | 1.07 |
+| **Sum** | **101.0** | **97.2** | **1.04** |
+
+Ghostty is faster by 4% on the sum of the suite. MacTerminal is faster by
+39% on `scrolling_fullscreen` and by 14% on `scrolling`. Ghostty is faster by
+14% to 16% on the four scrolling-region workloads and by 7% on `unicode`. The
+other workloads are equal to within 2%.
+
+Conditions, 2026-11-18: Mac Studio (M3 Ultra), macOS 27.2.1, MacTerminal Release
+build of `main` at `6ae3d832` with the Metal renderer, Ghostty 1.4.1 tip
+(`542611b3d`). Each terminal used a window of 100 by 37 cells and SF Mono at
+13 points. Each workload ran for three seconds. The table shows the median of
+three runs for each terminal, in alternating order. Suite sums repeated to
+approximately 1%. Individual workloads repeated to 7% or better, with three
+exceptions for MacTerminal: `scrolling_top_small_region` (9%), `unicode`
+(11%), and `sync_medium_cells` (14%).
+
+The terminal must be the active app during a measurement. macOS App Nap makes
+an inactive MacTerminal 2 to 3 times slower after approximately 30 seconds;
+an automated run must start the app with `-NSAppSleepDisabled YES`. See
+[PERFORMANCE.md](PERFORMANCE.md) for the measurement tools.
+
 # SwiftTerm library
 
 The SwiftTerm library itself contains the source code for both

@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 732 602" width="732" height="602" role="img" aria-label="vtebench mean sample time, MacTerminal and Ghostty, 12 workloads">
+<rect width="732" height="602" rx="8" fill="#fcfcfb"/>
+<g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">
+<text x="20" y="30" font-size="15" font-weight="600" fill="#0b0b0b">vtebench: mean time for one sample (ms), smaller is better</text>
+<rect x="20" y="45" width="12" height="12" rx="3" fill="#2a78d6"/>
+<text x="38" y="56" font-size="12" fill="#0b0b0b">MacTerminal (SwiftTerm)</text>
+<rect x="200" y="45" width="12" height="12" rx="3" fill="#eb6834"/>
+<text x="218" y="56" font-size="12" fill="#0b0b0b">Ghostty</text>
+<line x1="222.0" y1="74" x2="222.0" y2="558" stroke="#e4e3df" stroke-width="1"/>
+<text x="222.0" y="576" font-size="11" fill="#52514e" text-anchor="middle">0</text>
+<line x1="332.0" y1="74" x2="332.0" y2="558" stroke="#e4e3df" stroke-width="1"/>
+<text x="332.0" y="576" font-size="11" fill="#52514e" text-anchor="middle">4</text>
+<line x1="442.0" y1="74" x2="442.0" y2="558" stroke="#e4e3df" stroke-width="1"/>
+<text x="442.0" y="576" font-size="11" fill="#52514e" text-anchor="middle">8</text>
+<line x1="552.0" y1="74" x2="552.0" y2="558" stroke="#e4e3df" stroke-width="1"/>
+<text x="552.0" y="576" font-size="11" fill="#52514e" text-anchor="middle">12</text>
+<line x1="662.0" y1="74" x2="662.0" y2="558" stroke="#e4e3df" stroke-width="1"/>
+<text x="662.0" y="576" font-size="11" fill="#52514e" text-anchor="middle">16</text>
+<text x="442.0" y="594" font-size="11" fill="#52514e" text-anchor="middle">milliseconds</text>
+<text x="212" y="102.0" font-size="12" fill="#0b0b0b" text-anchor="end">cursor_motion</text>
+<path d="M222,84.0 h160.0 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-160.0 z" fill="#2a78d6"/><text x="392.0" y="94.5" font-size="11" fill="#52514e">6.0</text>
+<path d="M222,99.0 h156.9 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-156.9 z" fill="#eb6834"/><text x="388.9" y="109.5" font-size="11" fill="#52514e">5.8</text>
+<text x="212" y="142.0" font-size="12" fill="#0b0b0b" text-anchor="end">dense_cells</text>
+<path d="M222,124.0 h129.0 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-129.0 z" fill="#2a78d6"/><text x="361.0" y="134.5" font-size="11" fill="#52514e">4.8</text>
+<path d="M222,139.0 h129.7 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-129.7 z" fill="#eb6834"/><text x="361.7" y="149.5" font-size="11" fill="#52514e">4.9</text>
+<text x="212" y="182.0" font-size="12" fill="#0b0b0b" text-anchor="end">light_cells</text>
+<path d="M222,164.0 h84.7 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-84.7 z" fill="#2a78d6"/><text x="316.7" y="174.5" font-size="11" fill="#52514e">3.2</text>
+<path d="M222,179.0 h84.1 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-84.1 z" fill="#eb6834"/><text x="316.1" y="189.5" font-size="11" fill="#52514e">3.2</text>
+<text x="212" y="222.0" font-size="12" fill="#0b0b0b" text-anchor="end">medium_cells</text>
+<path d="M222,204.0 h139.5 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-139.5 z" fill="#2a78d6"/><text x="371.5" y="214.5" font-size="11" fill="#52514e">5.2</text>
+<path d="M222,219.0 h139.5 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-139.5 z" fill="#eb6834"/><text x="371.5" y="229.5" font-size="11" fill="#52514e">5.2</text>
+<text x="212" y="262.0" font-size="12" fill="#0b0b0b" text-anchor="end">scrolling</text>
+<path d="M222,244.0 h308.2 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-308.2 z" fill="#2a78d6"/><text x="540.2" y="254.5" font-size="11" fill="#52514e">11.4</text>
+<path d="M222,259.0 h360.9 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-360.9 z" fill="#eb6834"/><text x="592.9" y="269.5" font-size="11" fill="#52514e">13.3</text>
+<text x="212" y="302.0" font-size="12" fill="#0b0b0b" text-anchor="end">scrolling_bottom_region</text>
+<path d="M222,284.0 h406.6 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-406.6 z" fill="#2a78d6"/><text x="638.6" y="294.5" font-size="11" fill="#52514e">14.9</text>
+<path d="M222,299.0 h352.7 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-352.7 z" fill="#eb6834"/><text x="584.7" y="309.5" font-size="11" fill="#52514e">13.0</text>
+<text x="212" y="342.0" font-size="12" fill="#0b0b0b" text-anchor="end">scrolling_bottom_small_region</text>
+<path d="M222,324.0 h381.5 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-381.5 z" fill="#2a78d6"/><text x="613.5" y="334.5" font-size="11" fill="#52514e">14.0</text>
+<path d="M222,339.0 h328.1 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-328.1 z" fill="#eb6834"/><text x="560.1" y="349.5" font-size="11" fill="#52514e">12.1</text>
+<text x="212" y="382.0" font-size="12" fill="#0b0b0b" text-anchor="end">scrolling_fullscreen</text>
+<path d="M222,364.0 h94.8 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-94.8 z" fill="#2a78d6"/><text x="326.8" y="374.5" font-size="11" fill="#52514e">3.6</text>
+<path d="M222,379.0 h158.8 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-158.8 z" fill="#eb6834"/><text x="390.8" y="389.5" font-size="11" fill="#52514e">5.9</text>
+<text x="212" y="422.0" font-size="12" fill="#0b0b0b" text-anchor="end">scrolling_top_region</text>
+<path d="M222,404.0 h392.4 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-392.4 z" fill="#2a78d6"/><text x="624.4" y="414.5" font-size="11" fill="#52514e">14.4</text>
+<path d="M222,419.0 h343.7 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-343.7 z" fill="#eb6834"/><text x="575.7" y="429.5" font-size="11" fill="#52514e">12.6</text>
+<text x="212" y="462.0" font-size="12" fill="#0b0b0b" text-anchor="end">scrolling_top_small_region</text>
+<path d="M222,444.0 h381.0 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-381.0 z" fill="#2a78d6"/><text x="613.0" y="454.5" font-size="11" fill="#52514e">14.0</text>
+<path d="M222,459.0 h327.4 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-327.4 z" fill="#eb6834"/><text x="559.4" y="469.5" font-size="11" fill="#52514e">12.0</text>
+<text x="212" y="502.0" font-size="12" fill="#0b0b0b" text-anchor="end">sync_medium_cells</text>
+<path d="M222,484.0 h145.2 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-145.2 z" fill="#2a78d6"/><text x="377.2" y="494.5" font-size="11" fill="#52514e">5.4</text>
+<path d="M222,499.0 h145.6 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-145.6 z" fill="#eb6834"/><text x="377.6" y="509.5" font-size="11" fill="#52514e">5.4</text>
+<text x="212" y="542.0" font-size="12" fill="#0b0b0b" text-anchor="end">unicode</text>
+<path d="M222,524.0 h105.8 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-105.8 z" fill="#2a78d6"/><text x="337.8" y="534.5" font-size="11" fill="#52514e">4.0</text>
+<path d="M222,539.0 h98.5 a4,4 0 0 1 4,4 v5 a4,4 0 0 1 -4,4 h-98.5 z" fill="#eb6834"/><text x="330.5" y="549.5" font-size="11" fill="#52514e">3.7</text>
+<line x1="222" y1="74" x2="222" y2="558" stroke="#52514e" stroke-width="1"/>
+</g></svg>
