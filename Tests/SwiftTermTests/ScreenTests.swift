@@ -400,6 +400,73 @@ final class ScreenTests {
         TerminalTestHarness.assertLineText(terminal.buffer, row: 4, equals: "")
     }
 
+    /// SU on the normal screen keeps the lines it scrolls off, as xterm does.
+    @Test func testScrollUpSavesScrollback() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 5, scrollback: 10)
+        terminal.feed(text: "line1\r\nline2\r\nline3\r\nline4\r\nline5")
+        terminal.feed(text: "\(esc)[2S")
+
+        #expect(TerminalTestHarness.visibleLinesText(buffer: terminal.buffer) == ["line3", "line4", "line5", "", ""])
+        let all = String(decoding: terminal.getBufferAsData(), as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+        #expect(Array(all.prefix(5)) == ["line1", "line2", "line3", "line4", "line5"])
+        // SU does not move the cursor.
+        #expect(terminal.buffer.y == 4)
+    }
+
+    /// tmux enables DECLRMM; full-width margins still keep scrolled-off lines,
+    /// while narrow ones scroll only inside the margins.
+    @Test func testScrollUpWithMarginModeSavesScrollbackOnlyAtFullWidth() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 5, scrollback: 10)
+        terminal.feed(text: "\(esc)[?69hline1\r\nline2\r\nline3\r\nline4\r\nline5")
+        terminal.feed(text: "\(esc)[2S")
+        #expect(TerminalTestHarness.visibleLinesText(buffer: terminal.buffer) == ["line3", "line4", "line5", "", ""])
+        #expect(terminal.buffer.yBase == 2)
+
+        let (narrow, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 5, scrollback: 10)
+        narrow.feed(text: "aaaaa\r\nbbbbb\r\nccccc\r\nddddd\r\neeeee\(esc)[?69h\(esc)[1;3s\(esc)[1S")
+        #expect(narrow.buffer.yBase == 0)
+        #expect(TerminalTestHarness.visibleLinesText(buffer: narrow.buffer) == ["bbbaa", "cccbb", "dddcc", "eeedd", "   ee"])
+    }
+
+    /// A burst scrolled with one SU leaves the same scrollback as linefeeds.
+    @Test func testScrollUpMatchesLinefeedScrollback() {
+        func transcript(_ scroll: (Terminal, Int) -> Void) -> String {
+            let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 10, rows: 4, scrollback: 100)
+            var n = 0
+            for burst in [1, 3, 2, 4, 1, 2, 3] {
+                // tmux: scroll the screen, then draw the new rows at the bottom.
+                scroll(terminal, burst)
+                for i in 0..<burst {
+                    terminal.feed(text: "\(esc)[\(4 - burst + 1 + i);1H\(esc)[Krow\(n)")
+                    n += 1
+                }
+            }
+            return String(decoding: terminal.getBufferAsData(), as: UTF8.self)
+        }
+        let su = transcript { terminal, count in terminal.feed(text: "\(esc)[\(count)S") }
+        let lf = transcript { terminal, count in
+            terminal.feed(text: "\(esc)[4;1H" + String(repeating: "\n", count: count))
+        }
+        #expect(su == lf)
+    }
+
+    /// Within a scroll region that does not start at the top, or on the
+    /// alternate screen, SU still discards the lines.
+    @Test func testScrollUpInRegionDoesNotSaveScrollback() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 5, scrollback: 10)
+        terminal.feed(text: "line1\r\nline2\r\nline3\r\nline4\r\nline5")
+        terminal.feed(text: "\(esc)[2;5r\(esc)[1S")
+        #expect(TerminalTestHarness.visibleLinesText(buffer: terminal.buffer) == ["line1", "line3", "line4", "line5", ""])
+        #expect(terminal.buffer.yBase == 0)
+
+        let (alternate, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 5, scrollback: 10)
+        alternate.feed(text: "\(esc)[?1049hline1\r\nline2\(esc)[1S")
+        #expect(TerminalTestHarness.visibleLinesText(buffer: alternate.buffer) == ["line2", "", "", "", ""])
+        alternate.feed(text: "\(esc)[?1049l")
+        #expect(alternate.buffer.yBase == 0)
+    }
+
     /// Test scroll down (SD)
     @Test func testScrollDown() {
         let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 5, scrollback: 0)

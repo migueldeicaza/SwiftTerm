@@ -7724,6 +7724,19 @@ open class Terminal {
         let p = min (rows*2, max (pars.count == 0 ? 1 : pars [0], 1))
         let defaultBlank = PackedCell()
 
+        // Like xterm, lines that SU scrolls off the top of the normal screen
+        // go to scrollback, exactly as a linefeed at the bottom margin would.
+        // tmux scrolls a burst of output with one CSI n S (with DECLRMM on but
+        // full-width margins), so dropping these lines left gaps in the
+        // scrollback of an attached client.
+        let fullWidth = !marginMode || (buffer.marginLeft == 0 && buffer.marginRight == cols - 1)
+        if fullWidth && buffer.hasScrollback && buffer.scrollTop == 0 {
+            for _ in 0..<p {
+                scroll(isWrapped: false)
+            }
+            return
+        }
+
         if marginMode {
             let row = buffer.scrollTop + buffer.yBase
 
