@@ -60,9 +60,11 @@ struct UntrustedTerminalLink: Equatable {
     }
 
     let string: String
+    private let unresolvedLocalPath: Bool
 
-    init(_ string: String) {
+    init(_ string: String, unresolvedLocalPath: Bool = false) {
         self.string = string
+        self.unresolvedLocalPath = unresolvedLocalPath
     }
 
     var decision: Decision {
@@ -71,6 +73,7 @@ struct UntrustedTerminalLink: Equatable {
         guard !Self.containsUnsafeCharacters(string) else {
             return .deny(.unsafeCharacters)
         }
+        guard !unresolvedLocalPath else { return .deny(.inaccessibleFile) }
         guard let url = URL(string: string),
               let scheme = url.scheme?.lowercased(),
               !scheme.isEmpty else {
@@ -78,8 +81,7 @@ struct UntrustedTerminalLink: Equatable {
         }
 
         // Foundation parses "main.swift:12" as a URL with the scheme "main.swift".
-        if scheme.contains("."),
-           string.range(of: #"^[^:]+:[0-9]+(?::[0-9]+)?$"#, options: .regularExpression) != nil {
+        if scheme.contains("."), !TerminalView.hasURLScheme(string) {
             return .deny(.malformedURL)
         }
 
@@ -107,12 +109,14 @@ struct UntrustedTerminalLink: Equatable {
         value.unicodeScalars.contains(where: isUnsafeCharacter)
     }
 
-    /// Shows the effective target on one line.
+    /// Shows the effective target or the unresolved path on one line.
     var displayString: String {
         // URL(fileURLWithPath:) traps on an empty path.
         guard !string.isEmpty else { return "" }
         let normalized: String
-        if let url = URL(string: string), url.scheme != nil {
+        if unresolvedLocalPath {
+            normalized = string
+        } else if let url = URL(string: string), url.scheme != nil {
             // Use the same path for the preview and the file check.
             normalized = url.isFileURL
                 ? url.standardizedFileURL.resolvingSymlinksInPath().path
