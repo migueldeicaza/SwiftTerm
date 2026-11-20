@@ -712,6 +712,33 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         progressReportTimer = nil
     }
 
+    /// Brings the bar in line with the live report and ``showsProgressBar`` —
+    /// the one place either of them reaches the bar view, so a host that turns
+    /// the bar off cannot be talked back into it by the next report.
+    func syncProgressBar() {
+        guard showsProgressBar, let currentProgressReport else {
+            progressBarView?.apply(state: .remove, progress: nil)
+            return
+        }
+        progressBarView?.apply(state: currentProgressReport.state, progress: currentProgressReport.progress)
+    }
+
+    /// Controls whether the view draws the OSC 9;4 progress bar itself.
+    ///
+    /// The reports still reach ``TerminalViewDelegate/progressReport(source:report:)``,
+    /// so a host that draws progress in its own chrome turns the built-in bar off
+    /// without losing what it draws from; that callback also carries the synthetic
+    /// removals the view makes on its own, when the silence timer expires a bar and
+    /// when the view closes.
+    /// While this is `false` no report brings the bar back; setting it to
+    /// `true` again restores it, and a report still live comes back with it.
+    public var showsProgressBar: Bool = true {
+        didSet {
+            guard showsProgressBar != oldValue else { return }
+            syncProgressBar()
+        }
+    }
+
     /// Permanently releases UI drivers and renderer resources.
     ///
     /// An owner must call this method when it permanently releases the view.

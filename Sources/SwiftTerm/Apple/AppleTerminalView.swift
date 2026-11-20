@@ -2818,7 +2818,7 @@ extension TerminalView {
             guard wasLive else { return }
         } else {
             currentProgressReport = report
-            progressBarView?.apply(state: report.state, progress: report.progress)
+            syncProgressBar()
             resetProgressReportTimer()
         }
         terminalDelegate?.progressReport(source: self, report: report)
@@ -2846,7 +2846,7 @@ extension TerminalView {
     func clearProgressReport() {
         cancelProgressReportTimer()
         currentProgressReport = nil
-        progressBarView?.apply(state: .remove, progress: nil)
+        syncProgressBar()
     }
 
     /// Clears the report while the view is stopping, and says whether the host
