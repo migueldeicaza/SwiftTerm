@@ -80,6 +80,60 @@ final class MarkedTextOverlayColorTests {
         #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeBackgroundColor))
     }
 
+    /// A TUI that draws its own cursor reverses only the cell under the caret;
+    /// the overlay should match the row, not that cursor.
+    @Test func testOverlayIgnoresACursorDrawnInReverseVideo() throws {
+        let view = makeView()
+        view.feed(text: "> \u{1b}[7m \u{1b}[0m          \r\u{1b}[2C")
+        mark(view, "ce shi")
+        let overlay = try #require(overlay(in: view))
+        #expect(rgb(overlay.overlayBackgroundColor) == rgb(view.effectiveNativeBackgroundColor))
+        #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeForegroundColor))
+    }
+
+    /// A drawn cursor over a wide character reverses both of its columns.
+    @Test func testOverlayIgnoresADrawnCursorOverAWideCharacter() throws {
+        let view = makeView()
+        view.feed(text: "> \u{1b}[7m\u{304B}\u{1b}[0m          \r\u{1b}[2C")
+        mark(view, "ce shi")
+        let overlay = try #require(overlay(in: view))
+        #expect(rgb(overlay.overlayBackgroundColor) == rgb(view.effectiveNativeBackgroundColor))
+        #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeForegroundColor))
+    }
+
+    /// The same drawn cursor on a row painted with an explicit background.
+    @Test func testOverlayTakesTheRowBackgroundAroundADrawnCursor() throws {
+        let view = makeView()
+        view.feed(text: "\u{1b}[48;2;64;64;64m> \u{1b}[7m \u{1b}[27m          \u{1b}[0m\r\u{1b}[2C")
+        mark(view, "ce shi")
+        let overlay = try #require(overlay(in: view))
+        #expect(rgb(overlay.overlayBackgroundColor) == [64, 64, 64])
+    }
+
+    /// At the end of the row there is no cell after the cursor, so the cell
+    /// before the wide character decides, not the character's own first column.
+    @Test func testOverlayIgnoresADrawnCursorOverAWideCharacterAtTheRowEnd() throws {
+        let view = makeView()
+        let cols = view.withTerminal { $0.cols }
+        view.feed(text: "> \u{1b}[\(cols - 1)G\u{1b}[7m\u{304B}\u{1b}[0m\r\u{1b}[\(cols)G")
+        #expect(view.withTerminal { $0.displayBuffer.x } == cols - 1)
+        mark(view, "ce shi")
+        let overlay = try #require(overlay(in: view))
+        #expect(rgb(overlay.overlayBackgroundColor) == rgb(view.effectiveNativeBackgroundColor))
+        #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeForegroundColor))
+    }
+
+    /// A TUI may color only the cursor cell and reset right after it, so the
+    /// cells after the cursor have the default background.
+    @Test func testOverlayKeepsTheBackgroundUnderADrawnCursorBeforeDefaultCells() throws {
+        let view = makeView()
+        view.feed(text: "\u{1b}[48;2;64;64;64m> \u{1b}[7m \u{1b}[0m          \r\u{1b}[2C")
+        mark(view, "ce shi")
+        let overlay = try #require(overlay(in: view))
+        #expect(rgb(overlay.overlayBackgroundColor) == [64, 64, 64])
+        #expect(rgb(try #require(foreground(of: overlay))) == rgb(view.effectiveNativeForegroundColor))
+    }
+
     /// Bold brightens a cell's foreground but never its background.
     @Test func testOverlayIgnoresBoldOnAnAnsiBackground() throws {
         let view = TerminalView.makeForMarkedTextTests()

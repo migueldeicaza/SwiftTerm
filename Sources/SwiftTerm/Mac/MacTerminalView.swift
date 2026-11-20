@@ -2683,6 +2683,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     ///
     /// The background is mapped the way the renderer fills cells: bold never
     /// brightens it, only the foreground.
+    ///
+    /// TUIs that hide the hardware cursor and draw their own (Claude Code, for
+    /// one) leave a single reverse-video cell under the caret. That cell is the
+    /// cursor, not the row. The TUI draws it by reversing the row's own colors,
+    /// so the overlay reads the cell's colors without the reversal.
     private func markedTextColorsAtCaret() -> (foreground: NSColor, background: NSColor) {
         withTerminal { terminal in
             let buffer = terminal.displayBuffer
@@ -2690,9 +2695,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             guard row >= 0, row < buffer.lines.count, buffer.x >= 0, buffer.x < buffer.cols else {
                 return (effectiveNativeForegroundColor, effectiveNativeBackgroundColor)
             }
-            let attribute = buffer.lines[row][buffer.x].attribute
+            let line = buffer.lines[row]
+            let cell = line[buffer.x]
+            let attribute = cell.attribute
+            // The neighbor is the cell past the character under the caret, or the one before it at the
+            // end of the row. A wide character's second column (width 0) belongs to its first.
+            let start = cell.width == 0 && buffer.x > 0 ? buffer.x - 1 : buffer.x
+            let end = start + max(1, Int(line[start].width))
+            let neighbor = end < buffer.cols ? end : start - 1
+            let isDrawnCursor = attribute.style.contains(.inverse)
+                && neighbor >= 0 && !line[neighbor].attribute.style.contains(.inverse)
             let isBold = attribute.style.contains(.bold)
-            guard attribute.style.contains(.inverse) else {
+            guard attribute.style.contains(.inverse), !isDrawnCursor else {
                 return (effectiveNativeForegroundColor,
                         mapColor(color: attribute.bg, isFg: false, isBold: false, useBrightColors: useBrightColors))
             }
