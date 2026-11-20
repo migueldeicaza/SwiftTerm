@@ -3793,6 +3793,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case .mouseModeChanged:
             // iOS has no tracking-area equivalent to update.
             break
+        case .mousePointerShapeChanged:
+            // This host does not advertise native pointer shape support.
+            break
         case .bell:
             deliverBell()
         case .programStatusChanged:

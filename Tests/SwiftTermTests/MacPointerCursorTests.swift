@@ -29,6 +29,47 @@ struct MacPointerCursorTests {
         #expect(view.pointerCursor(modifiers: []) === NSCursor.iBeam)
     }
 
+    @Test func osc22SelectsShapesAndRestoresThemWithoutMouseTracking() throws {
+        let view = makeView()
+        view.feed(text: "\(esc)]22;pointer\(esc)\\")
+        #expect(view.currentMousePointerShape == .pointer)
+        #expect(view.pointerCursor(modifiers: []) === NSCursor.pointingHand)
+        view.feed(text: "\(esc)]22;>none\(esc)\\")
+        let hidden = view.pointerCursor(modifiers: [])
+        #expect(view.currentMousePointerShape == .hidden)
+        #expect(hidden !== NSCursor.arrow && hidden !== NSCursor.iBeam)
+        #expect(view.pointerCursor(modifiers: []) === hidden)
+        let image = try #require(hidden.image.tiffRepresentation)
+        let bitmap = try #require(NSBitmapImageRep(data: image))
+        #expect(bitmap.pixelsWide > 0 && bitmap.pixelsHigh > 0)
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                #expect(bitmap.colorAt(x: x, y: y)?.alphaComponent == 0)
+            }
+        }
+        view.feed(text: "\(esc)]22;<\(esc)\\")
+        #expect(view.pointerCursor(modifiers: []) === NSCursor.pointingHand)
+        view.feed(text: "\(esc)]22;\(esc)\\")
+        #expect(view.currentMousePointerShape == nil)
+        #expect(view.pointerCursor(modifiers: []) === NSCursor.iBeam)
+    }
+
+    @Test func osc22RespectsLocalSelectionAndScreenSwitches() {
+        let view = makeView()
+        view.feed(text: "\(esc)[?1003h\(esc)]22;none\(esc)\\")
+        let hidden = view.pointerCursor(modifiers: [])
+        #expect(view.pointerCursor(modifiers: .shift) === NSCursor.iBeam)
+        view.feed(text: "\(esc)[>1s")
+        #expect(view.pointerCursor(modifiers: .shift) === hidden)
+        view.feed(text: "\(esc)[?1049h")
+        #expect(view.currentMousePointerShape == nil)
+        #expect(view.pointerCursor(modifiers: []) === NSCursor.arrow)
+        view.feed(text: "\(esc)[?1049l")
+        #expect(view.currentMousePointerShape == .hidden)
+        view.resetToInitialState()
+        #expect(view.currentMousePointerShape == nil)
+    }
+
     @Test func mouseReportingShowsTheArrow() {
         let view = makeView()
         view.feed(text: "\(esc)[?1000h\(esc)[?1006h")
@@ -104,6 +145,35 @@ struct MacPointerCursorTests {
         view.pointerLocationInTopmostWindow = { _ in CGPoint(x: 10, y: 10) }
         window.orderFrontRegardless()
         return window
+    }
+
+    @Test func osc22UpdatesAStationaryPointerAndFullResetRestoresIt() {
+        let view = makeView()
+        let window = showInWindow(view)
+        defer {
+            window.orderOut(nil)
+            NSCursor.arrow.set()
+        }
+        NSCursor.iBeam.set()
+        view.feed(text: "\(esc)]22;none\(esc)\\")
+        view.eventQueue.drain()
+        #expect(NSCursor.current === view.pointerCursor(modifiers: []))
+        #expect(view.currentMousePointerShape == .hidden)
+        view.resetToInitialState()
+        view.eventQueue.drain()
+        #expect(NSCursor.current === NSCursor.iBeam)
+    }
+
+    @Test func osc22DoesNotHideThePointerOutsideItsView() {
+        let view = makeView()
+        let window = showInWindow(view)
+        defer { window.orderOut(nil) }
+        view.pointerLocationInTopmostWindow = { _ in nil }
+        NSCursor.arrow.set()
+        view.feed(text: "\(esc)]22;none\(esc)\\")
+        view.eventQueue.drain()
+        #expect(view.currentMousePointerShape == .hidden)
+        #expect(NSCursor.current === NSCursor.arrow)
     }
 
     @Test func mouseModeChangeUpdatesThePointerAtOnce() {

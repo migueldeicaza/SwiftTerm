@@ -2042,10 +2042,26 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// return shared cursors such as `NSCursor.arrow`, since the view compares
     /// them by identity to skip work when nothing changed.
     open func pointerCursor(modifiers: NSEvent.ModifierFlags) -> NSCursor {
-        guard allowMouseReporting && currentMouseMode != .off else { return .iBeam }
-        let shiftSelects = modifiers.contains(.shift) && !mouseShiftCaptureState.withLock { $0 }
-        return shiftSelects ? .iBeam : .arrow
+        let tracking = allowMouseReporting && currentMouseMode != .off
+        let shiftSelects = tracking && modifiers.contains(.shift) && !mouseShiftCaptureState.withLock { $0 }
+        if shiftSelects { return .iBeam }
+        switch currentMousePointerShape {
+        case .defaultShape: return .arrow
+        case .text: return .iBeam
+        case .pointer: return .pointingHand
+        case .crosshair: return .crosshair
+        case .hidden: return Self.hiddenMousePointer
+        case nil: return tracking ? .arrow : .iBeam
+        }
     }
+
+    // A transparent cursor is scoped to this view's cursor rect. Unlike
+    // NSCursor.hide(), it cannot leave the process-wide hide count unbalanced.
+    private static let hiddenMousePointer = NSCursor(
+        image: NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
+            NSGraphicsContext.current?.cgContext.clear(rect)
+            return true
+        }, hotSpot: .zero)
 
     /// Reads the keys held now unless given, since an event's flags can miss a
     /// Shift held since before the cursor update AppKit sends after a rect change.
@@ -4291,6 +4307,14 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// terminal lock.
     nonisolated private let mouseShiftCaptureState = Locked(false)
 
+    nonisolated private let mousePointerShapeState = Locked<MousePointerShape?>(nil)
+
+    /// The active screen's OSC 22 pointer shape, or nil for the usual pointer.
+    /// This copied read does not take the terminal lock.
+    public var currentMousePointerShape: MousePointerShape? {
+        mousePointerShapeState.withLock { $0 }
+    }
+
     /// The mouse reporting mode the program in the terminal last asked for,
     /// `.off` when it has none. Hosts that give a click their own meaning, such
     /// as a control-click context menu, can check it to leave the click to the
@@ -4319,6 +4343,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             } else {
                 deregisterTrackingInterest()
             }
+            pointerRuleChanged()
+        case .mousePointerShapeChanged:
             pointerRuleChanged()
         case .bell:
             deliverBell()
@@ -4390,6 +4416,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         mouseModeState.withLock { $0 = source.mouseMode }
         mouseShiftCaptureState.withLock { $0 = source.mouseShiftCapture }
         eventQueue.post(.mouseModeChanged)
+    }
+
+    nonisolated open func supportedMousePointerShapes(source: Terminal) -> [MousePointerShape] {
+        MousePointerShape.allCases
+    }
+
+    nonisolated open func mousePointerShapeChanged(source: Terminal) {
+        mousePointerShapeState.withLock { $0 = source.mousePointerShape }
+        eventQueue.post(.mousePointerShapeChanged)
     }
     
     public nonisolated func setTerminalTitle(source: Terminal, title: String) {
