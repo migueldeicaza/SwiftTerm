@@ -396,6 +396,48 @@ final class SwiftTermUnicode {
             skipNullCellsFollowingWide: true) == "\(javaneseConjunct)x")
     }
 
+    // Unicode 18 GB9c is InCB=Linker InCB=Extend* × InCB=Consonant. It does
+    // not need a consonant before the linker. Each case comes from
+    // GraphemeBreakTest-18.0.0 or from the ucs-detect UDHR samples.
+    @Test(arguments: [
+        // Tai Tham: a spacing vowel between the consonant and SAKOT.
+        "\u{1A20}\u{1A6E}\u{1A60}\u{1A2F}\u{1A68}",
+        "\u{1A23}\u{1A55}\u{1A60}\u{1A4B}",
+        "\u{1A34}\u{1A6E}\u{1A60}\u{1A48}\u{1A71}",
+        // Malayalam: a chillu, which is not InCB=Consonant, before the virama.
+        "\u{0D7B}\u{0D4D}\u{0D31}\u{0D46}",
+        // GraphemeBreakTest-18.0.0: a letter that is not a consonant.
+        "a\u{094D}\u{0924}",
+        "?\u{094D}\u{0924}",
+    ], [false, true])
+    func testUnicode18LinkerJoinsConsonantWithoutLeadingConsonant(text: String, perScalar: Bool) {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        if perScalar {
+            for scalar in text.unicodeScalars {
+                t.feed(text: String(scalar))
+            }
+        } else {
+            t.feed(text: text)
+        }
+        t.feed(text: "x")
+
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == text)
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+        #expect(t.getCharacter(col: 2, row: 0) == "x")
+        #expect(t.buffer.x == 3)
+    }
+
+    @Test func testExtendWithoutLinkerDoesNotJoinConsonant() {
+        // GraphemeBreakTest-18.0.0: ÷ 0915 × 0308 ÷ 0915 ÷. GB9c needs a linker.
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        t.feed(text: "\u{0915}\u{0308}\u{0915}")
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == "\u{0915}\u{0308}")
+        #expect(t.getCharData(col: 1, row: 0)?.getText() == "\u{0915}")
+        #expect(t.buffer.x == 2)
+    }
+
     @Test func testRepeatedIndicConjunctBreakSequenceStaysTwoCellsWide() {
         let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
         let t = h.terminal!
@@ -474,6 +516,58 @@ final class SwiftTermUnicode {
         #expect(t.getCharData(col: 0, row: 0)?.width == 1)
         #expect(t.getCharData(col: 1, row: 0)?.getText() == "\u{3000}")
         #expect(t.getCharData(col: 1, row: 0)?.width == 2)
+    }
+
+    @Test func testSpacingMarkThatJoinsNothingGetsACell() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        // At the start of a line there is no cell to join.
+        t.feed(text: "\u{0903}x")
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == "\u{0903}")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 1)
+        #expect(t.getCharacter(col: 1, row: 0) == "x")
+        #expect(t.buffer.x == 2)
+
+        // A nonspacing mark that joins nothing is still dropped.
+        t.feed(text: "\r\n\u{0301}x")
+        #expect(t.getCharacter(col: 0, row: 1) == "x")
+        #expect(t.buffer.x == 1)
+    }
+
+    @Test func testSpacingMarkAfterCursorMoveStartsANewCell() {
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        // Without a cursor move, the spacing mark joins and widens the cell.
+        t.feed(text: "\u{0915}\u{093F}")
+        #expect(t.getCharData(col: 0, row: 0)?.getText() == "\u{0915}\u{093F}")
+        #expect(t.getCharData(col: 0, row: 0)?.width == 2)
+
+        // After a cursor move, it does not change the cell before the cursor.
+        t.feed(text: "\r\n\u{0915}\u{1b}[2G\u{093F}")
+        #expect(t.getCharData(col: 0, row: 1)?.getText() == "\u{0915}")
+        #expect(t.getCharData(col: 0, row: 1)?.width == 1)
+        #expect(t.getCharData(col: 1, row: 1)?.getText() == "\u{093F}")
+        #expect(t.buffer.x == 2)
+    }
+
+    @Test(arguments: [false, true])
+    func testOrphanSpacingVowelLinkerAndConsonantShareTwoCells(perScalar: Bool) {
+        // ucs-detect Khün sample: TAI THAM VOWEL SIGN AA, SAKOT, HIGH KA.
+        // Unicode 18 GB9c makes it one grapheme; wcwidth gives it width 2.
+        let text = "\u{1A63}\u{1A60}\u{1A20}"
+        let h = HeadlessTerminal(queue: SwiftTermTests.queue) { _ in }
+        let t = h.terminal!
+        t.feed(text: "ab\u{1b}[5G")
+        if perScalar {
+            for scalar in text.unicodeScalars {
+                t.feed(text: String(scalar))
+            }
+        } else {
+            t.feed(text: text)
+        }
+        #expect(t.getCharData(col: 4, row: 0)?.getText() == text)
+        #expect(t.getCharData(col: 4, row: 0)?.width == 2)
+        #expect(t.buffer.x == 6)
     }
 
     @Test func testStandaloneEmojiModifiersDoNotJoinTablePrefix() {
