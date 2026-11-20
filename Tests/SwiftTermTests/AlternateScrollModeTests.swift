@@ -244,6 +244,43 @@ final class AlternateScrollModeTests: TerminalDelegate {
         #expect(delegate.sent.allSatisfy { $0 == Array(EscapeSequences.moveDownNormal) })
     }
 
+    @MainActor @Test func diagonalWheelEventReportsBothDirectionsWithinTheBurst() async {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\u{1b}[?1000h\u{1b}[?1006h")
+        guard let cell = view.cellDimension,
+              let wheel = Self.makePreciseWheelEvent(pixels: Int32((cell.height * 6.5).rounded()),
+                                                    horizontalPixels: -Int32((cell.width * 1.5).rounded())) else {
+            Issue.record("could not synthesize a diagonal scroll wheel event")
+            return
+        }
+
+        view.scrollWheel(with: wheel)
+        await drainMainQueue()
+
+        let reports = delegate.sent.map { String(decoding: $0, as: UTF8.self) }
+        #expect(reports.count == WheelReportBudget.burst)
+        #expect(reports.dropLast().allSatisfy { $0.hasPrefix("\u{1b}[<64;") })
+        #expect(reports.last?.hasPrefix("\u{1b}[<67;") == true)
+    }
+
+    @MainActor @Test func horizontalPreciseWheelWithInfiniteSensitivity() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 320, height: 160))
+        let delegate = WheelCapturingDelegate()
+        view.terminalDelegate = delegate
+        view.terminal.feed(text: "\u{1b}[?1049h")
+        view.scrollSensitivity = .infinity
+        guard let wheel = Self.makePreciseWheelEvent(pixels: 0, horizontalPixels: 10) else {
+            Issue.record("could not synthesize a horizontal scroll wheel event")
+            return
+        }
+
+        view.scrollWheel(with: wheel)
+
+        #expect(delegate.sent == Array(repeating: EscapeSequences.moveLeftNormal, count: WheelReportBudget.burst))
+    }
+
     @MainActor @Test func optionWheelUsesLocalScrollbackDuringMouseTracking() {
         let view = TerminalView(
             frame: CGRect(x: 0, y: 0, width: 320, height: 160),
@@ -310,13 +347,14 @@ final class AlternateScrollModeTests: TerminalDelegate {
     /// Pixel units give `hasPreciseScrollingDeltas`, i.e. the accumulating path.
     private static func makePreciseWheelEvent(
         pixels: Int32,
+        horizontalPixels: Int32 = 0,
         modifiers: CGEventFlags = []
     ) -> NSEvent? {
         guard let cg = CGEvent(scrollWheelEvent2Source: nil,
                                units: .pixel,
-                               wheelCount: 1,
+                               wheelCount: horizontalPixels == 0 ? 1 : 2,
                                wheel1: pixels,
-                               wheel2: 0,
+                               wheel2: horizontalPixels,
                                wheel3: 0) else {
             return nil
         }
