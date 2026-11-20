@@ -2447,6 +2447,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// OS specific feature.
     public var optionAsMetaKey: Bool = true
 
+    /// The Option keys that are Meta while `optionAsMetaKey` is `true`. The
+    /// default is `.both`. With `.left` or `.right`, the other Option key goes
+    /// to the OS, so the keyboard layout composes the character it puts behind
+    /// the key: a user of a Norwegian layout keeps Meta on one Option key and
+    /// types "|" with Option+7 on the other one.
+    ///
+    /// This has no effect while `optionAsMetaKey` is `false`. The key that is
+    /// not Meta obeys `optionAsMetaKeyForFunctionalKeys`. An event that does
+    /// not show which Option key is down (a synthetic event) gets Meta.
+    public var optionAsMetaSide: OptionMetaSide = .both
+
     /// When `optionAsMetaKey` is `false`, Option goes to the OS so the keyboard
     /// layout can compose the character it puts behind the key (Option+Q is "@"
     /// on a Turkish layout, Option+2 on a Czech one). The layout composes

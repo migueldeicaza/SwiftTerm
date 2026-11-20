@@ -93,6 +93,19 @@ public struct TerminalKeyEvent {
     public var composing: Bool { event.composing }
 }
 
+/// The Option keys that act as Meta while Option is the Meta key
+/// (`optionAsMetaKey` is true). An Option key that is not Meta goes to the
+/// keyboard layout, which composes its characters (Option+7 is "|" on a
+/// Norwegian layout).
+public enum OptionMetaSide: String, Codable, Sendable, CaseIterable {
+    /// The left and the right Option keys are Meta.
+    case both
+    /// The left Option key is Meta; the right one goes to the layout.
+    case left
+    /// The right Option key is Meta; the left one goes to the layout.
+    case right
+}
+
 /// A view that sends the keys of a `TerminalKeyboardRouter` to a terminal.
 @MainActor
 public protocol TerminalKeyboardHost: NSView {
@@ -104,6 +117,9 @@ public protocol TerminalKeyboardHost: NSView {
     /// that the keyboard layout composes nothing for; see
     /// `TerminalView.optionAsMetaKeyForFunctionalKeys`.
     var optionAsMetaKeyForFunctionalKeys: Bool { get }
+    /// The Option keys that are Meta while `optionAsMetaKey` is true; see
+    /// `TerminalView.optionAsMetaSide`.
+    var optionAsMetaSide: OptionMetaSide { get }
     /// A held letter opens the accent menu of macOS and does not repeat;
     /// see `TerminalView.pressAndHoldShowsAccentMenu`.
     var pressAndHoldShowsAccentMenu: Bool { get }
@@ -134,6 +150,8 @@ public protocol TerminalKeyboardHost: NSView {
 extension TerminalKeyboardHost {
     /// False: Option is Meta only when ``optionAsMetaKey`` is true.
     public var optionAsMetaKeyForFunctionalKeys: Bool { false }
+    /// Both: the two Option keys are Meta when ``optionAsMetaKey`` is true.
+    public var optionAsMetaSide: OptionMetaSide { .both }
     /// False: a held text key repeats.
     public var pressAndHoldShowsAccentMenu: Bool { false }
 }
@@ -184,19 +202,39 @@ public final class TerminalKeyboardRouter {
     private var optionAsMetaKey: Bool { host?.optionAsMetaKey ?? true }
 
     /// Whether Option acts as Meta for this key: on every key when
-    /// `optionAsMetaKey` is on, and on the keys the layout composes nothing
+    /// `optionAsMetaKey` is on and the Option key that is down is one of
+    /// `optionAsMetaSide`, and on the keys the layout composes nothing
     /// for when `optionAsMetaKeyForFunctionalKeys` is on. Escape, Enter, Tab
     /// and Backspace compose nothing, so they count as functional here, as
     /// they do in iTerm2. While the input method holds marked text, every key
     /// belongs to it.
     private func optionIsMeta(for event: NSEvent) -> Bool {
-        if optionAsMetaKey {
+        if optionAsMetaKey && metaSideIsPressed(event) {
             return true
         }
         guard host?.optionAsMetaKeyForFunctionalKeys == true, !isComposing else {
             return false
         }
         return textlessKey(for: event) != nil || kittyFunctionalKey(from: event) != nil
+    }
+
+    /// Whether the Option key that is down is one that `optionAsMetaSide`
+    /// makes Meta. The standard AppKit flags combine the two Option keys; the
+    /// device flags tell them apart. When the two keys are down, Meta has
+    /// priority. An event without device flags (a synthetic event) cannot
+    /// show the side, so Option is Meta there, as it is with `.both`.
+    private func metaSideIsPressed(_ event: NSEvent) -> Bool {
+        let side = host?.optionAsMetaSide ?? .both
+        if side == .both {
+            return true
+        }
+        let rawFlags = event.modifierFlags.rawValue
+        let left = rawFlags & UInt(NX_DEVICELALTKEYMASK) != 0
+        let right = rawFlags & UInt(NX_DEVICERALTKEYMASK) != 0
+        if !left && !right {
+            return true
+        }
+        return side == .left ? left : right
     }
 
     /// Escape, Enter, Tab and Backspace by their physical key. AppKit keeps

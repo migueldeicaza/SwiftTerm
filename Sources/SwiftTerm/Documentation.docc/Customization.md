@@ -105,6 +105,16 @@ terminalView.optionAsMetaKey = false
 terminalView.optionAsMetaKeyForFunctionalKeys = true
 ```
 
+Many keyboard layouts put common terminal characters behind Option (Option+7 is
+`|` on a Norwegian layout). `optionAsMetaSide` makes one Option key Meta and
+gives the other one to the layout, so the user has the two functions:
+
+```swift
+terminalView.optionAsMetaKey = true
+terminalView.optionAsMetaSide = .left   // right Option types layout characters
+terminalView.optionAsMetaKeyForFunctionalKeys = true
+```
+
 On iOS with an external keyboard, `optionAsMetaKey` is available too. The iOS
 view also supports toggling it at runtime with Option-Command-O.
 
