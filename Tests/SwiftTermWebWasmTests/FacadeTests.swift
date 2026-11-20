@@ -204,6 +204,20 @@ final class FacadeTests: XCTestCase {
         }
         for type: UInt8 in [5, 6, 8, 9, 10, 14] { XCTAssertTrue(types.contains(type), "Missing event \(type)") }
     }
+    func testMouseModeEventOnlyWhenTheModeChanges() {
+        let handle = terminalCreate(8, 2, 0)
+        defer { _ = terminalDestroy(handle) }
+        let entry = WasmRuntime.shared.handles.get(handle)!
+        while !entry.host.events.first.isEmpty { entry.host.events.consume() }
+        XCTAssertEqual(feed(handle, "\u{1b}[?1002h\u{1b}[>1s\u{1b}[>0s\u{1b}[?1002l"), 0)
+        var modes: [UInt32] = []
+        while !entry.host.events.first.isEmpty {
+            let bytes = entry.host.events.first
+            if bytes[0] == 14 { modes.append(word(bytes, 16)) }
+            entry.host.events.consume()
+        }
+        XCTAssertEqual(modes, [3, 0])
+    }
     func testTimeoutQueueFailureStillAdvancesRevision() {
         let handle = terminalCreate(8, 2, 0)
         defer { _ = terminalDestroy(handle) }

@@ -2041,6 +2041,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// on the main thread, so it must not take the terminal lock, and it must
     /// return shared cursors such as `NSCursor.arrow`, since the view compares
     /// them by identity to skip work when nothing changed.
+    ///
+    /// The view refreshes the pointer when a modifier changes only while the
+    /// application receives the mouse. An override that uses `modifiers` while
+    /// mouse reporting is off, such as a pointing hand while Command is held
+    /// over a link, gets no refresh until the next mouse move.
     open func pointerCursor(modifiers: NSEvent.ModifierFlags) -> NSCursor {
         guard allowMouseReporting && currentMouseMode != .off else { return .iBeam }
         let shiftSelects = modifiers.contains(.shift) && !mouseShiftCaptureState.withLock { $0 }
@@ -2149,8 +2154,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
-    /// Whether the pointer is over this view where it shows: a visible window,
-    /// no hidden ancestor, and no other window or view above it at that point.
+    /// Whether the pointer is over this view's text where it shows: a visible
+    /// window, no hidden ancestor, and no other window or view above it at that
+    /// point, the view's own subviews included, such as the find bar, whose
+    /// fields show their own pointer.
     private func pointerIsOver(_ window: NSWindow) -> Bool {
         guard window.isVisible, !isHiddenOrHasHiddenAncestor,
               let contentView = window.contentView,
@@ -2158,7 +2165,13 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return false
         }
         let point = contentView.superview?.convert(location, from: nil) ?? location
-        return contentView.hitTest(point)?.isDescendant(of: self) == true
+        guard let hit = contentView.hitTest(point) else { return false }
+#if canImport(MetalKit)
+        if let metalView, hit === metalView {
+            return true
+        }
+#endif
+        return hit === self
     }
     
     func makeFirstResponder ()
