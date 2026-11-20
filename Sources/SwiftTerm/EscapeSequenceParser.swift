@@ -814,6 +814,7 @@ final class EscapeSequenceParser {
         case 10:   terminal.oscSetColors(data, startAt: 0)
         case 11:   terminal.oscSetColors(data, startAt: 1)
         case 12:   terminal.oscSetColors(data, startAt: 2)
+        case 22:   terminal.oscMousePointerShape(data)
         case 52:   terminal.oscClipboard(data)
         case 104:  terminal.oscResetColor(data)
         case 110:  terminal.oscResetDynamicColor(foreground: true)

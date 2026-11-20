@@ -41,6 +41,8 @@ enum TerminalEvent: Int, CaseIterable, Sendable {
     case bell = 2
     /// Current program status changed. The view stores the latest snapshot.
     case programStatusChanged = 3
+    /// The active screen's native pointer shape changed.
+    case mousePointerShapeChanged = 4
 
     fileprivate var mask: UInt32 { 1 << UInt32(rawValue) }
 }
