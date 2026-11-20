@@ -70,12 +70,57 @@ struct SessionSignalTests {
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
         func processTerminated(source: TerminalView, exitCode: Int32?) {}
 
-        func progressReport(source: TerminalView, report: Terminal.ProgressReport) {
+        func progressReported(source: LocalProcessTerminalView, report: Terminal.ProgressReport) {
             reports.append(report)
         }
 
-        func notification(source: TerminalView, title: String, body: String) {
+        func notificationPosted(source: LocalProcessTerminalView, title: String, body: String) {
             notifications.append((title, body))
+        }
+    }
+
+    private final class DualSignalHost: TerminalViewDelegate, LocalProcessHostStubs {
+        var reports: [Terminal.ProgressReport] = []
+        var notifications: [String] = []
+        var otherViewSignals = 0
+
+        func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
+        func setTerminalTitle(source: TerminalView, title: String) {}
+        func send(source: TerminalView, data: ArraySlice<UInt8>) {}
+        func scrolled(source: TerminalView, position: Double) {}
+        func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {}
+        func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+        func clipboardCopy(source: TerminalView, content: Data) {}
+        func programStatusChanged(source: TerminalView, records: [TerminalProgramStatus]) {}
+        func selectionFinished(source: TerminalView) {}
+        func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities { [] }
+        func kittyClipboardAvailableMimeTypes(
+            source: TerminalView, location: KittyClipboardLocation
+        ) -> [String]? { nil }
+        func kittyClipboardRead(
+            source: TerminalView, location: KittyClipboardLocation, mimeType: String
+        ) -> KittyClipboardReadResult? { nil }
+        func kittyClipboardWrite(
+            source: TerminalView, location: KittyClipboardLocation, content: KittyClipboardWriteContent
+        ) -> KittyClipboardWriteResult { .unsupported }
+        func kittyClipboardRequestPermission(
+            source: TerminalView, request: KittyClipboardPermissionRequest
+        ) -> KittyClipboardPermissionResult { .deny }
+
+        func progressReport(source: TerminalView, report: Terminal.ProgressReport) {
+            otherViewSignals += 1
+        }
+
+        func notification(source: TerminalView, title: String, body: String) {
+            otherViewSignals += 1
+        }
+
+        func progressReported(source: LocalProcessTerminalView, report: Terminal.ProgressReport) {
+            reports.append(report)
+        }
+
+        func notificationPosted(source: LocalProcessTerminalView, title: String, body: String) {
+            notifications.append(title)
         }
     }
 
@@ -373,6 +418,23 @@ struct SessionSignalTests {
         view.feed(text: "\u{1b}]777;notify;Build;Done\u{07}")
         await settle { !delegate.notifications.isEmpty }
         #expect(delegate.notifications.first?.title == "Build")
+    }
+
+    /// A host that is the `terminalDelegate` of another view and the
+    /// `processDelegate` of a local one compiles, and its hooks for the other
+    /// view do not catch the local view's signals.
+    @Test func aHostOfBothProtocolsKeepsTheSignalsApart() async {
+        let view = LocalProcessTerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 320))
+        let delegate = DualSignalHost()
+        view.processDelegate = delegate
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        view.feed(text: "\u{1b}]777;notify;Build;Done\u{07}")
+        await settle { !delegate.reports.isEmpty && !delegate.notifications.isEmpty }
+
+        #expect(delegate.reports.map(\.state) == [.set])
+        #expect(delegate.notifications == ["Build"])
+        #expect(delegate.otherViewSignals == 0)
     }
 
     /// A process that exits mid-report never sends its removal, so its exit

@@ -505,6 +505,9 @@ Both are defaulted to do nothing, so neither is a breaking change for an
 existing delegate.
 
 ``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so a host
-that uses it implements the same two methods on
-``LocalProcessTerminalViewDelegate`` instead; the view forwards them, and they
-are defaulted there too.
+that uses it implements
+``LocalProcessTerminalViewDelegate/progressReported(source:report:)`` and
+``LocalProcessTerminalViewDelegate/notificationPosted(source:title:body:)``
+instead; the view forwards them, and they are defaulted there too. Their names
+differ from the ``TerminalViewDelegate`` methods, so a type that conforms to
+both protocols still compiles.

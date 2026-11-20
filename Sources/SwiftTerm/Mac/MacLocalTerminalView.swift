@@ -100,17 +100,22 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     // ``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so the
     // host cannot answer these ``TerminalViewDelegate`` hooks directly. The
     // view forwards them here, and the defaults do nothing.
+    //
+    // The names are different from the ``TerminalViewDelegate`` hooks, as with
+    // ``bellRang(source:style:)``. Thus a type that conforms to the two
+    // protocols continues to compile, and its hook for a different view does
+    // not become the answer here.
 
     /// Invoked every time the terminal view handles an OSC 9;4 progress report.
     ///
     /// See ``TerminalViewDelegate/progressReport(source:report:)``.
-    func progressReport(source: TerminalView, report: Terminal.ProgressReport)
+    func progressReported(source: LocalProcessTerminalView, report: Terminal.ProgressReport)
 
     /// Invoked when the process posts an OSC 777 desktop notification. The
     /// title and body are untrusted plain text.
     ///
     /// See ``TerminalViewDelegate/notification(source:title:body:)``.
-    func notification(source: TerminalView, title: String, body: String)
+    func notificationPosted(source: LocalProcessTerminalView, title: String, body: String)
 
     // MARK: Kitty clipboard protocol, OSC 5522
     //
@@ -164,9 +169,9 @@ public extension LocalProcessTerminalViewDelegate {
         }
     }
 
-    func progressReport(source: TerminalView, report: Terminal.ProgressReport) {}
+    func progressReported(source: LocalProcessTerminalView, report: Terminal.ProgressReport) {}
 
-    func notification(source: TerminalView, title: String, body: String) {}
+    func notificationPosted(source: LocalProcessTerminalView, title: String, body: String) {}
 
     func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
         []
@@ -304,6 +309,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
  *
  * - the size, the title and the current directory
  * - the bell
+ * - the OSC 9;4 progress reports and the OSC 777 notifications
  * - the program status and the end of a selection
  * - a failed start and process termination
  * - the Kitty clipboard requests
@@ -479,11 +485,11 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
     // These are `open` so a subclass can also answer them directly.
 
     open func progressReport(source: TerminalView, report: Terminal.ProgressReport) {
-        processDelegate?.progressReport(source: source, report: report)
+        processDelegate?.progressReported(source: self, report: report)
     }
 
     open func notification(source: TerminalView, title: String, body: String) {
-        processDelegate?.notification(source: source, title: title, body: body)
+        processDelegate?.notificationPosted(source: self, title: title, body: body)
     }
 
     // MARK: Kitty clipboard protocol, forwarded to the processDelegate
