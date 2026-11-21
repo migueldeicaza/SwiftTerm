@@ -7731,7 +7731,12 @@ open class Terminal {
         // scrollback of an attached client.
         let fullWidth = !marginMode || (buffer.marginLeft == 0 && buffer.marginRight == cols - 1)
         if fullWidth && buffer.hasScrollback && buffer.scrollTop == 0 {
-            for _ in 0..<p {
+            // xterm limits the count to the height of the scroll region
+            // (xtermScroll in util.c). Without this limit, a large SU, which
+            // some programs send to clear the screen, would also push blank
+            // lines into scrollback.
+            let count = min (p, buffer.scrollBottom - buffer.scrollTop + 1)
+            for _ in 0..<count {
                 scroll(isWrapped: false)
             }
             return

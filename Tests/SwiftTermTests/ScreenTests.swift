@@ -451,6 +451,30 @@ final class ScreenTests {
         #expect(su == lf)
     }
 
+    /// Like xterm, SU scrolls at most the height of the scroll region, so a
+    /// large count does not push blank lines into scrollback.
+    @Test func testScrollUpCountIsLimitedToScrollRegion() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 5, scrollback: 10)
+        terminal.feed(text: "line1\r\nline2\r\nline3\r\nline4\r\nline5")
+        terminal.feed(text: "\(esc)[100S")
+
+        #expect(terminal.buffer.yBase == 5)
+        #expect(TerminalTestHarness.visibleLinesText(buffer: terminal.buffer) == ["", "", "", "", ""])
+        let all = String(decoding: terminal.getBufferAsData(), as: UTF8.self)
+            .split(separator: "\n", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+        #expect(Array(all.prefix(5)) == ["line1", "line2", "line3", "line4", "line5"])
+
+        // In a region at the top, the limit is the region height, and the
+        // result matches as many linefeeds at the bottom margin.
+        func regionTranscript(_ scroll: String) -> String {
+            let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 5, rows: 5, scrollback: 10)
+            terminal.feed(text: "line1\r\nline2\r\nline3\r\nline4\r\nline5\(esc)[1;3r\(esc)[3;1H")
+            terminal.feed(text: scroll)
+            return String(decoding: terminal.getBufferAsData(), as: UTF8.self)
+        }
+        #expect(regionTranscript("\(esc)[100S") == regionTranscript("\n\n\n"))
+    }
+
     /// Within a scroll region that does not start at the top, or on the
     /// alternate screen, SU still discards the lines.
     @Test func testScrollUpInRegionDoesNotSaveScrollback() {
