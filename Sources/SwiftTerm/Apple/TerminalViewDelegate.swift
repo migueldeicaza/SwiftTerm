@@ -268,14 +268,17 @@ public protocol TerminalViewDelegate: AnyObject {
      * state, so an implementation only has to mirror what it is told.
      *
      * `set` and `indeterminate` mean the application is working. `error` and `pause` keep
-     * the report live too: the work stopped on a failure, or is paused, and the bar stays up
-     * until the application removes it, so a host that shows the session as busy should treat
-     * them as their own states rather than as work in progress.
+     * the report live too: the work stopped on a failure, or is paused, so a host that shows
+     * the session as busy should treat them as their own states rather than as work in
+     * progress. Like every live report, they end when the application removes them or when
+     * the silence timer (``TerminalView/progressReportTimeout``) runs out; with the default
+     * timeout, a failure the application leaves up turns into a `remove` after 15 seconds.
      *
      * Every live report is followed by exactly one `remove`: from the application, from the
      * silence timer (``TerminalView/progressReportTimeout``), from the process exiting, or
      * from the view closing; the last three arrive as a synthetic ``Terminal/ProgressReport``
-     * with the ``Terminal/ProgressReportState/remove`` state. A `remove` the application sends
+     * with the ``Terminal/ProgressReportState/remove`` state. A host that runs its own session
+     * ends a live report with ``TerminalView/endProgressReport()`` when that session ends. A `remove` the application sends
      * with no report live is not passed on, and nothing is reported once the view closes. A
      * delegate attached while a report is live reads it from
      * ``TerminalView/currentProgressReport``.
@@ -286,7 +289,10 @@ public protocol TerminalViewDelegate: AnyObject {
 
     /**
      * Invoked when the client application posts a desktop notification with OSC 777
-     * (`ESC ] 777 ; notify ; title ; body BEL`).
+     * (`ESC ] 777 ; notify ; title ; body BEL`) or with iTerm2's OSC 9
+     * (`ESC ] 9 ; body BEL`), which has no title and arrives with an empty one. An OSC 9
+     * payload that is a number, alone or before a semicolon, is one of ConEmu's commands, not a
+     * notification.
      *
      * SwiftTerm never posts a notification itself: what the host does with one — a banner,
      * a badge, an entry in its own inbox, nothing at all — is the host's policy.

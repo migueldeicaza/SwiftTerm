@@ -404,6 +404,36 @@ struct SessionSignalTests {
         #expect(delegate.notifications.first?.body == "3 passed; 1 failed")
     }
 
+    /// iTerm2's notification form carries a body and no title.
+    @Test func osc9NotificationsReachTheHost() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+
+        view.feed(text: "\u{1b}]9;Build finished; 2 warnings\u{07}")
+        await settle { !delegate.notifications.isEmpty }
+
+        #expect(delegate.notifications.count == 1)
+        #expect(delegate.notifications.first?.title == "")
+        #expect(delegate.notifications.first?.body == "Build finished; 2 warnings")
+    }
+
+    /// ConEmu numbers its own OSC 9 commands; they are not notifications, and
+    /// neither is a progress report SwiftTerm cannot parse.
+    @Test func conEmuCommandsAreNotNotifications() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+
+        view.feed(text: "\u{1b}]9;9;/tmp\u{07}")
+        view.feed(text: "\u{1b}]9;5\u{07}")
+        view.feed(text: "\u{1b}]9;4;9;40\u{07}")
+        await settleBriefly()
+
+        #expect(delegate.notifications.isEmpty)
+        #expect(delegate.reports.isEmpty)
+    }
+
     /// `LocalProcessTerminalView` is its own `TerminalViewDelegate`, so a host
     /// that uses it can only hear these through its process delegate.
     @Test func aLocalProcessViewForwardsToItsProcessDelegate() async {
@@ -450,6 +480,68 @@ struct SessionSignalTests {
 
         #expect(delegate.reports.map(\.state) == [.set, .remove])
         #expect(view.currentProgressReport == nil)
+    }
+
+    /// A drain that timed out can leave one output batch in flight when the
+    /// exit is delivered. A report in it would start a report nothing ends, so
+    /// reports are dropped until the next process starts.
+    @Test func aReportArrivingAfterTheProcessExitedIsDropped() async {
+        let view = LocalProcessTerminalView(frame: CGRect(x: 0, y: 0, width: 640, height: 320))
+        let delegate = ProcessHost()
+        view.processDelegate = delegate
+        view.progressReportTimeout = nil
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        view.processTerminated(view.process, exitCode: 0)
+        view.feed(text: "\u{1b}]9;4;1;50\u{07}")
+        await settleBriefly()
+
+        #expect(delegate.reports.map(\.state) == [.set, .remove])
+        #expect(view.currentProgressReport == nil)
+
+        view.startProcess(executable: "/bin/sh", args: ["-c", "printf '\\033]9;4;1;60\\007'; sleep 0.2"])
+        await settle(seconds: 10) { delegate.reports.count > 2 }
+
+        #expect(delegate.reports.dropFirst(2).first == Terminal.ProgressReport(state: .set, progress: 60))
+    }
+
+    /// A host that runs its own session over a plain view ends the report
+    /// when the session ends.
+    @Test func aHostEndsTheReportOfItsOwnSession() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+        view.progressReportTimeout = nil
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        view.endProgressReport()
+        view.endProgressReport()
+
+        #expect(delegate.reports.map(\.state) == [.set, .remove])
+        #expect(progressBar(of: view)?.isHidden == true)
+        #expect(view.currentProgressReport == nil)
+    }
+
+    /// A close that waits for the GPU leaves the view stopping until it is
+    /// retried. The silence timer's removal still reaches the host, and the
+    /// retried close owes nothing more.
+    @Test func aRemovalReachesTheHostWhileTheCloseWaits() async {
+        let view = makeView()
+        let delegate = HostDelegate()
+        view.terminalDelegate = delegate
+        view.schedulesProgressReportTimer = false
+
+        view.feed(text: "\u{1b}]9;4;1;40\u{07}")
+        await settle { !delegate.reports.isEmpty }
+        view.uiShutdownState = .stopping
+        view.progressReportTimer?.fire()
+
+        #expect(delegate.reports.map(\.state) == [.set, .remove])
+
+        view.updateUiClosed()
+        #expect(delegate.reports.count == 2)
     }
 
     /// A delegate written against the previous release conforms unchanged, and

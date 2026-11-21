@@ -111,8 +111,8 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     /// See ``TerminalViewDelegate/progressReport(source:report:)``.
     func progressReported(source: LocalProcessTerminalView, report: Terminal.ProgressReport)
 
-    /// Invoked when the process posts an OSC 777 desktop notification. The
-    /// title and body are untrusted plain text.
+    /// Invoked when the process posts an OSC 777 or OSC 9 desktop
+    /// notification. The title and body are untrusted plain text.
     ///
     /// See ``TerminalViewDelegate/notification(source:title:body:)``.
     func notificationPosted(source: LocalProcessTerminalView, title: String, body: String)
@@ -309,7 +309,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
  *
  * - the size, the title and the current directory
  * - the bell
- * - the OSC 9;4 progress reports and the OSC 777 notifications
+ * - the OSC 9;4 progress reports and the OSC 777 and OSC 9 notifications
  * - the program status and the end of a selection
  * - a failed start and process termination
  * - the Kitty clipboard requests
@@ -593,6 +593,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         // hosts that want options.termName in the child's environment pass
         // Terminal.getEnvironmentVariables(termName:) explicitly
         processAdapter.updateWindowSize(getWindowSize())
+        acceptsProgressReports = true
         process.startProcess(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
     }
 
@@ -613,7 +614,11 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
 
     open func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         programStatusProcessExited()
-        // A process that exits mid-report never sends its removal.
+        // A process that exits mid-report never sends its removal. A drain
+        // that timed out can leave one output batch in flight, and a report in
+        // it arrives after this, so later reports are dropped until the next
+        // process starts.
+        acceptsProgressReports = false
         endProgressReport()
         processDelegate?.processTerminated(source: self, exitCode: exitCode)
     }

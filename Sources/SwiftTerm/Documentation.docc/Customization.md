@@ -462,10 +462,10 @@ progress bar. The states mean:
 
 - `set` and `indeterminate`: the application is working, with or without a
   percentage.
-- `error`: the work stopped on a failure. The bar stays up, in red,
-  until the application removes it.
+- `error`: the work stopped on a failure. The bar stays up, in red, until the
+  application removes it or the silence timer runs out.
 - `pause`: the work is paused. The bar stays up, in orange, until the application resumes
-  or removes it.
+  or removes it, or the silence timer runs out.
 - `remove`: the report is over.
 
 Every report other than `remove` is live, and each live report is followed by
@@ -476,6 +476,16 @@ closing (``TerminalView/updateUiClosed()``); the last three arrive as a
 synthetic report. A `remove` the application sends with no report live is not
 passed on, since some shell integrations send one at every prompt, and nothing
 is reported once the view closes.
+
+The silence timer ends `error` and `pause` reports too, so with the default
+timeout a failure the application leaves up becomes a `remove` after 15
+seconds. A host that wants a failure to stay until the application clears it
+sets ``TerminalView/progressReportTimeout`` to `nil`.
+
+A host that runs its own session over a plain ``TerminalView`` (an SSH
+connection, or its own ``LocalProcess``) calls
+``TerminalView/endProgressReport()`` when the session ends, since a program
+that goes away mid-report never sends its removal.
 
 ```swift
 func progressReport (source: TerminalView, report: Terminal.ProgressReport) {
@@ -494,7 +504,10 @@ the state there instead of waiting for the next report.
 
 ``TerminalViewDelegate/notification(source:title:body:)`` is called when the
 application posts a desktop notification with OSC 777
-(`ESC ] 777 ; notify ; title ; body BEL`). SwiftTerm never posts one itself:
+(`ESC ] 777 ; notify ; title ; body BEL`) or with iTerm2's OSC 9
+(`ESC ] 9 ; body BEL`), which arrives with an empty title. An OSC 9 payload that
+is a number, alone or before a semicolon, is one of ConEmu's commands and is not
+passed on. SwiftTerm never posts a notification itself:
 whether it becomes a banner, a badge, or nothing at all is the host's policy.
 The title and body are untrusted plain text, passed on verbatim, one call for
 each sequence: any program that writes to the terminal can send them, including

@@ -521,12 +521,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// when none is live: what a host mirroring the session should show. A
     /// delegate attached while a report is live reads it here.
     public internal(set) var currentProgressReport: Terminal.ProgressReport?
+
+    /// Off once the session that sends the reports is over. A report parsed
+    /// before the end can reach the main queue after it, and would start a
+    /// report that nothing ends.
+    var acceptsProgressReports = true
     enum UIShutdownState {
         case active
         case stopping
         case stopped
     }
-    private(set) var uiShutdownState = UIShutdownState.active
+    internal(set) var uiShutdownState = UIShutdownState.active
 
     /// Tracks the selection state of the terminal, and can be used to set it
     /// programmatically (see `SelectionService`).
@@ -4360,7 +4365,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     public nonisolated func progressReport(source: Terminal, report: Terminal.ProgressReport) {
         onMain { [weak self] in
-            self?.handleProgressReport(report)
+            guard let self, self.acceptsProgressReports else { return }
+            self.handleProgressReport(report)
         }
     }
 

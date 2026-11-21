@@ -2824,11 +2824,22 @@ extension TerminalView {
         terminalDelegate?.progressReport(source: self, report: report)
     }
 
-    /// Ends a live report as a removal the host hears: the silence timer's
-    /// clear, and the process exiting. Nothing when no report is live.
+    /// Ends the live OSC 9;4 report, and tells the host with a removal.
+    /// Nothing happens when no report is live.
+    ///
+    /// The view calls it when the silence timer runs out, and
+    /// ``LocalProcessTerminalView`` calls it when its process exits. A host
+    /// that runs its own session, an SSH connection or its own
+    /// ``LocalProcess``, calls it when that session ends, since a program
+    /// that goes away mid-report never sends its removal.
+    ///
+    /// It also works while ``updateUiClosed()`` waits for the GPU to finish,
+    /// so a host is not left busy until that close is retried.
     @MainActor
-    func endProgressReport() {
-        handleProgressReport(Terminal.ProgressReport(state: .remove, progress: nil))
+    public func endProgressReport() {
+        guard uiShutdownState != .stopped, currentProgressReport != nil else { return }
+        clearProgressReport()
+        terminalDelegate?.progressReport(source: self, report: Terminal.ProgressReport(state: .remove, progress: nil))
     }
 
     @MainActor
