@@ -206,7 +206,8 @@ When a click/tap lands on an active link, ``TerminalView`` calls
   files must exist and must not be executable files, scripts, applications, or
   other active content. The check resolves symbolic links and rejects remote
   file hosts. OSC 8 targets must have a scheme, unless `localLinkResolver`
-  resolves them; detected paths can become file URLs. Alerts show as a sheet on the window of the view.
+  resolves them; detected paths can become file URLs. Alerts show as a sheet
+  on the window of the view.
 - When `resolvesLinksAgainstShellDirectory` is true, a detected relative path
   resolves against the shell's directory, when the shell reports it with OSC 7.
   Without OSC 7, or when the property is false, a relative path resolves
@@ -221,11 +222,19 @@ When a click/tap lands on an active link, ``TerminalView`` calls
 - On macOS, set `localLinkResolver` when the host knows where the session's
   files are, for example in a container or a project directory. The view
   gives the resolver each explicit or detected path, as the terminal output
-  has it, such as `main.swift:12` or `~/notes.txt`. Return a file URL. It
-  still goes through the checks above. When the resolver returns nil, the
+  has it, such as `main.swift:12` or `~/notes.txt`, plus the local OSC 7
+  directory as a `URL?` (nil when unavailable). The directory is supplied even
+  when `resolvesLinksAgainstShellDirectory` is false. The host decides how to
+  use it; OSC 7 cannot prove that the session is local. Return a file URL,
+  stripping any source-location suffix first. To open at a line or column,
+  implement `requestOpenLink(source:request:)`. The file URL still goes through
+  the checks above. When the resolver returns nil, the
   path is blocked, and SwiftTerm does not use the shell or app directory.
   The resolver is not called for URLs, or when OSC 7 names a different host.
-  It runs on the main thread, also for the OSC 8 preview, so it must be fast.
+  It runs on the main actor, also for the OSC 8 preview, so it must be fast.
+  The preview marks blocked targets and caches resolution until it closes or
+  the resolver or shell directory changes. Filesystem changes alone do not
+  refresh it; a click always resolves and checks the target again.
 - A custom delegate can give `openDefault` a rewrite of the link. For an OSC 8
   target, a rewrite must be a URL with a scheme, such as a `file://` URL.
   It can call `openDefault` later, for example after an async step. Nothing

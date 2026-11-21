@@ -178,8 +178,17 @@ extension TerminalView {
     /// When `localLinkResolver` is set and OSC 7 does not name a remote host,
     /// only the resolver turns a path into a file. A path that it does not
     /// resolve is blocked, and the app or shell directory is not used.
+    /// The resolver must strip source-location suffixes before returning a file URL.
+    /// Use `requestOpenLink(source:request:)` to preserve the line and column.
+    /// Call outside `withTerminal`: this takes the nonrecursive terminal lock.
     func linkTarget(_ link: String, isExplicit: Bool) -> UntrustedTerminalLink {
         var pathBase = Self.linkPathBase(hostCurrentDirectory: withTerminal { $0.hostCurrentDirectory })
+        let shellDirectory: URL?
+        if case .directory(let directory) = pathBase {
+            shellDirectory = URL(fileURLWithPath: directory, isDirectory: true)
+        } else {
+            shellDirectory = nil
+        }
         // Only the host can tell that the session is local. A remote host in
         // OSC 7 still blocks local paths.
         if !resolvesLinksAgainstShellDirectory, pathBase != .remote {
@@ -192,7 +201,7 @@ extension TerminalView {
         guard original.canResolveAsLocalPath else {
             return original
         }
-        if let url = localLinkResolver(link), url.isFileURL {
+        if let url = localLinkResolver(link, shellDirectory), url.isFileURL {
             return UntrustedTerminalLink(url.absoluteString)
         }
         // "custom:123" can be a URL. If the host has no file for it, keep the URL.

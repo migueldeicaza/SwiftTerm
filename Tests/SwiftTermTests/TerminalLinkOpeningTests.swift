@@ -65,7 +65,7 @@ struct TerminalLinkOpeningTests {
     ])
     func customDelegateReceivesTheOriginalLink(link: String, isExplicit: Bool) {
         let view = TerminalView(frame: .zero)
-        view.localLinkResolver = { _ in
+        view.localLinkResolver = { _, _ in
             Issue.record("No resolution before a custom delegate")
             return nil
         }
@@ -385,7 +385,7 @@ struct TerminalLinkOpeningTests {
         view.terminalDelegate = delegate
         defer { withExtendedLifetime(delegate) {} }
         var resolved: [String] = []
-        view.localLinkResolver = { link in
+        view.localLinkResolver = { link, _ in
             resolved.append(link)
             return file
         }
@@ -400,6 +400,28 @@ struct TerminalLinkOpeningTests {
         #expect(opened == Array(repeating: file.resolvingSymlinksInPath(), count: links.count))
     }
 
+    @Test(arguments: [nil, "file://localhost/tmp/project%20one"] as [String?], [true, false])
+    func localResolverReceivesTheShellDirectory(directory: String?, resolvesAgainstShellDirectory: Bool) {
+        let view = TerminalView(frame: .zero)
+        view.resolvesLinksAgainstShellDirectory = resolvesAgainstShellDirectory
+        if let directory {
+            view.feed(text: "\u{1b}]7;\(directory)\u{07}")
+        }
+        var calls = 0
+        view.localLinkResolver = { link, shellDirectory in
+            calls += 1
+            #expect(link == "main.swift:12:4")
+            #expect(shellDirectory == directory.map { _ in
+                URL(fileURLWithPath: "/tmp/project one", isDirectory: true)
+            })
+            #expect(!view.terminal.terminalLock.isLockedByCurrentThread)
+            return nil
+        }
+        defer { view.localLinkResolver = nil }
+        _ = view.linkTarget("main.swift:12:4", isExplicit: true)
+        #expect(calls == 1)
+    }
+
     @Test(arguments: [true, false], [nil, URL(string: "https://example.com")] as [URL?])
     func unresolvedLocalLinksDoNotFallBack(isExplicit: Bool, result: URL?) async throws {
         let (directory, file) = try makeTemporaryFile()
@@ -411,7 +433,7 @@ struct TerminalLinkOpeningTests {
         view.resolvesLinksAgainstShellDirectory = true
         view.feed(text: "\u{1b}]7;file://localhost\(directory.path)\u{07}")
         var resolved: [String] = []
-        view.localLinkResolver = { link in
+        view.localLinkResolver = { link, _ in
             resolved.append(link)
             return result
         }
@@ -441,7 +463,7 @@ struct TerminalLinkOpeningTests {
         let delegate = DefaultDelegate()
         view.terminalDelegate = delegate
         defer { withExtendedLifetime(delegate) {} }
-        view.localLinkResolver = { _ in unsafeFile }
+        view.localLinkResolver = { _, _ in unsafeFile }
         var alerts = 0
         var opened: [URL] = []
         view.activateLink("payload.command", params: [:], isExplicit: isExplicit) { alert, _, completion in
@@ -459,7 +481,7 @@ struct TerminalLinkOpeningTests {
         let delegate = DefaultDelegate()
         view.terminalDelegate = delegate
         defer { withExtendedLifetime(delegate) {} }
-        view.localLinkResolver = { _ in
+        view.localLinkResolver = { _, _ in
             Issue.record("Unsafe characters must be checked before resolution")
             return nil
         }
@@ -485,7 +507,7 @@ struct TerminalLinkOpeningTests {
         view.resolvesLinksAgainstShellDirectory = true
         view.feed(text: "\u{1b}]7;file://localhost\(directory.path)\u{07}")
         var resolved: [String] = []
-        view.localLinkResolver = { link in
+        view.localLinkResolver = { link, _ in
             resolved.append(link)
             return nil
         }
@@ -512,7 +534,7 @@ struct TerminalLinkOpeningTests {
         view.terminalDelegate = delegate
         defer { withExtendedLifetime(delegate) {} }
         var resolved: [String] = []
-        view.localLinkResolver = { link in
+        view.localLinkResolver = { link, _ in
             resolved.append(link)
             return nil
         }
@@ -536,7 +558,7 @@ struct TerminalLinkOpeningTests {
         defer { withExtendedLifetime(delegate) {} }
         view.resolvesLinksAgainstShellDirectory = true
         view.feed(text: "\u{1b}]7;file://localhost\(directory.path)\u{07}")
-        view.localLinkResolver = { _ in
+        view.localLinkResolver = { _, _ in
             Issue.record("A URL must not be resolved as a local path")
             return file
         }
@@ -561,7 +583,7 @@ struct TerminalLinkOpeningTests {
         view.terminalDelegate = delegate
         defer { withExtendedLifetime(delegate) {} }
         view.resolvesLinksAgainstShellDirectory = resolvesAgainstShellDirectory
-        view.localLinkResolver = { _ in
+        view.localLinkResolver = { _, _ in
             Issue.record("A remote path must not be resolved locally")
             return file
         }
