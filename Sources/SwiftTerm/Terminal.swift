@@ -4141,6 +4141,23 @@ open class Terminal {
         tdel?.notify(source: self, title: title, body: body)
     }
 
+    // iTerm2's notification form, which many tools write:
+    //    ESC ] 9 ; [body] \a
+    // ConEmu numbers its own OSC 9 commands (9;1 sleep, 9;9 working directory,
+    // ...). Those are not notifications, so a body made of a number, alone or
+    // before a semicolon, is dropped.
+    func oscNotificationITerm2(_ data: ArraySlice<UInt8>) {
+        guard let body = terminalStringUTF8(data), !body.isEmpty else {
+            return
+        }
+        let number = body.prefix { $0.isASCII && $0.isNumber }
+        if !number.isEmpty, number.endIndex == body.endIndex || body[number.endIndex] == ";" {
+            log("SwiftTerm: Unknown OSC 9 command: \(number)")
+            return
+        }
+        tdel?.notify(source: self, title: "", body: body)
+    }
+
     @discardableResult
     func oscProgressReport(_ data: ArraySlice<UInt8>) -> Bool {
         guard let report = parseProgressReport(data) else {
