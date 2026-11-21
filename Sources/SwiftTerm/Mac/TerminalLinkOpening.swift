@@ -166,26 +166,37 @@ extension TerminalView {
             return
         }
         guard allowsLink(isExplicit: isExplicit) else { return }
+        let target = linkTarget(link, isExplicit: isExplicit)
+        TerminalLinkOpening.request(target, window: window, presentAlert: presentAlert) { [weak self] url in
+            guard let self, allowsLink(isExplicit: isExplicit) else { return }
+            approved(url)
+        }
+    }
+
+    /// The target that the view's default policy checks for a link.
+    ///
+    /// When `localLinkResolver` is set and OSC 7 does not name a remote host,
+    /// only the resolver turns a path into a file. A path that it does not
+    /// resolve is blocked, and the app or shell directory is not used.
+    func linkTarget(_ link: String, isExplicit: Bool) -> UntrustedTerminalLink {
         var pathBase = Self.linkPathBase(hostCurrentDirectory: withTerminal { $0.hostCurrentDirectory })
         // Only the host can tell that the session is local. A remote host in
         // OSC 7 still blocks local paths.
         if !resolvesLinksAgainstShellDirectory, pathBase != .remote {
             pathBase = .processDirectory
         }
-        let target: UntrustedTerminalLink
-        let original = UntrustedTerminalLink(link)
-        if let localLinkResolver,
-           pathBase != .remote,
-           original.canResolveAsLocalPath {
-            let resolved = localLinkResolver(link).flatMap { $0.isFileURL ? $0.absoluteString : nil }
-            target = resolved.map(UntrustedTerminalLink.init) ?? original
-        } else {
-            target = Self.defaultLinkTarget(link, isExplicit: isExplicit, pathBase: pathBase)
+        guard let localLinkResolver, pathBase != .remote else {
+            return Self.defaultLinkTarget(link, isExplicit: isExplicit, pathBase: pathBase)
         }
-        TerminalLinkOpening.request(target, window: window, presentAlert: presentAlert) { [weak self] url in
-            guard let self, allowsLink(isExplicit: isExplicit) else { return }
-            approved(url)
+        let original = UntrustedTerminalLink(link, isResolvedByHost: true)
+        guard original.canResolveAsLocalPath else {
+            return original
         }
+        if let url = localLinkResolver(link), url.isFileURL {
+            return UntrustedTerminalLink(url.absoluteString)
+        }
+        // "custom:123" can be a URL. If the host has no file for it, keep the URL.
+        return original
     }
 
     /// A checked URL, and how to open it, for the deprecated delegate method.
