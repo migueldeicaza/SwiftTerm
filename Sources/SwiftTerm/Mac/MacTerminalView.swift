@@ -466,7 +466,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         let owner = renderOwner
         let applyEffects: @MainActor @Sendable (MainFrameEffects) -> Void = { [weak self] effects in
-            self?.applyFrameSideEffects(effects)
+            guard let self else { return }
+            var effects = effects
+            // A resize applied at once on main can come after this frame
+            // resized the terminal, and it has reported the newer size.
+            // Do not report the older one after it.
+            if let resized = effects.resizedTo {
+                let current = self.withTerminal {
+                    FrameTerminalSize(cols: $0.cols, rows: $0.rows)
+                }
+                if resized != current {
+                    effects.resizedTo = nil
+                }
+            }
+            self.applyFrameSideEffects(effects)
         }
         let loop = RenderLoop {
             guard let effects = owner.renderPublishedFrame() else { return }

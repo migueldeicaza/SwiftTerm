@@ -14,6 +14,8 @@ import CoreGraphics
 private struct FramePreparationRequest: Sendable {
     let viewState: FrameViewState
     let pendingSize: FrameTerminalSize?
+    /// The size generation when the request took `pendingSize`.
+    let sizeGeneration: UInt64
     let notifyAccessibility: Bool
 #if os(macOS)
     let updateScroller: Bool
@@ -25,6 +27,10 @@ private struct FramePreparationRequest: Sendable {
 /// This type stores values only. The render thread takes one value request,
 /// releases this lock, and only then enters the render owner and terminal
 /// locks. This makes the lock order explicit and prevents mailbox inversion.
+///
+/// The size generation has a lock of its own. The frame reads it while it
+/// holds the terminal lock, and nothing holds that lock while it takes
+/// another one, so it adds no lock order.
 final class TerminalRenderMailbox: Sendable {
     private struct State {
         var latestViewState: FrameViewState?
@@ -37,6 +43,7 @@ final class TerminalRenderMailbox: Sendable {
     }
 
     private let state = Locked(State())
+    private let sizeGeneration = Locked<UInt64>(0)
 
     func publish (_ viewState: FrameViewState) {
         state.withLock { $0.latestViewState = viewState }
@@ -51,8 +58,21 @@ final class TerminalRenderMailbox: Sendable {
     /// Drops the counts ``queueSize(cols:rows:)`` left for the next frame:
     /// a resize applied at once has measured the frame since, and the next
     /// frame would otherwise put the old counts back.
+    ///
+    /// A frame on the render loop can already have taken the counts. This
+    /// also starts a new size generation, and that frame does not apply
+    /// counts it took in an older one (``sizeGenerationIsCurrent(_:)``).
     func dropQueuedSize () {
-        state.withLock { $0.pendingSize = nil }
+        state.withLock { state in
+            state.pendingSize = nil
+            sizeGeneration.withLock { $0 &+= 1 }
+        }
+    }
+
+    /// Whether no resize was applied at once after a request took its counts
+    /// in `generation`. The frame calls this with the terminal lock held.
+    func sizeGenerationIsCurrent (_ generation: UInt64) -> Bool {
+        sizeGeneration.withLock { $0 == generation }
     }
 
     func setAccessibilityNotification (_ shouldNotify: Bool) {
@@ -84,12 +104,14 @@ final class TerminalRenderMailbox: Sendable {
             let request = FramePreparationRequest(
                 viewState: viewState,
                 pendingSize: state.pendingSize,
+                sizeGeneration: sizeGeneration.withLock { $0 },
                 notifyAccessibility: !state.suppressAccessibility,
                 updateScroller: state.updateScroller)
 #else
             let request = FramePreparationRequest(
                 viewState: viewState,
                 pendingSize: state.pendingSize,
+                sizeGeneration: sizeGeneration.withLock { $0 },
                 notifyAccessibility: !state.suppressAccessibility)
 #endif
             state.pendingSize = nil
@@ -521,9 +543,16 @@ final class TerminalRenderOwner: Sendable {
         return prepared.mainEffects
     }
 
+    /// `afterTakingRequest` runs between the moment the frame takes its
+    /// inputs and the moment it takes the terminal lock. Tests use it to put
+    /// main-thread work in that gap, where the render loop can be preempted.
     @MainActor
-    func prepareFrame (viewState: FrameViewState) -> TerminalView.PreparedFrame? {
+    func prepareFrame (viewState: FrameViewState,
+                       afterTakingRequest: (() -> Void)? = nil)
+        -> TerminalView.PreparedFrame?
+    {
         guard let request = mailbox.takeRequest(viewState: viewState) else { return nil }
+        afterTakingRequest?()
         return prepareFrame(request)
     }
 
@@ -567,8 +596,13 @@ final class TerminalRenderOwner: Sendable {
 #endif
 
         var update: TerminalView.PreparedFrame? = terminal.terminalLock.withLock {
+            // A resize applied at once after this request took its counts
+            // measured a newer frame. Do not put the old counts back.
+            let pendingSize = mailbox.sizeGenerationIsCurrent(request.sizeGeneration)
+                ? request.pendingSize
+                : nil
             let resizedTo = applyPendingSize(
-                request.pendingSize,
+                pendingSize,
                 cellPixelWidth: request.viewState.cellPixelWidth,
                 cellPixelHeight: request.viewState.cellPixelHeight,
                 terminal: terminal,
