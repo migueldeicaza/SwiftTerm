@@ -221,10 +221,13 @@ final class BidiEscapeTests: TerminalDelegate {
         terminal.feed(text: "\u{1b}[2 k")
         terminal.buffer.x = 1
         terminal.feed(text: "\u{1b}[S")
-        #expect(terminal.buffer.lines[0].bidiState == movedState)
-        #expect(terminal.buffer.lines[terminal.rows - 1].bidiState.fallbackDirection == .rightToLeft)
-        #expect(!terminal.buffer.lines[0].isWrapped)
-        #expect(!terminal.buffer.lines[terminal.rows - 1].isWrapped)
+        // The first row went to scrollback; index the screen from yBase.
+        let top = terminal.buffer.yBase
+        #expect(top == 1)
+        #expect(terminal.buffer.lines[top].bidiState == movedState)
+        #expect(terminal.buffer.lines[top + terminal.rows - 1].bidiState.fallbackDirection == .rightToLeft)
+        #expect(!terminal.buffer.lines[top].isWrapped)
+        #expect(!terminal.buffer.lines[top + terminal.rows - 1].isWrapped)
     }
 
     @Test func scrollDownMultipleLinesBreaksTheMovedParagraphBoundary() {
