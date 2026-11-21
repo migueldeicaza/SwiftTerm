@@ -1686,8 +1686,13 @@ public final class Buffer {
                }
 
                srcCol += newCols
-               let oldTrimmedLength = getWrappedLineTrimmedLength (wrappedLines, srcLine, oldCols)
-               if srcCol > oldTrimmedLength {
+               // A new row can take the rest of more than one old row: the
+               // widening reflow uses these lengths for the wrap causes.
+               while srcLine < wrappedLines.count {
+                       let oldTrimmedLength = getWrappedLineTrimmedLength (wrappedLines, srcLine, oldCols)
+                       if srcCol <= oldTrimmedLength {
+                               break
+                       }
                        srcCol -= oldTrimmedLength
                        srcLine += 1
                }
