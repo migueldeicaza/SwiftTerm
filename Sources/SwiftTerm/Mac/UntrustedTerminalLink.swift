@@ -60,12 +60,33 @@ struct UntrustedTerminalLink: Equatable {
     }
 
     let string: String
+    /// True when the host's `localLinkResolver` owns path resolution for this link.
+    /// Then a bare path is not resolved against the app directory, and a path
+    /// that the resolver did not find is an inaccessible file.
+    let isResolvedByHost: Bool
 
-    init(_ string: String) {
+    init(_ string: String, isResolvedByHost: Bool = false) {
         self.string = string
+        self.isResolvedByHost = isResolvedByHost
+    }
+
+    /// True when the link is a path, possibly with a location suffix, and not a URL.
+    /// Uses the same rule as the default policy, so that "Makefile:12" and
+    /// "main.swift:12" are paths and "tel:5551234" is a URL.
+    var canResolveAsLocalPath: Bool {
+        guard !string.isEmpty, !Self.containsUnsafeCharacters(string) else { return false }
+        return !TerminalView.hasURLScheme(string)
     }
 
     var decision: Decision {
+        let decision = baseDecision
+        if isResolvedByHost, decision == .deny(.malformedURL), canResolveAsLocalPath {
+            return .deny(.inaccessibleFile)
+        }
+        return decision
+    }
+
+    private var baseDecision: Decision {
         guard !string.isEmpty else { return .deny(.malformedURL) }
         // Check the source first. URL conversion can encode unsafe characters.
         guard !Self.containsUnsafeCharacters(string) else {
@@ -77,9 +98,7 @@ struct UntrustedTerminalLink: Equatable {
             return .deny(.malformedURL)
         }
 
-        // Foundation parses "main.swift:12" as a URL with the scheme "main.swift".
-        if scheme.contains("."),
-           string.range(of: #"^[^:]+:[0-9]+(?::[0-9]+)?$"#, options: .regularExpression) != nil {
+        if isSourceLocation(scheme: scheme) {
             return .deny(.malformedURL)
         }
 
@@ -117,6 +136,9 @@ struct UntrustedTerminalLink: Equatable {
             normalized = url.isFileURL
                 ? url.standardizedFileURL.resolvingSymlinksInPath().path
                 : string
+        } else if isResolvedByHost {
+            // The host did not resolve this path, so the app directory does not apply.
+            normalized = string
         } else {
             normalized = URL(fileURLWithPath: string).standardizedFileURL.path
         }
@@ -136,6 +158,12 @@ struct UntrustedTerminalLink: Equatable {
 }
 
 private extension UntrustedTerminalLink {
+    // Foundation parses "main.swift:12" as a URL with the scheme "main.swift".
+    func isSourceLocation(scheme: String) -> Bool {
+        scheme.contains(".")
+            && string.range(of: #"^[^:]+:[0-9]+(?::[0-9]+)?$"#, options: .regularExpression) != nil
+    }
+
     func fileDecision(for url: URL) -> Decision {
         guard url.isFileURL, url.query == nil, url.fragment == nil else {
             return .deny(.malformedURL)
