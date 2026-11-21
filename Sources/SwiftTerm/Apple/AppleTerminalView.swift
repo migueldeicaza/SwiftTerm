@@ -2152,6 +2152,10 @@ extension TerminalView {
         let newRows = Int (newSize.height / cellDimension.height)
         let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
         let cellPixels = currentCellPixelSize()
+        // Counts queued before this, by a font change or a live resize, were
+        // measured on an older frame. A caller that wants a frame to apply
+        // counts after this queues them again (applyCellDimensionChange).
+        renderOwner.mailbox.dropQueuedSize()
         
         var didResize = false
         var pixelsChanged = false

@@ -48,6 +48,13 @@ final class TerminalRenderMailbox: Sendable {
         }
     }
 
+    /// Drops the counts ``queueSize(cols:rows:)`` left for the next frame:
+    /// a resize applied at once has measured the frame since, and the next
+    /// frame would otherwise put the old counts back.
+    func dropQueuedSize () {
+        state.withLock { $0.pendingSize = nil }
+    }
+
     func setAccessibilityNotification (_ shouldNotify: Bool) {
         state.withLock { $0.suppressAccessibility = !shouldNotify }
     }
