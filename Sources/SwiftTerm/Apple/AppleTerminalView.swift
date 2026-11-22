@@ -2660,6 +2660,9 @@ extension TerminalView {
         let directory = source.hostCurrentDirectory
         onMain { [weak self] in
             guard let self else { return }
+#if os(macOS)
+            self.refreshPreviewUrl()
+#endif
             self.terminalDelegate?.hostCurrentDirectoryUpdate(source: self, directory: directory)
         }
     }

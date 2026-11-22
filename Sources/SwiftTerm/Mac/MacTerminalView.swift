@@ -251,6 +251,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
      */
     public weak var terminalDelegate: TerminalViewDelegate? {
         didSet {
+            removePreviewUrl()
             refreshKittyClipboardCapabilities()
         }
     }
@@ -3954,6 +3955,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     var urlPreview: NSTextField?
+    private var urlPreviewTarget: (link: String, display: String, directory: String?)?
     private var lastReportedLink: String?
     func previewUrl (payload: String)
     {
@@ -3962,7 +3964,23 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
         if let (target, _) = urlAndParamsFrom(payload: payload) {
-            let url = UntrustedTerminalLink(target).displayString
+            let directory = withTerminal { $0.hostCurrentDirectory }
+            let url: String
+            if let cached = urlPreviewTarget, cached.link == target, cached.directory == directory {
+                url = cached.display
+            } else {
+                // linkTarget takes the nonrecursive terminal lock; call outside withTerminal.
+                // Cache resolution and file checks until the preview or session changes.
+                let usesDefaultPolicy = terminalDelegate == nil || terminalDelegate === self
+                let resolved = usesDefaultPolicy
+                    ? linkTarget(target, isExplicit: true) : UntrustedTerminalLink(target)
+                if usesDefaultPolicy, case .deny = resolved.decision {
+                    url = resolved.displayString + " (blocked)"
+                } else {
+                    url = resolved.displayString
+                }
+                urlPreviewTarget = (target, url, directory)
+            }
             if let up = urlPreview {
                 up.stringValue = url
                 up.sizeToFit()
@@ -3985,8 +4003,16 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
     
+    func refreshPreviewUrl ()
+    {
+        if let cached = urlPreviewTarget {
+            previewUrl(payload: ";" + cached.link)
+        }
+    }
+
     func removePreviewUrl ()
     {
+        urlPreviewTarget = nil
         if let urlPreview = self.urlPreview {
             urlPreview.removeFromSuperview()
             self.urlPreview = nil
@@ -4747,7 +4773,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// names another host, detected paths do not open, with either value.
     /// `LocalProcessTerminalView` sets it to true. A local shell can still
     /// start a remote session, for example with ssh; SwiftTerm cannot see that.
-    public var resolvesLinksAgainstShellDirectory = false
+    public var resolvesLinksAgainstShellDirectory = false {
+        didSet { removePreviewUrl() }
+    }
 
     /// Resolves explicit and detected paths using the host's session context (macOS only).
     ///
@@ -4770,10 +4798,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// "custom:123" can also be a URL: when you return nil for it, SwiftTerm
     /// handles it as a URL with a custom scheme.
     ///
-    /// The view calls the resolver on the main thread. Keep it fast and do not block.
+    /// The view calls the resolver on the main thread, and also for the OSC 8
+    /// preview while the Command key is down when using the default delegate.
+    /// A custom delegate gets a plain preview without resolution or a verdict.
+    /// Keep the resolver fast and do not block.
+    /// Preview resolution is cached until it closes or the resolver or shell
+    /// directory changes. Clicks always resolve and check the file again.
     /// To resolve a path with an async step, implement
     /// `requestOpenLink(source:request:)` and call `request.openDefault(_:)` later.
-    public var localLinkResolver: (@MainActor (String, URL?) -> URL?)?
+    public var localLinkResolver: (@MainActor (String, URL?) -> URL?)? {
+        didSet { removePreviewUrl() }
+    }
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}

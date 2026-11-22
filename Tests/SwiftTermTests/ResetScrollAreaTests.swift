@@ -31,6 +31,27 @@ struct ResetScrollAreaTests {
         #expect(delegate.bufferActivatedCount == before + 1)
     }
 
+    private final class DirectoryDelegate: TerminalDelegate {
+        var directories: [String?] = []
+        func send(source: Terminal, data: ArraySlice<UInt8>) {}
+        func hostCurrentDirectoryUpdated(source: Terminal) {
+            directories.append(source.hostCurrentDirectory)
+        }
+    }
+
+    @Test("RIS reports a cleared shell directory only when it changes")
+    func fullResetReportsClearedDirectory() {
+        let delegate = DirectoryDelegate()
+        let terminal = Terminal(delegate: delegate)
+        terminal.feed(text: "\u{1b}c")
+        #expect(delegate.directories.isEmpty)
+        terminal.feed(text: "\u{1b}]7;file://localhost/tmp/project\u{07}")
+        terminal.feed(text: "\u{1b}c")
+        terminal.feed(text: "\u{1b}c")
+        #expect(terminal.hostCurrentDirectory == nil)
+        #expect(delegate.directories == ["file://localhost/tmp/project", nil])
+    }
+
     @Test("Keypad mode changes do not claim the buffer changed")
     func keypadModeDoesNotNotify() {
         let (terminal, delegate) = TerminalTestHarness.makeTerminal(cols: 80, rows: 24, scrollback: 500)

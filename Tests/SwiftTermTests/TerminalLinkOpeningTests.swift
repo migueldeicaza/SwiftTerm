@@ -83,6 +83,39 @@ struct TerminalLinkOpeningTests {
         #expect(delegate.requests.map(\.isExplicit) == [isExplicit])
     }
 
+    @Test func customDelegatePreviewDoesNotResolveOrBlockTheLink() {
+        let view = TerminalView(frame: .zero)
+        var calls = 0
+        view.localLinkResolver = { _, _ in
+            calls += 1
+            return nil
+        }
+        view.previewUrl(payload: ";report.txt")
+        #expect(calls == 1)
+        let delegate = Delegate()
+        view.terminalDelegate = delegate
+        #expect(view.urlPreview == nil)
+        withExtendedLifetime(delegate) {
+            view.previewUrl(payload: ";report.txt")
+            #expect(view.urlPreview?.stringValue == UntrustedTerminalLink("report.txt").displayString)
+            view.activateLink("report.txt", params: [:], isExplicit: true)
+        }
+        #expect(calls == 1)
+        #expect(delegate.requests.map(\.link) == ["report.txt"])
+    }
+
+    @Test func localProcessPreviewUsesTheDefaultPolicy() {
+        let view = LocalProcessTerminalView(frame: .zero)
+        var calls = 0
+        view.localLinkResolver = { _, _ in
+            calls += 1
+            return nil
+        }
+        view.previewUrl(payload: ";report.txt")
+        #expect(calls == 1)
+        #expect(view.urlPreview?.stringValue == "report.txt (blocked)")
+    }
+
     @Test func legacyDelegateReceivesTheCheckedURL() throws {
         let (directory, file) = try makeTemporaryFile()
         defer { try? FileManager.default.removeItem(at: directory) }

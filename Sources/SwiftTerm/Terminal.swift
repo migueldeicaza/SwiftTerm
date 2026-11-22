@@ -8505,6 +8505,7 @@ open class Terminal {
         options.rows = rows
         options.cols = cols
         let savedCursorHidden = cursorHidden
+        let hadDirectory = hostCurrentDirectory != nil
         setup (isReset: true)
         clearAllKittyImages()
         cursorHidden = savedCursorHidden
@@ -8518,6 +8519,9 @@ open class Terminal {
         // contentOffset of a buffer that no longer exists and renders blank until
         // some unrelated layout pass happens to correct it.
         tdel?.bufferActivated (source: self)
+        if hadDirectory {
+            tdel?.hostCurrentDirectoryUpdated(source: self)
+        }
     }
 
     // Support for:
