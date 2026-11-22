@@ -152,8 +152,13 @@ final class SnapshotTextBuilder {
     /// Profiler trace: `[NSAttributedString.Key: Any]` has String-backed keys,
     /// so each rebuild hashes and compares NSStrings and bridges every value
     /// through ObjC.
+    /// Both attribute caches are bounded independently. Truecolor output can
+    /// introduce new styles indefinitely without changing the render context,
+    /// even after the corresponding cells have left the terminal buffer.
+    private static let attributeCacheCapacity = 4_096
     private(set) var attributeCache: [AttributeCacheKey: SnapshotTextAttributes] = [:]
     private var packedAttributeCache: [PackedAttributeCacheKey: SnapshotTextAttributes] = [:]
+    var packedAttributeCacheCount: Int { packedAttributeCache.count }
     /// The style table that the keys of `packedAttributeCache` come from. A
     /// style ID means a different style in another table: an external source
     /// (`TerminalRowStore`) can replace its table when it is nearly full.
@@ -229,6 +234,9 @@ final class SnapshotTextBuilder {
         }
         let built = buildAttributes(attribute, withUrl: withUrl, context: context)
         if let built {
+            if attributeCache.count >= Self.attributeCacheCapacity {
+                attributeCache.removeAll(keepingCapacity: true)
+            }
             attributeCache[key] = built
         }
         return built
@@ -248,6 +256,9 @@ final class SnapshotTextBuilder {
         }
         let built = buildAttributes(attribute, withUrl: withUrl, context: context)
         if let built {
+            if packedAttributeCache.count >= Self.attributeCacheCapacity {
+                packedAttributeCache.removeAll(keepingCapacity: true)
+            }
             packedAttributeCache[cacheKey] = built
         }
         return built

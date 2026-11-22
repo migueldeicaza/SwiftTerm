@@ -25,9 +25,9 @@ struct AttributeCacheTests {
         SnapshotTextBuilder()
     }
 
-    private func makeContext(_ view: TerminalView) -> SnapshotRenderContext {
+    private func makeContext(_ view: TerminalView, cols: Int = 80) -> SnapshotRenderContext {
         SnapshotRenderContext(viewState: FrameViewState(view: view), style: .empty,
-                              ansiColors: view.withTerminal { $0.ansiColors }, cols: 80)
+                              ansiColors: view.withTerminal { $0.ansiColors }, cols: cols)
     }
 
     /// Repeated lookups within one context must return equal dictionaries, and
@@ -95,6 +95,66 @@ struct AttributeCacheTests {
         _ = builder.getAttributes(Attribute(fg: .ansi256(code: 2), bg: .defaultColor, style: .none),
                                withUrl: false, context: context)
         #expect(builder.attributeCache.count == 2)
+    }
+
+    /// Styles disappear from the screen while the render context stays the
+    /// same. Their dictionaries must eventually leave the cache as well.
+    @Test(arguments: [false, true])
+    func attributeCacheReleasesOldStyles(withUrl: Bool) {
+        let builder = makeBuilder()
+        let context = makeContext(makeView())
+        weak var firstDictionary: NSDictionary?
+
+        for value in 0..<4_200 {
+            autoreleasepool {
+                let attribute = Attribute(
+                    fg: .trueColor(red: UInt8(value >> 8),
+                                   green: UInt8(value & 0xff), blue: 37),
+                    bg: .defaultColor, style: .none)
+                let attributes = builder.getAttributes(attribute, withUrl: withUrl,
+                                                       context: context)
+                if value == 0 {
+                    firstDictionary = attributes?.objectiveC
+                    #expect(firstDictionary != nil)
+                }
+            }
+        }
+
+        #expect(builder.attributeCache.count <= 4_096)
+        #expect(firstDictionary == nil)
+    }
+
+    /// Blank truecolor backgrounds use inline packed keys, so their variety
+    /// is not limited by the arena's interned style table. Repaint one cell
+    /// repeatedly to exercise the actual packed rendering path.
+    @Test func packedAttributeCacheStaysBoundedAcrossBackgroundChanges() {
+        let builder = makeBuilder()
+        let context = makeContext(makeView(), cols: 1)
+        let line = BufferLine(cols: 1)
+        let row = TerminalSnapshot.Row(source: line, borrowing: true)
+        var maximumCachedAttributes = 0
+
+        for value in 0..<4_200 {
+            autoreleasepool {
+                let background = Attribute.Color.trueColor(
+                    red: UInt8(value >> 8), green: UInt8(value & 0xff), blue: 37)
+                line.fill(with: CharData(
+                    attribute: Attribute(fg: .defaultColor, bg: background, style: .none),
+                    code: 0))
+                let rendered = builder.buildAttributedString(row: row, absoluteRow: 0,
+                                                              context: context)
+                let color = rendered.segments.first?.attributedString.attribute(
+                    .backgroundColor, at: 0, effectiveRange: nil) as? NSColor
+                #expect(color == NSColor.make(red: CGFloat(value >> 8) / 255,
+                                               green: CGFloat(value & 0xff) / 255,
+                                               blue: 37.0 / 255, alpha: 1))
+                maximumCachedAttributes = max(maximumCachedAttributes,
+                                              builder.packedAttributeCacheCount)
+            }
+        }
+
+        #expect(maximumCachedAttributes > 0)
+        #expect(maximumCachedAttributes <= 4_096)
     }
 
     /// A visual-input change invalidates the cache. Without this a palette or
