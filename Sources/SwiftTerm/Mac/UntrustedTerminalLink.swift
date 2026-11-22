@@ -60,12 +60,32 @@ struct UntrustedTerminalLink: Equatable {
     }
 
     let string: String
+    /// True when the host's `localLinkResolver` owns path resolution for this link.
+    /// Then a bare path is not resolved against the app directory, and a path
+    /// that the resolver did not find is an inaccessible file.
+    let isResolvedByHost: Bool
 
-    init(_ string: String) {
+    init(_ string: String, isResolvedByHost: Bool = false) {
         self.string = string
+        self.isResolvedByHost = isResolvedByHost
+    }
+
+    /// Path candidates use the default policy's scheme rules: "Makefile:12" and
+    /// "main.swift:12" can be resolved as files; "tel:5551234" stays a URL.
+    var canResolveAsLocalPath: Bool {
+        guard !string.isEmpty, !Self.containsUnsafeCharacters(string) else { return false }
+        return !TerminalView.hasURLScheme(string)
     }
 
     var decision: Decision {
+        let decision = baseDecision
+        if isResolvedByHost, decision == .deny(.malformedURL), canResolveAsLocalPath {
+            return .deny(.inaccessibleFile)
+        }
+        return decision
+    }
+
+    private var baseDecision: Decision {
         guard !string.isEmpty else { return .deny(.malformedURL) }
         // Check the source first. URL conversion can encode unsafe characters.
         guard !Self.containsUnsafeCharacters(string) else {
@@ -117,6 +137,9 @@ struct UntrustedTerminalLink: Equatable {
             normalized = url.isFileURL
                 ? url.standardizedFileURL.resolvingSymlinksInPath().path
                 : string
+        } else if isResolvedByHost {
+            // The host did not resolve this path, so the app directory does not apply.
+            normalized = string
         } else {
             normalized = URL(fileURLWithPath: string).standardizedFileURL.path
         }
