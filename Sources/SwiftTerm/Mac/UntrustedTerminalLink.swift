@@ -163,9 +163,7 @@ private extension UntrustedTerminalLink {
         guard url.isFileURL, url.query == nil, url.fragment == nil else {
             return .deny(.malformedURL)
         }
-        if let host = url.host,
-           !host.isEmpty,
-           host.caseInsensitiveCompare("localhost") != .orderedSame {
+        if let host = url.host, !TerminalView.isLocalHost(host) {
             return .deny(.malformedURL)
         }
 
