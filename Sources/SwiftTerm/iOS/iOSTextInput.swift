@@ -251,6 +251,7 @@ extension TerminalView: UITextInput {
     public func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
         uitiLog("setMarkedText(\(markedText?.debugDescription ?? "nil"), selectedRange:\(selectedRange)) \(textInputStateDescription())")
         resetKoreanResyllabificationTransaction()
+        dropTextInputSeededFromScreen()
 
         let rangeToReplace = _markedTextRange ?? _selectedTextRange
         let rangeStartPosition = rangeToReplace.startPosition
@@ -289,11 +290,45 @@ extension TerminalView: UITextInput {
         pendingAutoPeriodDeleteWasSpace = false
         resetKoreanResyllabificationTransaction()
         textInputStorage = ""
+        textInputStorageIsFromScreen = false
         _selectedTextRange = TextRange (from: TextPosition(offset: 0), to: TextPosition(offset: 0))
         _markedTextRange = nil
         endTextInputEdit()
     }
-    
+
+    /// The keyboard repeats delete only while the text before the cursor is not empty. That
+    /// text is `textInputStorage`, which holds only what was typed, so holding delete over
+    /// text the program wrote (a shell completion, a pasted command, an agent's suggestion)
+    /// stopped after a few backspaces. When the storage runs empty this fills it with the
+    /// cursor row's text left of the cursor, minus the backspaces just sent that the
+    /// program has not echoed yet, so the keyboard keeps going. The text may include a
+    /// prompt; a backspace there is the program's to ignore, as with a hardware keyboard.
+    func seedTextInputFromScreen(unechoedBackspaces: Int) {
+        let line: String = withTerminal { terminal in
+            let buffer = terminal.buffer
+            let row = buffer.yBase + buffer.y
+            guard buffer.x > 0, row >= 0, row < buffer.lines.count else { return "" }
+            return buffer.lines[row].translateToString(trimRight: false, startCol: 0, endCol: buffer.x)
+        }
+        let seed = String(line.dropLast(max(0, unechoedBackspaces)))
+        guard !seed.isEmpty else { return }
+        beginTextInputEdit()
+        textInputStorage = seed
+        textInputStorageIsFromScreen = true
+        let end = TextPosition(offset: seed.textInputUTF16Count)
+        _selectedTextRange = TextRange(from: end, to: end)
+        _markedTextRange = nil
+        endTextInputEdit()
+        uitiLog("seedTextInputFromScreen -> \(seed.debugDescription)")
+    }
+
+    /// Typed text starts a new buffer: left in, the screen text would be part of the word
+    /// the keyboard autocorrects, and a correction would type it again.
+    func dropTextInputSeededFromScreen() {
+        guard textInputStorageIsFromScreen else { return }
+        resetInputBuffer()
+    }
+
     public func unmarkText() {
         uitiLog("unmarkText() \(textInputStateDescription())")
         if let previouslyMarkedRange = _markedTextRange {
