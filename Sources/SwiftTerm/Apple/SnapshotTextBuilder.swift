@@ -138,13 +138,19 @@ final class SnapshotTextBuilder {
     /// belongs to one renderer, so this cache cannot race another renderer.
     private var fallbackFonts: [FallbackFontKey: TTFont] = [:]
 
-    init(trueColorCacheCapacity: Int = 4_096) {
+    init(trueColorCacheCapacity: Int = 4_096, attributeCacheCapacity: Int = 4_096) {
         precondition(trueColorCacheCapacity > 0)
+        precondition(attributeCacheCapacity > 0)
         self.trueColorCacheCapacity = trueColorCacheCapacity
+        self.minimumAttributeCacheCapacity = attributeCacheCapacity
+        self.attributeCacheCapacity = attributeCacheCapacity
         trueColorCache.reserveCapacity(min(trueColorCacheCapacity, 1_024))
     }
 
     var trueColorCacheCount: Int { trueColorCache.count }
+
+    private let minimumAttributeCacheCapacity: Int
+    private var attributeCacheCapacity: Int
 
     /// Attribute dictionaries for the current render context.
     ///
@@ -155,7 +161,6 @@ final class SnapshotTextBuilder {
     /// Both attribute caches are bounded independently. Truecolor output can
     /// introduce new styles indefinitely without changing the render context,
     /// even after the corresponding cells have left the terminal buffer.
-    private static let attributeCacheCapacity = 4_096
     private(set) var attributeCache: [AttributeCacheKey: SnapshotTextAttributes] = [:]
     private var packedAttributeCache: [PackedAttributeCacheKey: SnapshotTextAttributes] = [:]
     var packedAttributeCacheCount: Int { packedAttributeCache.count }
@@ -234,7 +239,7 @@ final class SnapshotTextBuilder {
         }
         let built = buildAttributes(attribute, withUrl: withUrl, context: context)
         if let built {
-            if attributeCache.count >= Self.attributeCacheCapacity {
+            if attributeCache.count >= attributeCacheCapacity {
                 attributeCache.removeAll(keepingCapacity: true)
             }
             attributeCache[key] = built
@@ -256,7 +261,7 @@ final class SnapshotTextBuilder {
         }
         let built = buildAttributes(attribute, withUrl: withUrl, context: context)
         if let built {
-            if packedAttributeCache.count >= Self.attributeCacheCapacity {
+            if packedAttributeCache.count >= attributeCacheCapacity {
                 packedAttributeCache.removeAll(keepingCapacity: true)
             }
             packedAttributeCache[cacheKey] = built
@@ -265,10 +270,10 @@ final class SnapshotTextBuilder {
     }
 
     private func prepareAttributeCache(for context: SnapshotRenderContext) {
-        guard attributeCacheContextID != context.identity else { return }
-        // The identity changes only when an input used by the attribute
-        // dictionaries changes. A new frame with the same visual inputs keeps
-        // the cache warm.
+        let capacity = max(minimumAttributeCacheCapacity, 2 * context.cols * context.rows)
+        guard attributeCacheContextID != context.identity || attributeCacheCapacity != capacity else { return }
+        attributeCacheCapacity = capacity
+        // Keep a full grid warm across redraws; resize or visual changes reset it.
         attributeCache.removeAll(keepingCapacity: true)
         packedAttributeCache.removeAll(keepingCapacity: true)
         glyphCoverageCache.removeAll(keepingCapacity: true)

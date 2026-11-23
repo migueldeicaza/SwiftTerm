@@ -746,6 +746,7 @@ struct SnapshotRenderContext {
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
     let cols: Int
+    let rows: Int
 
     /// Identifies the values used to build attributed-string dictionaries.
     /// Equal visual inputs produce the same identity across frames, so the
@@ -756,13 +757,13 @@ struct SnapshotRenderContext {
     init (viewState: FrameViewState, snapshot: TerminalSnapshot) {
         self.init(viewState: viewState, style: snapshot.style,
                   nativeColors: snapshot.nativeColors(for: viewState.appearance),
-                  cols: snapshot.cols,
+                  cols: snapshot.cols, rows: snapshot.rowCount,
                   searchMatchRows: snapshot.searchMatchRows,
                   searchMatchFirstRow: snapshot.firstRow)
     }
 
     init (viewState: FrameViewState, style: SnapshotStyle, ansiColors: [Color],
-          cols: Int) {
+          cols: Int, rows: Int = 1) {
         let appearance = viewState.appearance
         self.init(
             viewState: viewState,
@@ -779,11 +780,11 @@ struct SnapshotRenderContext {
                 ansiColors: ansiColors.map(TTColor.make(color:)),
                 searchMatchBackgroundColor: appearance.searchMatchBackgroundColor?.nativeColor,
                 searchMatchForegroundColor: appearance.searchMatchForegroundColor?.nativeColor),
-            cols: cols)
+            cols: cols, rows: rows)
     }
 
     private init (viewState: FrameViewState, style: SnapshotStyle,
-                  nativeColors: SnapshotNativeColors, cols: Int,
+                  nativeColors: SnapshotNativeColors, cols: Int, rows: Int,
                   searchMatchRows: [[Range<Int>]] = [], searchMatchFirstRow: Int = 0) {
         fonts = viewState.fonts
         cellDimension = viewState.cellDimension
@@ -834,6 +835,7 @@ struct SnapshotRenderContext {
         bidiHostPolicy = viewState.bidiHostPolicy
         glyphFallbackProvider = viewState.glyphFallbackProvider
         self.cols = cols
+        self.rows = rows
 
         var identityHasher = Hasher()
         identityHasher.combine(fonts.normal.hash)
@@ -2987,7 +2989,8 @@ extension TerminalView {
             textBlinkVisible: textBlinkVisible)
         let context = SnapshotRenderContext(viewState: FrameViewState(view: self),
                                             style: liveStyle,
-                                            ansiColors: terminal.ansiColors, cols: cols)
+                                            ansiColors: terminal.ansiColors, cols: cols,
+                                            rows: terminal.rows)
         var result = textBuilder.buildAttributedString(row: snapshotRow, absoluteRow: row,
                                                        context: context)
         result.images = line.images
