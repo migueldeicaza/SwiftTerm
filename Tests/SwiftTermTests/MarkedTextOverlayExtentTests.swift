@@ -26,9 +26,7 @@ final class MarkedTextOverlayExtentTests {
         #expect(rects.count == 1)
         let rect = try #require(rects.first)
         #expect(abs(overlay.frame.minX + rect.minX - caretX) < 0.5)
-        let width = rect.width
-        #expect(width > 0)
-        #expect(width <= 2 * view.cellDimension.width + 1)
+        #expect(abs(rect.width - 2 * view.cellDimension.width) < 0.5)
     }
 
     /// Long dictation hypotheses wrap; the wrapped lines must hide the rows below,
