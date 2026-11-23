@@ -31,7 +31,8 @@ final class MarkedTextOverlayExtentTests {
         #expect(width <= 2 * view.cellDimension.width + 1)
     }
 
-    /// Long dictation hypotheses wrap; the wrapped lines must hide the rows below.
+    /// Long dictation hypotheses wrap; the wrapped lines must hide the rows below,
+    /// such as a TUI's border or status line, including the last one.
     /// Line 1 starts at the caret, and every later line at the first column.
     @Test func testWrappedLinesCoverTheFullWidth() throws {
         let view = TerminalView.makeForMarkedTextTests()
@@ -51,7 +52,7 @@ final class MarkedTextOverlayExtentTests {
         #expect(abs(rects[1].width - overlay.frame.width) < 0.5)
         let last = try #require(rects.last)
         #expect(abs(last.minX) < 0.5)
-        #expect(abs(last.width - 3 * view.cellDimension.width) < 0.5)
+        #expect(abs(last.width - overlay.frame.width) < 0.5)
     }
 
     /// One cell of marked text over a wide character covers both of its columns,
@@ -68,9 +69,10 @@ final class MarkedTextOverlayExtentTests {
         #expect(abs(overlay.frame.minX + last.maxX - 4 * cellWidth) < 0.5)
     }
 
-    /// Dictation can put a newline in the marked text. A line that ends in one
-    /// does not wrap onto the next row, so it covers its text only.
-    @Test func testALineEndingInANewlineCoversItsTextOnly() throws {
+    /// Dictation can put a newline in the marked text. The caret's row then
+    /// covers its text only, and the line after the newline, which sits on
+    /// another terminal row, covers the full width.
+    @Test func testANewlineEndsTheCaretRowAtItsText() throws {
         let view = TerminalView.makeForMarkedTextTests()
         view.feed(text: "> existing text\r\u{1b}[2C")
         view.updateCursorPosition()
@@ -84,7 +86,7 @@ final class MarkedTextOverlayExtentTests {
         #expect(abs(overlay.frame.minX + first.maxX - 4 * cellWidth) < 0.5)
         let last = try #require(rects.last)
         #expect(abs(overlay.frame.minX + last.minX) < 0.5)
-        #expect(abs(overlay.frame.minX + last.maxX - 2 * cellWidth) < 0.5)
+        #expect(abs(last.width - overlay.frame.width) < 0.5)
     }
 }
 #endif

@@ -2467,8 +2467,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // `configureNativeColors()`) when the cell carries no color of its own.
         let caretColors = markedTextColorsAtCaret()
         overlay.overlayBackgroundColor = caretColors.background
-        overlay.coverEnd = { [weak self] line, textEnd in
-            self?.markedTextCoverEnd(line: line, textEnd: textEnd) ?? textEnd
+        overlay.coverEnd = { [weak self] textEnd in
+            self?.markedTextCoverEnd(textEnd: textEnd) ?? textEnd
         }
 
         // Match terminal line metrics so wrapped lines line up with terminal rows.
@@ -2525,18 +2525,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         )
     }
 
-    /// The end of the terminal cells under a line of marked text that ends at
-    /// `textEnd`. The overlay starts at the first column and `alignToCells` ends
-    /// each character on a cell boundary, so the text covers whole cells; when
-    /// the cell after them is a wide character's second column, the end moves
-    /// past it so no half of that character shows.
-    private func markedTextCoverEnd(line: Int, textEnd: CGFloat) -> CGFloat {
+    /// The end of the terminal cells under marked text on the caret's row that
+    /// ends at `textEnd`. The overlay starts at the first column and `alignToCells`
+    /// ends each character on a cell boundary, so the text covers whole cells;
+    /// when the cell after them is a wide character's second column, the end
+    /// moves past it so no half of that character shows.
+    private func markedTextCoverEnd(textEnd: CGFloat) -> CGFloat {
         let cellWidth = cellDimension.width
         guard cellWidth > 0 else { return textEnd }
         var column = Int((textEnd / cellWidth).rounded())
         withTerminal { terminal in
             let buffer = terminal.displayBuffer
-            let row = buffer.yBase + buffer.y + line
+            let row = buffer.yBase + buffer.y
             if row < buffer.lines.count, column > 0, column < buffer.cols, buffer.lines[row][column].width == 0 {
                 column += 1
             }
@@ -4567,10 +4567,10 @@ final class DictationOverlayTextView: NSTextView {
         didSet { needsDisplay = true }
     }
 
-    /// Where the background of a line that ends inside a row stops, given the
-    /// line's index and the x where its text ends: past every terminal cell the
-    /// text covers, including both columns of a wide character it covers in part.
-    var coverEnd: (_ line: Int, _ textEnd: CGFloat) -> CGFloat = { $1 }
+    /// Where the background of the caret's row stops, given the x where its text
+    /// ends: past every terminal cell the text covers, including both columns of
+    /// a wide character it covers in part.
+    var coverEnd: (_ textEnd: CGFloat) -> CGFloat = { $0 }
 
     override func draw(_ dirtyRect: NSRect) {
         let rects = backgroundRects
@@ -4585,10 +4585,12 @@ final class DictationOverlayTextView: NSTextView {
         NSGraphicsContext.restoreGraphicsState()
     }
 
-    /// The area behind the marked text on each line. Soft-wrapped lines span the
-    /// full width so they hide the terminal rows below the caret. The last line,
-    /// and a line that ends in a newline, cover the text only, so characters to
-    /// the right of it stay visible while composing in the middle of a line.
+    /// The area behind the marked text on each line. Every line below the caret
+    /// spans the full width, since the terminal row under it is not the text
+    /// after the caret but another row, such as a TUI's border or status line.
+    /// The caret's row covers its text only when the text ends inside the row,
+    /// so characters to the right of the caret stay visible while composing in
+    /// the middle of a line.
     var backgroundRects: [NSRect] {
         guard let layoutManager, let container = textContainer else { return [] }
         let glyphRange = layoutManager.glyphRange(for: container)
@@ -4600,12 +4602,12 @@ final class DictationOverlayTextView: NSTextView {
             let isLast = NSMaxRange(lineGlyphs) >= NSMaxRange(glyphRange)
             let endsInNewline = characters.length > 0
                 && CharacterSet.newlines.contains(UnicodeScalar(string.character(at: NSMaxRange(characters) - 1)) ?? " ")
-            guard isLast || endsInNewline else {
+            guard rects.isEmpty, isLast || endsInNewline else {
                 rects.append(fragmentRect.offsetBy(dx: origin.x, dy: origin.y))
                 return
             }
             var rect = usedRect.offsetBy(dx: origin.x, dy: origin.y)
-            rect.size.width = self.coverEnd(rects.count, rect.maxX) - rect.minX
+            rect.size.width = self.coverEnd(rect.maxX) - rect.minX
             rects.append(rect)
         }
         return rects
