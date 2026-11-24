@@ -203,6 +203,7 @@ enum HangulInput {
     static func resyllabificationEdit(base: Character, followingSyllable: Character) -> ResyllabificationEdit? {
         guard let prefix = resyllabificationPrefix(base: base),
               let followingComponents = syllableComponents(of: followingSyllable),
+              followingComponents.finalIndex == 0,
               followingComponents.leadingIndex == prefix.movedLeadingIndex else {
             return nil
         }
