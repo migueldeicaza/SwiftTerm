@@ -264,5 +264,54 @@ struct MacPointerCursorTests {
         view.eventQueue.drain()
         #expect(NSCursor.current === NSCursor.iBeam)
     }
+
+    @Test func theFindBarButtonsShowTheArrow() throws {
+        let view = makeView()
+        let window = showInWindow(view)
+        defer { window.orderOut(nil) }
+        let showFind = NSMenuItem()
+        showFind.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
+        view.performFindPanelAction(showFind)
+        window.contentView?.layoutSubtreeIfNeeded()
+        let bar = try #require(view.subviews.first { $0 is TerminalFindBarView })
+        window.resetCursorRects()
+        let buttons = buttons(in: bar)
+        try #require(!buttons.isEmpty)
+
+        for button in buttons {
+            NSCursor.iBeam.set()
+            try cursorUpdate(of: button, at: CGPoint(x: button.bounds.midX, y: button.bounds.midY))
+            #expect(NSCursor.current === NSCursor.arrow, "\(button.toolTip ?? "")")
+        }
+
+        let text = CGPoint(x: 10, y: 10)
+        try #require(!bar.frame.contains(text))
+        NSCursor.arrow.set()
+        try cursorUpdate(of: view, at: text)
+        #expect(NSCursor.current === NSCursor.iBeam)
+    }
+
+    /// Sends `view` the cursor update AppKit sends when the pointer enters a
+    /// cursor rect at `point`, in the view's coordinates.
+    private func cursorUpdate(of view: NSView, at point: CGPoint) throws {
+        let window = try #require(view.window)
+        let event = try #require(NSEvent.mouseEvent(
+            with: .mouseMoved, location: view.convert(point, to: nil), modifierFlags: [],
+            timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            eventNumber: 1, clickCount: 0, pressure: 0))
+        view.cursorUpdate(with: event)
+    }
+
+    private func buttons(in view: NSView) -> [NSButton] {
+        view.subviews.flatMap { subview -> [NSButton] in
+            if subview is NSSearchField {
+                return []
+            }
+            if let button = subview as? NSButton {
+                return [button]
+            }
+            return buttons(in: subview)
+        }
+    }
 }
 #endif
