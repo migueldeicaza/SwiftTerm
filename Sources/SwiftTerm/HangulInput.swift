@@ -199,7 +199,9 @@ enum HangulInput {
 
     /// Returns the same edit when UIKit has already composed the following
     /// syllable. The leading consonant must be the consonant moved from the
-    /// final position of `base`.
+    /// final position of `base`. A real resyllabification always gives a
+    /// syllable without a final, so a syllable with a final (such as 늕 after
+    /// 는, or 굯 after 국) is a compound final and not a match.
     static func resyllabificationEdit(base: Character, followingSyllable: Character) -> ResyllabificationEdit? {
         guard let prefix = resyllabificationPrefix(base: base),
               let followingComponents = syllableComponents(of: followingSyllable),
