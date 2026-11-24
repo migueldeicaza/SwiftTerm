@@ -1936,8 +1936,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// The view refreshes the pointer when a modifier changes only while the
     /// application receives the mouse. An override that uses `modifiers` while
     /// mouse reporting is off, such as a pointing hand while Command is held
-    /// over a link, calls ``refreshPointer(modifiers:)`` from
-    /// `flagsChanged(with:)` to apply it before the next mouse move.
+    /// over a link, calls ``refreshPointer(modifiers:)`` to apply it before the
+    /// next mouse move. AppKit sends `flagsChanged(with:)` only to the first
+    /// responder, so an override of it covers only the focused view. To cover
+    /// every view, as with split panes, use a local `NSEvent` monitor for
+    /// `.flagsChanged`, as the view does while the application receives the mouse.
     open func pointerCursor(modifiers: NSEvent.ModifierFlags) -> NSCursor {
         guard allowMouseReporting && currentMouseMode != .off else { return .iBeam }
         let shiftSelects = modifiers.contains(.shift) && !mouseShiftCaptureState.withLock { $0 }
