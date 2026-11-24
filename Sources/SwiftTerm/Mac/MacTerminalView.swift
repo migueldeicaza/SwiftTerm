@@ -2574,8 +2574,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             tv.isRichText = true
             tv.textContainerInset = .zero
             tv.textContainer?.lineFragmentPadding = 0
-            // Our subclass fills the background per-line-fragment instead of
-            // over the whole frame, so turn off NSTextView's built-in fill.
+            // Our subclass fills the background behind the marked text instead
+            // of over the whole frame, so turn off NSTextView's built-in fill.
             tv.drawsBackground = false
             addSubview(tv, positioned: .above, relativeTo: nil)
             markedTextOverlay = tv
@@ -2590,6 +2590,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // `configureNativeColors()`) when the cell carries no color of its own.
         let caretColors = markedTextColorsAtCaret()
         overlay.overlayBackgroundColor = caretColors.background
+        overlay.coverEnd = { [weak self] textEnd in
+            self?.markedTextCoverEnd(textEnd: textEnd) ?? textEnd
+        }
 
         // Match terminal line metrics so wrapped lines line up with terminal rows.
         // The terminal wraps per character, and moves a wide character that does
@@ -2629,7 +2632,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             // too narrow for any character.
             container.containerSize = NSSize(width: overlayWidth + 0.5, height: .greatestFiniteMagnitude)
             container.exclusionPaths = exclusionWidth > 0
-                ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: exclusionWidth, height: lineHeight + 1))]
+                ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: exclusionWidth, height: lineHeight))]
                 : []
         }
 
@@ -2643,6 +2646,25 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             width: overlayWidth,
             height: overlayHeight
         )
+    }
+
+    /// The end of the terminal cells under marked text on the caret's row that
+    /// ends at `textEnd`. The overlay starts at the first column and `alignToCells`
+    /// ends each character on a cell boundary, so the text covers whole cells;
+    /// when the cell after them is a wide character's second column, the end
+    /// moves past it so no half of that character shows.
+    private func markedTextCoverEnd(textEnd: CGFloat) -> CGFloat {
+        let cellWidth = cellDimension.width
+        guard cellWidth > 0 else { return textEnd }
+        var column = Int((textEnd / cellWidth).rounded())
+        withTerminal { terminal in
+            let buffer = terminal.displayBuffer
+            let row = buffer.yBase + buffer.y
+            if row < buffer.lines.count, column > 0, column < buffer.cols, buffer.lines[row][column].width == 0 {
+                column += 1
+            }
+        }
+        return CGFloat(column) * cellWidth
     }
 
     /// Kerns each character of the marked text so it spans the columns the
@@ -4819,32 +4841,67 @@ extension TerminalViewDelegate {
 
 /// NSTextView subclass used for the dictation / IME marked-text overlay.
 ///
-/// Fills its background only under the laid-out line fragments rather than
-/// across the full frame. Line 1 already has an exclusion path covering the
-/// portion occupied by pre-existing terminal text (e.g. the prompt), so this
-/// drawing strategy leaves that area untouched while still covering wrapped
-/// lines below.
+/// Fills its background behind the marked text rather than across the full
+/// frame; see ``backgroundRects``. Line 1 has an exclusion path covering the
+/// pre-existing terminal text to the left of the caret (e.g. the prompt), so
+/// that area stays untouched.
 final class DictationOverlayTextView: NSTextView {
     var overlayBackgroundColor: NSColor = .clear {
         didSet { needsDisplay = true }
     }
 
+    /// Where the background of the caret's row stops, given the x where its text
+    /// ends: past every terminal cell the text covers, including both columns of
+    /// a wide character it covers in part.
+    var coverEnd: (_ textEnd: CGFloat) -> CGFloat = { $0 }
+
     override func draw(_ dirtyRect: NSRect) {
-        drawPerFragmentBackground(in: dirtyRect)
+        let rects = backgroundRects
+        overlayBackgroundColor.setFill()
+        for rect in rects where rect.intersects(dirtyRect) {
+            rect.fill()
+        }
+        // A glyph wider than its cells would otherwise draw over the terminal character next to it.
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath.clip(rects)
         super.draw(dirtyRect)
+        NSGraphicsContext.restoreGraphicsState()
     }
 
-    private func drawPerFragmentBackground(in dirtyRect: NSRect) {
-        guard let layoutManager, let container = textContainer else { return }
-        overlayBackgroundColor.setFill()
+    /// The area behind the marked text on each line. Every line below the caret
+    /// spans the full width, since the terminal row under it is not the text
+    /// after the caret but another row, such as a TUI's border or status line.
+    /// The caret's row covers its text only when the text ends inside the row,
+    /// so characters to the right of the caret stay visible while composing in
+    /// the middle of a line.
+    var backgroundRects: [NSRect] {
+        guard let layoutManager, let container = textContainer else { return [] }
         let glyphRange = layoutManager.glyphRange(for: container)
+        let string = (textStorage?.string ?? "") as NSString
         let origin = textContainerOrigin
-        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, _, _, _, _ in
-            let r = fragmentRect.offsetBy(dx: origin.x, dy: origin.y)
-            if r.intersects(dirtyRect) {
-                r.fill()
+        var rects: [NSRect] = []
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, usedRect, _, lineGlyphs, _ in
+            let characters = layoutManager.characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
+            let isLast = NSMaxRange(lineGlyphs) >= NSMaxRange(glyphRange)
+            let endsInNewline = characters.length > 0
+                && CharacterSet.newlines.contains(UnicodeScalar(string.character(at: NSMaxRange(characters) - 1)) ?? " ")
+            guard rects.isEmpty, isLast || endsInNewline else {
+                rects.append(fragmentRect.offsetBy(dx: origin.x, dy: origin.y))
+                return
             }
+            var rect = usedRect.offsetBy(dx: origin.x, dy: origin.y)
+            rect.size.width = self.coverEnd(rect.maxX) - rect.minX
+            rects.append(rect)
         }
+        return rects
+    }
+}
+
+private extension NSBezierPath {
+    static func clip(_ rects: [NSRect]) {
+        let path = NSBezierPath()
+        rects.forEach { path.appendRect($0) }
+        path.addClip()
     }
 }
 
