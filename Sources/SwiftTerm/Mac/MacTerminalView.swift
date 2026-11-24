@@ -2625,18 +2625,35 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             .foregroundColor: caretColors.foreground,
             .paragraphStyle: para,
         ], range: fullRange)
-        alignToCells(display)
-        overlay.textStorage?.setAttributedString(display)
+        let firstColumns = alignToCells(display)
 
         // The overlay spans the terminal's columns, so it wraps where the
-        // terminal does. Line 1 skips the portion already occupied by text to
-        // the left of the caret (e.g. the prompt) via an exclusion path; wrapped
-        // lines 2+ start from the first column.
+        // terminal does. Line 1 starts at the caret, after the text already to
+        // its left (e.g. the prompt); wrapped lines 2+ start from the first column.
         let overlayX: CGFloat = 0
         let cols = withTerminal { $0.cols }
         let overlayWidth = CGFloat(max(1, cols)) * cellDimension.width
-        let caretX = caretView.frame.origin.x
-        let exclusionWidth = max(0, caretX - overlayX)
+        let caretX = max(0, caretView.frame.origin.x - overlayX)
+        // The terminal moves a wide character that does not fit in the cells
+        // left on the caret's row to the next row, so the overlay starts there.
+        let startsOnNextRow = caretX > 0
+            && CGFloat(firstColumns) * cellDimension.width > overlayWidth - caretX + 0.25
+        let firstLineIndent = startsOnNextRow ? 0 : caretX
+
+        // An indent, not an exclusion path, moves line 1 to the caret: TextKit
+        // drops an exclusion-path line fragment narrower than 15 points, which
+        // put the text of a caret in the last column on the wrong row. Only the
+        // first paragraph starts at the caret; a newline in dictated text
+        // starts the next one in the first column.
+        if firstLineIndent > 0 {
+            let firstParagraph = (display.string as NSString).paragraphRange(for: NSRange(location: 0, length: 0))
+            let indented = para.mutableCopy() as! NSMutableParagraphStyle
+            indented.firstLineHeadIndent = firstLineIndent
+            display.addAttribute(.paragraphStyle, value: indented, range: firstParagraph)
+        }
+        overlay.textStorage?.setAttributedString(display)
+        overlay.firstLineIndent = firstLineIndent
+        overlay.firstLineIsOnCaretRow = !startsOnNextRow
 
         if let container = overlay.textContainer {
             // The kerned advances add up to whole cells, and cellDimension.width
@@ -2644,18 +2661,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             // The slack absorbs the floating-point rounding in that sum; it is
             // too narrow for any character.
             container.containerSize = NSSize(width: overlayWidth + 0.5, height: .greatestFiniteMagnitude)
-            container.exclusionPaths = exclusionWidth > 0
-                ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: exclusionWidth, height: lineHeight))]
-                : []
+            container.exclusionPaths = []
         }
 
         // Size the text view so its frame exactly wraps the wrapped line fragments.
         overlay.layoutManager?.ensureLayout(for: overlay.textContainer!)
-        let overlayHeight = overlay.layoutManager?.usedRect(for: overlay.textContainer!).height ?? lineHeight
+        let overlayHeight = overlay.layoutManager?.usedRect(for: overlay.textContainer!).maxY ?? lineHeight
+        let overlayTop = caretView.frame.maxY - (startsOnNextRow ? lineHeight : 0)
 
         overlay.frame = NSRect(
             x: overlayX,
-            y: caretView.frame.maxY - overlayHeight,
+            y: overlayTop - overlayHeight,
             width: overlayWidth,
             height: overlayHeight
         )
@@ -2685,7 +2701,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// wide ones such as CJK. Their glyphs, often from a fallback font, are
     /// narrower than two cells, and the terminal pixel-snaps cell widths, so the
     /// font's own advances would drift from the grid.
-    private func alignToCells(_ text: NSMutableAttributedString) {
+    ///
+    /// Returns the number of columns of the first character.
+    private func alignToCells(_ text: NSMutableAttributedString) -> Int {
         let cellWidth = cellDimension.width
         let regionalIndicatorWidth = withTerminal { $0.options.regionalIndicatorWidth }
         // Each IME keystroke and dictation hypothesis lays out the whole string
@@ -2693,12 +2711,16 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // it instead: it adds spacing between Latin and CJK runs and picks other
         // fallback fonts than the overlay's text view.
         var advances = markedTextAdvanceCache.flatMap { $0.font == font ? $0.advances : nil } ?? [:]
+        var firstColumns: Int?
         let string = text.string as NSString
         string.enumerateSubstrings(in: NSRange(location: 0, length: string.length),
                                    options: .byComposedCharacterSequences) { substring, range, _, _ in
             guard let substring else { return }
             let columns = substring.reduce(0) {
                 $0 + UnicodeUtil.columnWidth(of: $1, regionalIndicatorWidth: regionalIndicatorWidth)
+            }
+            if firstColumns == nil {
+                firstColumns = columns
             }
             // The IME can send a .glyphInfo that replaces the glyph and its
             // width, so the string alone does not identify such a cluster.
@@ -2717,6 +2739,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
                               range: range)
         }
         markedTextAdvanceCache = (font, advances)
+        return firstColumns ?? 0
     }
 
     /// Colors for the marked-text overlay, taken from the cell under the caret.
@@ -4855,9 +4878,9 @@ extension TerminalViewDelegate {
 /// NSTextView subclass used for the dictation / IME marked-text overlay.
 ///
 /// Fills its background behind the marked text rather than across the full
-/// frame; see ``backgroundRects``. Line 1 has an exclusion path covering the
-/// pre-existing terminal text to the left of the caret (e.g. the prompt), so
-/// that area stays untouched.
+/// frame; see ``backgroundRects``. Line 1 starts at `firstLineIndent`, after
+/// the pre-existing terminal text to the left of the caret (e.g. the prompt),
+/// so that area stays untouched.
 final class DictationOverlayTextView: NSTextView {
     var overlayBackgroundColor: NSColor = .clear {
         didSet { needsDisplay = true }
@@ -4867,6 +4890,18 @@ final class DictationOverlayTextView: NSTextView {
     /// ends: past every terminal cell the text covers, including both columns of
     /// a wide character it covers in part.
     var coverEnd: (_ textEnd: CGFloat) -> CGFloat = { $0 }
+
+    /// The x where line 1 starts: the caret's position on its row, or 0 when
+    /// line 1 starts on the row after the caret's.
+    var firstLineIndent: CGFloat = 0 {
+        didSet { needsDisplay = true }
+    }
+
+    /// False when a wide character that does not fit in the cells left on the
+    /// caret's row moves line 1 to the next row.
+    var firstLineIsOnCaretRow = true {
+        didSet { needsDisplay = true }
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         let rects = backgroundRects
@@ -4898,8 +4933,15 @@ final class DictationOverlayTextView: NSTextView {
             let isLast = NSMaxRange(lineGlyphs) >= NSMaxRange(glyphRange)
             let endsInNewline = characters.length > 0
                 && CharacterSet.newlines.contains(UnicodeScalar(string.character(at: NSMaxRange(characters) - 1)) ?? " ")
-            guard rects.isEmpty, isLast || endsInNewline else {
-                rects.append(fragmentRect.offsetBy(dx: origin.x, dy: origin.y))
+            guard rects.isEmpty, self.firstLineIsOnCaretRow, isLast || endsInNewline else {
+                var rect = fragmentRect.offsetBy(dx: origin.x, dy: origin.y)
+                // Line 1 starts at the caret, after the prompt.
+                if rects.isEmpty {
+                    let indent = min(self.firstLineIndent, rect.width)
+                    rect.origin.x += indent
+                    rect.size.width -= indent
+                }
+                rects.append(rect)
                 return
             }
             var rect = usedRect.offsetBy(dx: origin.x, dy: origin.y)

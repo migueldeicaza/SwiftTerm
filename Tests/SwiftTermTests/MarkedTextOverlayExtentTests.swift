@@ -53,6 +53,42 @@ final class MarkedTextOverlayExtentTests {
         #expect(abs(last.width - overlay.frame.width) < 0.5)
     }
 
+    /// Marked text at a caret in the last column covers that cell only, not the
+    /// prompt to its left.
+    @Test func testBackgroundCoversACaretInTheLastColumn() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        view.feed(text: String(repeating: "-", count: cols - 1))
+        view.updateCursorPosition()
+        view.setMarkedText("x")
+        let overlay = try #require(view.dictationOverlay)
+        let rects = overlay.backgroundRects
+        #expect(rects.count == 1)
+        let rect = try #require(rects.first)
+        let cellWidth = view.cellDimension.width
+        #expect(abs(overlay.frame.minX + rect.minX - CGFloat(cols - 1) * cellWidth) < 0.5)
+        #expect(abs(rect.width - cellWidth) < 0.5)
+        #expect(abs(overlay.frame.maxY - view.caretView.frame.maxY) < 0.5)
+    }
+
+    /// A wide character that does not fit at a caret in the last column starts on
+    /// the next row. That row is not the caret's, so its background spans the
+    /// full width, and the caret's row stays uncovered.
+    @Test func testWideCharacterOnTheNextRowCoversTheFullWidth() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        view.feed(text: String(repeating: "-", count: cols - 1))
+        view.updateCursorPosition()
+        view.setMarkedText("日")
+        let overlay = try #require(view.dictationOverlay)
+        let rects = overlay.backgroundRects
+        #expect(rects.count == 1)
+        let rect = try #require(rects.first)
+        #expect(abs(rect.minX) < 0.5)
+        #expect(abs(rect.width - overlay.frame.width) < 0.5)
+        #expect(abs(overlay.frame.maxY - view.caretView.frame.minY) < 0.5)
+    }
+
     /// One cell of marked text over a wide character covers both of its columns,
     /// so no half of the character shows next to the text.
     @Test func testBackgroundCoversAWideCharacterAfterTheMarkedText() throws {
