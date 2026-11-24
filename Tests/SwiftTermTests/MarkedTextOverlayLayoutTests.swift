@@ -165,6 +165,49 @@ final class MarkedTextOverlayLayoutTests {
         #expect(visible.map(\.column) == [10, 11, 0, 1])
     }
 
+    /// A prompt that fills the row leaves the caret on the last column with a
+    /// wrap pending, so the next character, narrow or wide, goes to the next row.
+    @Test func testTextAfterAPendingWrapStartsOnTheNextRow() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        let cells = try cellsAfterPrompt("xy", caretColumn: cols, in: view)
+        #expect(cells.count == 2)
+        #expect(cells.first.map { $0 == (row: 1, column: 0) } == true)
+        #expect(cells.last.map { $0 == (row: 1, column: 1) } == true)
+    }
+
+    /// With autowrap reset, the next character overwrites the last column, so
+    /// the text stays at the caret.
+    @Test func testTextAfterAFilledRowWithoutAutowrapStaysAtTheCaret() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        view.feed(text: "\u{1b}[?7l")
+        let cells = try cellsAfterPrompt("x", caretColumn: cols, in: view)
+        #expect(cells.count == 1)
+        #expect(cells.first.map { $0 == (row: 0, column: cols - 1) } == true)
+    }
+
+    /// Right-to-left text starts at the caret as left-to-right text does; a
+    /// natural direction would put the indent on the right edge.
+    @Test func testRightToLeftTextStartsAtTheCaret() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cells = try cellsAfterPrompt("שלום", caretColumn: 10, in: view)
+        #expect(cells.count == 4)
+        #expect(cells.allSatisfy { $0.row == 0 })
+        #expect(cells.map(\.column).sorted() == [10, 11, 12, 13])
+    }
+
+    /// A zero-width first character goes with the wide character after it, so
+    /// at a caret in the last column both start on the next row.
+    @Test func testZeroWidthFirstCharacterDoesNotKeepAWideOneOnTheCaretRow() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        let cells = try cellsAfterPrompt("\u{0301}日", caretColumn: cols - 1, in: view)
+        #expect(cells.count == 2)
+        #expect(cells.allSatisfy { $0.row == 1 })
+        #expect(cells.last.map { $0.column == 0 } == true)
+    }
+
     /// A wide character that does not fit in the last column goes to the next row.
     @Test func testWideCharacterMovesToTheNextRowWhenOneColumnRemains() throws {
         let view = TerminalView.makeForMarkedTextTests()

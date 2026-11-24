@@ -527,6 +527,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var markedTextOverlay: DictationOverlayTextView?
     /// The measured advance of each cluster the overlay has shown, for `font`.
     private var markedTextAdvanceCache: (font: NSFont, advances: [String: CGFloat])?
+    /// Line 1 of the marked-text overlay, in view coordinates, for `firstRect`.
+    /// It is not the caret's rect when line 1 starts on the row below the caret.
+    private var markedTextFirstLineRect: NSRect?
     private var progressBarView: TerminalProgressBarView?
     private(set) var progressReportTimer: Timer?
     var schedulesProgressReportTimer = true
@@ -2574,6 +2577,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             markedTextOverlay?.removeFromSuperview()
             markedTextOverlay = nil
             markedTextAdvanceCache = nil
+            markedTextFirstLineRect = nil
             return
         }
 
@@ -2615,6 +2619,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         para.minimumLineHeight = lineHeight
         para.maximumLineHeight = lineHeight
         para.lineBreakMode = .byCharWrapping
+        // The terminal writes the text from the caret to the right, also for
+        // right-to-left text. A natural direction would put the indent of an
+        // RTL paragraph on the right edge, and the text over the prompt.
+        para.baseWritingDirection = .leftToRight
+        para.alignment = .left
 
         // Match the terminal's effective foreground color. This preserves
         // host-selected themes and terminal foreground-color changes.
@@ -2636,8 +2645,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let caretX = max(0, caretView.frame.origin.x - overlayX)
         // The terminal moves a wide character that does not fit in the cells
         // left on the caret's row to the next row, so the overlay starts there.
-        let startsOnNextRow = caretX > 0
-            && CGFloat(firstColumns) * cellDimension.width > overlayWidth - caretX + 0.25
+        // After a write that fills the last column, the caret stays on that
+        // column with a wrap pending, and with autowrap set any character goes
+        // to the next row.
+        let wrapPending = withTerminal { $0.wraparound && $0.displayBuffer.pendingWrap }
+        let startsOnNextRow = firstColumns > 0 && (wrapPending || (caretX > 0
+            && CGFloat(firstColumns) * cellDimension.width > overlayWidth - caretX + 0.25))
         let firstLineIndent = startsOnNextRow ? 0 : caretX
 
         // An indent, not an exclusion path, moves line 1 to the caret: TextKit
@@ -2667,7 +2680,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // Size the text view so its frame exactly wraps the wrapped line fragments.
         overlay.layoutManager?.ensureLayout(for: overlay.textContainer!)
         let overlayHeight = overlay.layoutManager?.usedRect(for: overlay.textContainer!).maxY ?? lineHeight
-        let overlayTop = caretView.frame.maxY - (startsOnNextRow ? lineHeight : 0)
+        // On the bottom row there is no row below the caret in the view, and
+        // the view clips its subviews. The commit scrolls the terminal up one
+        // row, so line 1 shows on the caret's row, where the text then lands.
+        let rowBelowIsInView = caretView.frame.minY - lineHeight >= bounds.minY - 0.5
+        let overlayTop = caretView.frame.maxY - (startsOnNextRow && rowBelowIsInView ? lineHeight : 0)
+        markedTextFirstLineRect = startsOnNextRow
+            ? NSRect(x: overlayX, y: overlayTop - lineHeight,
+                     width: CGFloat(max(1, firstColumns)) * cellDimension.width, height: lineHeight)
+            : caretView.frame
 
         overlay.frame = NSRect(
             x: overlayX,
@@ -2702,7 +2723,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// narrower than two cells, and the terminal pixel-snaps cell widths, so the
     /// font's own advances would drift from the grid.
     ///
-    /// Returns the number of columns of the first character.
+    /// Returns the number of columns of the first character that takes any, or
+    /// 0 when no character does.
     private func alignToCells(_ text: NSMutableAttributedString) -> Int {
         let cellWidth = cellDimension.width
         let regionalIndicatorWidth = withTerminal { $0.options.regionalIndicatorWidth }
@@ -2719,7 +2741,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             let columns = substring.reduce(0) {
                 $0 + UnicodeUtil.columnWidth(of: $1, regionalIndicatorWidth: regionalIndicatorWidth)
             }
-            if firstColumns == nil {
+            // A zero-width character such as a lone combining mark goes with
+            // the character after it, so it does not decide where line 1 starts.
+            if firstColumns == nil, columns > 0 {
                 firstColumns = columns
             }
             // The IME can send a .glyphInfo that replaces the glyph and its
@@ -2836,7 +2860,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     open func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
         actualRange?.pointee = range
         
-        if let r = window?.convertToScreen(convert(caretView!.frame, to: nil)) {
+        // The IME puts its candidate window below this rect, so while marked
+        // text shows it is line 1 of the overlay, which can be on the row
+        // below the caret.
+        let anchor = markedTextOverlay != nil ? markedTextFirstLineRect ?? caretView!.frame : caretView!.frame
+        if let r = window?.convertToScreen(convert(anchor, to: nil)) {
             return r
         }
         

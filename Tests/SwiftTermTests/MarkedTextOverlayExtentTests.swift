@@ -89,6 +89,45 @@ final class MarkedTextOverlayExtentTests {
         #expect(abs(overlay.frame.maxY - view.caretView.frame.minY) < 0.5)
     }
 
+    /// On the bottom row there is no row below the caret in the view, so text
+    /// that goes to the next row shows on the caret's row, where the commit's
+    /// scroll puts it, instead of below the view.
+    @Test func testNextRowTextOnTheBottomRowStaysInTheView() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let (cols, rows) = view.withTerminal { ($0.cols, $0.rows) }
+        view.feed(text: String(repeating: "\r\n", count: rows - 1) + String(repeating: "-", count: cols - 1))
+        view.updateCursorPosition()
+        view.setMarkedText("日")
+        let overlay = try #require(view.dictationOverlay)
+        #expect(overlay.frame.minY >= view.bounds.minY - 0.5)
+        #expect(abs(overlay.frame.maxY - view.caretView.frame.maxY) < 0.5)
+        let rect = try #require(overlay.backgroundRects.first)
+        #expect(abs(rect.minX) < 0.5)
+        #expect(abs(rect.width - overlay.frame.width) < 0.5)
+    }
+
+    /// The IME puts its candidate window below `firstRect`, so when the text
+    /// starts on the row below the caret, that row is the rect.
+    @Test func testFirstRectIsTheNextRowWhenTheTextStartsThere() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        view.feed(text: String(repeating: "-", count: cols - 1))
+        view.updateCursorPosition()
+        view.setMarkedText("日")
+        let window = NSWindow(contentRect: view.frame, styleMask: [.borderless], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView?.addSubview(view)
+        let cell: CGSize = view.cellDimension
+        let caret = view.caretView.frame
+        let expected = window.convertToScreen(view.convert(
+            NSRect(x: 0, y: caret.minY - cell.height, width: 2 * cell.width, height: cell.height), to: nil))
+        let rect = view.firstRect(forCharacterRange: NSRange(location: 0, length: 1), actualRange: nil)
+        #expect(abs(rect.minX - expected.minX) < 0.5)
+        #expect(abs(rect.minY - expected.minY) < 0.5)
+        #expect(abs(rect.width - expected.width) < 0.5)
+    }
+
     /// One cell of marked text over a wide character covers both of its columns,
     /// so no half of the character shows next to the text.
     @Test func testBackgroundCoversAWideCharacterAfterTheMarkedText() throws {
