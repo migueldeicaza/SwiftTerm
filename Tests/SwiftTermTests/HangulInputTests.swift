@@ -150,6 +150,51 @@ final class HangulInputTests: XCTestCase {
         XCTAssertEqual(transaction.consumeInsertion(" "), .noMatch)
     }
 
+    // 는 + ㅈ -> 늕 and 국 + ㅅ -> 굯 add a compound final. The following
+    // syllable starts with the base's final consonant, but it has a final,
+    // so it is not a resyllabification.
+    func testCompoundFinalIsNotResyllabification() {
+        XCTAssertNil(HangulInput.resyllabificationEdit(base: "는", followingSyllable: "늕"))
+        XCTAssertNil(HangulInput.resyllabificationEdit(base: "국", followingSyllable: "굯"))
+        XCTAssertNil(HangulInput.resyllabificationEdit(base: "릴", followingSyllable: "릵"))
+    }
+
+    func testResyllabificationTransactionIgnoresCompoundFinal() {
+        var transaction = HangulInput.ResyllabificationTransaction()
+        transaction.begin(deletedText: "않는")
+
+        XCTAssertEqual(transaction.consumeInsertion("않"), .prefixReinserted)
+        XCTAssertEqual(transaction.consumeInsertion("늕"), .noMatch)
+    }
+
+    func testResyllabificationTransactionIgnoresCompoundFinalAtStartOfInputBuffer() {
+        var transaction = HangulInput.ResyllabificationTransaction()
+        transaction.begin(deletedText: "국")
+
+        XCTAssertEqual(transaction.consumeInsertion("굯"), .noMatch)
+    }
+
+    // 않는지: 늕 is committed as typed, then ㅣ moves ㅈ to the next syllable.
+    func testResyllabificationAfterCompoundFinal() {
+        var transaction = HangulInput.ResyllabificationTransaction()
+        transaction.begin(deletedText: "않늕")
+
+        XCTAssertEqual(transaction.consumeInsertion("않"), .prefixReinserted)
+        XCTAssertEqual(
+            transaction.consumeInsertion("지"),
+            .replacement(.init(charactersToDelete: 1, textToInsert: "않는지")))
+    }
+
+    // 국수: 굯 is committed as typed, then ㅜ moves ㅅ to the next syllable.
+    func testResyllabificationAfterCompoundFinalAtStartOfInputBuffer() {
+        var transaction = HangulInput.ResyllabificationTransaction()
+        transaction.begin(deletedText: "굯")
+
+        XCTAssertEqual(
+            transaction.consumeInsertion("수"),
+            .replacement(.init(charactersToDelete: 0, textToInsert: "국수")))
+    }
+
     func testComposedFollowingSyllableMustStartWithMovedFinalConsonant() {
         XCTAssertNil(
             HangulInput.resyllabificationEdit(base: "핫", followingSyllable: "아"))
