@@ -254,7 +254,8 @@ final class SnapshotTextBuilder {
                                context: SnapshotRenderContext)
         -> SnapshotTextAttributes?
     {
-        prepareAttributeCache(for: context)
+        // `buildAttributedString` prepared the cache for this context at the
+        // start of the row; the context cannot change within one row.
         let cacheKey = PackedAttributeCacheKey(attribute: key, withUrl: withUrl)
         if let cached = packedAttributeCache[cacheKey] {
             return cached
@@ -270,10 +271,15 @@ final class SnapshotTextBuilder {
     }
 
     private func prepareAttributeCache(for context: SnapshotRenderContext) {
-        let capacity = max(minimumAttributeCacheCapacity, 2 * context.cols * context.rows)
-        guard attributeCacheContextID != context.identity || attributeCacheCapacity != capacity else { return }
-        attributeCacheCapacity = capacity
-        // Keep a full grid warm across redraws; resize or visual changes reset it.
+        // The visible grid bounds the styles that one redraw needs, so a full
+        // grid stays warm across redraws. A new limit alone does not clear
+        // the caches: after a shrink, the next insert past the limit does.
+        attributeCacheCapacity = max(minimumAttributeCacheCapacity,
+                                     2 * context.cols * context.rows)
+        // The identity changes only when an input used by the attribute
+        // dictionaries changes. A new frame with the same visual inputs keeps
+        // the cache warm.
+        guard attributeCacheContextID != context.identity else { return }
         attributeCache.removeAll(keepingCapacity: true)
         packedAttributeCache.removeAll(keepingCapacity: true)
         glyphCoverageCache.removeAll(keepingCapacity: true)
@@ -472,6 +478,9 @@ final class SnapshotTextBuilder {
     {
         var segments: [ViewLineSegment] = []
         let line = snapshotRow.line
+        // Once per row, not once per style run: the packed lookup and the
+        // glyph-fallback caches depend on this reset.
+        prepareAttributeCache(for: context)
         if line.cellArena !== packedAttributeCacheArena {
             packedAttributeCache.removeAll(keepingCapacity: true)
             packedAttributeCacheArena = line.cellArena

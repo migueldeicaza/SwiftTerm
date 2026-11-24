@@ -281,19 +281,19 @@ struct GlyphFallbackTests {
         let bareContext = SnapshotRenderContext(viewState: FrameViewState(view: view),
                                                 style: .empty,
                                                 ansiColors: view.withTerminal { $0.ansiColors },
-                                                cols: 80)
+                                                cols: 80, rows: 25)
         view.glyphFallbackProvider = provider
         let withProvider = SnapshotRenderContext(viewState: FrameViewState(view: view),
                                                  style: .empty,
                                                  ansiColors: view.withTerminal { $0.ansiColors },
-                                                 cols: 80)
+                                                 cols: 80, rows: 25)
         #expect(bareContext.identity != withProvider.identity)
 
         provider.generation += 1
         let bumped = SnapshotRenderContext(viewState: FrameViewState(view: view),
                                            style: .empty,
                                            ansiColors: view.withTerminal { $0.ansiColors },
-                                           cols: 80)
+                                           cols: 80, rows: 25)
         #expect(withProvider.identity != bumped.identity)
     }
 

@@ -763,7 +763,7 @@ struct SnapshotRenderContext {
     }
 
     init (viewState: FrameViewState, style: SnapshotStyle, ansiColors: [Color],
-          cols: Int, rows: Int = 1) {
+          cols: Int, rows: Int) {
         let appearance = viewState.appearance
         self.init(
             viewState: viewState,

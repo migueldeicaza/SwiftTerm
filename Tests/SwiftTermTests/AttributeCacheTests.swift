@@ -218,18 +218,39 @@ struct AttributeCacheTests {
         }
     }
 
-    @Test func gridResizeUpdatesAttributeCacheCapacity() {
+    /// A resize changes the limit but does not clear the cache, so a live
+    /// window drag stays warm. After a shrink, the next new style clears it.
+    @Test func gridResizeUpdatesAttributeCacheCapacity() throws {
         let view = makeView()
         let builder = SnapshotTextBuilder(attributeCacheCapacity: 2)
-        for rows in [2, 1] {
-            let context = makeContext(view, cols: 1, rows: rows)
-            for value in 0..<4 {
-                _ = builder.getAttributes(
-                    Attribute(fg: .ansi256(code: UInt8(value)), bg: .defaultColor, style: .none),
-                    withUrl: false, context: context)
-            }
-            #expect(builder.attributeCache.count == 2 * rows)
+        func lookUp(_ value: Int, rows: Int) throws -> NSDictionary {
+            try #require(builder.getAttributes(
+                Attribute(fg: .ansi256(code: UInt8(value)), bg: .defaultColor, style: .none),
+                withUrl: false, context: makeContext(view, cols: 1, rows: rows))).objectiveC
         }
+
+        // One row: the limit is the minimum, 2.
+        for value in 0..<4 {
+            _ = try lookUp(value, rows: 1)
+        }
+        #expect(builder.attributeCache.count == 2)
+
+        // Two rows: the limit grows to 4 and the two cached entries stay.
+        var grown: [NSDictionary] = []
+        for value in 0..<4 {
+            grown.append(try lookUp(value, rows: 2))
+        }
+        #expect(builder.attributeCache.count == 4)
+
+        // Back to one row: existing entries still hit.
+        for value in 0..<4 {
+            #expect(try lookUp(value, rows: 1) === grown[value])
+        }
+        #expect(builder.attributeCache.count == 4)
+
+        // The next new style finds the cache over the limit and clears it.
+        _ = try lookUp(4, rows: 1)
+        #expect(builder.attributeCache.count == 1)
     }
 
     /// A visual-input change invalidates the cache. Without this a palette or

@@ -409,7 +409,7 @@ struct SearchHighlightTests {
         view.translucentCellBackgrounds = true
         view.searchMatchBackgroundColor = NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.5)
         let context = SnapshotRenderContext(viewState: FrameViewState(view: view), style: .empty,
-                                            ansiColors: view.withTerminal { $0.ansiColors }, cols: 40)
+                                            ansiColors: view.withTerminal { $0.ansiColors }, cols: 40, rows: 25)
         // As the selection fill: 0.5 white over 0.4 black.
         let fill = context.searchMatchFillColor!.usingColorSpace(.sRGB)!
         #expect(abs(fill.alphaComponent - 0.7) < 0.001)
