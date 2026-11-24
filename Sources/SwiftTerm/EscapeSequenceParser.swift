@@ -809,7 +809,7 @@ final class EscapeSequenceParser {
         case 8:    terminal.oscHyperlink(data)
         case 9:
             if !terminal.oscProgressReport(data) {
-                terminal.log ("SwiftTerm: Unknown OSC code: \(code)")
+                terminal.oscNotificationITerm2(data)
             }
         case 10:   terminal.oscSetColors(data, startAt: 0)
         case 11:   terminal.oscSetColors(data, startAt: 1)
