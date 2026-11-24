@@ -237,6 +237,20 @@ final class FacadeTests: XCTestCase {
         XCTAssertEqual(terminalReset(handle), 0)
         XCTAssertEqual(mouseModeEvents(entry), [[0, 0]])
     }
+    func testResetWithShiftCaptureSendsOneMouseModeEvent() {
+        let handle = terminalCreate(8, 2, 0)
+        defer { _ = terminalDestroy(handle) }
+        let entry = WasmRuntime.shared.handles.get(handle)!
+        _ = mouseModeEvents(entry)
+        XCTAssertEqual(feed(handle, "\u{1b}[?1002h\u{1b}[>1s"), 0)
+        XCTAssertEqual(mouseModeEvents(entry), [[3, 0], [3, 1]])
+        XCTAssertEqual(terminalReset(handle), 0)
+        XCTAssertEqual(mouseModeEvents(entry), [[0, 0]])
+        XCTAssertEqual(feed(handle, "\u{1b}[?1002h\u{1b}[>1s"), 0)
+        XCTAssertEqual(mouseModeEvents(entry), [[3, 0], [3, 1]])
+        XCTAssertEqual(feed(handle, "\u{1b}c"), 0)
+        XCTAssertEqual(mouseModeEvents(entry), [[0, 0]])
+    }
     func testTimeoutQueueFailureStillAdvancesRevision() {
         let handle = terminalCreate(8, 2, 0)
         defer { _ = terminalDestroy(handle) }
