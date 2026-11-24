@@ -1936,7 +1936,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// The view refreshes the pointer when a modifier changes only while the
     /// application receives the mouse. An override that uses `modifiers` while
     /// mouse reporting is off, such as a pointing hand while Command is held
-    /// over a link, gets no refresh until the next mouse move.
+    /// over a link, calls ``refreshPointer(modifiers:)`` from
+    /// `flagsChanged(with:)` to apply it before the next mouse move.
     open func pointerCursor(modifiers: NSEvent.ModifierFlags) -> NSCursor {
         guard allowMouseReporting && currentMouseMode != .off else { return .iBeam }
         let shiftSelects = modifiers.contains(.shift) && !mouseShiftCaptureState.withLock { $0 }
@@ -2029,8 +2030,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     /// Applies a change of the pointer's rule at once when the pointer is over
-    /// the terminal, since AppKit only reads the cursor rects again on the next move.
-    func refreshPointer(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+    /// the terminal's text, since AppKit only reads the cursor rects again on
+    /// the next move.
+    ///
+    /// The view calls it when the mouse mode, the Shift capture or
+    /// `allowMouseReporting` changes, and on a modifier change while the
+    /// application receives the mouse. A subclass whose
+    /// ``pointerCursor(modifiers:)`` depends on other state calls it when that
+    /// state changes.
+    ///
+    /// - Parameter modifiers: The modifier keys held now, passed to
+    ///   ``pointerCursor(modifiers:)``.
+    public func refreshPointer(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
         guard let window else { return }
         if pointerCursor(modifiers: []) != cursorRectPointer {
             window.invalidateCursorRects(for: self)
@@ -2043,7 +2054,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// Whether the pointer is over this view's text where it shows: a visible
     /// window, no hidden ancestor, and no other window or view above it at that
     /// point, the view's own subviews included, such as the find bar, whose
-    /// fields show their own pointer.
+    /// fields show their own pointer. The Metal surface and the overlay of
+    /// composed text count as the text.
     private func pointerIsOver(_ window: NSWindow) -> Bool {
         guard window.isVisible, !isHiddenOrHasHiddenAncestor,
               let contentView = window.contentView,
@@ -2052,12 +2064,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         let point = contentView.superview?.convert(location, from: nil) ?? location
         guard let hit = contentView.hitTest(point) else { return false }
+        if hit === self || hit === markedTextOverlay {
+            return true
+        }
 #if canImport(MetalKit)
         if let metalView, hit === metalView {
             return true
         }
 #endif
-        return hit === self
+        return false
     }
     
     func makeFirstResponder ()

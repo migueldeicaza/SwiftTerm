@@ -8,6 +8,7 @@
 
 #if os(macOS)
 import AppKit
+import Metal
 import Testing
 
 @testable import SwiftTerm
@@ -268,6 +269,42 @@ struct MacPointerCursorTests {
         view.eventQueue.drain()
         view.refreshPointer(modifiers: [])
         #expect(NSCursor.current === NSCursor.iBeam)
+
+        let text = CGPoint(x: 10, y: 10)
+        try #require(!bar.frame.contains(text))
+        view.pointerLocationInTopmostWindow = { _ in view.convert(text, to: nil) }
+        view.refreshPointer(modifiers: [])
+        #expect(NSCursor.current === NSCursor.arrow)
+    }
+
+    @Test func shiftOverComposedTextShowsTheIBeam() throws {
+        let view = makeView()
+        let window = showInWindow(view)
+        defer { window.orderOut(nil) }
+        view.feed(text: "\(esc)[?1002h")
+        view.eventQueue.drain()
+        view.setMarkedText("\u{304B}", selectedRange: NSRange(location: 1, length: 0),
+                           replacementRange: NSRange(location: NSNotFound, length: 0))
+        let overlay = try #require(view.subviews.first { $0 is DictationOverlayTextView })
+        let center = overlay.convert(CGPoint(x: overlay.bounds.midX, y: overlay.bounds.midY), to: nil)
+        view.pointerLocationInTopmostWindow = { _ in center }
+        NSCursor.arrow.set()
+
+        view.refreshPointer(modifiers: .shift)
+        #expect(NSCursor.current === NSCursor.iBeam)
+    }
+
+    @Test(.enabled(if: MetalTerminalRenderer.shaderLibraryIsAvailable && MTLCreateSystemDefaultDevice() != nil))
+    func theMetalSurfaceCountsAsTheText() throws {
+        let view = makeView()
+        try view.setUseMetal(true)
+        let window = showInWindow(view)
+        defer { window.orderOut(nil) }
+        NSCursor.iBeam.set()
+
+        view.feed(text: "\(esc)[?1000h")
+        view.eventQueue.drain()
+        #expect(NSCursor.current === NSCursor.arrow)
     }
 
     private func searchField(in view: NSView) -> NSSearchField? {
