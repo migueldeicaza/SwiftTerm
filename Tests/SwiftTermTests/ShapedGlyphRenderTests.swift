@@ -81,7 +81,15 @@ struct ShapedGlyphRenderTests {
 
     /// A green `ﬃ` (U+FB03). Menlo has no glyph for it, so CoreText takes it
     /// from Lucida Grande, whose glyph is about 1.6 Menlo cells wide.
-    private static let fallbackLigatureRow = "\u{1b}[38;2;0;255;0m\u{FB03}"
+    /// The cursor is hidden: it sits in the next cell, and the Metal frame
+    /// draws it there, which would hide any ink that paints over that cell.
+    private static let fallbackLigatureRow = "\u{1b}[?25l\u{1b}[38;2;0;255;0m\u{FB03}"
+
+    /// A green `∏` (U+220F) and nothing after it. Courier has the glyph, so
+    /// it is a primary-font glyph, but its ink ends about 1.4 pt past the
+    /// right edge of its one-column cell (issue #827). The cursor is hidden,
+    /// as in `fallbackLigatureRow`.
+    private static let primaryOverflowRow = "\u{1b}[?25l\u{1b}[38;2;0;255;0m\u{220F}"
 
     /// A green Devanagari conjunct: one fallback glyph covering two cells,
     /// which must keep its two-cell span rather than be fitted to one.
@@ -166,6 +174,19 @@ struct ShapedGlyphRenderTests {
     /// instead of painting over the next one.
     @Test func coreGraphicsFallbackGlyphStaysInItsCell() throws {
         let view = makeView(feeding: Self.fallbackLigatureRow, font: "Menlo-Regular")
+        let rep = try #require(RenderTestSupport.render(view))
+        func green(_ column: Int) -> Int {
+            RenderTestSupport.pixelCount(in: rep, view: view, column: column,
+                                         matches: { self.isGreen($0) })
+        }
+        #expect(green(0) > 0)
+        #expect(green(1) == 0)
+    }
+
+    /// A primary-font glyph wider than its one-column cell is fitted to the
+    /// cell, as a fallback glyph is.
+    @Test func coreGraphicsPrimaryFontOverflowStaysInItsCell() throws {
+        let view = makeView(feeding: Self.primaryOverflowRow, font: "Courier")
         let rep = try #require(RenderTestSupport.render(view))
         func green(_ column: Int) -> Int {
             RenderTestSupport.pixelCount(in: rep, view: view, column: column,
@@ -306,6 +327,14 @@ extension ShapedGlyphRenderTests {
 
     @Test func metalFallbackGlyphStaysInItsCell() throws {
         let view = makeView(feeding: Self.fallbackLigatureRow, font: "Menlo-Regular")
+        guard let frame = metalFrame(of: view) else { return }
+        let isGreen = { (r: UInt8, g: UInt8, b: UInt8) in g > 180 && r < 80 && b < 80 }
+        #expect(frame.count(inColumns: 0..<1, matches: isGreen) > 0)
+        #expect(frame.count(inColumns: 1..<2, matches: isGreen) == 0)
+    }
+
+    @Test func metalPrimaryFontOverflowStaysInItsCell() throws {
+        let view = makeView(feeding: Self.primaryOverflowRow, font: "Courier")
         guard let frame = metalFrame(of: view) else { return }
         let isGreen = { (r: UInt8, g: UInt8, b: UInt8) in g > 180 && r < 80 && b < 80 }
         #expect(frame.count(inColumns: 0..<1, matches: isGreen) > 0)

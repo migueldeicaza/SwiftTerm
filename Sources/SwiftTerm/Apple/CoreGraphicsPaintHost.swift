@@ -28,6 +28,8 @@ protocol CoreGraphicsPaintHost: AnyObject {
     func firstPaintedRow (snapshot: TerminalSnapshot) -> Int
 #endif
     var fontSet: TerminalView.FontSet { get }
+    /// The immutable font snapshot of `fontSet`, cached until the fonts change.
+    func frameFonts () -> FrameFontSet
     var bounds: CGRect { get }
     var frame: CGRect { get }
     var antiAliasCustomBlockGlyphs: Bool { get }
