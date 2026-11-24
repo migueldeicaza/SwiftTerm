@@ -120,6 +120,7 @@ public func terminalReset(_ terminal: UInt32) -> Int32 {
         #endif
         #endif
         entry.host.queueFailure = false
+        entry.host.lastMouseModeValues = nil
         entry.clearSelection()
         entry.terminal.resetToInitialState()
         entry.host.forceFull = true
