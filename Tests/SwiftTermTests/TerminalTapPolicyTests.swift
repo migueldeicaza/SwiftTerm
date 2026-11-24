@@ -40,4 +40,13 @@ struct TerminalTapPolicyTests {
     @Test func singleTapIsLocalWhenNoReportingAndNoSelection() {
         #expect(TerminalTapPolicy.action(tapCount: 1, hasActiveSelection: false, mouseReportingActive: false) == .localSingleTap)
     }
+
+    /// A finger cannot hover, so a touch activates a link when the host allows taps on links.
+    /// A pointer click keeps the highlight mode rules.
+    @Test func touchActivatesLinkOnlyForTouchesWhenAllowed() {
+        #expect(TerminalTapPolicy.touchActivatesLink(tapActivates: true, isPointer: false))
+        #expect(!TerminalTapPolicy.touchActivatesLink(tapActivates: true, isPointer: true))
+        #expect(!TerminalTapPolicy.touchActivatesLink(tapActivates: false, isPointer: false))
+        #expect(!TerminalTapPolicy.touchActivatesLink(tapActivates: false, isPointer: true))
+    }
 }

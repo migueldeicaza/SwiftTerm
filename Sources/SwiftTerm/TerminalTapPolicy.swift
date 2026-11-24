@@ -30,6 +30,14 @@ enum TerminalTapPolicy {
         nearCursor && !clearedSelection
     }
 
+    /// Whether a tap that the highlight mode rejected still activates the link.
+    ///
+    /// A pointer click keeps the highlight mode rules. A touch cannot hover, so
+    /// it activates the link when the host allows taps on links.
+    static func touchActivatesLink(tapActivates: Bool, isPointer: Bool) -> Bool {
+        tapActivates && !isPointer
+    }
+
     /// Resolves a tap to an action.
     ///
     /// Double and triple taps select text. With no application mouse reporting,

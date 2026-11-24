@@ -263,6 +263,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    /// Controls how a touch on a link activates it.
+    ///
+    /// A finger cannot hover, so the ``linkHighlightMode`` rules that apply to
+    /// pointer clicks never accept a touch. This property sets the touch
+    /// behavior. Pointer clicks (a mouse or a trackpad) do not use it.
+    public var touchLinkActivation: TouchLinkActivation = .tap
+
     /// The color used to draw link text and its underline, or `nil` (the
     /// default) to draw each link in its cell's own foreground color.
     ///
@@ -1060,14 +1067,43 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    /// Returns the link at a point in the view's coordinates, or nil when the
+    /// point is not on a link.
+    ///
+    /// The lookup finds OSC 8 links and links that SwiftTerm detects in the
+    /// text. It ignores ``linkHighlightMode``, the hover state and the modifier
+    /// keys. Use it with ``touchLinkActivation`` set to `.none` to show your
+    /// own menu or to use your own gesture for links.
+    public func linkRequest(at point: CGPoint) -> TerminalLinkRequest?
+    {
+        let hit = calculateTapHit(point: point).grid
+        return withTerminal { _ in linkAtPositionLocked(hit) }.map {
+            TerminalLinkRequest(link: $0.link, params: $0.params, isExplicit: $0.isExplicit)
+        }
+    }
+
+    /// The link that a single tap activates, or nil.
+    func linkRequestForTap(at point: CGPoint, touchType: UITouch.TouchType?) -> TerminalLinkRequest?
+    {
+        let hit = calculateTapHit(point: point).grid
+        if let result = linkForClick(at: hit, hasCommandModifier: commandActive) {
+            return TerminalLinkRequest(link: result.link, params: result.params, isExplicit: result.isExplicit)
+        }
+        guard TerminalTapPolicy.touchActivatesLink(
+            tapActivates: touchLinkActivation == .tap, isPointer: touchType == .indirectPointer) else {
+            return nil
+        }
+        return linkRequest(at: point)
+    }
+
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
         guard gestureRecognizer.view != nil,
               gestureRecognizer.state == .ended else { return }
 
         let tapHit = calculateTapHit(gesture: gestureRecognizer).grid
-        if let result = linkForClick(at: tapHit, hasCommandModifier: commandActive) {
-            let request = TerminalLinkRequest(link: result.link, params: result.params, isExplicit: result.isExplicit)
+        let touchType = (gestureRecognizer as? TerminalTapGestureRecognizer)?.touchType
+        if let request = linkRequestForTap(at: gestureRecognizer.location(in: self), touchType: touchType) {
             terminalDelegate?.requestOpenLink(source: self, request: request)
             return
         }
@@ -1549,7 +1585,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         longPress.minimumPressDuration = 0.7
         addGestureRecognizer(longPress)
         
-        let singleTap = UITapGestureRecognizer (target: self, action: #selector(singleTap(_:)))
+        let singleTap = TerminalTapGestureRecognizer (target: self, action: #selector(singleTap(_:)))
         addGestureRecognizer(singleTap)
         
         let doubleTap = UITapGestureRecognizer (target: self, action: #selector(doubleTap(_:)))

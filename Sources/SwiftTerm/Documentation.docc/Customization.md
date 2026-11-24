@@ -159,6 +159,26 @@ Link activation is also gated by `linkHighlightMode`. The reporting mode chooses
 how links are discovered during tracking, while highlight mode decides whether a
 click/tap is allowed to open the link.
 
+### Touch Link Activation (iOS and visionOS)
+
+A finger cannot hover, so the `linkHighlightMode` rules apply only to pointer
+clicks. `touchLinkActivation` sets what a touch on a link does:
+
+```swift
+terminalView.touchLinkActivation = .tap   // Default: a tap on a link opens it
+terminalView.touchLinkActivation = .none  // A tap on a link acts as a tap on text
+```
+
+With `.none`, use `linkRequest(at:)` to find the link under a point and show
+your own menu or use your own gesture:
+
+```swift
+if let request = terminalView.linkRequest(at: location) {
+    // Show "Open Link" and "Copy Link", then for example:
+    terminalView.terminalDelegate?.requestOpenLink(source: terminalView, request: request)
+}
+```
+
 ### Link Color
 
 By default a highlighted link is underlined in its own text color. Set

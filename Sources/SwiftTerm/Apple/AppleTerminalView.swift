@@ -3123,6 +3123,23 @@ extension TerminalView {
         guard linkVisibleForClick(match: match, hasCommandModifier: hasCommandModifier) else {
             return nil
         }
+        return resolvedLinkLocked(match: match, at: position)
+    }
+
+    /// The link at a buffer position, explicit or implicit. It ignores the
+    /// highlight mode, the hover state and the modifier keys.
+    func linkAtPositionLocked(_ position: Position) -> (link: String, params: [String:String], isExplicit: Bool)?
+    {
+        terminal.terminalLock.preconditionLocked()
+        guard let match = terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit) else {
+            return nil
+        }
+        return resolvedLinkLocked(match: match, at: position)
+    }
+
+    /// Gives the target and the OSC 8 parameters of a match.
+    func resolvedLinkLocked(match: Terminal.LinkMatch, at position: Position) -> (link: String, params: [String:String], isExplicit: Bool)
+    {
         if match.isExplicit,
            let payload = payloadStringLocked(at: position),
            let (url, params) = urlAndParamsFrom(payload: payload) {
