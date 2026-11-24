@@ -300,12 +300,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     private var pointerInteraction: UIPointerInteraction?
     private var hoverGesture: UIHoverGestureRecognizer?
     private var didFinishSetup = false
-    private enum UIShutdownState {
+    enum UIShutdownState {
         case active
         case stopping
         case stopped
     }
-    private var uiShutdownState = UIShutdownState.active
+    private(set) var uiShutdownState = UIShutdownState.active
     var linkHighlightRange: [Terminal.LinkMatch.RowRange]?
     private var lastPointerLocation: CGPoint?
     
@@ -396,8 +396,12 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     var caretView: CaretView?
     var _lineSpacing: CGFloat = 1.0
     var terminal: Terminal!
-    private var progressBarView: TerminalProgressBarView?
-    private var progressReportTimer: Timer?
+    private(set) var progressBarView: TerminalProgressBarView?
+    private(set) var progressReportTimer: Timer?
+    /// The OSC 9;4 report the application has up and has not removed, or `nil`
+    /// when none is live: what a host mirroring the session should show. A
+    /// delegate attached while a report is live reads it here.
+    public internal(set) var currentProgressReport: Terminal.ProgressReport?
     
     /// Tracks the selection state of the terminal, and can be used to set it
     /// programmatically (see `SelectionService`).
@@ -695,38 +699,53 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// a wait that is already running.
     public var progressReportTimeout: TimeInterval? = TerminalView.defaultProgressReportTimeout {
         didSet {
-            guard progressBarView?.isHidden == false else { return }
+            guard currentProgressReport != nil else { return }
             resetProgressReportTimer()
         }
     }
 
-    private func resetProgressReportTimer() {
-        progressReportTimer?.invalidate()
-        progressReportTimer = nil
+    func resetProgressReportTimer() {
+        cancelProgressReportTimer()
         guard let progressReportTimeout else { return }
         progressReportTimer = Timer.scheduledTimer(withTimeInterval: progressReportTimeout, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
-                self?.clearProgressReport()
+                self?.endProgressReport()
             }
         }
     }
 
-    private func clearProgressReport() {
+    func cancelProgressReportTimer() {
         progressReportTimer?.invalidate()
         progressReportTimer = nil
-        progressBarView?.apply(state: .remove, progress: nil)
     }
 
-    private func handleProgressReport(_ report: Terminal.ProgressReport) {
-        if report.state == .remove {
-            clearProgressReport()
+    /// Brings the bar in line with the live report and ``showsProgressBar`` —
+    /// the one place either of them reaches the bar view, so a host that turns
+    /// the bar off cannot be talked back into it by the next report.
+    func syncProgressBar() {
+        guard showsProgressBar, let currentProgressReport else {
+            progressBarView?.apply(state: .remove, progress: nil)
             return
         }
-
-        progressBarView?.apply(state: report.state, progress: report.progress)
-        resetProgressReportTimer()
+        progressBarView?.apply(state: currentProgressReport.state, progress: currentProgressReport.progress)
     }
-    
+
+    /// Controls whether the view draws the OSC 9;4 progress bar itself.
+    ///
+    /// The reports still reach ``TerminalViewDelegate/progressReport(source:report:)``,
+    /// so a host that draws progress in its own chrome turns the built-in bar off
+    /// without losing what it draws from; that callback also carries the synthetic
+    /// removals the view makes on its own, when the silence timer expires a bar and
+    /// when the view closes.
+    /// While this is `false` no report brings the bar back; setting it to
+    /// `true` again restores it, and a report still live comes back with it.
+    public var showsProgressBar: Bool = true {
+        didSet {
+            guard showsProgressBar != oldValue else { return }
+            syncProgressBar()
+        }
+    }
+
     /// Permanently releases UI drivers and renderer resources.
     ///
     /// An owner must call this method when it permanently releases the view.
@@ -748,9 +767,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
 #endif
         stopTextBlinking()
-        clearProgressReport()
+        let owesProgressRemoval = shutdownProgressReport()
         renderOwner.invalidateSynchronizedOutputWatchdog()
         uiShutdownState = .stopped
+        if owesProgressRemoval { reportClosedProgressRemoval() }
         return true
     }
     

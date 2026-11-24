@@ -95,6 +95,28 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     ///   - style: The bell style of the view. It is never `.none`.
     func bellRang(source: LocalProcessTerminalView, style: BellStyle)
 
+    // MARK: Session signals
+    //
+    // ``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so the
+    // host cannot answer these ``TerminalViewDelegate`` hooks directly. The
+    // view forwards them here, and the defaults do nothing.
+    //
+    // The names are different from the ``TerminalViewDelegate`` hooks, as with
+    // ``bellRang(source:style:)``. Thus a type that conforms to the two
+    // protocols continues to compile, and its hook for a different view does
+    // not become the answer here.
+
+    /// Invoked every time the terminal view handles an OSC 9;4 progress report.
+    ///
+    /// See ``TerminalViewDelegate/progressReport(source:report:)``.
+    func progressReported(source: LocalProcessTerminalView, report: Terminal.ProgressReport)
+
+    /// Invoked when the process posts an OSC 777 or OSC 9 desktop
+    /// notification. The title and body are untrusted plain text.
+    ///
+    /// See ``TerminalViewDelegate/notification(source:title:body:)``.
+    func notificationPosted(source: LocalProcessTerminalView, title: String, body: String)
+
     // MARK: Kitty clipboard protocol, OSC 5522
     //
     // ``LocalProcessTerminalView`` is its own ``TerminalViewDelegate``, so the
@@ -146,6 +168,10 @@ public extension LocalProcessTerminalViewDelegate {
             source.playDefaultBell()
         }
     }
+
+    func progressReported(source: LocalProcessTerminalView, report: Terminal.ProgressReport) {}
+
+    func notificationPosted(source: LocalProcessTerminalView, title: String, body: String) {}
 
     func kittyClipboardCapabilities(source: TerminalView) -> KittyClipboardCapabilities {
         []
@@ -283,6 +309,7 @@ private final class LocalProcessTerminalViewProcessAdapter:
  *
  * - the size, the title and the current directory
  * - the bell
+ * - the OSC 9;4 progress reports and the OSC 777 and OSC 9 notifications
  * - the program status and the end of a selection
  * - a failed start and process termination
  * - the Kitty clipboard requests
@@ -453,6 +480,18 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         processDelegate.bellRang(source: self, style: style)
     }
 
+    // MARK: Session signals, forwarded to the processDelegate
+    //
+    // These are `open` so a subclass can also answer them directly.
+
+    open func progressReport(source: TerminalView, report: Terminal.ProgressReport) {
+        processDelegate?.progressReported(source: self, report: report)
+    }
+
+    open func notification(source: TerminalView, title: String, body: String) {
+        processDelegate?.notificationPosted(source: self, title: title, body: body)
+    }
+
     // MARK: Kitty clipboard protocol, forwarded to the processDelegate
     //
     // These are `open` so a subclass can also answer them directly.
@@ -554,6 +593,7 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
         // hosts that want options.termName in the child's environment pass
         // Terminal.getEnvironmentVariables(termName:) explicitly
         processAdapter.updateWindowSize(getWindowSize())
+        acceptsProgressReports = true
         process.startProcess(executable: executable, args: args, environment: environment, execName: execName, currentDirectory: currentDirectory)
     }
 
@@ -574,6 +614,12 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
 
     open func processTerminated(_ source: LocalProcess, exitCode: Int32?) {
         programStatusProcessExited()
+        // A process that exits mid-report never sends its removal. A drain
+        // that timed out can leave one output batch in flight, and a report in
+        // it arrives after this, so later reports are dropped until the next
+        // process starts.
+        acceptsProgressReports = false
+        endProgressReport()
         processDelegate?.processTerminated(source: self, exitCode: exitCode)
     }
 
