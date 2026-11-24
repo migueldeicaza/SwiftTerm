@@ -60,6 +60,46 @@ Change the mode at any time — the renderer picks it up on the next frame:
 terminalView.metalBufferingMode = .perFrameAggregated
 ```
 
+## Text Blending
+
+The ``TerminalView/metalTextBlending`` property controls how the renderer
+blends the coverage of monochrome glyphs with the color behind them. Color
+glyphs such as emoji are not affected.
+
+| Mode | Behavior | Best for |
+|------|----------|----------|
+| ``MetalTextBlending/native`` (default) | Blends glyph coverage directly in sRGB space, as Core Graphics does. | Matching the weight of text in other macOS and iOS apps. |
+| ``MetalTextBlending/linearCorrected`` | Applies a gamma-corrected coverage curve chosen by the brightness of the text color. | Keeping antialiased strokes at a similar optical weight in light and dark themes. |
+
+Change the mode at any time; the renderer picks it up on the next frame
+without rebuilding its glyph caches:
+
+```swift
+terminalView.metalTextBlending = .linearCorrected
+```
+
+`TerminalRenderView` has the same property. The Core Graphics renderer
+ignores it.
+
+## Font Smoothing
+
+On macOS, ``TerminalView/fontSmoothing`` (on by default) lets Core Graphics
+thicken glyph stems the way other macOS apps do. Set it to `false` for
+thinner strokes on Retina displays.
+
+Core Graphics thickens light text on a dark background more than dark text on
+a light one. The Metal renderer follows this per cell: it compares each
+cell's text color with the background the text is drawn on (the selection
+color, an explicit cell background, the cursor, or the terminal background)
+and rasterizes the glyph for that polarity. Dark text in a light theme
+therefore keeps its normal weight, while a selection, an inverse-video status
+bar, or the block cursor in the same window still get the heavier
+light-on-dark form. Both forms of a glyph stay in the atlas, so reverse video
+and a visual bell do not flush it.
+
+Changing `fontSmoothing` takes effect on the next frame and rebuilds the
+glyph atlas once.
+
 ## Environment Variables
 
 The following environment variable can be used to tune Metal behavior:
@@ -115,6 +155,8 @@ maintained — one grayscale for regular text and one BGRA for color glyphs
 
 - ``TerminalView/metalBufferingMode``
 - ``MetalBufferingMode``
+- ``TerminalView/metalTextBlending``
+- ``MetalTextBlending``
 
 ### Error Handling
 

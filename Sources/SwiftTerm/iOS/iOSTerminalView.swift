@@ -194,6 +194,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// You can change this property at any time; the renderer picks up the
     /// new mode on the next frame.
     public var metalBufferingMode: MetalBufferingMode = .perRowPersistent
+
+    /// Controls how monochrome glyph coverage is blended by the Metal renderer.
+    public var metalTextBlending: MetalTextBlending = .native {
+        didSet {
+            guard metalTextBlending != oldValue else { return }
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
+    }
     
     /**
      * Whether mouse events are sent to the application running in the terminal once it has

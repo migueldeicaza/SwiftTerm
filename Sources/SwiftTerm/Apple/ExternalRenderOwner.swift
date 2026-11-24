@@ -166,6 +166,7 @@ extension FrameViewState {
         cellPixelHeight = Int((cellDimension.height * scale).rounded())
         imageScale = view.getImageScale()
         metalBufferingMode = view.metalBufferingMode
+        metalTextBlending = view.metalTextBlending
         antiAliasCustomBlockGlyphs = view.antiAliasCustomBlockGlyphs
         appearance = view.frameAppearance()
         customBlockGlyphs = view.customBlockGlyphs

@@ -570,6 +570,7 @@ struct FrameViewState: Sendable {
     let cellPixelHeight: Int
     let imageScale: CGFloat
     let metalBufferingMode: MetalBufferingMode
+    let metalTextBlending: MetalTextBlending
     let fontSmoothing: Bool
     let antiAliasCustomBlockGlyphs: Bool
     let cursorHasFocus: Bool
@@ -618,6 +619,7 @@ struct FrameViewState: Sendable {
         cellPixelHeight = cellPixelDimension(cellDimension.height, scale: backingScale)
         imageScale = view.getImageScale()
         metalBufferingMode = view.metalBufferingMode
+        metalTextBlending = view.metalTextBlending
         antiAliasCustomBlockGlyphs = view.antiAliasCustomBlockGlyphs
         appearance = view.frameCaptureCache.appearance(for: view)
         customBlockGlyphs = view.customBlockGlyphs
@@ -695,6 +697,7 @@ struct SnapshotRenderContext {
     let renderingScale: CGFloat
     let imageScale: CGFloat
     let metalBufferingMode: MetalBufferingMode
+    let metalTextBlending: MetalTextBlending
     let fontSmoothing: Bool
     let antiAliasCustomBlockGlyphs: Bool
     let cursorHasFocus: Bool
@@ -793,6 +796,7 @@ struct SnapshotRenderContext {
         cursorHasFocus = viewState.cursorHasFocus
         imageScale = viewState.imageScale
         metalBufferingMode = viewState.metalBufferingMode
+        metalTextBlending = viewState.metalTextBlending
         antiAliasCustomBlockGlyphs = viewState.antiAliasCustomBlockGlyphs
         effectiveForegroundColor = nativeColors.effectiveForegroundColor
         effectiveBackgroundColor = nativeColors.effectiveBackgroundColor
@@ -1697,7 +1701,12 @@ extension TerminalView {
     /// Defaults to `true` (standard macOS font smoothing).
     @objc open var fontSmoothing: Bool {
         get { _fontSmoothing }
-        set { _fontSmoothing = newValue }
+        set {
+            guard _fontSmoothing != newValue else { return }
+            _fontSmoothing = newValue
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
     }
 #endif
 

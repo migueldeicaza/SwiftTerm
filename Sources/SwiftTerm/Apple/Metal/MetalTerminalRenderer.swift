@@ -16,6 +16,16 @@ import UIKit
 struct GlyphKey: Hashable {
     let rasterFontToken: UInt32
     let glyph: CGGlyph
+    /// True only when macOS font smoothing is enabled and this glyph is drawn
+    /// dark-on-light; false otherwise so both polarities coexist in the atlas
+    /// without flushing on selections, inverse video, or visual bells.
+    let darkOnLight: Bool
+
+    init(rasterFontToken: UInt32, glyph: CGGlyph, darkOnLight: Bool = false) {
+        self.rasterFontToken = rasterFontToken
+        self.glyph = glyph
+        self.darkOnLight = darkOnLight
+    }
 }
 
 private struct CoreTextFontIdentity: Hashable {
@@ -661,6 +671,7 @@ struct CacheSignature: Hashable {
     let linkModifierActive: Bool
     let customBlockGlyphs: Bool
     let antiAliasCustomBlockGlyphs: Bool
+    let fontSmoothing: Bool
     let imageScale: Double
 }
 
@@ -1058,9 +1069,11 @@ final class MetalTerminalRenderer {
     private let commandQueue: MTLCommandQueue
     private let textPipeline: MTLRenderPipelineState
     private let textGrayPipeline: MTLRenderPipelineState
+    private let textGrayLinearPipeline: MTLRenderPipelineState
     private let colorPipeline: MTLRenderPipelineState
     private let cellTextPipeline: MTLRenderPipelineState
     private let cellTextGrayPipeline: MTLRenderPipelineState
+    private let cellTextGrayLinearPipeline: MTLRenderPipelineState
     private let cellColorPipeline: MTLRenderPipelineState
     /// Cell backgrounds that replace the pass clear instead of blending over
     /// it; see `SnapshotRenderContext.translucentCellBackgroundAlpha`.
@@ -1074,6 +1087,10 @@ final class MetalTerminalRenderer {
     private let rasterizer = CoreTextGlyphRasterizer()
     private let glyphBitmapResultCache = GlyphBitmapResultCache()
     private let rasterFontRegistry = RasterFontRegistry()
+    /// Whether a raster font can hold colour glyphs, by raster font token.
+    /// Tokens are never rebound, so an entry stays true for its token; the
+    /// table is emptied with the registry only to bound it.
+    private var colorCapableRasterFonts: [UInt32: Bool] = [:]
     private let glyphMetricsCache = GlyphMetricsCache()
     private let colorSIMDCache = MetalColorSIMDCache()
     // Profiling-only identity comparison. These maps stay empty when
@@ -1266,6 +1283,11 @@ final class MetalTerminalRenderer {
                                                                             pixelFormat: pixelFormat,
                                                                             vertexName: "terminal_text_vertex",
                                                                             fragmentName: "terminal_text_fragment_gray"),
+              let textGrayLinearPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
+                                                                                  library: library,
+                                                                                  pixelFormat: pixelFormat,
+                                                                                  vertexName: "terminal_text_vertex",
+                                                                                  fragmentName: "terminal_text_fragment_gray_linear"),
               let cellTextPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
                                                                             library: library,
                                                                             pixelFormat: pixelFormat,
@@ -1276,6 +1298,11 @@ final class MetalTerminalRenderer {
                                                                                 pixelFormat: pixelFormat,
                                                                                 vertexName: "terminal_cell_text_vertex",
                                                                                 fragmentName: "terminal_text_fragment_gray"),
+              let cellTextGrayLinearPipeline = MetalTerminalRenderer.makeTextPipeline(device: device,
+                                                                                      library: library,
+                                                                                      pixelFormat: pixelFormat,
+                                                                                      vertexName: "terminal_cell_text_vertex",
+                                                                                      fragmentName: "terminal_text_fragment_gray_linear"),
               let colorPipeline = MetalTerminalRenderer.makeColorPipeline(device: device,
                                                                           library: library,
                                                                           pixelFormat: pixelFormat,
@@ -1296,9 +1323,11 @@ final class MetalTerminalRenderer {
         }
         self.textPipeline = textPipeline
         self.textGrayPipeline = textGrayPipeline
+        self.textGrayLinearPipeline = textGrayLinearPipeline
         self.colorPipeline = colorPipeline
         self.cellTextPipeline = cellTextPipeline
         self.cellTextGrayPipeline = cellTextGrayPipeline
+        self.cellTextGrayLinearPipeline = cellTextGrayLinearPipeline
         self.cellColorPipeline = cellColorPipeline
         self.cellBackgroundReplacePipeline = cellBackgroundReplacePipeline
         let samplerDesc = MTLSamplerDescriptor()
@@ -1491,8 +1520,13 @@ final class MetalTerminalRenderer {
 
         let backgroundPipeline = renderContext.translucentCellBackgroundAlpha == nil
             ? cellColorPipeline : cellBackgroundReplacePipeline
+        let activeCellTextGrayPipeline = renderContext.metalTextBlending == .linearCorrected
+            ? cellTextGrayLinearPipeline : cellTextGrayPipeline
+        let activeTextGrayPipeline = renderContext.metalTextBlending == .linearCorrected
+            ? textGrayLinearPipeline : textGrayPipeline
         if let frame = drawData.frame {
             drawFrameData(frame, backgroundPipeline: backgroundPipeline,
+                          cellTextGrayPipeline: activeCellTextGrayPipeline,
                           encoder: encoder, viewport: viewport)
         } else {
             let rows = drawData.rows
@@ -1525,7 +1559,7 @@ final class MetalTerminalRenderer {
             drawVertexBuffers(rows: rows,
                               bufferKey: \.glyphGrayBuffer,
                               countKey: \.glyphGrayCount,
-                              pipeline: cellTextGrayPipeline,
+                              pipeline: activeCellTextGrayPipeline,
                               texture: grayscaleAtlas.texture,
                               encoder: encoder,
                               viewport: viewport)
@@ -1572,7 +1606,7 @@ final class MetalTerminalRenderer {
 
         if !drawData.cursorGlyphVerticesGray.isEmpty {
             if let buffer = makeBuffer(drawData.cursorGlyphVerticesGray) {
-                encoder.setRenderPipelineState(textGrayPipeline)
+                encoder.setRenderPipelineState(activeTextGrayPipeline)
                 encoder.setVertexBuffer(buffer, offset: 0, index: 0)
                 var viewportVar = viewport
                 encoder.setVertexBytes(&viewportVar, length: MemoryLayout<SIMD2<Float>>.stride, index: 1)
@@ -1742,6 +1776,7 @@ final class MetalTerminalRenderer {
                                        linkModifierActive: linkModifierActive,
                                        customBlockGlyphs: context.customBlockGlyphs,
                                        antiAliasCustomBlockGlyphs: context.antiAliasCustomBlockGlyphs,
+                                       fontSmoothing: rasterizer.fontSmoothing,
                                        imageScale: Double(context.imageScale))
         if signature != cacheSignature {
             if signature.glyphFallbackIdentity != cacheSignature?.glyphFallbackIdentity {
@@ -1752,7 +1787,14 @@ final class MetalTerminalRenderer {
                 // so tokens are never rebound to another font.
                 glyphBitmapResultCache.removeAll()
                 rasterFontRegistry.removeAll()
+                colorCapableRasterFonts.removeAll(keepingCapacity: true)
                 scaledFontCache.removeAll()
+            }
+            if signature.fontSmoothing != cacheSignature?.fontSmoothing {
+                glyphBitmapResultCache.removeAll()
+                customGlyphCache.removeAll()
+                grayscaleAtlas.reset()
+                colorAtlas.reset()
             }
             rowCache.removeAll()
             cacheSignature = signature
@@ -2114,6 +2156,15 @@ final class MetalTerminalRenderer {
 
                 let textColor = runAttributes[.foregroundColor] as? TTColor ?? context.effectiveForegroundColor
                 let textColorSIMD = colorToSIMD(textColor)
+                let cellBgColor = (runAttributes[.selectionBackgroundColor] as? TTColor)
+                    ?? (runAttributes[.backgroundColor] as? TTColor)
+                    ?? context.effectiveBackgroundColor
+                let hasExplicitBg = runAttributes.keys.contains(.selectionBackgroundColor)
+                    || runAttributes.keys.contains(SwiftTermExplicitBackgroundKey)
+                let darkOnLight = usesDarkOnLightSmoothing(
+                    foreground: textColorSIMD,
+                    background: colorToSIMD(cellBgColor),
+                    defaultBackground: hasExplicitBg ? colorToSIMD(context.effectiveBackgroundColor) : nil)
 
                 let glyphPolicy = runAttributes[SwiftTermGlyphPolicyKey] as? TerminalGlyphPlacementPolicy
                 let policyIconHeight = glyphPolicy != nil
@@ -2154,7 +2205,8 @@ final class MetalTerminalRenderer {
                             fittingFont: glyphRun.font,
                             renderingScale: scale,
                             metricsFont: &metricsFont,
-                            glyph: glyph) else {
+                            glyph: glyph,
+                            darkOnLight: darkOnLight) else {
                             continue
                         }
                         let entry = resolvedGlyph.entry
@@ -2395,6 +2447,22 @@ final class MetalTerminalRenderer {
             }
             let rasterFontToken = rasterTokens[face]
             let textColorSIMD = colorToSIMD(style.foreground)
+            let cellBgSIMD: SIMD4<Float>
+            let hasExplicitBg: Bool
+            if let selectionBackground = style.selectionBackground {
+                cellBgSIMD = colorToSIMD(selectionBackground)
+                hasExplicitBg = true
+            } else if style.explicitBackground {
+                cellBgSIMD = colorToSIMD(style.background)
+                hasExplicitBg = true
+            } else {
+                cellBgSIMD = colorToSIMD(context.effectiveBackgroundColor)
+                hasExplicitBg = false
+            }
+            let darkOnLight = usesDarkOnLightSmoothing(
+                foreground: textColorSIMD,
+                background: cellBgSIMD,
+                defaultBackground: hasExplicitBg ? colorToSIMD(context.effectiveBackgroundColor) : nil)
             for column in run.start..<run.end {
                 let glyph = font.glyph(for: UInt32(plain.codes[column]))
                 recordProfileGlyphIdentityAlias(fullFontToken: fullTokens[face],
@@ -2405,7 +2473,8 @@ final class MetalTerminalRenderer {
                                                      fittingFont: font.shapedFont,
                                                      renderingScale: scale,
                                                      metricsFont: &metricsFonts[face],
-                                                     glyph: glyph) else {
+                                                     glyph: glyph,
+                                                     darkOnLight: darkOnLight) else {
                     continue
                 }
                 let entry = resolvedGlyph.entry
@@ -2976,6 +3045,7 @@ final class MetalTerminalRenderer {
         // caches because their tokens must never be rebound to another font.
         let previousEvictions = glyphBitmapResultCache.emptyEvictionCount
         glyphBitmapResultCache.removeAll()
+        colorCapableRasterFonts.removeAll(keepingCapacity: true)
         if ProfilingStats.enabled {
             activeProfileCounters.rasterFontRegistryLookups += 1
             activeProfileCounters.rasterFontRegistryMisses += 1
@@ -3084,13 +3154,60 @@ final class MetalTerminalRenderer {
         return metrics
     }
 
+    @inline(__always)
+    private static func relativeLuminance(_ color: SIMD4<Float>) -> Float {
+        0.2126 * color.x + 0.7152 * color.y + 0.0722 * color.z
+    }
+
+    @inline(__always)
+    private func usesDarkOnLightSmoothing(foreground: SIMD4<Float>,
+                                          background: SIMD4<Float>,
+                                          defaultBackground: SIMD4<Float>? = nil) -> Bool {
+#if os(macOS)
+        guard rasterizer.fontSmoothing else { return false }
+        let fgLuma = Self.relativeLuminance(foreground)
+        // Composite translucent cell/selection backgrounds over the terminal's
+        // default background, and weight any remaining window translucency
+        // against a mid-gray backdrop so low-alpha backgrounds do not
+        // misclassify text polarity.
+        let backdropLuma: Float
+        if let defaultBackground {
+            backdropLuma = Self.relativeLuminance(defaultBackground) * defaultBackground.w
+                + 0.5 * (1 - defaultBackground.w)
+        } else {
+            backdropLuma = 0.5
+        }
+        let bgLuma = Self.relativeLuminance(background) * background.w
+            + backdropLuma * (1 - background.w)
+        return fgLuma < bgLuma
+#else
+        return false
+#endif
+    }
+
+    private func rasterFontCanContainColorGlyphs(token: UInt32, font: CTFont) -> Bool {
+        if let known = colorCapableRasterFonts[token] {
+            return known
+        }
+        let capable = CoreTextGlyphRasterizer.canContainColorGlyphs(font)
+        colorCapableRasterFonts[token] = capable
+        return capable
+    }
+
     private func glyphEntry(rasterFontToken: UInt32,
                             font: CTFont,
                             fittingFont: CTFont,
                             renderingScale: CGFloat,
                             metricsFont: inout GlyphMetricsFont?,
-                            glyph: CGGlyph) -> ResolvedGlyph? {
-        let key = GlyphKey(rasterFontToken: rasterFontToken, glyph: glyph)
+                            glyph: CGGlyph,
+                            darkOnLight: Bool = false) -> ResolvedGlyph? {
+        // The rasterizer draws a colour-capable font the same way for either
+        // polarity, so such a font keeps one atlas entry per glyph.
+        let effectiveDarkOnLight = darkOnLight && rasterizer.fontSmoothing
+            && !rasterFontCanContainColorGlyphs(token: rasterFontToken, font: font)
+        let key = GlyphKey(rasterFontToken: rasterFontToken,
+                           glyph: glyph,
+                           darkOnLight: effectiveDarkOnLight)
         if ProfilingStats.enabled {
             activeProfileCounters.glyphAtlasLookups += 1
         }
@@ -3130,7 +3247,7 @@ final class MetalTerminalRenderer {
             activeProfileCounters.rasterizations += 1
         }
         let bitmap: GlyphBitmap
-        switch rasterizer.rasterize(font: font, glyph: glyph, metrics: metrics) {
+        switch rasterizer.rasterize(font: font, glyph: glyph, metrics: metrics, darkOnLight: effectiveDarkOnLight) {
         case .bitmap(let result):
             bitmap = result
             if ProfilingStats.enabled {
@@ -3813,6 +3930,7 @@ final class MetalTerminalRenderer {
     }
 
     private func drawFrameData(_ frame: FrameDrawData, backgroundPipeline: MTLRenderPipelineState,
+                               cellTextGrayPipeline: MTLRenderPipelineState,
                                encoder: MTLRenderCommandEncoder, viewport: SIMD2<Float>) {
         drawImageBatches(frame.belowBackgroundImageDraws, encoder: encoder, viewport: viewport)
 
@@ -4109,6 +4227,10 @@ final class MetalTerminalRenderer {
         }
         let yOffset = context.baselineOffset
         let textColorSIMD = colorToSIMD(caretTextColor)
+        let cursorDarkOnLight = usesDarkOnLightSmoothing(
+            foreground: textColorSIMD,
+            background: cursorColor,
+            defaultBackground: colorToSIMD(context.effectiveBackgroundColor))
 
         for run in runs {
             let runGlyphsCount = CTRunGetGlyphCount(run)
@@ -4144,7 +4266,8 @@ final class MetalTerminalRenderer {
                     fittingFont: ctFont,
                     renderingScale: scale,
                     metricsFont: &metricsFont,
-                    glyph: glyph) else {
+                    glyph: glyph,
+                    darkOnLight: cursorDarkOnLight) else {
                     continue
                 }
                 let entry = resolvedGlyph.entry

@@ -427,6 +427,10 @@ try terminalView.setUseMetal(true)
 terminalView.metalBufferingMode = .perRowPersistent   // default
 terminalView.metalBufferingMode = .perFrameAggregated // for full-screen TUIs
 
+// Choose how monochrome glyph coverage is blended
+terminalView.metalTextBlending = .native          // default, matches Core Graphics
+terminalView.metalTextBlending = .linearCorrected // even stroke weight across themes
+
 // Check current renderer
 if terminalView.isUsingMetalRenderer {
     print("GPU rendering active")
