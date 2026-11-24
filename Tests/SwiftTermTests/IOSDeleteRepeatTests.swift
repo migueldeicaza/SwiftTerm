@@ -32,19 +32,30 @@ struct IOSDeleteRepeatTests {
         delegate.writes.reduce(0) { $0 + $1.filter { $0 == 0x7f }.count }
     }
 
-    @Test func deleteWithNothingTypedSeedsTheScreenTextBeforeTheCursor() {
+    private func spaces(_ count: Int) -> String { String(repeating: " ", count: count) }
+
+    @Test func deleteWithNothingTypedSeedsAPlaceholder() {
         let (view, delegate) = fixture(screen: "$ /compact")
 
         view.deleteBackward()
 
         #expect(backspaces(delegate) == 1)
-        // The backspace is not echoed yet: one character less than the screen shows.
-        #expect(view.textInputStorage == "$ /compac")
-        #expect(view.textInputStorageIsFromScreen)
+        // One space per character left of the cursor, less the backspace not echoed yet.
+        #expect(view.textInputStorage == spaces(9))
+        #expect(view.textInputStorageIsPlaceholder)
         #expect(view.hasText)
     }
 
-    @Test func deletingTheLastTypedCharacterSeedsTheScreenText() {
+    @Test func thePlaceholderHidesTheScreenText() {
+        let (view, _) = fixture(screen: "$ export TOKEN=secret")
+
+        view.deleteBackward()
+
+        #expect(view.textInputStorage.allSatisfy { $0 == " " })
+        #expect(!view.textInputStorage.contains("secret"))
+    }
+
+    @Test func everyBackspaceNotEchoedCounts() {
         let (view, delegate) = fixture(screen: "$ ")
         view.insertText("/c")
         // The program completes what was typed.
@@ -54,29 +65,115 @@ struct IOSDeleteRepeatTests {
         view.deleteBackward()
 
         #expect(backspaces(delegate) == 2)
-        #expect(view.textInputStorage == "$ /compac")
-        #expect(view.textInputStorageIsFromScreen)
+        // "$ /compact" less the two backspaces the program has not answered.
+        #expect(view.textInputStorage == spaces(8))
+        #expect(view.textInputStorageIsPlaceholder)
     }
 
-    @Test func typedTextReplacesTheSeed() {
+    @Test func outputAfterABackspaceCountsAsItsEcho() {
+        let (view, _) = fixture(screen: "$ abc")
+        view.deleteBackward()
+        // The program erases the character: the screen already shows the delete.
+        view.feed(text: "\u{8} \u{8}")
+        view.resetInputBuffer()
+
+        view.deleteBackward()
+
+        // "$ ab" less the one new backspace.
+        #expect(view.textInputStorage == spaces(3))
+    }
+
+    @Test func aRangeDeleteCountsItsBackspaces() {
+        let (view, delegate) = fixture(screen: "$ ")
+        view.insertText("ab")
+        view.feed(text: "ab")
+        view.selectedTextRange = view.textRange(from: view.beginningOfDocument, to: view.endOfDocument)
+
+        view.deleteBackward()
+
+        #expect(backspaces(delegate) == 2)
+        #expect(view.textInputStorage == spaces(2))
+    }
+
+    @Test func wideCharactersCountOnce() {
+        let (view, _) = fixture(screen: "$ 한글")
+
+        view.deleteBackward()
+
+        // Four characters on six cells, less one backspace; no NUL for the second cells.
+        #expect(view.textInputStorage == spaces(3))
+    }
+
+    @Test func typedTextReplacesThePlaceholder() {
         let (view, _) = fixture(screen: "$ ls")
         view.deleteBackward()
-        #expect(view.textInputStorageIsFromScreen)
+        #expect(view.textInputStorageIsPlaceholder)
 
         view.insertText("x")
 
         #expect(view.textInputStorage == "x")
-        #expect(!view.textInputStorageIsFromScreen)
+        #expect(!view.textInputStorageIsPlaceholder)
     }
 
-    @Test func markedTextReplacesTheSeed() {
+    @Test func markedTextReplacesThePlaceholder() {
         let (view, _) = fixture(screen: "$ ls")
         view.deleteBackward()
 
         view.setMarkedText("k", selectedRange: NSRange(location: 1, length: 0))
 
         #expect(view.textInputStorage == "k")
-        #expect(!view.textInputStorageIsFromScreen)
+        #expect(!view.textInputStorageIsPlaceholder)
+    }
+
+    @Test func replacingInThePlaceholderOnlyInserts() {
+        let (view, delegate) = fixture(screen: "$ ls")
+        view.deleteBackward()
+        let sentBefore = backspaces(delegate)
+        let end = view.endOfDocument
+        let start = view.position(from: end, offset: -1)!
+
+        view.replace(view.textRange(from: start, to: end)!, withText: "cd")
+
+        // The placeholder may stand for screen text that has changed: nothing more is deleted.
+        #expect(backspaces(delegate) == sentBefore)
+        #expect(delegate.writes.last == Array("cd".utf8))
+        #expect(!view.textInputStorageIsPlaceholder)
+    }
+
+    @Test func theDoubleSpacePeriodSurvivesThePlaceholder() {
+        let (view, delegate) = fixture(screen: "$ ")
+        view.insertText(" ")
+        // The keyboard deletes the space it is about to turn into ". ".
+        view.deleteBackward()
+        #expect(view.textInputStorageIsPlaceholder)
+
+        view.insertText(". ")
+
+        // The shell had the space deleted and gets two back, not ". ".
+        #expect(delegate.writes.last == Array("  ".utf8))
+    }
+
+    @Test func aPendingKoreanResyllabificationKeepsTheBufferEmpty() {
+        let (view, _) = fixture(screen: "$ ")
+        // As after the keyboard deleted 핫 to put its final consonant on the next syllable.
+        view.koreanResyllabificationTransaction.begin(deletedText: "핫")
+        #expect(view.koreanResyllabificationIsPending)
+
+        view.seedTextInputPlaceholder()
+
+        #expect(view.textInputStorage == "")
+        #expect(view.koreanResyllabificationIsPending)
+    }
+
+    @Test func deleteAtTheStartOfABufferWithTextAfterItSeedsNothing() {
+        let (view, _) = fixture(screen: "$ ")
+        view.insertText("ls")
+        view.selectedTextRange = view.textRange(from: view.beginningOfDocument, to: view.beginningOfDocument)
+
+        view.deleteBackward()
+
+        #expect(view.textInputStorage == "ls")
+        #expect(!view.textInputStorageIsPlaceholder)
     }
 
     @Test func deleteAtTheStartOfARowSeedsNothing() {
@@ -86,7 +183,7 @@ struct IOSDeleteRepeatTests {
 
         #expect(backspaces(delegate) == 1)
         #expect(view.textInputStorage == "")
-        #expect(!view.textInputStorageIsFromScreen)
+        #expect(!view.textInputStorageIsPlaceholder)
     }
 }
 #endif

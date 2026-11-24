@@ -414,14 +414,36 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     // We use this as temporary storage for UITextInput, which we send to the terminal on demand
     var textInputStorage: String = ""
-    /// True while `textInputStorage` holds text read from the screen, not typed: see
-    /// `seedTextInputFromScreen`. The next typed text replaces it.
-    var textInputStorageIsFromScreen = false
+    /// True while `textInputStorage` holds placeholder spaces for text the program wrote,
+    /// not typed text: see `seedTextInputPlaceholder`. The next typed text replaces it.
+    var textInputStorageIsPlaceholder = false
+    /// Backspaces sent since the program last wrote output, which the screen may not show
+    /// yet. Any output is taken to echo them all, since a program answers in order.
+    private var backspacesSinceOutput = 0
+    private var fedBytesAtLastBackspace = 0
     var pendingAutoPeriodDeleteWasSpace: Bool = false
-    private var koreanResyllabificationTransaction = HangulInput.ResyllabificationTransaction()
+    var koreanResyllabificationTransaction = HangulInput.ResyllabificationTransaction()
 
     func resetKoreanResyllabificationTransaction() {
         koreanResyllabificationTransaction.reset()
+    }
+
+    var koreanResyllabificationIsPending: Bool { koreanResyllabificationTransaction.isPending }
+
+    private var fedBytes: Int { diagnosticsState.withLock { $0.bytesFed } }
+
+    /// Backspaces sent that the screen does not show yet.
+    var unechoedBackspaceCount: Int {
+        fedBytes == fedBytesAtLastBackspace ? backspacesSinceOutput : 0
+    }
+
+    private func noteBackspacesSent(_ count: Int) {
+        let fed = fedBytes
+        if fed != fedBytesAtLastBackspace {
+            backspacesSinceOutput = 0
+            fedBytesAtLastBackspace = fed
+        }
+        backspacesSinceOutput += count
     }
 
     // This tracks the marked text, part of the UITextInput protocol, which is used to flag temporary data entry, that might
@@ -2478,9 +2500,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Whether the delete key has anything to act on.
     ///
     /// `open` rather than `public` because the answer belongs to the embedder: this
-    /// reports the input-session shadow, which is empty at an ordinary shell prompt,
-    /// while `deleteBackward()` — already `open` — sends a backspace in that same state.
-    /// A host that knows its far side always has something to delete can say so.
+    /// reports the input-session shadow: what was typed, or after a delete that emptied it,
+    /// placeholder spaces for the text left of the cursor (`seedTextInputPlaceholder`). It is
+    /// empty at a fresh prompt and at the start of a row, while `deleteBackward()`, already
+    /// `open`, sends a backspace in that same state. A host that knows its far side always
+    /// has something to delete can say so.
     open var hasText: Bool {
         return !textInputStorage.isEmpty
     }
@@ -2545,8 +2569,10 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     private func commitTextInput(_ text: String, applyModifiers: Bool) {
-        dropTextInputSeededFromScreen()
+        // Read before the drop: deleting the only typed character, a space, leaves the
+        // placeholder in the buffer, and the drop's reset clears the flag.
         let hadPendingAutoPeriodDelete = pendingAutoPeriodDeleteWasSpace
+        dropTextInputPlaceholder()
         if !isAutoPeriodReplacement(text) {
             pendingAutoPeriodDeleteWasSpace = false
         }
@@ -3187,8 +3213,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 // In that scenario, we should just send the backspace character to the terminal
                 pendingAutoPeriodDeleteWasSpace = false
                 self.sendBackspaceKey()
+                noteBackspacesSent(1)
                 uitiLog("deleteBackward() no text to delete, sending backspace")
-                seedTextInputFromScreen(unechoedBackspaces: 1)
+                // Only an empty buffer: the cursor can be at its start with text after it
+                // (moved there with the space-bar trackpad).
+                seedTextInputPlaceholder()
                 return
             }
 
@@ -3197,6 +3226,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             guard let deleteRange = textInputStorage.textInputCharacterRange(beforeUTF16Offset: rangeStartIndex) else {
                 pendingAutoPeriodDeleteWasSpace = false
                 self.sendBackspaceKey()
+                noteBackspacesSent(1)
                 uitiLog("deleteBackward() no text to delete, sending backspace")
                 endTextInputEdit()
                 return
@@ -3209,6 +3239,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             rangeStartPosition = TextPosition(offset: rangeStartIndex)
 
             self.sendBackspaceKey()
+            noteBackspacesSent(1)
         } else {
             pendingAutoPeriodDeleteWasSpace = false
             beginTextInputEdit()
@@ -3220,17 +3251,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             for _ in 0..<backspaces {
                 self.sendBackspaceKey()
             }
+            noteBackspacesSent(backspaces)
 
             textInputStorage.removeSubrange(rangeToDelete.fullRange(in: textInputStorage))
         }
-        
+
         _markedTextRange = nil
         _selectedTextRange = TextRange(from: rangeStartPosition, to: rangeStartPosition)
 
         endTextInputEdit()
-        if textInputStorage.isEmpty {
-            seedTextInputFromScreen(unechoedBackspaces: rangeToDelete.isEmpty ? 1 : rangeToDelete.length)
-        }
+        seedTextInputPlaceholder()
     }
 
     enum SendData {
