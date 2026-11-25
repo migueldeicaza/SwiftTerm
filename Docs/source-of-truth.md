@@ -8,6 +8,18 @@ emulator features and security patches.
 | Parser, buffers, OSC/CSI, clipboard, Kitty, render, hardening, HostHelpers | **This repo** |
 | Host app UI, `ios_system`, Relay, Xcode/CI | `jiaomeimei0-prog/a-shell` |
 
+### a-Shell command execution on iOS
+
+iOS does not allow App Store apps to `fork`/`exec` real Unix child processes.
+a-Shell runs commands **inside the app sandbox**:
+
+1. **`ios_system`** (`ios_fork` + `ios_system`) — in-process session/streams for
+   native embedded commands from the host catalogue.
+2. **WebAssembly** — user/`pkg` WASI binaries via the in-app WASM runtime and
+   loopback `wasm.html` HTTPS server; not a substitute for every native command.
+
+SwiftTerm only owns the terminal emulator UI/API; command dispatch stays in a-Shell.
+
 ## a-Shell package pin
 
 a-Shell keeps a **SwiftTerm git submodule** for Xcode

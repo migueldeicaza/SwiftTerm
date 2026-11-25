@@ -32,6 +32,12 @@ Implemented in `Sources/SwiftTerm/Apple/AppleTerminalView+HostHelpers.swift`
 
 Git submodule: https://github.com/jiaomeimei0-prog/a-shell  
 
+On iOS, a-Shell does **not** spawn Unix processes. Commands run in-sandbox via
+**`ios_system`** (native catalogue) and optionally **WebAssembly** (WASI /
+`pkg` `.wasm` through loopback `wasm.html`). SwiftTerm supplies the terminal
+view and HostHelpers only. See `Docs/source-of-truth.md` and
+`Docs/feature-status-report-2026-11-26.md` §1.1.
+
 ### Init
 
 ```sh

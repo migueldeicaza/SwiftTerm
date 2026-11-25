@@ -31,6 +31,22 @@ jiaomeimei0-prog/SwiftTerm          ← SOURCES emulator (fork v2)
 
 I/O terminal app: Foundation `Pipe` + `ios_system` (không dùng `LocalProcess`/PTY kernel).
 
+### 1.1 Mô hình thực thi lệnh trên iOS (a-Shell)
+
+iOS / App Store **không cho** app tự `fork`/`exec` tiến trình Unix như shell máy tính. Trong a-Shell đã hợp nhất (fork SwiftTerm v2 + host), lệnh **không** gọi nhân Unix trực tiếp:
+
+| Lớp | Cơ chế | Vai trò |
+|-----|--------|---------|
+| **Terminal UI** | SwiftTerm (`TerminalView` + HostHelpers) | Hiển thị / nhập / selection / VoiceOver |
+| **Điều phối lệnh** | `ios_system` — `ios_fork()` + `ios_system(...)` trong **cùng process** app | Giả lập session, stdin/stdout/stderr (`Pipe`), catalogue lệnh native |
+| **Lệnh native nhúng** | Framework trong bundle (`commandDictionary.plist` → python, vim, curl, ssh, lg2, …) | Chạy in-process qua `ios_system`, không phải binary Unix riêng |
+| **Lệnh WebAssembly** | `clang` → `wasm32-wasi`; runtime WASM + `https://localhost:<WasmServerPort>/wasm.html` | Gói user/`pkg` (`.wasm`); **không** thay toàn bộ catalogue native |
+| **Relay (opt-in)** | HTTPS `/run` → cùng đường `ios_system` | Điều khiển từ xa trong sandbox app |
+
+**Lưu ý:** WASM là lớp bổ sung (portable / `pkg`), bị hạn chế thêm (không socket/fork Unix đầy đủ). ShellWorkers (mini) vẫn dùng `ios_system` trong extension — cũng không phải process Unix thật.
+
+Tham chiếu mã: `Apps/a-Shell/a-Shell/SceneDelegate.swift` (`ios_fork` / `ios_system` / đường WASM); `Relay.swift`; README a-Shell mục Programming / Relay.
+
 ---
 
 ## 2. SwiftTerm — năm nhóm HostHelpers (cầu nối a-Shell)
