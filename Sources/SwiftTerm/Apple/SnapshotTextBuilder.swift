@@ -138,13 +138,19 @@ final class SnapshotTextBuilder {
     /// belongs to one renderer, so this cache cannot race another renderer.
     private var fallbackFonts: [FallbackFontKey: TTFont] = [:]
 
-    init(trueColorCacheCapacity: Int = 4_096) {
+    init(trueColorCacheCapacity: Int = 4_096, attributeCacheCapacity: Int = 4_096) {
         precondition(trueColorCacheCapacity > 0)
+        precondition(attributeCacheCapacity > 0)
         self.trueColorCacheCapacity = trueColorCacheCapacity
+        self.minimumAttributeCacheCapacity = attributeCacheCapacity
+        self.attributeCacheCapacity = attributeCacheCapacity
         trueColorCache.reserveCapacity(min(trueColorCacheCapacity, 1_024))
     }
 
     var trueColorCacheCount: Int { trueColorCache.count }
+
+    private let minimumAttributeCacheCapacity: Int
+    private var attributeCacheCapacity: Int
 
     /// Attribute dictionaries for the current render context.
     ///
@@ -152,8 +158,12 @@ final class SnapshotTextBuilder {
     /// Profiler trace: `[NSAttributedString.Key: Any]` has String-backed keys,
     /// so each rebuild hashes and compares NSStrings and bridges every value
     /// through ObjC.
+    /// Both attribute caches are bounded independently. Truecolor output can
+    /// introduce new styles indefinitely without changing the render context,
+    /// even after the corresponding cells have left the terminal buffer.
     private(set) var attributeCache: [AttributeCacheKey: SnapshotTextAttributes] = [:]
     private var packedAttributeCache: [PackedAttributeCacheKey: SnapshotTextAttributes] = [:]
+    var packedAttributeCacheCount: Int { packedAttributeCache.count }
     /// The style table that the keys of `packedAttributeCache` come from. A
     /// style ID means a different style in another table: an external source
     /// (`TerminalRowStore`) can replace its table when it is nearly full.
@@ -229,6 +239,9 @@ final class SnapshotTextBuilder {
         }
         let built = buildAttributes(attribute, withUrl: withUrl, context: context)
         if let built {
+            if attributeCache.count >= attributeCacheCapacity {
+                attributeCache.removeAll(keepingCapacity: true)
+            }
             attributeCache[key] = built
         }
         return built
@@ -241,23 +254,32 @@ final class SnapshotTextBuilder {
                                context: SnapshotRenderContext)
         -> SnapshotTextAttributes?
     {
-        prepareAttributeCache(for: context)
+        // `buildAttributedString` prepared the cache for this context at the
+        // start of the row; the context cannot change within one row.
         let cacheKey = PackedAttributeCacheKey(attribute: key, withUrl: withUrl)
         if let cached = packedAttributeCache[cacheKey] {
             return cached
         }
         let built = buildAttributes(attribute, withUrl: withUrl, context: context)
         if let built {
+            if packedAttributeCache.count >= attributeCacheCapacity {
+                packedAttributeCache.removeAll(keepingCapacity: true)
+            }
             packedAttributeCache[cacheKey] = built
         }
         return built
     }
 
     private func prepareAttributeCache(for context: SnapshotRenderContext) {
-        guard attributeCacheContextID != context.identity else { return }
+        // The visible grid bounds the styles that one redraw needs, so a full
+        // grid stays warm across redraws. A new limit alone does not clear
+        // the caches: after a shrink, the next insert past the limit does.
+        attributeCacheCapacity = max(minimumAttributeCacheCapacity,
+                                     2 * context.cols * context.rows)
         // The identity changes only when an input used by the attribute
         // dictionaries changes. A new frame with the same visual inputs keeps
         // the cache warm.
+        guard attributeCacheContextID != context.identity else { return }
         attributeCache.removeAll(keepingCapacity: true)
         packedAttributeCache.removeAll(keepingCapacity: true)
         glyphCoverageCache.removeAll(keepingCapacity: true)
@@ -456,6 +478,9 @@ final class SnapshotTextBuilder {
     {
         var segments: [ViewLineSegment] = []
         let line = snapshotRow.line
+        // Once per row, not once per style run: the packed lookup and the
+        // glyph-fallback caches depend on this reset.
+        prepareAttributeCache(for: context)
         if line.cellArena !== packedAttributeCacheArena {
             packedAttributeCache.removeAll(keepingCapacity: true)
             packedAttributeCacheArena = line.cellArena
