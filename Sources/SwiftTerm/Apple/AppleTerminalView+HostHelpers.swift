@@ -1,9 +1,22 @@
 //
 //  AppleTerminalView+HostHelpers.swift
 //
-// Host-facing helpers historically carried on the holzschu/SwiftTerm v1.x pin
-// for a-Shell. Kept here so Apps/a-Shell can consume this package without a
-// nested SwiftTerm checkout.
+// a-Shell host API surface ported from the historical holzschu/SwiftTerm v1.x
+// pin onto this fork (v2). Kept so a-Shell can submodule *this* package and
+// retain the five original terminal host capability groups:
+//
+//  1. Prompt / line-editor bookkeeping
+//     (setPromptEnd, getLastPrompt, getNewContent, getLastLine)
+//  2. Cursor control
+//     (save/restore/setCursorPosition, moveUp/Down/Beginning/EndOfLine)
+//  3. Selection editing
+//     (deleteSelection, moveToBeginning/EndOfSelection)
+//  4. Display / style helpers
+//     (clearToEndOfLine, wipeContents, setCursorStyle, ensureCaretIsVisible)
+//  5. Terminal / buffer access
+//     (getTerminal, isCurrentBufferAlternate, currentCommandVoiceOver)
+//
+// Emulator feature and security patches still land only in this repository.
 //
 #if !SWIFTTERM_EMBEDDED
 #if os(iOS) || os(visionOS)
