@@ -386,6 +386,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     let textBuilder = SnapshotTextBuilder()
 
     nonisolated let diagnosticsState = Locked(TerminalView.Diagnostics())
+    /// Counts the output batches fed to the terminal. Unlike the diagnostics it is never
+    /// reset, so the text input can tell whether output arrived since a backspace.
+    nonisolated let outputGeneration = Locked(0)
 #if canImport(MetalKit)
     var metalView: MTKView?
     private var metalDrawDelegate: MetalMainActorDrawDelegate?
@@ -430,11 +433,51 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     
     // We use this as temporary storage for UITextInput, which we send to the terminal on demand
     var textInputStorage: String = ""
+    /// True while `textInputStorage` holds placeholder spaces for text the program wrote,
+    /// not typed text: see `seedTextInputPlaceholder`. The next typed text replaces it.
+    var textInputStorageIsPlaceholder = false
+    /// Backspaces sent since the program last wrote output, which the screen may not show
+    /// yet. Any output is taken to echo them all, since a program answers in order.
+    private var backspacesSinceOutput = 0
+    private var outputGenerationAtLastBackspace = 0
     var pendingAutoPeriodDeleteWasSpace: Bool = false
-    private var koreanResyllabificationTransaction = HangulInput.ResyllabificationTransaction()
+    var koreanResyllabificationTransaction = HangulInput.ResyllabificationTransaction()
 
     func resetKoreanResyllabificationTransaction() {
         koreanResyllabificationTransaction.reset()
+    }
+
+    var koreanResyllabificationIsPending: Bool { koreanResyllabificationTransaction.isPending }
+
+    private var currentOutputGeneration: Int { outputGeneration.withLock { $0 } }
+
+    /// Backspaces sent that the screen does not show yet.
+    var unechoedBackspaceCount: Int {
+        currentOutputGeneration == outputGenerationAtLastBackspace ? backspacesSinceOutput : 0
+    }
+
+    /// Sends `count` backspaces and counts them as not yet echoed. The generation is read
+    /// before sending: a host that echoes inside `send` moves it, and that echo must count.
+    private func sendCountedBackspaces(_ count: Int, _ sendOne: () -> Void) {
+        guard count > 0 else { return }
+        let generation = currentOutputGeneration
+        if generation != outputGenerationAtLastBackspace {
+            backspacesSinceOutput = 0
+            outputGenerationAtLastBackspace = generation
+        }
+        backspacesSinceOutput += count
+        for _ in 0..<count {
+            sendOne()
+        }
+    }
+
+    func sendCountedBackspaceKeys(_ count: Int) {
+        sendCountedBackspaces(count) { sendBackspaceKey() }
+    }
+
+    /// A raw DEL, as `replace` has always sent, without the key encoding.
+    func sendCountedRawBackspaces(_ count: Int) {
+        sendCountedBackspaces(count) { send([0x7f]) }
     }
 
     // This tracks the marked text, part of the UITextInput protocol, which is used to flag temporary data entry, that might
@@ -2520,9 +2563,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// Whether the delete key has anything to act on.
     ///
     /// `open` rather than `public` because the answer belongs to the embedder: this
-    /// reports the input-session shadow, which is empty at an ordinary shell prompt,
-    /// while `deleteBackward()` — already `open` — sends a backspace in that same state.
-    /// A host that knows its far side always has something to delete can say so.
+    /// reports the input-session shadow: what was typed, or after a delete that emptied it,
+    /// placeholder spaces for the text left of the cursor (`seedTextInputPlaceholder`). It is
+    /// empty at a fresh prompt and at the start of a row, while `deleteBackward()`, already
+    /// `open`, sends a backspace in that same state. A host that knows its far side always
+    /// has something to delete can say so.
     open var hasText: Bool {
         return !textInputStorage.isEmpty
     }
@@ -2586,8 +2631,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         return " "
     }
 
-    private func commitTextInput(_ text: String, applyModifiers: Bool) {
+    func commitTextInput(_ text: String, applyModifiers: Bool) {
+        // Read before the drop: deleting the only typed character, a space, leaves the
+        // placeholder in the buffer, and the drop's reset clears the flag.
         let hadPendingAutoPeriodDelete = pendingAutoPeriodDeleteWasSpace
+        dropTextInputPlaceholder()
         if !isAutoPeriodReplacement(text) {
             pendingAutoPeriodDeleteWasSpace = false
         }
@@ -3174,9 +3222,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             // event so the encoder can report its matching release.
             pendingKittyKeyEvent = nil
         }
-        for _ in 0..<charactersToDelete {
-            sendBackspaceKey()
-        }
+        sendCountedBackspaceKeys(charactersToDelete)
         if kittyEnabled {
             pendingKittyKeyEvent = pendingEvent
             sendKittyTextInput(textToInsert, applyModifiers: applyModifiers)
@@ -3227,8 +3273,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
                 // text input buffer.  This happens for example when text has been pasted.
                 // In that scenario, we should just send the backspace character to the terminal
                 pendingAutoPeriodDeleteWasSpace = false
-                self.sendBackspaceKey()
+                sendCountedBackspaceKeys(1)
                 uitiLog("deleteBackward() no text to delete, sending backspace")
+                // Only an empty buffer: the cursor can be at its start with text after it
+                // (moved there with the space-bar trackpad).
+                seedTextInputPlaceholder()
                 return
             }
 
@@ -3236,7 +3285,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
             guard let deleteRange = textInputStorage.textInputCharacterRange(beforeUTF16Offset: rangeStartIndex) else {
                 pendingAutoPeriodDeleteWasSpace = false
-                self.sendBackspaceKey()
+                sendCountedBackspaceKeys(1)
                 uitiLog("deleteBackward() no text to delete, sending backspace")
                 endTextInputEdit()
                 return
@@ -3248,7 +3297,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             textInputStorage.removeSubrange(deleteRange)
             rangeStartPosition = TextPosition(offset: rangeStartIndex)
 
-            self.sendBackspaceKey()
+            sendCountedBackspaceKeys(1)
         } else {
             pendingAutoPeriodDeleteWasSpace = false
             beginTextInputEdit()
@@ -3256,18 +3305,16 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             // pressing the backspace, it will delete chunks of text at a time.
             let oldText = textInputStorage[rangeToDelete.fullRange(in: textInputStorage)]
             trackKoreanResyllabificationDeletion(oldText, range: rangeToDelete)
-            let backspaces = oldText.count
-            for _ in 0..<backspaces {
-                self.sendBackspaceKey()
-            }
+            sendCountedBackspaceKeys(oldText.count)
 
             textInputStorage.removeSubrange(rangeToDelete.fullRange(in: textInputStorage))
         }
-        
+
         _markedTextRange = nil
         _selectedTextRange = TextRange(from: rangeStartPosition, to: rangeStartPosition)
 
         endTextInputEdit()
+        seedTextInputPlaceholder()
     }
 
     enum SendData {

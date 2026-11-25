@@ -1628,6 +1628,7 @@ extension TerminalView {
         let owner = renderOwner
         let signal = frameSignal
         let diagnosticsState = diagnosticsState
+        let outputGeneration = outputGeneration
         feedSender.configure(
             feedBytes: { bytes in
                 signal.markDirty()
@@ -1638,6 +1639,7 @@ extension TerminalView {
                     diagnostics.bytesFed += bytes.count
                     diagnostics.batches += 1
                 }
+                outputGeneration.withLock { $0 &+= 1 }
                 signal.markDirty()
             },
             feedText: { text in
@@ -1647,6 +1649,7 @@ extension TerminalView {
                     diagnostics.bytesFed += text.utf8.count
                     diagnostics.batches += 1
                 }
+                outputGeneration.withLock { $0 &+= 1 }
                 signal.markDirty()
             })
     }
@@ -4683,6 +4686,7 @@ extension TerminalView {
             diagnostics.bytesFed += count
             diagnostics.batches += 1
         }
+        outputGeneration.withLock { $0 &+= 1 }
     }
 
     func setupFrameDriver () {

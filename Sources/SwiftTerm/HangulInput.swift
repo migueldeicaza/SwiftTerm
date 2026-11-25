@@ -78,6 +78,9 @@ enum HangulInput {
         mutating func reset() {
             state = nil
         }
+
+        /// A deletion began a resyllabification and the insertion that ends it has not come yet.
+        var isPending: Bool { state != nil }
     }
 
     private static let syllableBase = 0xAC00

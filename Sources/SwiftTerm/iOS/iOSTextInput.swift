@@ -149,6 +149,14 @@ extension TerminalView: UITextInput {
         guard _markedTextRange == nil else { return }
         resetKoreanResyllabificationTransaction()
         uitiLog ("replace(range:\(r), withText:\(text.debugDescription)) \(textInputStateDescription())")
+        // The placeholder stands for screen text that may have changed since; deleting
+        // by its length could remove the wrong characters, so the text is only inserted.
+        if textInputStorageIsPlaceholder {
+            dropTextInputPlaceholder()
+            // As below: a replacement is sent as it is, without the latched Ctrl or Meta.
+            commitTextInput(text, applyModifiers: false)
+            return
+        }
 
         beginTextInputEdit()
 
@@ -162,10 +170,7 @@ extension TerminalView: UITextInput {
         if let normalized = normalizedAutoPeriodReplacementText(text, oldText: oldText, rangeToReplace: r) {
             replacementText = normalized
         }
-        let backspaces = oldText.count
-        for _ in 0..<backspaces {
-            self.send ([0x7f])
-        }
+        sendCountedRawBackspaces(oldText.count)
         self.send (txt: replacementText)
 
         let insertionIndex = r.startPosition.offset
@@ -251,6 +256,7 @@ extension TerminalView: UITextInput {
     public func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
         uitiLog("setMarkedText(\(markedText?.debugDescription ?? "nil"), selectedRange:\(selectedRange)) \(textInputStateDescription())")
         resetKoreanResyllabificationTransaction()
+        dropTextInputPlaceholder()
 
         let rangeToReplace = _markedTextRange ?? _selectedTextRange
         let rangeStartPosition = rangeToReplace.startPosition
@@ -289,11 +295,55 @@ extension TerminalView: UITextInput {
         pendingAutoPeriodDeleteWasSpace = false
         resetKoreanResyllabificationTransaction()
         textInputStorage = ""
+        textInputStorageIsPlaceholder = false
         _selectedTextRange = TextRange (from: TextPosition(offset: 0), to: TextPosition(offset: 0))
         _markedTextRange = nil
         endTextInputEdit()
     }
-    
+
+    /// The keyboard repeats delete only while the text before the cursor is not empty. That
+    /// text is `textInputStorage`, which holds only what was typed, so holding delete over
+    /// text the program wrote (a shell completion, a pasted command, an agent's suggestion)
+    /// stopped after a few backspaces. When the storage runs empty this fills it with one
+    /// space per character left of the cursor on the cursor row, less the backspaces the
+    /// program has not echoed yet, so the keyboard keeps going.
+    ///
+    /// Spaces, not the screen text: the text before the cursor is document context that a
+    /// keyboard with Full Access can read, and the screen can hold secrets. Spaces also give
+    /// the keyboard no word to suggest, so it never replaces text it read before the program
+    /// redrew the line. The count may include a prompt; a backspace there is the program's
+    /// to ignore, as with a hardware keyboard.
+    func seedTextInputPlaceholder() {
+        // A Korean resyllabification deletes a syllable and then inserts its replacement;
+        // the buffer must stay as UIKit left it in between.
+        guard textInputStorage.isEmpty, !koreanResyllabificationIsPending else { return }
+        let characters: Int = withTerminal { terminal in
+            let buffer = terminal.buffer
+            let row = buffer.yBase + buffer.y
+            guard buffer.x > 0, row >= 0, row < buffer.lines.count else { return 0 }
+            let text = buffer.lines[row].translateToString(trimRight: false, startCol: 0, endCol: buffer.x,
+                                                           skipNullCellsFollowingWide: true)
+            return terminalReplacingNulls(text).count
+        }
+        let count = characters - unechoedBackspaceCount
+        guard count > 0 else { return }
+        beginTextInputEdit()
+        textInputStorage = String(repeating: " ", count: count)
+        textInputStorageIsPlaceholder = true
+        let end = TextPosition(offset: count)
+        _selectedTextRange = TextRange(from: end, to: end)
+        _markedTextRange = nil
+        endTextInputEdit()
+        uitiLog("seedTextInputPlaceholder -> \(count) spaces")
+    }
+
+    /// Typed text starts a new buffer: left in, the placeholder would be part of the word
+    /// the keyboard autocorrects, and a correction would send its spaces.
+    func dropTextInputPlaceholder() {
+        guard textInputStorageIsPlaceholder else { return }
+        resetInputBuffer()
+    }
+
     public func unmarkText() {
         uitiLog("unmarkText() \(textInputStateDescription())")
         if let previouslyMarkedRange = _markedTextRange {
