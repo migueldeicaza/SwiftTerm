@@ -46,6 +46,13 @@ final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate, Term
         window?.makeFirstResponder(searchField)
     }
 
+    /// Shows the arrow over the bar's controls, whose cursor updates travel up
+    /// the responder chain and would otherwise reach the terminal view and its
+    /// I-beam. The search field keeps the I-beam it sets for its own text.
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .arrow)
+    }
+
     private func setup() {
         wantsLayer = true
         material = .popover
