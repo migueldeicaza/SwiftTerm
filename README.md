@@ -48,6 +48,9 @@ use the library inside the `TerminalApp` directory.
 * The sample iOS application uses an SSH library to connect to a remote system (as there is no native shell
 on iOS to run) and includes a login UI to configure the connection. 
 
+This repository also vendors the [a-Shell](https://github.com/jiaomeimei0-prog/a-shell) iOS
+terminal as a Git submodule under `Apps/a-Shell` (see `Apps/README.md`). 
+
 ## History
 
 This is a port of my original

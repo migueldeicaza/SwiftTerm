@@ -1,0 +1,4 @@
+[submodule "Apps/a-Shell"]
+	path = Apps/a-Shell
+	url = https://github.com/jiaomeimei0-prog/a-shell.git
+	branch = master
