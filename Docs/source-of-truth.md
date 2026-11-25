@@ -20,6 +20,10 @@ a-Shell runs commands **inside the app sandbox**:
 
 SwiftTerm only owns the terminal emulator UI/API; command dispatch stays in a-Shell.
 
+**Prescribed UI↔command backend for a-Shell:** `TerminalViewDelegate`
+`send`/`feed` over Foundation `Pipe` + `ios_system` (not `LocalProcess`).
+See [`Docs/host-ui-backend.md`](host-ui-backend.md).
+
 ## a-Shell package pin
 
 a-Shell keeps a **SwiftTerm git submodule** for Xcode

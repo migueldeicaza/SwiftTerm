@@ -35,7 +35,11 @@ Git submodule: https://github.com/jiaomeimei0-prog/a-shell
 On iOS, a-Shell does **not** spawn Unix processes. Commands run in-sandbox via
 **`ios_system`** (native catalogue) and optionally **WebAssembly** (WASI /
 `pkg` `.wasm` through loopback `wasm.html`). SwiftTerm supplies the terminal
-view and HostHelpers only. See `Docs/source-of-truth.md` and
+view and HostHelpers only.
+
+**UI backend:** wire `TerminalView` through `TerminalViewDelegate` (`send` /
+`feed`) to Pipe + `ios_system` — see `Docs/host-ui-backend.md`. Do not use
+`LocalProcess` on iOS. Also: `Docs/source-of-truth.md`,
 `Docs/feature-status-report-2026-11-26.md` §1.1.
 
 ### Init
