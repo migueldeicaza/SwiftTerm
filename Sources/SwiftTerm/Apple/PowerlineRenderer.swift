@@ -383,7 +383,7 @@ enum PowerlineRenderer {
 
     private static let solidFlamePath = flameLowerPath + flameFlatEdgePath + flameUpperPath
     private static let thinFlamePath = [FlameSegment.move(x: -201.389, y: 1845.66)]
-        + flameUpperPath + flameLowerPath.dropFirst()
+        + flameUpperPath + Array(flameLowerPath.dropFirst())
 
     private static func addFlame(to path: CGMutablePath,
                                  direction: Direction,

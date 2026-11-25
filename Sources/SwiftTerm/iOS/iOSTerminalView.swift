@@ -331,6 +331,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
      */
     public var notifyUpdateChanges = false
 
+    // Host-app prompt / line-editor bookkeeping (used by a-Shell and similar
+    // front-ends that drive TerminalView without a PTY local-echo path).
+    public var promptline = 0
+    public var promptcolumn = 0
+    public var savedCursorLine = 0
+    public var savedCursorColumn = 0
+    public var savedCursorLinesTop = 0
+    public var currentCommandVoiceOver = ""
+
     /// If true, the caret view will show different shapes depending on the focus
     /// otherwise, it will behave like it is focused
     public var caretViewTracksFocus: Bool {
@@ -3242,7 +3251,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         koreanResyllabificationTransaction.begin(deletedText: String(deletedText))
     }
 
-    func ensureCaretIsVisible ()
+    public func ensureCaretIsVisible ()
     {
         let shouldUpdate = withTerminal { terminal -> Bool in
             guard !terminal.synchronizedOutputActive else { return false }
