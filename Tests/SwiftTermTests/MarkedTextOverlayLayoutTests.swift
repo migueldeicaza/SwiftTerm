@@ -113,6 +113,101 @@ final class MarkedTextOverlayLayoutTests {
         #expect(cells[cols] == (row: 1, column: 0))
     }
 
+    /// Puts the caret on the first row at `column`, after a prompt that fills the
+    /// columns to its left, and marks `text`. Returns the terminal cell where each
+    /// character of `text` shows, as (row below the caret's row, column).
+    private func cellsAfterPrompt(_ text: String, caretColumn column: Int,
+                                  in view: TerminalView) throws -> [(row: Int, column: Int)] {
+        view.feed(text: String(repeating: "-", count: column))
+        // The caret follows the cursor in the frame paths, which do not run without a window.
+        view.updateCursorPosition()
+        view.setMarkedText(text)
+        let overlay = try #require(view.dictationOverlay)
+        let origin = overlay.textContainerOrigin
+        let cell: CGSize = view.cellDimension
+        return try characterPositions(view).map { position in
+            let y = view.caretView.frame.maxY - overlay.frame.maxY + origin.y + position.y
+            return (row: Int((y / cell.height).rounded()),
+                    column: Int(((overlay.frame.minX + origin.x + position.x) / cell.width).rounded()))
+        }
+    }
+
+    /// TextKit drops an exclusion-path line fragment narrower than 15 points, so
+    /// the overlay once drew a caret's text in the last column at the first column.
+    @Test func testTextStartsAtACaretInTheLastColumn() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        let cells = try cellsAfterPrompt("xy", caretColumn: cols - 1, in: view)
+        #expect(cells.count == 2)
+        #expect(cells.first.map { $0 == (row: 0, column: cols - 1) } == true)
+        #expect(cells.last.map { $0 == (row: 1, column: 0) } == true)
+    }
+
+    /// A wide character at a caret in the last column goes to the next row, as
+    /// it does when the terminal writes it.
+    @Test func testWideCharacterAtACaretInTheLastColumnStartsOnTheNextRow() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        let cells = try cellsAfterPrompt("日b", caretColumn: cols - 1, in: view)
+        #expect(cells.count == 2)
+        #expect(cells.first.map { $0 == (row: 1, column: 0) } == true)
+        #expect(cells.last.map { $0 == (row: 1, column: 2) } == true)
+    }
+
+    /// Only the caret's row starts at the caret; the line after a newline in
+    /// dictated text starts at the first column.
+    @Test func testLineAfterANewlineStartsAtTheFirstColumn() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cells = try cellsAfterPrompt("ab\ncd", caretColumn: 10, in: view)
+        let visible = cells.enumerated().filter { $0.offset != 2 }.map(\.element)
+        #expect(visible.count == 4)
+        #expect(visible.map(\.row) == [0, 0, 1, 1])
+        #expect(visible.map(\.column) == [10, 11, 0, 1])
+    }
+
+    /// A prompt that fills the row leaves the caret on the last column with a
+    /// wrap pending, so the next character, narrow or wide, goes to the next row.
+    @Test func testTextAfterAPendingWrapStartsOnTheNextRow() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        let cells = try cellsAfterPrompt("xy", caretColumn: cols, in: view)
+        #expect(cells.count == 2)
+        #expect(cells.first.map { $0 == (row: 1, column: 0) } == true)
+        #expect(cells.last.map { $0 == (row: 1, column: 1) } == true)
+    }
+
+    /// With autowrap reset, the next character overwrites the last column, so
+    /// the text stays at the caret.
+    @Test func testTextAfterAFilledRowWithoutAutowrapStaysAtTheCaret() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        view.feed(text: "\u{1b}[?7l")
+        let cells = try cellsAfterPrompt("x", caretColumn: cols, in: view)
+        #expect(cells.count == 1)
+        #expect(cells.first.map { $0 == (row: 0, column: cols - 1) } == true)
+    }
+
+    /// Right-to-left text starts at the caret as left-to-right text does; a
+    /// natural direction would put the indent on the right edge.
+    @Test func testRightToLeftTextStartsAtTheCaret() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cells = try cellsAfterPrompt("שלום", caretColumn: 10, in: view)
+        #expect(cells.count == 4)
+        #expect(cells.allSatisfy { $0.row == 0 })
+        #expect(cells.map(\.column).sorted() == [10, 11, 12, 13])
+    }
+
+    /// A zero-width first character goes with the wide character after it, so
+    /// at a caret in the last column both start on the next row.
+    @Test func testZeroWidthFirstCharacterDoesNotKeepAWideOneOnTheCaretRow() throws {
+        let view = TerminalView.makeForMarkedTextTests()
+        let cols = view.withTerminal { $0.cols }
+        let cells = try cellsAfterPrompt("\u{0301}日", caretColumn: cols - 1, in: view)
+        #expect(cells.count == 2)
+        #expect(cells.allSatisfy { $0.row == 1 })
+        #expect(cells.last.map { $0.column == 0 } == true)
+    }
+
     /// A wide character that does not fit in the last column goes to the next row.
     @Test func testWideCharacterMovesToTheNextRowWhenOneColumnRemains() throws {
         let view = TerminalView.makeForMarkedTextTests()
