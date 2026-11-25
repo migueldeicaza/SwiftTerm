@@ -146,6 +146,21 @@ struct PrintAndCsiFastPathTests {
         expectSameState(whole, single, "byte at a time")
     }
 
+    @Test func aPlainScalarRunAfterACursorMoveEndsTheCursorBoundary() {
+        // After a cursor move, the emoji arrives in a print run of its own
+        // (the plain-scalar path). The joiner sequence that follows must
+        // still join it, as it does when the text arrives in one feed.
+        let (whole, _) = TerminalTestHarness.makeTerminal(cols: 10, rows: 2)
+        let (split, _) = TerminalTestHarness.makeTerminal(cols: 10, rows: 2)
+        whole.feed(byteArray: Array("\(Self.esc)[2G😀\u{200D}🧑".utf8))
+        split.feed(byteArray: Array("\(Self.esc)[2G".utf8))
+        split.feed(byteArray: Array("😀".utf8))
+        split.feed(byteArray: Array("\u{200D}🧑".utf8))
+        #expect(whole.buffer.lines[0].packedView(at: 1).getScalarValues() ==
+                [0x1F600, 0x200D, 0x1F9D1])
+        expectSameState(whole, split, "plain-scalar run after a cursor move")
+    }
+
     private func expectSameState(_ lhs: Terminal, _ rhs: Terminal, _ label: Comment) {
         #expect(lhs.buffer.x == rhs.buffer.x, label)
         #expect(lhs.buffer.y == rhs.buffer.y, label)

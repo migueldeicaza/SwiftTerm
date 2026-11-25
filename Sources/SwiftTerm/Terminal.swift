@@ -1986,17 +1986,18 @@ open class Terminal {
         guard incomingBreak == .consonant else {
             return nil
         }
-        var foundLinker = false
+        // Unicode 18 GB9c: InCB=Linker InCB=Extend* × InCB=Consonant. Unlike
+        // Unicode 15.1 to 17, the rule does not need a consonant before the
+        // linker, so a spacing vowel or a chillu before the linker does not
+        // stop it. The standard library can have older rules, so the
+        // `candidate.count` test above does not decide this case.
         for value in cell.getScalarValues().reversed() {
             switch UnicodeUtil.indicConjunctBreak(value) {
             case .extend:
                 continue
             case .linker:
-                foundLinker = true
-            case .consonant:
-                guard foundLinker else { return nil }
                 return candidate.unicodeScalars.map { $0.value }
-            case .none:
+            case .consonant, .none:
                 return nil
             }
         }
@@ -2140,6 +2141,7 @@ open class Terminal {
             previous = 0
         }
         guard previous != 0x200D, !UnicodeUtil.isGraphemePrepend(previous) else { return false }
+        cursorStartsNewGrapheme = false
         updateRange(borrowing: buffer, buffer.y)
         buffer.insertCharacter(makePackedCell(styleID: curStyleID, scalar: scalar, width: Int8(width),
                                               payloadCode: resolveActiveHyperlinkPayloadCode()))
@@ -2221,7 +2223,12 @@ open class Terminal {
         @inline(__always)
         func joinWithPrevious(_ value: UInt32, properties: UInt8,
                               width: Int) -> UnicodeUtil.GraphemeJoin {
-            if cursorStartsNewGrapheme && width > 0 { return .breaks }
+            // A spacing mark (Mc) widens the cell it joins, so after a cursor
+            // move it starts a new grapheme, as a spacing character does.
+            if cursorStartsNewGrapheme &&
+               (width > 0 || UnicodeUtil.isSpacingMarkWidth(value)) {
+                return .breaks
+            }
             let previous = resolvePreviousScalar()
             guard previous != 0 else { return .breaks }
             // Batchable scalars exclude emoji modifiers, so the emoji-modifier
@@ -2687,7 +2694,15 @@ open class Terminal {
                     continue
                 }
                 if chWidth == 0 {
-                    continue
+                    // UAX #29 makes a spacing mark that joins nothing the
+                    // start of a grapheme. Give it a cell, so that the text
+                    // stays visible and the marks after it have a cell to
+                    // join. Other zero-width scalars are dropped.
+                    guard UnicodeUtil.isSpacingMarkWidth(firstScalarValue) else {
+                        continue
+                    }
+                    chWidth = 1
+                    cursorStartsNewGrapheme = false
                 }
                 // The accessibility stack might not need this
                 //let screenReaderMode = options.screenReaderMode
