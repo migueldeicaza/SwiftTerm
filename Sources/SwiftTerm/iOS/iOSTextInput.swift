@@ -153,7 +153,8 @@ extension TerminalView: UITextInput {
         // by its length could remove the wrong characters, so the text is only inserted.
         if textInputStorageIsPlaceholder {
             dropTextInputPlaceholder()
-            insertText(text)
+            // As below: a replacement is sent as it is, without the latched Ctrl or Meta.
+            commitTextInput(text, applyModifiers: false)
             return
         }
 
@@ -169,10 +170,7 @@ extension TerminalView: UITextInput {
         if let normalized = normalizedAutoPeriodReplacementText(text, oldText: oldText, rangeToReplace: r) {
             replacementText = normalized
         }
-        let backspaces = oldText.count
-        for _ in 0..<backspaces {
-            self.send ([0x7f])
-        }
+        sendCountedRawBackspaces(oldText.count)
         self.send (txt: replacementText)
 
         let insertionIndex = r.startPosition.offset

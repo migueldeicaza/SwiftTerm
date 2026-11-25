@@ -349,6 +349,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     let textBuilder = SnapshotTextBuilder()
 
     nonisolated let diagnosticsState = Locked(TerminalView.Diagnostics())
+    /// Counts the output batches fed through the feed sender. Only the iOS text input reads
+    /// it; it is declared here because the shared feed path increments it.
+    nonisolated let outputGeneration = Locked(0)
 #if canImport(MetalKit)
     var metalView: (NSView & MetalRenderTarget)?
     private var metalDrawDelegate: MetalMainActorDrawDelegate?

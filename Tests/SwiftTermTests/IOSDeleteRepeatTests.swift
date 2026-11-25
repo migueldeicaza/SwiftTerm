@@ -11,7 +11,16 @@ import Testing
 struct IOSDeleteRepeatTests {
     private final class Delegate: TerminalViewDelegate {
         var writes: [[UInt8]] = []
-        func send(source: TerminalView, data: ArraySlice<UInt8>) { writes.append(Array(data)) }
+        /// Echo each backspace inside `send`, as a host that answers synchronously would.
+        var echoesBackspaces = false
+        func send(source: TerminalView, data: ArraySlice<UInt8>) {
+            writes.append(Array(data))
+            if echoesBackspaces {
+                for byte in data where byte == 0x7f {
+                    source.feed(text: "\u{8} \u{8}")
+                }
+            }
+        }
         func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {}
         func setTerminalTitle(source: TerminalView, title: String) {}
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
@@ -83,6 +92,47 @@ struct IOSDeleteRepeatTests {
         #expect(view.textInputStorage == spaces(3))
     }
 
+    @Test func aDiagnosticsResetDoesNotHideAnEcho() {
+        let (view, _) = fixture(screen: "$ abc")
+        view.deleteBackward()
+        view.feed(text: "\u{8} \u{8}")
+        view.resetDiagnostics()
+        // Five bytes, as many as the screen: the fed-byte count lands back where it was at
+        // the backspace, which made the echoed backspace look unechoed.
+        view.feed(text: "\u{1b}[00m")
+        view.resetInputBuffer()
+
+        view.deleteBackward()
+
+        // "$ ab" less the one new backspace.
+        #expect(view.textInputStorage == spaces(3))
+    }
+
+    @Test func anEchoInsideSendCountsAsTheEcho() {
+        let (view, delegate) = fixture(screen: "$ abc")
+        delegate.echoesBackspaces = true
+
+        view.deleteBackward()
+
+        // The host erased the character before `send` returned: "$ ab", nothing unechoed.
+        #expect(view.textInputStorage == spaces(4))
+    }
+
+    @Test func replaceCountsItsBackspaces() {
+        let (view, delegate) = fixture(screen: "$ ")
+        view.insertText("ab")
+        view.feed(text: "ab")
+        let end = view.endOfDocument
+        let start = view.position(from: end, offset: -1)!
+        view.replace(view.textRange(from: start, to: end)!, withText: "")
+
+        view.deleteBackward()
+
+        #expect(backspaces(delegate) == 2)
+        // "$ ab" less the backspace from `replace` and the one from the delete.
+        #expect(view.textInputStorage == spaces(2))
+    }
+
     @Test func aRangeDeleteCountsItsBackspaces() {
         let (view, delegate) = fixture(screen: "$ ")
         view.insertText("ab")
@@ -138,6 +188,22 @@ struct IOSDeleteRepeatTests {
         #expect(backspaces(delegate) == sentBefore)
         #expect(delegate.writes.last == Array("cd".utf8))
         #expect(!view.textInputStorageIsPlaceholder)
+    }
+
+    @Test func replacingInThePlaceholderIgnoresALatchedControl() throws {
+        let (view, delegate) = fixture(screen: "$ ls")
+        view.deleteBackward()
+        // Ctrl latched on the accessory bar, which is where the text input reads it.
+        let accessory = try #require(view.terminalAccessory)
+        accessory.controlModifier = true
+        let end = view.endOfDocument
+        let start = view.position(from: end, offset: -1)!
+
+        view.replace(view.textRange(from: start, to: end)!, withText: "cd")
+
+        // A replacement goes as it is, as `replace` always sent it; Ctrl stays for the next key.
+        #expect(delegate.writes.last == Array("cd".utf8))
+        #expect(accessory.controlModifier)
     }
 
     @Test func theDoubleSpacePeriodSurvivesThePlaceholder() {
