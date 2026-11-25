@@ -45,7 +45,21 @@ final class BufferRef {
 public final class Buffer {
     private let _lines: CircularBufferLineList
     /// Identifier space shared by every packed cell in this buffer.
-    let cellArena: CellArena
+    private(set) var cellArena: CellArena
+
+    func collectStyleIdentifiers(into identifiers: inout Set<UInt16>) {
+        for index in 0..<_lines.count {
+            _lines[index].collectStyleIdentifiers(into: &identifiers)
+        }
+    }
+
+    func adoptArena(_ arena: CellArena) {
+        _lines.discardUnusedLines()
+        cellArena = arena
+        for index in 0..<_lines.count {
+            _lines[index].adoptArena(arena)
+        }
+    }
 
     /// The box handed to lines and to the line list so they can reach back here.
     /// Implicitly unwrapped because it can only be built once `self` exists.

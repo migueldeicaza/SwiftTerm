@@ -594,7 +594,10 @@ open class Terminal {
     }
 
     // The current buffers
-    private let cellArena: CellArena
+    private var cellArena: CellArena
+    // If the live buffers themselves fill the table, retain the bounded
+    // fallback without rescanning them for every SGR in the same input batch.
+    private var styleReclamationBlocked = false
     var normalBuffer, altBuffer: Buffer
     /**
      * Returns the active buffer (either the normal buffer or the alternative buffer)
@@ -901,10 +904,15 @@ open class Terminal {
     private func setCurrentAttribute(_ attribute: Attribute) {
         guard attribute != curAttr else { return }
 
-        let styleID = cellArena.intern(attribute: attribute)
+        var arenaChanged = false
+        var styleID = cellArena.intern(attribute: attribute)
+        if styleID == nil && !styleReclamationBlocked {
+            arenaChanged = reclaimStyles(for: attribute)
+            styleID = cellArena.intern(attribute: attribute)
+        }
         let effectiveAttribute = styleID == nil ? CharData.defaultAttr : attribute
         let effectiveStyleID = styleID ?? 0
-        let backgroundChanged = effectiveAttribute.bg != curAttr.bg
+        let backgroundChanged = effectiveAttribute.bg != curAttr.bg || arenaChanged
         curAttr = effectiveAttribute
         curStyleID = effectiveStyleID
 
@@ -926,6 +934,33 @@ open class Terminal {
         currentEraseAttribute = eraseAttribute
         currentEraseBlankCell = eraseBlank
         currentEraseSpaceCell = eraseSpace
+    }
+
+    /// Styles that left the screen and scrollback must not consume their
+    /// 16-bit identifiers for the rest of the terminal's lifetime. Re-home
+    /// retained cells in a fresh arena, leaving old snapshot arenas immutable.
+    private func reclaimStyles(for attribute: Attribute) -> Bool {
+        var referenced: Set<UInt16> = [0]
+        normalBuffer.collectStyleIdentifiers(into: &referenced)
+        altBuffer.collectStyleIdentifiers(into: &referenced)
+        // Reserve the requested style and its erase background. If all the
+        // styles are still live, the existing resource limit continues to apply.
+        guard referenced.count + 2 <= cellArena.attributeLimit + 1 else {
+            styleReclamationBlocked = true
+            return false
+        }
+
+        let arena = CellArena(styleCapacity: cellArena.attributeLimit,
+                              graphemeCapacity: cellArena.graphemeLimit)
+        _ = arena.intern(attribute: attribute)
+        _ = arena.intern(attribute: Attribute(fg: CharData.defaultAttr.fg,
+                                             bg: attribute.bg,
+                                             style: CharData.defaultAttr.style))
+        normalBuffer.adoptArena(arena)
+        altBuffer.adoptArena(arena)
+        cellArena = arena
+        refresh(startRow: 0, endRow: rows - 1)
+        return true
     }
     // The requested conformance from DECSCL command
     enum TerminalConformance: Sendable {
@@ -1423,6 +1458,7 @@ open class Terminal {
     }
     public func setup (isReset: Bool = false)
     {
+        styleReclamationBlocked = false
         // Sadly a duplicate of much of what lives in init() due to Swift not allowing me to
         // call this
         _cols = max (options.cols, MINIMUM_COLS)
@@ -8093,6 +8129,7 @@ open class Terminal {
      */
     public func parse (buffer: ArraySlice<UInt8>)
     {
+        if parseDepth == 0 { styleReclamationBlocked = false }
         parseDepth += 1
         defer {
             parseDepth -= 1
@@ -8122,6 +8159,7 @@ open class Terminal {
     /// Parses one borrowed batch and completes all parser effects before return.
     private func parseBorrowed(_ bytes: Span<UInt8>)
     {
+        if parseDepth == 0 { styleReclamationBlocked = false }
         parseDepth += 1
         defer {
             parseDepth -= 1

@@ -713,6 +713,14 @@ internal final class CircularBufferLineList {
         }
     }
 
+    /// Inactive ring slots can retain trimmed rows for reuse. Their packed
+    /// identifiers must not reappear after the owning buffer changes arenas.
+    func discardUnusedLines() {
+        for index in count..<capacity {
+            storage[getCyclicIndex(index)] = nil
+        }
+    }
+
     /// Empties the ring in place and gives it `newMaxLength` slots.
     ///
     /// `Buffer.clear` uses this instead of replacing its list object. That

@@ -603,12 +603,23 @@ public final class BufferLine: CustomDebugStringConvertible {
 
     var cellArena: CellArena { storage.arena }
 
+    /// Includes the cached tail blank, which a later resize can materialize.
+    func collectStyleIdentifiers(into identifiers: inout Set<UInt16>) {
+        identifiers.insert(tailBlankCell.styleID)
+        for index in 0..<storage.count {
+            identifiers.insert(storage.rawCell(at: index).styleID)
+        }
+    }
+
     func adoptArena(_ arena: CellArena) {
         guard storage.arena !== arena else { return }
         let tailAttribute = storage.arena.attribute(for: tailBlankCell)
         storage = storage.rehomed(to: arena)
         tailBlankCell = arena.pack(attribute: tailAttribute, scalar: 0,
                                    widthState: .narrow)!
+        // Render snapshots must copy the new identifiers, but selection and
+        // search still see exactly the same text.
+        bumpRenderOnly()
     }
 
     public func getData() -> [CharData] {

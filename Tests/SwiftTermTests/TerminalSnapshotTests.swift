@@ -48,6 +48,34 @@ struct TerminalSnapshotTests {
         #expect(snapshot.cursor?.logicalCol == 8)
     }
 
+    @Test func styleReclamationInvalidatesPackedRenderAttributes() throws {
+        let view = makeView(cols: 8, rows: 3)
+        view.feed(text: "\u{1b}[38;2;12;34;56mA")
+        let snapshot = TerminalSnapshot()
+        let builder = SnapshotTextBuilder()
+        #expect(refresh(snapshot, from: view) == .refreshed)
+        let before = try #require(snapshot.rows.first)
+        let beforeContext = SnapshotRenderContext(viewState: FrameViewState(view: view), snapshot: snapshot)
+        _ = builder.buildAttributedString(row: before, absoluteRow: snapshot.firstRow, context: beforeContext)
+
+        var stream = ""
+        for color in 0..<70_000 {
+            stream += "\u{1b}[38;2;\((color >> 16) & 255);\((color >> 8) & 255);\(color & 255)m\u{1b}[2;1HX"
+        }
+        view.feed(text: stream)
+        #expect(refresh(snapshot, from: view) == .refreshed)
+        #expect(snapshot.rows[0].line[0].attribute.fg == .trueColor(red: 12, green: 34, blue: 56))
+        let row = snapshot.rows[1]
+        let context = SnapshotRenderContext(viewState: FrameViewState(view: view), snapshot: snapshot)
+        let rendered = builder.buildAttributedString(row: row, absoluteRow: snapshot.firstRow + 1, context: context)
+        let segment = try #require(rendered.segments.first)
+        let color = try #require((segment.attributedString.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)?.usingColorSpace(.sRGB))
+        let last = 69_999
+        #expect(abs(color.redComponent - CGFloat(last >> 16) / 255) < 0.0001)
+        #expect(abs(color.greenComponent - CGFloat((last >> 8) & 255) / 255) < 0.0001)
+        #expect(abs(color.blueComponent - CGFloat(last & 255) / 255) < 0.0001)
+    }
+
     @Test func frameBoundaryMessagesAreCheckedSendable() {
         requireSendable(FrameViewState.self)
         requireSendable(MainFrameEffects.self)
