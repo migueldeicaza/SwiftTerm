@@ -24,6 +24,11 @@ SwiftTerm only owns the terminal emulator UI/API; command dispatch stays in a-Sh
 `send`/`feed` over Foundation `Pipe` + `ios_system` (not `LocalProcess`).
 See [`Docs/host-ui-backend.md`](host-ui-backend.md).
 
+**Prescribed UI backend for Web on Windows:** WASM package (`write` /
+`readOutput` / `snapshot`) + host Canvas/input; shell via WebSocket to
+PTY/SSH (WSL or remote). Not a-Shell’s command catalogue.
+See [`Docs/host-ui-backend-web-windows.md`](host-ui-backend-web-windows.md).
+
 ## a-Shell package pin
 
 a-Shell keeps a **SwiftTerm git submodule** for Xcode

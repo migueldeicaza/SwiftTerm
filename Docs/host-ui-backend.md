@@ -94,3 +94,11 @@ Sửa emulator → chỉ SwiftTerm. Sửa pipe/`ios_system` → chỉ a-shell.
 | SSH → `send`/`feed` | Client SSH thuần (sample iOSTerminal) | Chỉ khi user chạy `ssh` *bên trong* ios_system |
 | ExternalTerminalView | Emulator remote / process khác | **Không** (emulator local trong app) |
 | **Pipe + ios_system** | Lệnh local trong sandbox iOS | **Đúng — backend lõi** |
+
+---
+
+## Web trên Windows
+
+UI terminal trong trình duyệt dùng engine **WASM** (`write` / `readOutput` / `snapshot`), không dùng `TerminalView` UIKit và không có `LocalProcess` trên Windows. Backend lệnh = WebSocket tới PTY/SSH (WSL hoặc server Linux/Mac).
+
+→ [`Docs/host-ui-backend-web-windows.md`](host-ui-backend-web-windows.md)
