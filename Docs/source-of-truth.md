@@ -29,6 +29,9 @@ See [`Docs/host-ui-backend.md`](host-ui-backend.md).
 PTY/SSH (WSL or remote). Not a-Shell’s command catalogue.
 See [`Docs/host-ui-backend-web-windows.md`](host-ui-backend-web-windows.md).
 
+**System comparison (fork vs Miguel + holzschu):**  
+[`Docs/system-comparison-report-2026-11-26.md`](system-comparison-report-2026-11-26.md).
+
 ## a-Shell package pin
 
 a-Shell keeps a **SwiftTerm git submodule** for Xcode
