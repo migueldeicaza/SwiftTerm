@@ -381,6 +381,23 @@ internal final class CircularBufferLineList {
       }
     }
 
+    /// Calls `body` with every line the ring holds, counted or not.
+    ///
+    /// A row below the counted lines is created by the subscript on first use
+    /// and stays in its slot without being counted, and `pop`, `trimStart` and
+    /// a smaller `count` leave their lines behind. All of them come back as
+    /// screen rows once `yBase + rows` reaches past `count`, so whatever must
+    /// hold for a screen row (its width, above all) must hold for them too.
+    /// Empty slots are not created.
+    func forEachHeldLine(_ body: (BufferLine) -> Void)
+    {
+        for index in 0..<capacity {
+            if let line = storage[index] {
+                body(line)
+            }
+        }
+    }
+
     func push (_ value: BufferLine)
     {
 #if SWIFTTERM_EMBEDDED
