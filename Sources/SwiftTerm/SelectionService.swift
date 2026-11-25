@@ -139,8 +139,11 @@ public class SelectionService: CustomDebugStringConvertible {
             newRowSelectionAnchor = nil
         }
 
+        // The same text is selected at its new rows: keep the revision.
+        let unchangedRevision = revision
         start = newStart
         end = newEnd
+        revision = unchangedRevision
         pivot = newPivot
         wordSelectionAnchor = newWordSelectionAnchor
         rowSelectionAnchor = newRowSelectionAnchor
@@ -345,6 +348,7 @@ public class SelectionService: CustomDebugStringConvertible {
     var _active: Bool = false {
         didSet {
             guard _active != oldValue else { return }
+            revision &+= 1
             terminal.selectionActiveDidChange (nowActive: _active)
         }
     }
@@ -380,8 +384,17 @@ public class SelectionService: CustomDebugStringConvertible {
     public private(set) var start: Position {
         didSet {
           hasSelectionRange = start != end
+          if start != oldValue { revision &+= 1 }
         }
     }
+
+    /// Counts the changes to the selected range: `start`, `end`, `active`
+    /// and `isBlock`. The views compare the value at the start and at the end
+    /// of a user gesture to know if the gesture changed the selection.
+    ///
+    /// A translation of the selection for an in-place scroll does not count,
+    /// because the selected text stays the same.
+    private(set) var revision: UInt64 = 0
 
     /**
      * Used to track the pivot point when selection in iOS-style selection
@@ -407,6 +420,7 @@ public class SelectionService: CustomDebugStringConvertible {
     public private(set) var end: Position {
         didSet {
           hasSelectionRange = start != end
+          if end != oldValue { revision &+= 1 }
         }
     }
     
@@ -419,7 +433,11 @@ public class SelectionService: CustomDebugStringConvertible {
     /// `end`, on every row between them. Otherwise it runs from `start` to
     /// `end` in reading order. ``startBlockSelection(bufferPosition:)`` makes
     /// a block; every other way of starting a selection makes a stream.
-    public private(set) var isBlock: Bool = false
+    public private(set) var isBlock: Bool = false {
+        didSet {
+            if isBlock != oldValue { revision &+= 1 }
+        }
+    }
 
     /**
      * Starts the selection from the specific screen-relative location

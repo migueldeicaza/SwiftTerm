@@ -148,7 +148,9 @@ The view has the appearance properties of `TerminalView`, for example `font`,
 `lineSpacing`, `nativeForegroundColor`, `nativeBackgroundColor`, `caretColor`,
 `minimumContrastRatio` and `bidiHostPolicy`. Call `setUseMetal(_:)` to draw
 with the Metal renderer. If the device has no Metal support, the method
-throws ``MetalError`` and the view continues with Core Graphics.
+throws ``MetalError`` and the view continues with Core Graphics. With Metal,
+`metalTextBlending` selects how glyph coverage is blended, as described in
+<doc:GPURendering>.
 
 ### Hit testing
 

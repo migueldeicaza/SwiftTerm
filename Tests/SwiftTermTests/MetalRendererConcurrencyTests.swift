@@ -42,7 +42,13 @@ struct MetalRendererConcurrencyTests {
         #expect(state.setCursorBlinkWanted(true))
         controller.apply(shouldBlink: true)
         #expect(controller.isRunning)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.04))
+        // Other main-actor tests run in this nested run loop. One long test
+        // can use all of a short wait before the timer fires, so wait again
+        // until the timer fired, up to two seconds.
+        let deadline = Date().addingTimeInterval(2)
+        repeat {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.04))
+        } while redraws.withLock({ $0 }) == 0 && Date() < deadline
         #expect(redraws.withLock { $0 } > 0)
 
         let redrawCount = redraws.withLock { $0 }

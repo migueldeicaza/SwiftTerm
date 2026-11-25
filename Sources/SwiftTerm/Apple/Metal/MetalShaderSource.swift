@@ -85,6 +85,17 @@ fragment float4 terminal_text_fragment_gray(GlyphOut in [[stage_in]],
     return float4(in.color.rgb * coverage, in.color.a * coverage);
 }
 
+fragment float4 terminal_text_fragment_gray_linear(GlyphOut in [[stage_in]],
+                                                   texture2d<float> atlas [[texture(0)]],
+                                                   sampler samp [[sampler(0)]]) {
+    float coverage = atlas.sample(samp, in.texCoord).r;
+    float luma = dot(in.color.rgb, float3(0.2126, 0.7152, 0.0722));
+    float darkCurve = 1.0 - pow(max(0.0, 1.0 - coverage), 1.0 / 1.8);
+    float lightCurve = pow(max(0.0, coverage), 1.0 / 1.45);
+    float adjusted = mix(darkCurve, lightCurve, clamp(luma, 0.0, 1.0));
+    return float4(in.color.rgb * adjusted, in.color.a * adjusted);
+}
+
 struct ColorVertex {
     float2 position;
     float4 color;

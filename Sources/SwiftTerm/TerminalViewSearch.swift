@@ -20,19 +20,34 @@ extension TerminalView {
     /// - Returns: `true` if a match was found.
     @discardableResult
     public func findNext (_ term: String, options: SearchOptions = SearchOptions(), scrollToResult: Bool = true) -> Bool {
+        find(term, options: options, scrollToResult: scrollToResult, next: true, highlights: .host)
+    }
+
+    /// One find in one lock transaction, so that no frame sees a state
+    /// between the find and a change of the highlight pattern.
+    /// - Parameter highlights: the owner whose highlight pattern becomes
+    ///   this term. Nil changes no highlight pattern: the find shows its
+    ///   match, and highlights that are on screen stay as they are.
+    @discardableResult
+    func find (_ term: String, options: SearchOptions, scrollToResult: Bool = true,
+               next: Bool, highlights: SearchHighlightOwner?) -> Bool {
         let resultRow: Int? = withTerminal { _ in
             guard let search = search, let selection = selection else {
                 return nil
             }
 
             search.updateLastSelection(currentSearchSelection(selection))
-            if let result = search.findNext(term: term, options: options) {
+            let result = next
+                ? search.findNext(term: term, options: options, highlights: highlights)
+                : search.findPrevious(term: term, options: options, highlights: highlights)
+            if let result {
                 return applySearchResultLocked(result, selection: selection)
             }
 
             selection.selectNone()
             return nil
         }
+        invalidateTerminalContents()
         if let resultRow {
             if scrollToResult {
                 scrollToReveal(row: resultRow)
@@ -50,52 +65,117 @@ extension TerminalView {
     /// - Returns: `true` if a match was found.
     @discardableResult
     public func findPrevious (_ term: String, options: SearchOptions = SearchOptions(), scrollToResult: Bool = true) -> Bool {
-        let resultRow: Int? = withTerminal { _ in
-            guard let search = search, let selection = selection else {
-                return nil
-            }
-
-            search.updateLastSelection(currentSearchSelection(selection))
-            if let result = search.findPrevious(term: term, options: options) {
-                return applySearchResultLocked(result, selection: selection)
-            }
-
-            selection.selectNone()
-            return nil
-        }
-        if let resultRow {
-            if scrollToResult {
-                scrollToReveal(row: resultRow)
-            }
-            return true
-        }
-        return false
+        find(term, options: options, scrollToResult: scrollToResult, next: false, highlights: .host)
     }
 
-
     /// Position of the current match among all matches for `term`: a 1-based
-    /// `index` (0 when there is no current match) and the `total` match count
-    /// (capped at `limit`). Drives a "2/14" style counter in a search UI.
+    /// `index` (0 when there is no current match, or it is past `limit`) and
+    /// the `total` match count (capped at `limit`). Drives a "2/14" style
+    /// counter in a search UI.
     public func searchMatchSummary (_ term: String, options: SearchOptions = SearchOptions(), limit: Int = 1000) -> (index: Int, total: Int) {
+        let summary = searchMatchCount(term, options: options, limit: limit)
+        return (summary.index, summary.total)
+    }
+
+    /// What a search UI needs for its counter, read under one hold of the lock.
+    struct SearchMatchCount: Equatable {
+        /// 1-based position of the selected match; 0 if it is not among the counted ones.
+        var index: Int
+        /// The number of matches, at most the limit.
+        var total: Int
+        /// There are more matches than the limit.
+        var capped: Bool
+        /// ``SearchService/generation`` when the count was taken.
+        var generation: Int
+    }
+
+    /// Counts the matches for `term` and locates the selected one among them.
+    func searchMatchCount (_ term: String, options: SearchOptions, limit: Int) -> SearchMatchCount {
         withTerminal { _ in
-            guard let search = search else {
-                return (0, 0)
+            searchMatchCountLocked(term, options: options, limit: limit)
+        }
+    }
+
+    private func searchMatchCountLocked (_ term: String, options: SearchOptions, limit: Int) -> SearchMatchCount {
+        terminal.terminalLock.preconditionLocked()
+        guard let search else {
+            return SearchMatchCount(index: 0, total: 0, capped: false, generation: 0)
+        }
+        // Output invalidates the last result but leaves the match selected.
+        var current = search.lastResult.map { Position(col: $0.col, row: $0.row) }
+        if current == nil, let selection {
+            current = currentSearchSelection(selection)?.start
+        }
+        let summary = search.matchSummary(term: term, options: options, limit: limit, current: current)
+        return SearchMatchCount(index: summary.index, total: summary.total, capped: summary.capped,
+                                generation: search.generation)
+    }
+
+    /// Finds the next (or previous) match and, when `countLimit` is given,
+    /// counts the matches under the same hold of the lock, so that output
+    /// arriving in between cannot make the count disagree with the selection.
+    /// - Parameter highlights: the owner whose highlight pattern becomes
+    ///   this term, or nil to change no highlight pattern.
+    func find (_ term: String, options: SearchOptions, forward: Bool, countLimit: Int?,
+               highlights: SearchHighlightOwner?) -> (found: Bool, count: SearchMatchCount?) {
+        let outcome: (row: Int?, count: SearchMatchCount?) = withTerminal { _ in
+            guard let search = search, let selection = selection else {
+                return (nil, nil)
             }
-            let all = search.findAll(term: term, options: options, limit: limit)
-            guard let last = search.lastResult,
-                  let i = all.firstIndex(where: { $0.row == last.row && $0.col == last.col }) else {
-                return (0, all.count)
+            search.updateLastSelection(currentSearchSelection(selection))
+            let result = forward ? search.findNext(term: term, options: options, highlights: highlights)
+                : search.findPrevious(term: term, options: options, highlights: highlights)
+            guard let result else {
+                selection.selectNone()
+                return (nil, nil)
             }
-            return (i + 1, all.count)
+            let row = applySearchResultLocked(result, selection: selection)
+            return (row, countLimit.map { searchMatchCountLocked(term, options: options, limit: $0) })
+        }
+        // A change of the highlight pattern needs a frame also with no match.
+        invalidateTerminalContents()
+        if let row = outcome.row {
+            scrollToReveal(row: row)
+        }
+        return (outcome.row != nil, outcome.count)
+    }
+
+    /// The search generation: it changes when the content may have changed.
+    func searchGeneration () -> Int {
+        withTerminal { _ in
+            search?.generation ?? 0
         }
     }
 
     /// Clears the current search state and selection.
     public func clearSearch () {
+        clearSearch(keepingHostHighlights: false)
+    }
+
+    /// - Parameter keepingHostHighlights: true for the find bar, which
+    ///   removes only the highlights that it made active.
+    func clearSearch (keepingHostHighlights: Bool) {
         withTerminal { _ in
-            search?.reset()
+            search?.reset(keepingHostHighlights: keepingHostHighlights)
             selection?.selectNone()
         }
+        invalidateTerminalContents()
+    }
+
+    /// Removes the highlights that ``highlightsAllSearchMatches`` paints.
+    ///
+    /// The selection does not change, and the next ``findNext(_:options:scrollToResult:)``
+    /// continues from the current match and shows the highlights again.
+    public func clearSearchHighlights () {
+        clearSearchHighlights(owner: nil)
+    }
+
+    /// - Parameter owner: the owner whose highlights go, or nil for all.
+    func clearSearchHighlights (owner: SearchHighlightOwner?) {
+        withTerminal { _ in
+            search?.clearHighlightPattern(owner: owner)
+        }
+        invalidateTerminalContents()
     }
 
     private func applySearchResultLocked (_ result: SearchResult, selection: SelectionService) -> Int {

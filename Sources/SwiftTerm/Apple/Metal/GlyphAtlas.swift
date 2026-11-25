@@ -307,7 +307,7 @@ final class GlyphAtlas {
         loggedResetOverflow = false
     }
 
-    private func reset() {
+    func reset() {
         // Packing starts over from the origin. Every region handed out from here
         // on is written whole, padding included, before a frame samples it, so
         // the old pixels need no clearing.

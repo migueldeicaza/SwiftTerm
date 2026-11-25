@@ -25,9 +25,10 @@ struct AttributeCacheTests {
         SnapshotTextBuilder()
     }
 
-    private func makeContext(_ view: TerminalView) -> SnapshotRenderContext {
+    private func makeContext(_ view: TerminalView, cols: Int = 80,
+                             rows: Int = 1) -> SnapshotRenderContext {
         SnapshotRenderContext(viewState: FrameViewState(view: view), style: .empty,
-                              ansiColors: view.withTerminal { $0.ansiColors }, cols: 80)
+                              ansiColors: view.withTerminal { $0.ansiColors }, cols: cols, rows: rows)
     }
 
     /// Repeated lookups within one context must return equal dictionaries, and
@@ -95,6 +96,161 @@ struct AttributeCacheTests {
         _ = builder.getAttributes(Attribute(fg: .ansi256(code: 2), bg: .defaultColor, style: .none),
                                withUrl: false, context: context)
         #expect(builder.attributeCache.count == 2)
+    }
+
+    /// Styles disappear from the screen while the render context stays the
+    /// same. Their dictionaries must eventually leave the cache as well.
+    @Test(arguments: [false, true])
+    func attributeCacheReleasesOldStyles(withUrl: Bool) {
+        let builder = SnapshotTextBuilder(attributeCacheCapacity: 8)
+        let context = makeContext(makeView(), cols: 1)
+        weak var firstDictionary: NSDictionary?
+
+        for value in 0..<12 {
+            autoreleasepool {
+                let attribute = Attribute(
+                    fg: .trueColor(red: UInt8(value >> 8),
+                                   green: UInt8(value & 0xff), blue: 37),
+                    bg: .defaultColor, style: .none)
+                let attributes = builder.getAttributes(attribute, withUrl: withUrl,
+                                                       context: context)
+                if value == 0 {
+                    firstDictionary = attributes?.objectiveC
+                    #expect(firstDictionary != nil)
+                }
+            }
+        }
+
+        #expect(builder.attributeCache.count <= 8)
+        #expect(firstDictionary == nil)
+    }
+
+    /// Blank truecolor backgrounds use inline packed keys, so their variety
+    /// is not limited by the arena's interned style table. Repaint one cell
+    /// repeatedly to exercise the actual packed rendering path.
+    @Test func packedAttributeCacheStaysBoundedAcrossBackgroundChanges() {
+        let builder = SnapshotTextBuilder(attributeCacheCapacity: 8)
+        let context = makeContext(makeView(), cols: 1)
+        let line = BufferLine(cols: 1)
+        let row = TerminalSnapshot.Row(source: line, borrowing: true)
+        var maximumCachedAttributes = 0
+
+        for value in 0..<12 {
+            autoreleasepool {
+                let background = Attribute.Color.trueColor(
+                    red: UInt8(value >> 8), green: UInt8(value & 0xff), blue: 37)
+                line.fill(with: CharData(
+                    attribute: Attribute(fg: .defaultColor, bg: background, style: .none),
+                    code: 0))
+                let rendered = builder.buildAttributedString(row: row, absoluteRow: 0,
+                                                              context: context)
+                let color = rendered.segments.first?.attributedString.attribute(
+                    .backgroundColor, at: 0, effectiveRange: nil) as? NSColor
+                #expect(color == NSColor.make(red: CGFloat(value >> 8) / 255,
+                                               green: CGFloat(value & 0xff) / 255,
+                                               blue: 37.0 / 255, alpha: 1))
+                maximumCachedAttributes = max(maximumCachedAttributes,
+                                              builder.packedAttributeCacheCount)
+            }
+        }
+
+        #expect(maximumCachedAttributes > 0)
+        #expect(maximumCachedAttributes <= 8)
+    }
+
+    @Test(arguments: [false, true])
+    func largeGridKeepsAttributeCacheWarm(withUrl: Bool) throws {
+        let view = makeView()
+        let builder = makeBuilder()
+        let context = makeContext(view, cols: 100, rows: 42)
+        let attributes = (0..<4_200).map { value in
+            Attribute(fg: .trueColor(red: UInt8(value >> 8),
+                                     green: UInt8(value & 0xff), blue: 37),
+                      bg: .defaultColor, style: .none)
+        }
+        let firstPass = try attributes.map {
+            try #require(builder.getAttributes($0, withUrl: withUrl, context: context))
+        }
+        let nextFrame = makeContext(view, cols: 100, rows: 42)
+        #expect(nextFrame.identity == context.identity)
+        for (attribute, first) in zip(attributes, firstPass) {
+            let second = try #require(builder.getAttributes(
+                attribute, withUrl: withUrl, context: nextFrame))
+            #expect(first.objectiveC === second.objectiveC)
+        }
+        #expect(builder.attributeCache.count == attributes.count)
+    }
+
+    @Test func largeGridKeepsPackedAttributeCacheWarm() throws {
+        let view = makeView()
+        let builder = SnapshotTextBuilder(trueColorCacheCapacity: 1)
+        let arena = CellArena()
+        let rows = (0..<42).map { row in
+            let line = BufferLine(cols: 100, arena: arena)
+            for col in 0..<100 {
+                let value = row * 100 + col
+                line[col] = CharData(attribute: Attribute(
+                    fg: .defaultColor,
+                    bg: .trueColor(red: UInt8(value >> 8),
+                                   green: UInt8(value & 0xff), blue: 37), style: .none), code: 0)
+            }
+            return TerminalSnapshot.Row(source: line, borrowing: true)
+        }
+        var firstPass: [NSColor] = []
+        for pass in 0..<2 {
+            let context = makeContext(view, cols: 100, rows: rows.count)
+            for (index, row) in rows.enumerated() {
+                let rendered = builder.buildAttributedString(row: row, absoluteRow: index,
+                                                              context: context)
+                let text = try #require(rendered.segments.first?.attributedString)
+                for col in 0..<100 {
+                    let color = try #require(text.attribute(
+                        .backgroundColor, at: col, effectiveRange: nil) as? NSColor)
+                    if pass == 0 {
+                        firstPass.append(color)
+                    } else {
+                        // The one-entry color cache cannot hide an attribute-cache miss.
+                        #expect(color === firstPass[index * 100 + col])
+                    }
+                }
+            }
+            #expect(builder.packedAttributeCacheCount == 4_200)
+        }
+    }
+
+    /// A resize changes the limit but does not clear the cache, so a live
+    /// window drag stays warm. After a shrink, the next new style clears it.
+    @Test func gridResizeUpdatesAttributeCacheCapacity() throws {
+        let view = makeView()
+        let builder = SnapshotTextBuilder(attributeCacheCapacity: 2)
+        func lookUp(_ value: Int, rows: Int) throws -> NSDictionary {
+            try #require(builder.getAttributes(
+                Attribute(fg: .ansi256(code: UInt8(value)), bg: .defaultColor, style: .none),
+                withUrl: false, context: makeContext(view, cols: 1, rows: rows))).objectiveC
+        }
+
+        // One row: the limit is the minimum, 2.
+        for value in 0..<4 {
+            _ = try lookUp(value, rows: 1)
+        }
+        #expect(builder.attributeCache.count == 2)
+
+        // Two rows: the limit grows to 4 and the two cached entries stay.
+        var grown: [NSDictionary] = []
+        for value in 0..<4 {
+            grown.append(try lookUp(value, rows: 2))
+        }
+        #expect(builder.attributeCache.count == 4)
+
+        // Back to one row: existing entries still hit.
+        for value in 0..<4 {
+            #expect(try lookUp(value, rows: 1) === grown[value])
+        }
+        #expect(builder.attributeCache.count == 4)
+
+        // The next new style finds the cache over the limit and clears it.
+        _ = try lookUp(4, rows: 1)
+        #expect(builder.attributeCache.count == 1)
     }
 
     /// A visual-input change invalidates the cache. Without this a palette or

@@ -183,6 +183,7 @@ testing, and screen-scraping terminal output.
 ### GPU Rendering
 
 - ``MetalBufferingMode``
+- ``MetalTextBlending``
 - ``MetalError``
 
 ### Graphics

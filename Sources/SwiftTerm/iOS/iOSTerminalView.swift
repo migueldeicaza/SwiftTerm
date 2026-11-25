@@ -194,6 +194,15 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     /// You can change this property at any time; the renderer picks up the
     /// new mode on the next frame.
     public var metalBufferingMode: MetalBufferingMode = .perRowPersistent
+
+    /// Controls how monochrome glyph coverage is blended by the Metal renderer.
+    public var metalTextBlending: MetalTextBlending = .native {
+        didSet {
+            guard metalTextBlending != oldValue else { return }
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
+    }
     
     /**
      * Whether mouse events are sent to the application running in the terminal once it has
@@ -222,6 +231,34 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    /// Where the view copies the selected text each time the user completes
+    /// a selection gesture. iOS and visionOS have no primary selection, thus
+    /// only ``CopyOnSelectMode/clipboard`` and ``CopyOnSelectMode/both`` copy,
+    /// and they write the general pasteboard.
+    ///
+    /// The copy occurs at the end of the gesture (a double tap, a triple tap,
+    /// the Select and Select All commands, and the end of a selection drag),
+    /// not during the drag. Selections that the search functions or the host
+    /// API make are not copied, and a selection of only white space is not
+    /// copied. The default is ``CopyOnSelectMode/off``.
+    ///
+    /// The delegate method ``TerminalViewDelegate/selectionFinished(source:)``
+    /// reports the same event, for hosts that use a different policy.
+    public var copyOnSelect: CopyOnSelectMode = .off
+
+    func writeCopyOnSelectText (_ text: String) {
+        if copyOnSelect == .clipboard || copyOnSelect == .both {
+            writeSelectionToPasteboard(text)
+        }
+    }
+
+    /// The selection revision when the current user gesture started.
+    var selectionRevisionAtGestureStart: UInt64 = 0
+
+    func writeSelectionToPasteboard (_ text: String) {
+        UIPasteboard.general.string = text
+    }
+
     /// Controls how link tracking resolves hovered links:
     /// `.explicit` = OSC 8 only, `.implicit` = explicit + implicit fallback, `.none` = off.
     public var linkReporting: LinkReporting = .implicit
@@ -234,6 +271,13 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             frameDriver.markDirty()
         }
     }
+
+    /// Controls how a touch on a link activates it.
+    ///
+    /// A finger cannot hover, so the ``linkHighlightMode`` rules that apply to
+    /// pointer clicks never accept a touch. This property sets the touch
+    /// behavior. Pointer clicks (a mouse or a trackpad) do not use it.
+    public var touchLinkActivation: TouchLinkActivation = .tap
 
     /// The color used to draw link text and its underline, or `nil` (the
     /// default) to draw each link in its cell's own foreground color.
@@ -728,25 +772,29 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     @objc open override func copy(_ sender: Any?) {
-        UIPasteboard.general.string = withTerminal { _ in
+        writeSelectionToPasteboard(withTerminal { _ in
             let text = selection.getSelectedText()
             selection.selectNone()
             return text
-        }
+        })
         disableSelectionPanGesture()
     }
         
     @objc open override func selectAll(_ sender: Any?) {
-        withTerminal { _ in selection.selectAll() }
+        userSelectionGesture {
+            withTerminal { _ in selection.selectAll() }
+        }
         enableSelectionPanGesture()
     }
     
     /// Invoked when the user has long-pressed and then clicked "Select"
     @objc public override func select (_ sender: Any?)  {
         if let loc = lastLongSelect {
-            withTerminal { terminal in
-                selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.displayBuffer)
-                selection.selectionMode = .character
+            userSelectionGesture {
+                withTerminal { terminal in
+                    selection.selectWordOrExpression(at: Position (col: loc.col, row: loc.row), in: terminal.displayBuffer)
+                    selection.selectionMode = .character
+                }
             }
             enableSelectionPanGesture()
             DispatchQueue.main.async {
@@ -1028,14 +1076,43 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
+    /// Returns the link at a point in the view's coordinates, or nil when the
+    /// point is not on a link.
+    ///
+    /// The lookup finds OSC 8 links and links that SwiftTerm detects in the
+    /// text. It ignores ``linkHighlightMode``, the hover state and the modifier
+    /// keys. Use it with ``touchLinkActivation`` set to `.none` to show your
+    /// own menu or to use your own gesture for links.
+    public func linkRequest(at point: CGPoint) -> TerminalLinkRequest?
+    {
+        let hit = calculateTapHit(point: point).grid
+        return withTerminal { _ in linkAtPositionLocked(hit) }.map {
+            TerminalLinkRequest(link: $0.link, params: $0.params, isExplicit: $0.isExplicit)
+        }
+    }
+
+    /// The link that a single tap activates, or nil.
+    func linkRequestForTap(at point: CGPoint, touchType: UITouch.TouchType?) -> TerminalLinkRequest?
+    {
+        let hit = calculateTapHit(point: point).grid
+        if let result = linkForClick(at: hit, hasCommandModifier: commandActive) {
+            return TerminalLinkRequest(link: result.link, params: result.params, isExplicit: result.isExplicit)
+        }
+        guard TerminalTapPolicy.touchActivatesLink(
+            tapActivates: touchLinkActivation == .tap, isPointer: touchType == .indirectPointer) else {
+            return nil
+        }
+        return linkRequest(at: point)
+    }
+
     @objc func singleTap (_ gestureRecognizer: UITapGestureRecognizer)
     {
         guard gestureRecognizer.view != nil,
               gestureRecognizer.state == .ended else { return }
 
         let tapHit = calculateTapHit(gesture: gestureRecognizer).grid
-        if let result = linkForClick(at: tapHit, hasCommandModifier: commandActive) {
-            let request = TerminalLinkRequest(link: result.link, params: result.params, isExplicit: result.isExplicit)
+        let touchType = (gestureRecognizer as? TerminalTapGestureRecognizer)?.touchType
+        if let request = linkRequestForTap(at: gestureRecognizer.location(in: self), touchType: touchType) {
             terminalDelegate?.requestOpenLink(source: self, request: request)
             return
         }
@@ -1122,9 +1199,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         if tapAction(tapCount: 2, gestureRecognizer: gestureRecognizer) == .selectWord {
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
-            withTerminal { terminal in
-                selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
-                selection.selectionMode = .character
+            userSelectionGesture {
+                withTerminal { terminal in
+                    selection.selectWordOrExpression(at: hit, in: terminal.displayBuffer)
+                    selection.selectionMode = .character
+                }
             }
             enableSelectionPanGesture()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
@@ -1142,7 +1221,9 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
 
         if tapAction(tapCount: 3, gestureRecognizer: gestureRecognizer) == .selectLine {
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
-            withTerminal { _ in selection.select(row: hit.row) }
+            userSelectionGesture {
+                withTerminal { _ in selection.select(row: hit.row) }
+            }
             enableSelectionPanGesture()
             showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: hit)
             frameDriver.markDirty()
@@ -1402,6 +1483,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         
         switch gestureRecognizer.state {
         case .began:
+            beginUserSelectionGesture()
             let hit = calculateTapHit(gesture: gestureRecognizer).grid
             let extended = withTerminal { _ -> Bool in
                 if selection.active {
@@ -1455,6 +1537,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         case .ended:
             stopSelectionTimer()
             if withTerminal({ _ in selection.active }) {
+                endUserSelectionGesture()
                 showContextMenu (forRegion: makeContextMenuRegionForSelection(), pos: calculateTapHit(gesture: gestureRecognizer).grid)
             }
             break
@@ -1511,7 +1594,7 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         longPress.minimumPressDuration = 0.7
         addGestureRecognizer(longPress)
         
-        let singleTap = UITapGestureRecognizer (target: self, action: #selector(singleTap(_:)))
+        let singleTap = TerminalTapGestureRecognizer (target: self, action: #selector(singleTap(_:)))
         addGestureRecognizer(singleTap)
         
         let doubleTap = UITapGestureRecognizer (target: self, action: #selector(doubleTap(_:)))
@@ -1942,6 +2025,45 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
             _selectedTextForegroundColor = newValue
             withTerminal { $0.updateFullScreen() }
             frameDriver.markDirty()
+        }
+    }
+
+    /// Paints all matches of the current search pattern at the same time.
+    ///
+    /// The pattern is the term and the options of the last
+    /// ``findNext(_:options:scrollToResult:)`` or
+    /// ``findPrevious(_:options:scrollToResult:)``. The matches on the visible
+    /// rows are painted with ``searchMatchBackgroundColor``. The current match
+    /// stays as the selection and keeps the selection colors.
+    /// ``clearSearchHighlights()`` and ``clearSearch()`` remove the highlights.
+    /// The default is `false`.
+    ///
+    /// The highlights are found again for the visible rows when the content
+    /// changes. For a line that wraps across more rows than the view shows, a
+    /// match far from the visible rows can be different from the match that
+    /// `findNext` selects.
+    public var highlightsAllSearchMatches: Bool = false {
+        didSet {
+            if highlightsAllSearchMatches != oldValue {
+                frameDriver?.markDirty()
+            }
+        }
+    }
+
+    /// The background color of the matches that ``highlightsAllSearchMatches`` paints.
+    public var searchMatchBackgroundColor: UIColor = UIColor(red: 1, green: 0.84, blue: 0.2, alpha: 1) {
+        didSet {
+            withTerminal { $0.updateFullScreen() }
+            frameDriver?.markDirty()
+        }
+    }
+
+    /// The text color of the matches that ``highlightsAllSearchMatches`` paints,
+    /// or `nil` to keep the color of each cell. The default is black.
+    public var searchMatchForegroundColor: UIColor? = .black {
+        didSet {
+            withTerminal { $0.updateFullScreen() }
+            frameDriver?.markDirty()
         }
     }
     
@@ -3682,8 +3804,11 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
         }
     }
 
-    /// Controls how this view responds to the bell character; `.sound`
-    /// preserves the historical behavior of invoking the delegate's `bell`
+    /// Controls how this view responds to the bell character. The default
+    /// is `.sound`.
+    ///
+    /// For each style but `.none`, the view calls
+    /// ``TerminalViewDelegate/bell(source:style:)``.
     public var bellStyle: BellStyle = .sound {
         didSet {
             bellPolicy.setStyle(bellStyle)
@@ -3721,15 +3846,27 @@ open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollVi
     }
 
     private func deliverBell () {
+        // The policy drops each bell when the style is `.none`.
         guard bellPolicy.shouldDeliver() else { return }
-        switch bellStyle {
-        case .none: break
-        case .sound: terminalDelegate?.bell(source: self)
-        case .visual: flashVisualBell()
-        case .soundAndVisual:
-            terminalDelegate?.bell(source: self)
+        let style = bellStyle
+        // The delegate comes first and the flash second.
+        terminalDelegate?.bell(source: self, style: style)
+        if style.flashes {
             flashVisualBell()
         }
+    }
+
+    /// Plays the default bell. On iOS, it gives haptic feedback. On visionOS,
+    /// it does nothing.
+    ///
+    /// The default implementation of ``TerminalViewDelegate/bell(source:)``
+    /// calls this method. A delegate that gets a bell and wants the default
+    /// bell also calls it.
+    public func playDefaultBell () {
+        #if os(iOS)
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.warning)
+        #endif
     }
 
     /// Briefly flashes the view with the foreground color, the "visual bell"
@@ -3967,10 +4104,7 @@ extension TerminalViewDelegate {
 
     public func bell (source: TerminalView)
     {
-        #if os(iOS)
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(.warning)
-        #endif
+        source.playDefaultBell()
     }
     
     public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {

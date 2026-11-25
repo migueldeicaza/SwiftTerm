@@ -59,7 +59,15 @@ final class SearchLineCache {
         linesCache?[row] = entry
     }
 
-    func translateBufferLineToStringWithWrap (lineIndex: Int, trimRight: Bool) -> LineCacheEntry {
+    /// The text of the rows from `lineIndex` to the end of its logical line,
+    /// with the string offset at which each row starts.
+    ///
+    /// `lastRow` clips the translation: no row after it is read, even when
+    /// the logical line continues. The frame path uses this limit so that a
+    /// line wrapped across thousands of rows costs only the rows near the
+    /// viewport. This function does not read or write the lines cache.
+    func translateBufferLineToStringWithWrap (lineIndex: Int, trimRight: Bool,
+                                              lastRow: Int = Int.max) -> LineCacheEntry {
         let buffer = terminal.displayBuffer
         var strings: [String] = []
         var lineOffsets: [Int] = [0]
@@ -92,7 +100,7 @@ final class SearchLineCache {
 
             strings.append(string)
 
-            if lineWrapsToNext {
+            if lineWrapsToNext && idx < lastRow {
                 lineOffsets.append(lineOffsets[lineOffsets.count - 1] + string.count)
             } else {
                 break

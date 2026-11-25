@@ -287,9 +287,34 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// The selection VoiceOver last heard of.
     var accessibilitySelection: SnapshotSelectionState = .empty
     var search: SearchService!
-    private var findBar: TerminalFindBarView?
-    private var findBarTerm: String = ""
-    private var findBarOptions: SearchOptions = SearchOptions()
+    private var findBar: (any TerminalFindBar)?
+    /// What showing the find bar changed in it, to undo when it is discarded.
+    private var findBarConstraints: [NSLayoutConstraint] = []
+    private var findBarTranslatedAutoresizingMask = true
+    /// The delayed count of matches for the find bar.
+    private var findCountTimer: Timer?
+    /// The find bar's count is older than the search it describes.
+    private var findCountPending = false
+    /// The search generation the find bar's count was taken at.
+    private var findCountGeneration: Int?
+    /// Shares the query with other applications. Tests use a private one.
+    var findPasteboard = NSPasteboard(name: .find)
+    /// Makes the find bar this view shows; `nil` selects the built-in one.
+    ///
+    /// The view calls this the first time it needs a find bar and keeps the
+    /// result. Setting the property discards a find bar made earlier; if that
+    /// one was showing, the new one takes its place with the same query.
+    public var findBarProvider: (() -> any TerminalFindBar)? {
+        didSet {
+            replaceFindBar()
+        }
+    }
+    /// The most matches counted for the find bar's status.
+    static let findBarMatchLimit = 1000
+    /// How long typing must pause before the matches are counted.
+    static let findCountDelay: TimeInterval = 0.15
+    /// How often a showing count is checked against new output.
+    static let findCountRefreshInterval: TimeInterval = 0.5
     var debug: TerminalDebugView?
     let viewStateLock = NSLock()
     /// Cropped bitmaps for the Kitty placements on screen, reused between
@@ -369,6 +394,15 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// new mode on the next frame.
     public var metalBufferingMode: MetalBufferingMode = .perRowPersistent
 
+    /// Controls how monochrome glyph coverage is blended by the Metal renderer.
+    public var metalTextBlending: MetalTextBlending = .native {
+        didSet {
+            guard metalTextBlending != oldValue else { return }
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
+    }
+
     /// Overrides the backing scale used by the Metal renderer.
     ///
     /// Client applications that apply their own view transforms can set this
@@ -441,7 +475,20 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
         let owner = renderOwner
         let applyEffects: @MainActor @Sendable (MainFrameEffects) -> Void = { [weak self] effects in
-            self?.applyFrameSideEffects(effects)
+            guard let self else { return }
+            var effects = effects
+            // A resize applied at once on main can come after this frame
+            // resized the terminal, and it has reported the newer size.
+            // Do not report the older one after it.
+            if let resized = effects.resizedTo {
+                let current = self.withTerminal {
+                    FrameTerminalSize(cols: $0.cols, rows: $0.rows)
+                }
+                if resized != current {
+                    effects.resizedTo = nil
+                }
+            }
+            self.applyFrameSideEffects(effects)
         }
         let loop = RenderLoop {
             guard let effects = owner.renderPublishedFrame() else { return }
@@ -487,6 +534,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     private var markedTextStorage: NSAttributedString?
     private var markedSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
     private var markedTextOverlay: DictationOverlayTextView?
+    /// The measured advance of each cluster the overlay has shown, for `font`.
+    private var markedTextAdvanceCache: (font: NSFont, advances: [String: CGFloat])?
+    /// Line 1 of the marked-text overlay, in view coordinates, for `firstRect`.
+    /// It is not the caret's rect when line 1 starts on the row below the caret.
+    private var markedTextFirstLineRect: NSRect?
     private var progressBarView: TerminalProgressBarView?
     private(set) var progressReportTimer: Timer?
     var schedulesProgressReportTimer = true
@@ -1561,6 +1613,45 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    /// Paints all matches of the current search pattern at the same time.
+    ///
+    /// The pattern is the term and the options of the last
+    /// ``findNext(_:options:scrollToResult:)`` or
+    /// ``findPrevious(_:options:scrollToResult:)``. The matches on the visible
+    /// rows are painted with ``searchMatchBackgroundColor``. The current match
+    /// stays as the selection and keeps the selection colors.
+    /// ``clearSearchHighlights()`` and ``clearSearch()`` remove the highlights.
+    /// The default is `false`.
+    ///
+    /// The highlights are found again for the visible rows when the content
+    /// changes. For a line that wraps across more rows than the view shows, a
+    /// match far from the visible rows can be different from the match that
+    /// `findNext` selects.
+    public var highlightsAllSearchMatches: Bool = false {
+        didSet {
+            if highlightsAllSearchMatches != oldValue {
+                frameDriver?.markDirty()
+            }
+        }
+    }
+
+    /// The background color of the matches that ``highlightsAllSearchMatches`` paints.
+    public var searchMatchBackgroundColor: NSColor = NSColor(srgbRed: 1, green: 0.84, blue: 0.2, alpha: 1) {
+        didSet {
+            withTerminal { $0.updateFullScreen() }
+            frameDriver?.markDirty()
+        }
+    }
+
+    /// The text color of the matches that ``highlightsAllSearchMatches`` paints,
+    /// or `nil` to keep the color of each cell. The default is black.
+    public var searchMatchForegroundColor: NSColor? = .black {
+        didSet {
+            withTerminal { $0.updateFullScreen() }
+            frameDriver?.markDirty()
+        }
+    }
+
     func backingScaleFactor () -> CGFloat
     {
         window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1
@@ -1740,6 +1831,49 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         didSet {
             pointerRuleChanged()
         }
+    }
+
+    /// Where the view copies the selected text each time the user completes
+    /// a selection gesture: the system clipboard, the primary selection that
+    /// ``pastePrimarySelection()`` reads, or the two of them.
+    ///
+    /// The copy occurs at the end of the gesture (mouse up after a drag, a
+    /// double-click, a triple-click or a Shift-click, and the Select All
+    /// command), not during the drag. Selections that the search functions or
+    /// the host API make are not copied, and a selection of only white space
+    /// is not copied. The default is ``CopyOnSelectMode/off``.
+    ///
+    /// The view does not wait for a possible subsequent click, thus a
+    /// triple-click copies the word first and then the row.
+    ///
+    /// The delegate method ``TerminalViewDelegate/selectionFinished(source:)``
+    /// reports the same event, for hosts that use a different policy.
+    public var copyOnSelect: CopyOnSelectMode = .off
+
+    /// The system clipboard that the Copy and Paste commands use. Tests
+    /// replace it.
+    var selectionPasteboard: NSPasteboard = .general
+
+    /// The primary selection that ``pastePrimarySelection()`` reads. Tests
+    /// replace it.
+    var primarySelectionPasteboard = NSPasteboard(name: NSPasteboard.Name("NSSelectionPboard"))
+
+    func writeCopyOnSelectText (_ text: String) {
+        if copyOnSelect == .clipboard || copyOnSelect == .both {
+            writeSelectionToPasteboard(text)
+        }
+        if copyOnSelect == .primarySelection || copyOnSelect == .both {
+            primarySelectionPasteboard.clearContents()
+            primarySelectionPasteboard.setString(text, forType: .string)
+        }
+    }
+
+    /// The selection revision when the current user gesture started.
+    var selectionRevisionAtGestureStart: UInt64 = 0
+
+    func writeSelectionToPasteboard (_ text: String) {
+        selectionPasteboard.clearContents()
+        selectionPasteboard.setString(text, forType: .string)
     }
 
     /// Controls how link tracking resolves hovered links:
@@ -1949,7 +2083,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     /// Reads the keys held now unless given, since an event's flags can miss a
     /// Shift held since before the cursor update AppKit sends after a rect change.
-    private func setPointer(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+    private func setPointer(modifiers: NSEvent.ModifierFlags? = nil) {
+        let modifiers = modifiers ?? heldModifierFlags()
         // AppKit calls cursorUpdate on every mouse move over the view and on every display
         // cycle that re-evaluates cursor rects. With a customized pointer (size or
         // colour in Accessibility settings) each set() re-renders the cursor image,
@@ -1963,6 +2098,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// The cursor the rect was last built with, so that a change of the rule
     /// makes AppKit build the rects again only when it changes the rect.
     private var cursorRectPointer: NSCursor?
+
+    /// The modifier keys that are held now. Tests replace it: without that, a
+    /// Shift key that the user holds while the tests run changes the result.
+    var heldModifierFlags: () -> NSEvent.ModifierFlags = { NSEvent.modifierFlags }
 
     /// The pointer's location in `window` when the application is active and
     /// `window` is the topmost window under it, `nil` otherwise, also under a
@@ -2043,8 +2182,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// state changes.
     ///
     /// - Parameter modifiers: The modifier keys held now, passed to
-    ///   ``pointerCursor(modifiers:)``.
-    public func refreshPointer(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+    ///   ``pointerCursor(modifiers:)``. When `nil`, the view reads the keys
+    ///   held now.
+    public func refreshPointer(modifiers: NSEvent.ModifierFlags? = nil) {
         guard let window else { return }
         if pointerCursor(modifiers: []) != cursorRectPointer {
             window.invalidateCursorRects(for: self)
@@ -2364,6 +2504,17 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// OS specific feature.
     public var optionAsMetaKey: Bool = true
 
+    /// The Option keys that are Meta while `optionAsMetaKey` is `true`. The
+    /// default is `.both`. With `.left` or `.right`, the other Option key goes
+    /// to the OS, so the keyboard layout composes the character it puts behind
+    /// the key: a user of a Norwegian layout keeps Meta on one Option key and
+    /// types "|" with Option+7 on the other one.
+    ///
+    /// This has no effect while `optionAsMetaKey` is `false`. The key that is
+    /// not Meta obeys `optionAsMetaKeyForFunctionalKeys`. An event that does
+    /// not show which Option key is down (a synthetic event) gets Meta.
+    public var optionAsMetaSide: OptionMetaSide = .both
+
     /// When `optionAsMetaKey` is `false`, Option goes to the OS so the keyboard
     /// layout can compose the character it puts behind the key (Option+Q is "@"
     /// on a Turkish layout, Option+2 on a Czech one). The layout composes
@@ -2466,6 +2617,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         guard let markedTextStorage, markedTextStorage.length > 0 else {
             markedTextOverlay?.removeFromSuperview()
             markedTextOverlay = nil
+            markedTextAdvanceCache = nil
+            markedTextFirstLineRect = nil
             return
         }
 
@@ -2479,8 +2632,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             tv.isRichText = true
             tv.textContainerInset = .zero
             tv.textContainer?.lineFragmentPadding = 0
-            // Our subclass fills the background per-line-fragment instead of
-            // over the whole frame, so turn off NSTextView's built-in fill.
+            // Our subclass fills the background behind the marked text instead
+            // of over the whole frame, so turn off NSTextView's built-in fill.
             tv.drawsBackground = false
             addSubview(tv, positioned: .above, relativeTo: nil)
             markedTextOverlay = tv
@@ -2495,61 +2648,163 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // `configureNativeColors()`) when the cell carries no color of its own.
         let caretColors = markedTextColorsAtCaret()
         overlay.overlayBackgroundColor = caretColors.background
+        overlay.coverEnd = { [weak self] textEnd in
+            self?.markedTextCoverEnd(textEnd: textEnd) ?? textEnd
+        }
 
         // Match terminal line metrics so wrapped lines line up with terminal rows.
+        // The terminal wraps per character, and moves a wide character that does
+        // not fit in the last column to the next row; character wrapping does both.
         let lineHeight = cellDimension.height
         let para = NSMutableParagraphStyle()
         para.minimumLineHeight = lineHeight
         para.maximumLineHeight = lineHeight
-        para.lineBreakMode = .byWordWrapping
+        para.lineBreakMode = .byCharWrapping
+        // The terminal writes the text from the caret to the right, also for
+        // right-to-left text. A natural direction would put the indent of an
+        // RTL paragraph on the right edge, and the text over the prompt.
+        para.baseWritingDirection = .leftToRight
+        para.alignment = .left
 
         // Match the terminal's effective foreground color. This preserves
         // host-selected themes and terminal foreground-color changes.
-        //
-        // The terminal pixel-snaps each cell's width, so the effective per-cell
-        // advance is slightly wider than the font's natural advance. Apply a
-        // matching `.kern` so overlay characters line up with the terminal grid.
-        let glyphW = font.glyph(withName: "W")
-        let naturalAdvance = font.advancement(forGlyph: glyphW).width
-        let kern = max(0, cellDimension.width - naturalAdvance)
-
         let display = NSMutableAttributedString(attributedString: markedTextStorage)
         let fullRange = NSRange(location: 0, length: display.length)
         display.addAttributes([
             .font: font,
             .foregroundColor: caretColors.foreground,
             .paragraphStyle: para,
-            .kern: kern,
         ], range: fullRange)
-        overlay.textStorage?.setAttributedString(display)
+        let firstColumns = alignToCells(display)
 
-        // The overlay spans the full content width. Line 1 skips the portion
-        // already occupied by text to the left of the caret (e.g. the prompt)
-        // via an exclusion path; wrapped lines 2+ start from the left edge.
-        let horizontalInset: CGFloat = 4
-        let rightInset: CGFloat = 4
-        let overlayX = horizontalInset
-        let overlayWidth = max(cellDimension.width, bounds.width - horizontalInset - rightInset)
-        let caretX = max(horizontalInset, caretView.frame.origin.x)
-        let exclusionWidth = max(0, caretX - overlayX)
+        // The overlay spans the terminal's columns, so it wraps where the
+        // terminal does. Line 1 starts at the caret, after the text already to
+        // its left (e.g. the prompt); wrapped lines 2+ start from the first column.
+        let overlayX: CGFloat = 0
+        let cols = withTerminal { $0.cols }
+        let overlayWidth = CGFloat(max(1, cols)) * cellDimension.width
+        let caretX = max(0, caretView.frame.origin.x - overlayX)
+        // The terminal moves a wide character that does not fit in the cells
+        // left on the caret's row to the next row, so the overlay starts there.
+        // After a write that fills the last column, the caret stays on that
+        // column with a wrap pending, and with autowrap set any character goes
+        // to the next row.
+        let wrapPending = withTerminal { $0.wraparound && $0.displayBuffer.pendingWrap }
+        let startsOnNextRow = firstColumns > 0 && (wrapPending || (caretX > 0
+            && CGFloat(firstColumns) * cellDimension.width > overlayWidth - caretX + 0.25))
+        let firstLineIndent = startsOnNextRow ? 0 : caretX
+
+        // An indent, not an exclusion path, moves line 1 to the caret: TextKit
+        // drops an exclusion-path line fragment narrower than 15 points, which
+        // put the text of a caret in the last column on the wrong row. Only the
+        // first paragraph starts at the caret; a newline in dictated text
+        // starts the next one in the first column.
+        if firstLineIndent > 0 {
+            let firstParagraph = (display.string as NSString).paragraphRange(for: NSRange(location: 0, length: 0))
+            let indented = para.mutableCopy() as! NSMutableParagraphStyle
+            indented.firstLineHeadIndent = firstLineIndent
+            display.addAttribute(.paragraphStyle, value: indented, range: firstParagraph)
+        }
+        overlay.textStorage?.setAttributedString(display)
+        overlay.firstLineIndent = firstLineIndent
+        overlay.firstLineIsOnCaretRow = !startsOnNextRow
 
         if let container = overlay.textContainer {
-            container.containerSize = NSSize(width: overlayWidth, height: .greatestFiniteMagnitude)
-            container.exclusionPaths = exclusionWidth > 0
-                ? [NSBezierPath(rect: NSRect(x: 0, y: 0, width: exclusionWidth, height: lineHeight + 1))]
-                : []
+            // The kerned advances add up to whole cells, and cellDimension.width
+            // is pixel-snapped, so a full row fills the width almost exactly.
+            // The slack absorbs the floating-point rounding in that sum; it is
+            // too narrow for any character.
+            container.containerSize = NSSize(width: overlayWidth + 0.5, height: .greatestFiniteMagnitude)
+            container.exclusionPaths = []
         }
 
         // Size the text view so its frame exactly wraps the wrapped line fragments.
         overlay.layoutManager?.ensureLayout(for: overlay.textContainer!)
-        let overlayHeight = overlay.layoutManager?.usedRect(for: overlay.textContainer!).height ?? lineHeight
+        let overlayHeight = overlay.layoutManager?.usedRect(for: overlay.textContainer!).maxY ?? lineHeight
+        // On the bottom row there is no row below the caret in the view, and
+        // the view clips its subviews. The commit scrolls the terminal up one
+        // row, so line 1 shows on the caret's row, where the text then lands.
+        let rowBelowIsInView = caretView.frame.minY - lineHeight >= bounds.minY - 0.5
+        let overlayTop = caretView.frame.maxY - (startsOnNextRow && rowBelowIsInView ? lineHeight : 0)
+        markedTextFirstLineRect = startsOnNextRow
+            ? NSRect(x: overlayX, y: overlayTop - lineHeight,
+                     width: CGFloat(max(1, firstColumns)) * cellDimension.width, height: lineHeight)
+            : caretView.frame
 
         overlay.frame = NSRect(
             x: overlayX,
-            y: caretView.frame.maxY - overlayHeight,
+            y: overlayTop - overlayHeight,
             width: overlayWidth,
             height: overlayHeight
         )
+    }
+
+    /// The end of the terminal cells under marked text on the caret's row that
+    /// ends at `textEnd`. The overlay starts at the first column and `alignToCells`
+    /// ends each character on a cell boundary, so the text covers whole cells;
+    /// when the cell after them is a wide character's second column, the end
+    /// moves past it so no half of that character shows.
+    private func markedTextCoverEnd(textEnd: CGFloat) -> CGFloat {
+        let cellWidth = cellDimension.width
+        guard cellWidth > 0 else { return textEnd }
+        var column = Int((textEnd / cellWidth).rounded())
+        withTerminal { terminal in
+            let buffer = terminal.displayBuffer
+            let row = buffer.yBase + buffer.y
+            if row < buffer.lines.count, column > 0, column < buffer.cols, buffer.lines[row][column].width == 0 {
+                column += 1
+            }
+        }
+        return CGFloat(column) * cellWidth
+    }
+
+    /// Kerns each character of the marked text so it spans the columns the
+    /// terminal gives it once committed: one cell for most characters, two for
+    /// wide ones such as CJK. Their glyphs, often from a fallback font, are
+    /// narrower than two cells, and the terminal pixel-snaps cell widths, so the
+    /// font's own advances would drift from the grid.
+    ///
+    /// Returns the number of columns of the first character that takes any, or
+    /// 0 when no character does.
+    private func alignToCells(_ text: NSMutableAttributedString) -> Int {
+        let cellWidth = cellDimension.width
+        let regionalIndicatorWidth = withTerminal { $0.options.regionalIndicatorWidth }
+        // Each IME keystroke and dictation hypothesis lays out the whole string
+        // again, so measure each distinct cluster once. Core Text cannot measure
+        // it instead: it adds spacing between Latin and CJK runs and picks other
+        // fallback fonts than the overlay's text view.
+        var advances = markedTextAdvanceCache.flatMap { $0.font == font ? $0.advances : nil } ?? [:]
+        var firstColumns: Int?
+        let string = text.string as NSString
+        string.enumerateSubstrings(in: NSRange(location: 0, length: string.length),
+                                   options: .byComposedCharacterSequences) { substring, range, _, _ in
+            guard let substring else { return }
+            let columns = substring.reduce(0) {
+                $0 + UnicodeUtil.columnWidth(of: $1, regionalIndicatorWidth: regionalIndicatorWidth)
+            }
+            // A zero-width character such as a lone combining mark goes with
+            // the character after it, so it does not decide where line 1 starts.
+            if firstColumns == nil, columns > 0 {
+                firstColumns = columns
+            }
+            // The IME can send a .glyphInfo that replaces the glyph and its
+            // width, so the string alone does not identify such a cluster.
+            let cacheable = text.attribute(.glyphInfo, at: range.location, longestEffectiveRange: nil, in: range) == nil
+            let advance: CGFloat
+            if cacheable, let cached = advances[substring] {
+                advance = cached
+            } else {
+                advance = text.attributedSubstring(from: range).size().width
+                if cacheable {
+                    advances[substring] = advance
+                }
+            }
+            text.addAttribute(.kern,
+                              value: CGFloat(columns) * cellWidth - advance,
+                              range: range)
+        }
+        markedTextAdvanceCache = (font, advances)
+        return firstColumns ?? 0
     }
 
     /// Colors for the marked-text overlay, taken from the cell under the caret.
@@ -2646,7 +2901,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     open func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
         actualRange?.pointee = range
         
-        if let r = window?.convertToScreen(convert(caretView!.frame, to: nil)) {
+        // The IME puts its candidate window below this rect, so while marked
+        // text shows it is line 1 of the overlay, which can be on the row
+        // below the caret.
+        let anchor = markedTextOverlay != nil ? markedTextFirstLineRect ?? caretView!.frame : caretView!.frame
+        if let r = window?.convertToScreen(convert(anchor, to: nil)) {
             return r
         }
         
@@ -2755,18 +3014,106 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
 
+    private var visibleFindBar: (any TerminalFindBar)? {
+        guard let findBar, !findBar.isHidden else {
+            return nil
+        }
+        return findBar
+    }
+
     private func performFind(next: Bool) {
-        let termFromBar = (findBar?.isHidden == false) ? findBar?.searchText : nil
-        guard let term = termFromBar ?? findPasteboardString(), !term.isEmpty else {
+        let bar = visibleFindBar
+        guard let term = bar?.searchText ?? findPasteboardString(), !term.isEmpty else {
             return
         }
         updateFindPasteboard(term)
-        let options = findBar?.options ?? SearchOptions()
-        if next {
-            _ = findNext(term, options: options)
-        } else {
-            _ = findPrevious(term, options: options)
+        runFind(term, options: bar?.options ?? SearchOptions(), forward: next, deferCount: false)
+    }
+
+    /// Selects the next or previous match and tells the find bar the outcome.
+    /// With `deferCount` the matches are counted once the user stops typing.
+    private func runFind(_ term: String, options: SearchOptions, forward: Bool, deferCount: Bool) {
+        cancelFindCount()
+        let bar = visibleFindBar
+        let wantsCount = bar?.showsMatchCount == true
+        // With no find bar on screen, there is no control to remove the
+        // highlights. A find then changes no highlight pattern: the host's
+        // highlights stay, with the host's term.
+        let outcome = find(term, options: options, forward: forward,
+                           countLimit: wantsCount && !deferCount ? TerminalView.findBarMatchLimit : nil,
+                           highlights: bar != nil ? .findBar : nil)
+        guard let bar else {
+            return
         }
+        guard outcome.found else {
+            bar.setFindStatus(findFailureStatus(term, options: options))
+            if wantsCount {
+                // Later output may contain the term.
+                scheduleFindCount(after: TerminalView.findCountRefreshInterval)
+            }
+            return
+        }
+        if let count = outcome.count {
+            findCountGeneration = count.generation
+            bar.setFindStatus(.matches(current: count.index, total: count.total, capped: count.capped))
+        } else {
+            bar.setFindStatus(.found)
+        }
+        if wantsCount {
+            findCountPending = outcome.count == nil
+            scheduleFindCount(after: deferCount ? TerminalView.findCountDelay : TerminalView.findCountRefreshInterval)
+        }
+    }
+
+    private func findFailureStatus(_ term: String, options: SearchOptions) -> TerminalFindStatus {
+        if options.regex, (try? NSRegularExpression(pattern: term)) == nil {
+            return .message("Invalid regular expression")
+        }
+        return .notFound
+    }
+
+    private func cancelFindCount() {
+        findCountTimer?.invalidate()
+        findCountTimer = nil
+        findCountPending = false
+        findCountGeneration = nil
+    }
+
+    private func scheduleFindCount(after delay: TimeInterval) {
+        findCountTimer?.invalidate()
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.refreshFindCount()
+            }
+        }
+        findCountTimer = timer
+        // Common modes: the count also arrives during a resize or a menu.
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    /// Counts the matches again if the count is due or output changed the
+    /// content since, and keeps checking for as long as the bar shows one.
+    private func refreshFindCount() {
+        findCountTimer = nil
+        guard let bar = visibleFindBar, bar.showsMatchCount else {
+            return
+        }
+        let term = bar.searchText
+        guard !term.isEmpty else {
+            return
+        }
+        if findCountPending || searchGeneration() != findCountGeneration {
+            let options = bar.options
+            let count = searchMatchCount(term, options: options, limit: TerminalView.findBarMatchLimit)
+            findCountPending = false
+            findCountGeneration = count.generation
+            if count.total == 0 {
+                bar.setFindStatus(findFailureStatus(term, options: options))
+            } else {
+                bar.setFindStatus(.matches(current: count.index, total: count.total, capped: count.capped))
+            }
+        }
+        scheduleFindCount(after: TerminalView.findCountRefreshInterval)
     }
 
     private func setFindPasteboardFromSelection() {
@@ -2776,54 +3123,109 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         guard !selected.isEmpty else {
             return
         }
-        let pasteboard = NSPasteboard(name: .find)
-        pasteboard.clearContents()
-        pasteboard.setString(selected, forType: .string)
+        findPasteboard.clearContents()
+        findPasteboard.setString(selected, forType: .string)
     }
 
     private func findPasteboardString() -> String? {
-        let pasteboard = NSPasteboard(name: .find)
-        return pasteboard.string(forType: .string)
+        findPasteboard.string(forType: .string)
     }
 
     private func updateFindPasteboard(_ term: String) {
-        let pasteboard = NSPasteboard(name: .find)
-        pasteboard.clearContents()
-        pasteboard.setString(term, forType: .string)
+        guard findPasteboard.string(forType: .string) != term else {
+            return
+        }
+        findPasteboard.clearContents()
+        findPasteboard.setString(term, forType: .string)
     }
 
-    private func ensureFindBar() -> TerminalFindBarView {
+    private func ensureFindBar() -> any TerminalFindBar {
         if let findBar {
             return findBar
         }
-        let bar = TerminalFindBarView()
+        let bar: any TerminalFindBar = findBarProvider?() ?? TerminalFindBarView()
+        // A bar that only has a frame keeps its size. The constraints for that
+        // are the weakest there are, below any content hugging, so whatever
+        // sizing the bar has of its own wins.
+        let size = bar.frame.size
+        let frameSizePriority = NSLayoutConstraint.Priority(1)
+        findBarTranslatedAutoresizingMask = bar.translatesAutoresizingMaskIntoConstraints
         bar.translatesAutoresizingMaskIntoConstraints = false
         bar.isHidden = true
-        bar.onSearchChanged = { [weak self] term in
-            self?.handleFindBarSearchChanged(term)
-        }
-        bar.onFindNext = { [weak self] in
-            self?.performFind(next: true)
-        }
-        bar.onFindPrevious = { [weak self] in
-            self?.performFind(next: false)
-        }
-        bar.onClose = { [weak self] in
-            self?.hideFindBar()
-        }
-        bar.onOptionsChanged = { [weak self] options in
-            self?.handleFindBarOptionsChanged(options)
-        }
+        bar.findBarDelegate = self
 
         addSubview(bar)
-        NSLayoutConstraint.activate([
+        // A bar too wide for the view sticks out on the left instead of
+        // breaking its own width.
+        let leading = bar.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8)
+        leading.priority = NSLayoutConstraint.Priority(999)
+        var constraints = [
             bar.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             bar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            bar.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 8),
-            bar.widthAnchor.constraint(lessThanOrEqualToConstant: 520)
-        ])
+            leading
+        ]
+        if size.width > 0 {
+            let width = bar.widthAnchor.constraint(equalToConstant: size.width)
+            width.priority = frameSizePriority
+            constraints.append(width)
+        }
+        if size.height > 0 {
+            let height = bar.heightAnchor.constraint(equalToConstant: size.height)
+            height.priority = frameSizePriority
+            constraints.append(height)
+        }
+        NSLayoutConstraint.activate(constraints)
+        findBarConstraints = constraints
         findBar = bar
         return bar
+    }
+
+    /// Whether the keyboard focus is in the find bar.
+    private func findBarHasFocus(_ bar: any TerminalFindBar) -> Bool {
+        guard let responder = window?.firstResponder as? NSView else {
+            return false
+        }
+        return responder === bar || responder.isDescendant(of: bar)
+    }
+
+    /// Drops the find bar and gives the application its view back as it was.
+    private func discardFindBar() {
+        guard let bar = findBar else {
+            return
+        }
+        cancelFindCount()
+        NSLayoutConstraint.deactivate(findBarConstraints)
+        findBarConstraints = []
+        bar.removeFromSuperview()
+        bar.translatesAutoresizingMaskIntoConstraints = findBarTranslatedAutoresizingMask
+        bar.isHidden = false
+        if bar.findBarDelegate === self {
+            bar.findBarDelegate = nil
+        }
+        findBar = nil
+    }
+
+    /// The provider changed: a showing bar is replaced by one from the new
+    /// provider, which starts the search over with its own options.
+    private func replaceFindBar() {
+        guard let old = findBar else {
+            return
+        }
+        let wasVisible = !old.isHidden
+        let hadFocus = wasVisible && findBarHasFocus(old)
+        let term = old.searchText
+        discardFindBar()
+        guard wasVisible else {
+            return
+        }
+        let bar = ensureFindBar()
+        bar.isHidden = false
+        bar.searchText = term
+        clearSearch(keepingHostHighlights: true)
+        handleFindBarSearchChanged(bar)
+        if hadFocus {
+            bar.focusSearchField()
+        }
     }
 
     private func showFindBar(prefillSelection: Bool) {
@@ -2833,33 +3235,39 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let initial = (selectedText?.isEmpty == false) ? selectedText : findPasteboardString()
         if let initial {
             bar.searchText = initial
-            handleFindBarSearchChanged(initial)
+            handleFindBarSearchChanged(bar)
         }
-        bar.focus()
+        bar.focusSearchField()
     }
 
     private func hideFindBar() {
+        cancelFindCount()
         findBar?.isHidden = true
+        // The highlights that the bar made active go away with it. The
+        // selection stays, and so do highlights from the host's own search.
+        clearSearchHighlights(owner: .findBar)
         window?.makeFirstResponder(self)
     }
 
-    private func handleFindBarSearchChanged(_ term: String) {
-        findBarTerm = term
+    private func handleFindBarSearchChanged(_ bar: any TerminalFindBar) {
+        let term = bar.searchText
         if term.isEmpty {
-            clearSearch()
+            cancelFindCount()
+            clearSearch(keepingHostHighlights: true)
+            bar.setFindStatus(.none)
             return
         }
         updateFindPasteboard(term)
-        _ = findNext(term, options: findBarOptions)
+        runFind(term, options: bar.options, forward: true, deferCount: true)
     }
 
-    private func handleFindBarOptionsChanged(_ options: SearchOptions) {
-        findBarOptions = options
-        if !findBarTerm.isEmpty {
-            _ = findNext(findBarTerm, options: options)
+    private func handleFindBarOptionsChanged(_ bar: any TerminalFindBar) {
+        let term = bar.searchText
+        if !term.isEmpty {
+            runFind(term, options: bar.options, forward: true, deferCount: false)
         }
     }
-    
+
     nonisolated open func selectionChanged(source: Terminal) {
         onMain { [weak self] in
             guard let self, self.terminal != nil else { return }
@@ -2899,14 +3307,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             selection.getSelectedText()
         }
         
-        let clipboard = NSPasteboard.general
-        clipboard.clearContents()
-        clipboard.setString(str, forType: .string)
+        writeSelectionToPasteboard(str)
     }
     
     public override func selectAll(_ sender: Any?)
     {
-        selectAll ()
+        userSelectionGesture { selectAll () }
     }
     
     //func undo (sender: Any) {}
@@ -3153,6 +3559,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         optionDragIsLocal = false
         pressSelectsBlock = event.modifierFlags.contains(.option) && event.clickCount == 1
         let shouldSendButtonPress = withTerminal { terminal in
+            selectionRevisionAtGestureStart = selection.revision
             pointerPressSnapshot = SemanticPromptPointerSnapshot(
                 selectionWasActive: selection.active,
                 didDrag: false,
@@ -3318,6 +3725,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     
     open override func mouseUp(with event: NSEvent) {
         defer {
+            // The press was the view's own, not one that the application
+            // got as a mouse report.
+            let pressWasLocal = pointerPressSnapshot.pressWasSemanticEligible || optionDragIsLocal
             didSelectionDrag = false
             pointerPressSnapshot.pressWasSemanticEligible = false
             pointerPressPoint = nil
@@ -3329,6 +3739,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             pressSelectsBlock = false
             withTerminal { terminal in
                 terminal.endPrimaryPointerPress()
+            }
+            if pressWasLocal {
+                endUserSelectionGesture ()
             }
         }
         stopSelectionAutoScrollTimer()
@@ -3986,8 +4399,11 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         frameSignal.requestViewUpdate()
     }
 
-    /// Controls how this view responds to the bell character; `.sound`
-    /// preserves the historical behavior of invoking the delegate's `bell`
+    /// Controls how this view responds to the bell character. The default
+    /// is `.sound`.
+    ///
+    /// For each style but `.none`, the view calls
+    /// ``TerminalViewDelegate/bell(source:style:)``.
     public var bellStyle: BellStyle = .sound {
         didSet {
             bellPolicy.setStyle(bellStyle)
@@ -4050,18 +4466,23 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
 
     private func deliverBell () {
+        // The policy drops each bell when the style is `.none`.
         guard bellPolicy.shouldDeliver() else { return }
-        switch bellStyle {
-        case .none:
-            break
-        case .sound:
-            terminalDelegate?.bell(source: self)
-        case .visual:
-            flashVisualBell()
-        case .soundAndVisual:
-            terminalDelegate?.bell(source: self)
+        let style = bellStyle
+        // The delegate comes first and the flash second.
+        terminalDelegate?.bell(source: self, style: style)
+        if style.flashes {
             flashVisualBell()
         }
+    }
+
+    /// Plays the default bell sound, which is the system beep.
+    ///
+    /// The default implementation of ``TerminalViewDelegate/bell(source:)``
+    /// calls this method. A delegate that gets a bell and wants the default
+    /// sound also calls it.
+    public func playDefaultBell () {
+        NSSound.beep()
     }
 
     /// Briefly flashes the view with the foreground color, the "visual bell"
@@ -4257,9 +4678,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
 
     @MainActor
     private func kittyPasteboard(_ location: KittyClipboardLocation) -> NSPasteboard {
-        location == .primary
-            ? NSPasteboard(name: NSPasteboard.Name("NSSelectionPboard"))
-            : .general
+        location == .primary ? primarySelectionPasteboard : selectionPasteboard
     }
 
     /// The platform type identifiers at one location, or `nil` when the
@@ -4510,7 +4929,7 @@ extension TerminalViewDelegate {
 
     public func bell (source: TerminalView)
     {
-        NSSound.beep()
+        source.playDefaultBell()
     }
     
     public func iTermContent (source: TerminalView, content: ArraySlice<UInt8>) {
@@ -4527,32 +4946,119 @@ extension TerminalViewDelegate {
 
 /// NSTextView subclass used for the dictation / IME marked-text overlay.
 ///
-/// Fills its background only under the laid-out line fragments rather than
-/// across the full frame. Line 1 already has an exclusion path covering the
-/// portion occupied by pre-existing terminal text (e.g. the prompt), so this
-/// drawing strategy leaves that area untouched while still covering wrapped
-/// lines below.
+/// Fills its background behind the marked text rather than across the full
+/// frame; see ``backgroundRects``. Line 1 starts at `firstLineIndent`, after
+/// the pre-existing terminal text to the left of the caret (e.g. the prompt),
+/// so that area stays untouched.
 final class DictationOverlayTextView: NSTextView {
     var overlayBackgroundColor: NSColor = .clear {
         didSet { needsDisplay = true }
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        drawPerFragmentBackground(in: dirtyRect)
-        super.draw(dirtyRect)
+    /// Where the background of the caret's row stops, given the x where its text
+    /// ends: past every terminal cell the text covers, including both columns of
+    /// a wide character it covers in part.
+    var coverEnd: (_ textEnd: CGFloat) -> CGFloat = { $0 }
+
+    /// The x where line 1 starts: the caret's position on its row, or 0 when
+    /// line 1 starts on the row after the caret's.
+    var firstLineIndent: CGFloat = 0 {
+        didSet { needsDisplay = true }
     }
 
-    private func drawPerFragmentBackground(in dirtyRect: NSRect) {
-        guard let layoutManager, let container = textContainer else { return }
+    /// False when a wide character that does not fit in the cells left on the
+    /// caret's row moves line 1 to the next row.
+    var firstLineIsOnCaretRow = true {
+        didSet { needsDisplay = true }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let rects = backgroundRects
         overlayBackgroundColor.setFill()
-        let glyphRange = layoutManager.glyphRange(for: container)
-        let origin = textContainerOrigin
-        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, _, _, _, _ in
-            let r = fragmentRect.offsetBy(dx: origin.x, dy: origin.y)
-            if r.intersects(dirtyRect) {
-                r.fill()
-            }
+        for rect in rects where rect.intersects(dirtyRect) {
+            rect.fill()
         }
+        // A glyph wider than its cells would otherwise draw over the terminal character next to it.
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath.clip(rects)
+        super.draw(dirtyRect)
+        NSGraphicsContext.restoreGraphicsState()
+    }
+
+    /// The area behind the marked text on each line. Every line below the caret
+    /// spans the full width, since the terminal row under it is not the text
+    /// after the caret but another row, such as a TUI's border or status line.
+    /// The caret's row covers its text only when the text ends inside the row,
+    /// so characters to the right of the caret stay visible while composing in
+    /// the middle of a line.
+    var backgroundRects: [NSRect] {
+        guard let layoutManager, let container = textContainer else { return [] }
+        let glyphRange = layoutManager.glyphRange(for: container)
+        let string = (textStorage?.string ?? "") as NSString
+        let origin = textContainerOrigin
+        var rects: [NSRect] = []
+        layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { fragmentRect, usedRect, _, lineGlyphs, _ in
+            let characters = layoutManager.characterRange(forGlyphRange: lineGlyphs, actualGlyphRange: nil)
+            let isLast = NSMaxRange(lineGlyphs) >= NSMaxRange(glyphRange)
+            let endsInNewline = characters.length > 0
+                && CharacterSet.newlines.contains(UnicodeScalar(string.character(at: NSMaxRange(characters) - 1)) ?? " ")
+            guard rects.isEmpty, self.firstLineIsOnCaretRow, isLast || endsInNewline else {
+                var rect = fragmentRect.offsetBy(dx: origin.x, dy: origin.y)
+                // Line 1 starts at the caret, after the prompt.
+                if rects.isEmpty {
+                    let indent = min(self.firstLineIndent, rect.width)
+                    rect.origin.x += indent
+                    rect.size.width -= indent
+                }
+                rects.append(rect)
+                return
+            }
+            var rect = usedRect.offsetBy(dx: origin.x, dy: origin.y)
+            rect.size.width = self.coverEnd(rect.maxX) - rect.minX
+            rects.append(rect)
+        }
+        return rects
+    }
+}
+
+private extension NSBezierPath {
+    static func clip(_ rects: [NSRect]) {
+        let path = NSBezierPath()
+        rects.forEach { path.appendRect($0) }
+        path.addClip()
+    }
+}
+
+extension TerminalView: TerminalFindBarDelegate {
+    // Only the bar this view shows drives its search: a bar the view has
+    // discarded, or one that belongs to another view, is ignored.
+
+    public func findBarSearchTextChanged(_ bar: TerminalFindBar) {
+        guard bar === visibleFindBar else {
+            return
+        }
+        handleFindBarSearchChanged(bar)
+    }
+
+    public func findBarOptionsChanged(_ bar: TerminalFindBar) {
+        guard bar === visibleFindBar else {
+            return
+        }
+        handleFindBarOptionsChanged(bar)
+    }
+
+    public func findBar(_ bar: TerminalFindBar, findNext forward: Bool) {
+        guard bar === visibleFindBar else {
+            return
+        }
+        performFind(next: forward)
+    }
+
+    public func findBarClose(_ bar: TerminalFindBar) {
+        guard bar === visibleFindBar else {
+            return
+        }
+        hideFindBar()
     }
 }
 #endif

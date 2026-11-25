@@ -133,13 +133,19 @@ struct GlyphPixelAlignmentTests {
         let font = CTFontCreateWithFontDescriptor(descriptor, 16, nil) as NSFont
         let scale: CGFloat = 3
 
+        /// With `sharedEntry` the cursor must sample the very atlas region the
+        /// row does. Otherwise (font smoothing rasterizes the block cursor's
+        /// glyph in the opposite polarity, as its own atlas entry) the two
+        /// regions may differ, but only by one whole-texel translation: the
+        /// same scale and the same sub-pixel placement of the bitmap.
         func expectCursorCopy(buffer: MTLBuffer?, count: Int,
-                              cursor: [GlyphVertex], label: String) throws {
+                              cursor: [GlyphVertex], sharedEntry: Bool, label: String) throws {
             let buffer = try #require(buffer)
             try #require(count == 1)
             try #require(cursor.count == 6)
             let cells = buffer.contents().bindMemory(to: TextCell.self, capacity: count)
             let cell = cells[0]
+            var firstDelta: SIMD2<Float>?
             for vertex in cursor {
                 // The cursor clips its copy to the cell, so compare the
                 // position-to-UV mapping rather than the clipped quad origin.
@@ -147,16 +153,26 @@ struct GlyphPixelAlignmentTests {
                     + (vertex.position.x - cell.position.x) * cell.texSize.x / cell.size.x
                 let expectedV = cell.texOrigin.y
                     + (vertex.position.y - cell.position.y) * cell.texSize.y / cell.size.y
-                #expect(abs(vertex.texCoord.x - expectedU) < 0.00001,
-                        "\(label) cursor x differs from the row bitmap placement")
-                #expect(abs(vertex.texCoord.y - expectedV) < 0.00001,
-                        "\(label) cursor y differs from the row bitmap placement")
+                // Offset from the row's region, in atlas texels.
+                let delta = SIMD2<Float>((vertex.texCoord.x - expectedU) * cell.size.x / cell.texSize.x,
+                                         (vertex.texCoord.y - expectedV) * cell.size.y / cell.texSize.y)
+                let reference = sharedEntry ? SIMD2<Float>(0, 0) : (firstDelta ?? delta)
+                firstDelta = firstDelta ?? delta
+                #expect(abs(delta.x - reference.x) < 0.01,
+                        "\(label) cursor x differs from the row bitmap placement (delta \(delta), reference \(reference))")
+                #expect(abs(delta.y - reference.y) < 0.01,
+                        "\(label) cursor y differs from the row bitmap placement (delta \(delta), reference \(reference))")
+                #expect(abs(delta.x - delta.x.rounded()) < 0.01,
+                        "\(label) cursor x is off the atlas texel grid")
+                #expect(abs(delta.y - delta.y.rounded()) < 0.01,
+                        "\(label) cursor y is off the atlas texel grid")
             }
         }
 
-        for text in ["W", "😀"] {
+        for (text, fontSmoothing) in [("W", false), ("W", true), ("😀", true)] {
             let frame = CGRect(x: 0, y: 0, width: 100, height: 40)
             let view = TerminalView(frame: frame, font: font)
+            view.fontSmoothing = fontSmoothing
             view.frameDriver.invalidate()
             view.metalScaleFactorOverride = scale
             view.caretViewTracksFocus = false
@@ -176,10 +192,11 @@ struct GlyphPixelAlignmentTests {
             let row = try #require(data.rows.first)
             if text == "😀" {
                 try expectCursorCopy(buffer: row.glyphColorBuffer, count: row.glyphColorCount,
-                                     cursor: data.cursorGlyphVerticesColor, label: "color")
+                                     cursor: data.cursorGlyphVerticesColor, sharedEntry: true, label: "color")
             } else {
                 try expectCursorCopy(buffer: row.glyphGrayBuffer, count: row.glyphGrayCount,
-                                     cursor: data.cursorGlyphVerticesGray, label: "grayscale")
+                                     cursor: data.cursorGlyphVerticesGray, sharedEntry: !fontSmoothing,
+                                     label: "grayscale")
             }
         }
     }

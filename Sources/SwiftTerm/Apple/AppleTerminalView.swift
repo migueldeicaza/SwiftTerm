@@ -241,6 +241,11 @@ struct FrameAppearance: Sendable, Equatable {
     let linkColor: FrameColor?
     /// Overrides only the underline of highlighted links.
     let linkUnderlineColor: FrameColor?
+    /// The background of the cells that "highlight all matches" paints, or
+    /// `nil` for a view that has no search.
+    var searchMatchBackgroundColor: FrameColor? = nil
+    /// The text color of those cells; `nil` keeps the cell's own color.
+    var searchMatchForegroundColor: FrameColor? = nil
 }
 
 /// Caches main-actor font copies and dynamic-color resolution for frame input.
@@ -255,6 +260,8 @@ final class FrameCaptureCache {
     private var sourceColors: [TTColor] = []
     private var sourceLinkColor: TTColor?
     private var sourceLinkUnderlineColor: TTColor?
+    private var sourceSearchMatchBackgroundColor: TTColor?
+    private var sourceSearchMatchForegroundColor: TTColor?
     private var appearanceSignature = 0
     private var cachedAppearance: FrameAppearance?
 
@@ -292,6 +299,8 @@ final class FrameCaptureCache {
         ]
         let linkColor = view.linkColor
         let linkUnderlineColor = view.linkUnderlineColor
+        let searchMatchBackgroundColor = view.searchMatchBackgroundColor
+        let searchMatchForegroundColor = view.searchMatchForegroundColor
 #if os(macOS)
         let signature = view.effectiveAppearance.name.rawValue.hashValue
 #else
@@ -302,7 +311,10 @@ final class FrameCaptureCache {
            sourceColors.count == current.count,
            zip(sourceColors, current).allSatisfy({ $0.0.isEqual($0.1) }),
            sourceLinkColor?.isEqual(linkColor) ?? (linkColor == nil),
-           sourceLinkUnderlineColor?.isEqual(linkUnderlineColor) ?? (linkUnderlineColor == nil) {
+           sourceLinkUnderlineColor?.isEqual(linkUnderlineColor) ?? (linkUnderlineColor == nil),
+           sourceSearchMatchBackgroundColor?.isEqual(searchMatchBackgroundColor) ?? false,
+           sourceSearchMatchForegroundColor?.isEqual(searchMatchForegroundColor)
+               ?? (searchMatchForegroundColor == nil) {
             return cachedAppearance
         }
 
@@ -314,7 +326,11 @@ final class FrameCaptureCache {
             caretColor: FrameColor(current[4], view: view),
             caretTextColor: FrameColor(current[5], view: view),
             linkColor: linkColor.map { FrameColor($0, view: view) },
-            linkUnderlineColor: linkUnderlineColor.map { FrameColor($0, view: view) })
+            linkUnderlineColor: linkUnderlineColor.map { FrameColor($0, view: view) },
+            searchMatchBackgroundColor: FrameColor(searchMatchBackgroundColor, view: view),
+            searchMatchForegroundColor: searchMatchForegroundColor.map { FrameColor($0, view: view) })
+        sourceSearchMatchBackgroundColor = searchMatchBackgroundColor
+        sourceSearchMatchForegroundColor = searchMatchForegroundColor
         sourceColors = current
         sourceLinkColor = linkColor
         sourceLinkUnderlineColor = linkUnderlineColor
@@ -539,6 +555,9 @@ struct FrameViewState: Sendable {
     let commandActive: Bool
     let textBlinkVisible: Bool
     let notifyUpdateChanges: Bool
+    /// The view's "highlight all matches" option. The render owner reads the
+    /// option only from here.
+    let highlightsAllSearchMatches: Bool
 
     // What SnapshotRenderContext reads, plus the geometry the frame tick uses
     // to compute its dirty region.
@@ -551,6 +570,7 @@ struct FrameViewState: Sendable {
     let cellPixelHeight: Int
     let imageScale: CGFloat
     let metalBufferingMode: MetalBufferingMode
+    let metalTextBlending: MetalTextBlending
     let fontSmoothing: Bool
     let antiAliasCustomBlockGlyphs: Bool
     let cursorHasFocus: Bool
@@ -579,6 +599,7 @@ struct FrameViewState: Sendable {
         commandActive = view.commandActive
         textBlinkVisible = view.textBlinkVisible
         notifyUpdateChanges = view.notifyUpdateChanges
+        highlightsAllSearchMatches = view.highlightsAllSearchMatches
 
         fonts = view.frameCaptureCache.fonts(for: view)
         cellDimension = view.cellDimension
@@ -598,6 +619,7 @@ struct FrameViewState: Sendable {
         cellPixelHeight = cellPixelDimension(cellDimension.height, scale: backingScale)
         imageScale = view.getImageScale()
         metalBufferingMode = view.metalBufferingMode
+        metalTextBlending = view.metalTextBlending
         antiAliasCustomBlockGlyphs = view.antiAliasCustomBlockGlyphs
         appearance = view.frameCaptureCache.appearance(for: view)
         customBlockGlyphs = view.customBlockGlyphs
@@ -634,6 +656,9 @@ struct MainFrameEffects: Sendable {
     var scrollPosition: Double
     var blinkRows: [Int] = []
     var resizedTo: FrameTerminalSize? = nil
+    /// Not nil when the "highlight all matches" search was too slow: ask
+    /// for a frame after this time, in seconds, to search again.
+    var searchRetryDelay: TimeInterval? = nil
 #if os(macOS)
     var scroller: TerminalView.ScrollerState? = nil
     /// The selection the frame shows, so VoiceOver hears of a change to it
@@ -653,6 +678,16 @@ struct SnapshotNativeColors {
     let linkColor: TTColor?
     let linkUnderlineColor: TTColor?
     let ansiColors: [TTColor]
+    var searchMatchBackgroundColor: TTColor? = nil
+    var searchMatchForegroundColor: TTColor? = nil
+}
+
+/// The highlight that covers a cell. The selection, which holds the current
+/// search match, has priority.
+enum CellHighlight {
+    case none
+    case selection
+    case searchMatch
 }
 
 struct SnapshotRenderContext {
@@ -662,6 +697,7 @@ struct SnapshotRenderContext {
     let renderingScale: CGFloat
     let imageScale: CGFloat
     let metalBufferingMode: MetalBufferingMode
+    let metalTextBlending: MetalTextBlending
     let fontSmoothing: Bool
     let antiAliasCustomBlockGlyphs: Bool
     let cursorHasFocus: Bool
@@ -701,9 +737,19 @@ struct SnapshotRenderContext {
     /// default background, so the selection color arrives already composited
     /// over it; the pixels match the highlight drawn over the default background.
     let selectionFillColor: TTColor
+    /// The columns of the search matches, by screen row; see
+    /// `TerminalSnapshot.searchMatchRows`.
+    let searchMatchRows: [[Range<Int>]]
+    let searchMatchFirstRow: Int
+    /// The search match highlight as it is painted, composited in the same
+    /// way as `selectionFillColor`. `nil` paints no match.
+    let searchMatchFillColor: TTColor?
+    /// The text color of a search match; `nil` keeps the cell's own color.
+    let searchMatchForegroundColor: TTColor?
     let bidiHostPolicy: BidiHostPolicy
     let glyphFallbackProvider: (any TerminalGlyphFallbackProvider)?
     let cols: Int
+    let rows: Int
 
     /// Identifies the values used to build attributed-string dictionaries.
     /// Equal visual inputs produce the same identity across frames, so the
@@ -714,11 +760,13 @@ struct SnapshotRenderContext {
     init (viewState: FrameViewState, snapshot: TerminalSnapshot) {
         self.init(viewState: viewState, style: snapshot.style,
                   nativeColors: snapshot.nativeColors(for: viewState.appearance),
-                  cols: snapshot.cols)
+                  cols: snapshot.cols, rows: snapshot.rowCount,
+                  searchMatchRows: snapshot.searchMatchRows,
+                  searchMatchFirstRow: snapshot.firstRow)
     }
 
     init (viewState: FrameViewState, style: SnapshotStyle, ansiColors: [Color],
-          cols: Int) {
+          cols: Int, rows: Int) {
         let appearance = viewState.appearance
         self.init(
             viewState: viewState,
@@ -732,12 +780,15 @@ struct SnapshotRenderContext {
                 caretTextColor: appearance.caretTextColor.nativeColor,
                 linkColor: appearance.linkColor?.nativeColor,
                 linkUnderlineColor: appearance.linkUnderlineColor?.nativeColor,
-                ansiColors: ansiColors.map(TTColor.make(color:))),
-            cols: cols)
+                ansiColors: ansiColors.map(TTColor.make(color:)),
+                searchMatchBackgroundColor: appearance.searchMatchBackgroundColor?.nativeColor,
+                searchMatchForegroundColor: appearance.searchMatchForegroundColor?.nativeColor),
+            cols: cols, rows: rows)
     }
 
     private init (viewState: FrameViewState, style: SnapshotStyle,
-                  nativeColors: SnapshotNativeColors, cols: Int) {
+                  nativeColors: SnapshotNativeColors, cols: Int, rows: Int,
+                  searchMatchRows: [[Range<Int>]] = [], searchMatchFirstRow: Int = 0) {
         fonts = viewState.fonts
         cellDimension = viewState.cellDimension
         viewBounds = viewState.viewBounds
@@ -746,6 +797,7 @@ struct SnapshotRenderContext {
         cursorHasFocus = viewState.cursorHasFocus
         imageScale = viewState.imageScale
         metalBufferingMode = viewState.metalBufferingMode
+        metalTextBlending = viewState.metalTextBlending
         antiAliasCustomBlockGlyphs = viewState.antiAliasCustomBlockGlyphs
         effectiveForegroundColor = nativeColors.effectiveForegroundColor
         effectiveBackgroundColor = nativeColors.effectiveBackgroundColor
@@ -771,13 +823,23 @@ struct SnapshotRenderContext {
             translucentCellBackgroundAlpha = defaultBackgroundAlpha
             selectionFillColor = compositedColor(selectedTextBackgroundColor,
                                                  over: effectiveBackgroundColor)
+            if let matchColor = nativeColors.searchMatchBackgroundColor {
+                searchMatchFillColor = compositedColor(matchColor, over: effectiveBackgroundColor)
+            } else {
+                searchMatchFillColor = nil
+            }
         } else {
             translucentCellBackgroundAlpha = nil
             selectionFillColor = selectedTextBackgroundColor
+            searchMatchFillColor = nativeColors.searchMatchBackgroundColor
         }
+        searchMatchForegroundColor = nativeColors.searchMatchForegroundColor
+        self.searchMatchRows = searchMatchFillColor == nil ? [] : searchMatchRows
+        self.searchMatchFirstRow = searchMatchFirstRow
         bidiHostPolicy = viewState.bidiHostPolicy
         glyphFallbackProvider = viewState.glyphFallbackProvider
         self.cols = cols
+        self.rows = rows
 
         var identityHasher = Hasher()
         identityHasher.combine(fonts.normal.hash)
@@ -793,6 +855,8 @@ struct SnapshotRenderContext {
         identityHasher.combine(caretTextColor.hash)
         identityHasher.combine(linkColor?.hash)
         identityHasher.combine(linkUnderlineColor?.hash)
+        identityHasher.combine(searchMatchFillColor?.hash)
+        identityHasher.combine(searchMatchForegroundColor?.hash)
         for color in self.ansiColors {
             identityHasher.combine(color.hash)
         }
@@ -801,6 +865,29 @@ struct SnapshotRenderContext {
         identityHasher.combine(minimumContrastRatio)
         identityHasher.combine(translucentCellBackgroundAlpha)
         identity = UInt64(bitPattern: Int64(identityHasher.finalize()))
+    }
+
+    /// The colors that a highlighted cell gets in place of its own.
+    /// A nil `foreground` keeps the cell's text color.
+    @inline(__always)
+    func highlightColors (_ highlight: CellHighlight) -> (fill: TTColor, foreground: TTColor?)? {
+        switch highlight {
+        case .none:
+            return nil
+        case .selection:
+            return (selectionFillColor, selectedTextForegroundColor)
+        case .searchMatch:
+            return searchMatchFillColor.map { ($0, searchMatchForegroundColor) }
+        }
+    }
+
+    /// The search match columns of the buffer row `absoluteRow`, in ascending
+    /// order. Empty for a row with no match.
+    @inline(__always)
+    func searchMatchColumns (forRow absoluteRow: Int) -> [Range<Int>] {
+        let index = absoluteRow - searchMatchFirstRow
+        guard index >= 0, index < searchMatchRows.count else { return [] }
+        return searchMatchRows[index]
     }
 
     /// ``CellGeometry/baselineOffset(normalFont:cellHeight:)`` for the fonts and
@@ -1616,7 +1703,12 @@ extension TerminalView {
     /// Defaults to `true` (standard macOS font smoothing).
     @objc open var fontSmoothing: Bool {
         get { _fontSmoothing }
-        set { _fontSmoothing = newValue }
+        set {
+            guard _fontSmoothing != newValue else { return }
+            _fontSmoothing = newValue
+            withTerminal { $0.updateFullScreen() }
+            frameDriver.markDirty()
+        }
     }
 #endif
 
@@ -1647,18 +1739,39 @@ extension TerminalView {
     {
         resetCaches()
         self.cellDimension = computeFontDimensions ()
+        applyCellDimensionChange()
+    }
+
+    /// Applies a new `cellDimension` to the terminal and the screen.
+    ///
+    /// Used by `resetFont` and `remeasureCellDimensionIfBackingScaleChanged`.
+    /// It goes through `processSizeChange`, not `resize(cols:rows:)`: the
+    /// soft reset in `resize(cols:rows:)` would clear the modes, scroll region
+    /// and attributes of the program that is running. `processSizeChange`
+    /// also uses `getEffectiveWidth`, so the scroller width is not counted as
+    /// columns, and zooming in and back out does not drift the column count.
+    func applyCellDimensionChange ()
+    {
         refreshCachedViewState()
         if (frame.width > 0) && (frame.height > 0) {
-            // Use getEffectiveWidth so the scroller's reserved width is taken
-            // into account, matching processSizeChange(). Computing columns from
-            // the raw frame width here would over-count by the scroller width,
-            // so zooming the font in and back out would drift the column count.
-            let newCols = Int(getEffectiveWidth(size: frame.size) / cellDimension.width)
-            let newRows = Int(frame.height / cellDimension.height)
-            resize(cols: newCols, rows: newRows)
+            processSizeChange(newSize: frame.size)
+            // The renderers draw from the frame snapshot. If the grid keeps
+            // the same row and column counts, a size change leaves no dirty
+            // rows; request a full frame after the snapshot has the new cell
+            // geometry.
+            withTerminal { $0.updateFullScreen() }
+            // A live resize may have queued counts measured with the old cell
+            // size (or a frame may already be applying them), and the next
+            // frame would restore them over the ones just set. Queue the
+            // corrected counts in their place; if they match, the frame only
+            // updates the pixel geometry.
+            queueSizeChange(newSize: frame.size)
         }
+        // `needsDisplay` alone repaints the previous snapshot, and the GPU
+        // renderers ignore it. Mark the frame driver so a frame with the new
+        // cell geometry is drawn even when the terminal is idle.
+        invalidateTerminalContents()
         updateCaretView()
-        
         #if os(macOS)
         needsDisplay = true
         #else
@@ -2050,8 +2163,13 @@ extension TerminalView {
         let newRows = Int (newSize.height / cellDimension.height)
         let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
         let cellPixels = currentCellPixelSize()
+        // Counts queued before this, by a font change or a live resize, were
+        // measured on an older frame. A caller that wants a frame to apply
+        // counts after this queues them again (applyCellDimensionChange).
+        renderOwner.mailbox.dropQueuedSize()
         
         var didResize = false
+        var pixelsChanged = false
         withTerminal { terminal in
             if newCols != terminal.cols || newRows != terminal.rows {
                 selection.active = false
@@ -2063,9 +2181,11 @@ extension TerminalView {
                 search.invalidate ()
                 didResize = true
             } else {
+                let previous = terminal.pixelGeometry
                 terminal.updatePixelGeometry(
                     cellWidth: cellPixels.width,
                     cellHeight: cellPixels.height)
+                pixelsChanged = terminal.pixelGeometry != previous
             }
         }
         if didResize {
@@ -2073,6 +2193,13 @@ extension TerminalView {
             terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
             updateScroller()
             return true
+        }
+        if pixelsChanged {
+            // A font or line-spacing change can alter the cell pixels and keep
+            // the rows and columns. The host must still get the new size: for
+            // example, `LocalProcessTerminalView` sends `ws_xpixel` and
+            // `ws_ypixel` to the PTY from this callback.
+            terminalDelegate?.sizeChanged (source: self, newCols: newCols, newRows: newRows)
         }
         return false
     }
@@ -2212,11 +2339,9 @@ extension TerminalView {
     /// Only runs while the view has a window: a detached view would measure
     /// against `NSScreen.main`, so it keeps its grid until it is attached.
     ///
-    /// Unlike `resetFont`, this does not go through `resize(cols:rows:)`,
-    /// whose `softReset()` would clear modes set by the running program.
-    /// `processSizeChange` resizes the terminal only when the rows or columns
-    /// change, and otherwise just updates the pixel geometry. Returns whether
-    /// the grid was re-measured.
+    /// Like `resetFont`, this uses `applyCellDimensionChange`, so the modes
+    /// that the running program set are kept. Returns whether the grid was
+    /// re-measured.
     @discardableResult
     func remeasureCellDimensionIfBackingScaleChanged () -> Bool
     {
@@ -2224,24 +2349,7 @@ extension TerminalView {
             return false
         }
         cellDimension = computeFontDimensions()
-        refreshCachedViewState()
-        processSizeChange(newSize: frame.size)
-        // Core Graphics draws from the frame snapshot. If the grid still has
-        // the same row and column counts, a size change leaves no dirty rows;
-        // request a full frame after the snapshot has the new cell geometry.
-        withTerminal { $0.updateFullScreen() }
-        // A live resize may have queued counts measured with the old cell
-        // size (or a frame may already be applying them), and the next frame
-        // would restore them over the ones just set. Queue the corrected
-        // counts in their place; if they match, the frame only updates the
-        // pixel geometry.
-        queueSizeChange(newSize: frame.size)
-        updateCaretView()
-        #if os(macOS)
-        needsDisplay = true
-        #else
-        setNeedsDisplay(frame)
-        #endif
+        applyCellDimensionChange()
         return true
     }
 
@@ -2890,7 +2998,8 @@ extension TerminalView {
             textBlinkVisible: textBlinkVisible)
         let context = SnapshotRenderContext(viewState: FrameViewState(view: self),
                                             style: liveStyle,
-                                            ansiColors: terminal.ansiColors, cols: cols)
+                                            ansiColors: terminal.ansiColors, cols: cols,
+                                            rows: terminal.rows)
         var result = textBuilder.buildAttributedString(row: snapshotRow, absoluteRow: row,
                                                        context: context)
         result.images = line.images
@@ -3026,6 +3135,23 @@ extension TerminalView {
         guard linkVisibleForClick(match: match, hasCommandModifier: hasCommandModifier) else {
             return nil
         }
+        return resolvedLinkLocked(match: match, at: position)
+    }
+
+    /// The link at a buffer position, explicit or implicit. It ignores the
+    /// highlight mode, the hover state and the modifier keys.
+    func linkAtPositionLocked(_ position: Position) -> (link: String, params: [String:String], isExplicit: Bool)?
+    {
+        terminal.terminalLock.preconditionLocked()
+        guard let match = terminal.linkMatch(at: .buffer(position), mode: .explicitAndImplicit) else {
+            return nil
+        }
+        return resolvedLinkLocked(match: match, at: position)
+    }
+
+    /// Gives the target and the OSC 8 parameters of a match.
+    func resolvedLinkLocked(match: Terminal.LinkMatch, at position: Position) -> (link: String, params: [String:String], isExplicit: Bool)
+    {
         if match.isExplicit,
            let payload = payloadStringLocked(at: position),
            let (url, params) = urlAndParamsFrom(payload: payload) {
@@ -4201,6 +4327,12 @@ extension TerminalView {
 #endif
         updateTextBlinkLifecycle(blinkRows: effects.blinkRows)
 
+        if let delay = effects.searchRetryDelay {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.frameDriver?.markDirty()
+            }
+        }
+
         if let changed = effects.rangeChanged {
             terminalDelegate?.rangeChanged(source: self, startY: changed.start,
                                            endY: changed.end)
@@ -4865,6 +4997,8 @@ extension TerminalView {
                 cellWidth: cellPixels.width,
                 cellHeight: cellPixels.height)
             terminal.softReset()
+            // Search positions and highlight ranges are for the old layout.
+            search?.invalidate()
         }
         terminalDelegate?.sizeChanged(source: self, newCols: cols, newRows: rows)
         updateScroller()
@@ -5238,6 +5372,43 @@ extension TerminalView {
         }
     }
     
+    /// Records the selection at the start of a user gesture.
+    func beginUserSelectionGesture () {
+        guard terminal != nil else { return }
+        selectionRevisionAtGestureStart = withTerminal { _ in selection.revision }
+    }
+
+    /// Reports the selection as finished if it changed after
+    /// ``beginUserSelectionGesture()``. A second call with no new gesture
+    /// does nothing.
+    func endUserSelectionGesture () {
+        guard terminal != nil else { return }
+        let revision = withTerminal { _ in selection.revision }
+        guard revision != selectionRevisionAtGestureStart else { return }
+        selectionRevisionAtGestureStart = revision
+        userSelectionFinished ()
+    }
+
+    /// Runs a user gesture that completes in one step, such as a tap or a
+    /// menu command, and reports the selection if the gesture changed it.
+    func userSelectionGesture (_ body: () -> Void) {
+        beginUserSelectionGesture ()
+        body ()
+        endUserSelectionGesture ()
+    }
+
+    /// Notifies the delegate, then copies the text as ``copyOnSelect`` specifies.
+    /// Does nothing when no range is selected.
+    private func userSelectionFinished () {
+        guard withTerminal({ _ in selection.active && selection.hasSelectionRange }) else { return }
+        terminalDelegate?.selectionFinished (source: self)
+        // Read the text after the delegate call, because the host can change
+        // or clear the selection there. Build it only when it is necessary.
+        guard copyOnSelect != .off, let text = getSelection (),
+              !text.allSatisfy(\.isWhitespace) else { return }
+        writeCopyOnSelectText (text)
+    }
+
     /// Selects the entire buffer
     public func selectAll () {
         withTerminal { _ in

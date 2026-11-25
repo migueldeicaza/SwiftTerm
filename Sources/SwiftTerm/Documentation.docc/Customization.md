@@ -105,6 +105,16 @@ terminalView.optionAsMetaKey = false
 terminalView.optionAsMetaKeyForFunctionalKeys = true
 ```
 
+Many keyboard layouts put common terminal characters behind Option (Option+7 is
+`|` on a Norwegian layout). `optionAsMetaSide` makes one Option key Meta and
+gives the other one to the layout, so the user has the two functions:
+
+```swift
+terminalView.optionAsMetaKey = true
+terminalView.optionAsMetaSide = .left   // right Option types layout characters
+terminalView.optionAsMetaKeyForFunctionalKeys = true
+```
+
 On iOS with an external keyboard, `optionAsMetaKey` is available too. The iOS
 view also supports toggling it at runtime with Option-Command-O.
 
@@ -148,6 +158,26 @@ Important: `.implicit` means "explicit + implicit fallback", not "implicit only.
 Link activation is also gated by `linkHighlightMode`. The reporting mode chooses
 how links are discovered during tracking, while highlight mode decides whether a
 click/tap is allowed to open the link.
+
+### Touch Link Activation (iOS and visionOS)
+
+A finger cannot hover, so the `linkHighlightMode` rules apply only to pointer
+clicks. `touchLinkActivation` sets what a touch on a link does:
+
+```swift
+terminalView.touchLinkActivation = .tap   // Default: a tap on a link opens it
+terminalView.touchLinkActivation = .none  // A tap on a link acts as a tap on text
+```
+
+With `.none`, use `linkRequest(at:)` to find the link under a point and show
+your own menu or use your own gesture:
+
+```swift
+if let request = terminalView.linkRequest(at: location) {
+    // Show "Open Link" and "Copy Link", then for example:
+    terminalView.terminalDelegate?.requestOpenLink(source: terminalView, request: request)
+}
+```
 
 ### Link Color
 
@@ -396,6 +426,10 @@ try terminalView.setUseMetal(true)
 // Choose a buffering strategy
 terminalView.metalBufferingMode = .perRowPersistent   // default
 terminalView.metalBufferingMode = .perFrameAggregated // for full-screen TUIs
+
+// Choose how monochrome glyph coverage is blended
+terminalView.metalTextBlending = .native          // default, matches Core Graphics
+terminalView.metalTextBlending = .linearCorrected // even stroke weight across themes
 
 // Check current renderer
 if terminalView.isUsingMetalRenderer {

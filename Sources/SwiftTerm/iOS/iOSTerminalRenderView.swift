@@ -94,6 +94,8 @@ open class TerminalRenderView: UIView, CaretHost {
     public var bidiHostPolicy: BidiHostPolicy = .respectTerminal { didSet { invalidateAll() } }
     /// How the Metal renderer builds its GPU buffers, as in `TerminalView`.
     public var metalBufferingMode: MetalBufferingMode = .perRowPersistent { didSet { invalidateAll() } }
+    /// How the Metal renderer blends monochrome glyph coverage, as in `TerminalView`.
+    public var metalTextBlending: MetalTextBlending = .native { didSet { invalidateAll() } }
 
     /// The default foreground color: the color of text with no explicit color.
     public var nativeForegroundColor: UIColor = .label { didSet { colorsChanged() } }

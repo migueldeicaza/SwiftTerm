@@ -30,16 +30,63 @@ public final class BufferLine: CustomDebugStringConvertible {
         /// Renders the bottom of a character, using two cells
         case doubledDown
     }
-    private var isWrappedValue: Bool
+    /// Why a line continues the previous line.
+    enum WrapCause: UInt8, Sendable {
+        /// The line starts after a hard line break, or is the first line.
+        case none
+        /// The line continues the previous line, but no automatic wrap at
+        /// the last column of the screen is recorded for it. An automatic
+        /// wrap at an internal right margin (DECLRMM) gives this value.
+        case soft
+        /// A printed character caused an automatic wrap at the last column
+        /// of the screen. Only this value lets implicit link lookup read
+        /// the two lines as one, as Ghostty does with its row wrap flag.
+        case screenEdge
+    }
+    private var wrapValue: WrapCause
     /// True when this line is a continuation of the previous line: the text
     /// soft-wrapped onto it rather than starting after an explicit newline.
     public internal(set) var isWrapped: Bool {
-        get { isWrappedValue }
+        get { wrapValue != .none }
         set {
-            guard newValue != isWrappedValue else { return }
-            isWrappedValue = newValue
+            guard newValue != (wrapValue != .none) else { return }
+            // A cleared wrap also clears the screen-edge mark. A wrap set
+            // here has no recorded cause.
+            wrapValue = newValue ? .soft : .none
             bump()
         }
+    }
+    /// The recorded cause of the wrap onto this line. `isWrapped` is true
+    /// for each value other than `.none`.
+    var wrapCause: WrapCause {
+        get { wrapValue }
+        @inline(__always) set {
+            guard newValue != wrapValue else { return }
+            let wrapChanged = (newValue != .none) != (wrapValue != .none)
+            wrapValue = newValue
+            // The cause is not drawn and not selected. Only a change of
+            // `isWrapped` is a change of the line.
+            if wrapChanged { bump() }
+        }
+    }
+    /// True when an automatic wrap at the last column of the screen moved
+    /// the output onto this line. Implicit link lookup uses this value, and
+    /// not `isWrapped`, to join lines.
+    var isScreenEdgeWrapped: Bool { wrapValue == .screenEdge }
+
+    /// Records that a full-width automatic wrap made this line a
+    /// continuation. It has no effect on a line that is not wrapped.
+    @inline(__always)
+    func markScreenEdgeWrap() {
+        if wrapValue == .soft { wrapValue = .screenEdge }
+    }
+
+    /// Removes the screen-edge mark and keeps `isWrapped`. Use it when a
+    /// command changes the end of the previous line: reflow keeps its
+    /// paragraph, but a link must not continue across the changed cells.
+    @inline(__always)
+    func clearScreenEdgeWrap() {
+        if wrapValue == .screenEdge { wrapValue = .soft }
     }
     private var bidiStateValue: BidiPresentationState
     /// BiDi state for the paragraph that contains this row.
@@ -254,7 +301,7 @@ public final class BufferLine: CustomDebugStringConvertible {
          isWrapped: Bool = false, bidiState: BidiPresentationState = .default,
          arena: CellArena)
     {
-        isWrappedValue = isWrapped
+        wrapValue = isWrapped ? .soft : .none
         bidiStateValue = bidiState
         storage = CellStoragePage(count: cols, repeating: packedFill, arena: arena)
         usedLength = blankTailCell == nil ? cols : 0
@@ -264,7 +311,7 @@ public final class BufferLine: CustomDebugStringConvertible {
 
     public init (from other: BufferLine)
     {
-        isWrappedValue = other.isWrappedValue
+        wrapValue = other.wrapValue
         bidiStateValue = other.bidiStateValue
         renderModeValue = other.renderModeValue
         semanticMarksValue = other.semanticMarksValue
@@ -634,11 +681,20 @@ public final class BufferLine: CustomDebugStringConvertible {
         bump()
     }
 
+    /// `recycle(with:wrapCause:bidiState:)` for a wrap with no recorded
+    /// cause.
+    @discardableResult
+    @inline(__always)
+    func recycle(with empty: PackedCell, isWrapped: Bool,
+                 bidiState: BidiPresentationState) -> Bool {
+        recycle(with: empty, wrapCause: isWrapped ? .soft : .none, bidiState: bidiState)
+    }
+
     /// Resets a line object for reuse. This is one logical mutation, so it
     /// bypasses the individual metadata setters and changes `generation` once.
     @discardableResult
     @inline(__always)
-    func recycle(with empty: PackedCell, isWrapped: Bool,
+    func recycle(with empty: PackedCell, wrapCause: WrapCause,
                  bidiState: BidiPresentationState) -> Bool {
         let hadImages = imagesValue != nil
         clearCellState(with: empty)
@@ -646,7 +702,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             semanticMarksValue.removeAll(keepingCapacity: true)
         }
         semanticHardContinuationGroupValue = nil
-        isWrappedValue = isWrapped
+        wrapValue = wrapCause
         bidiStateValue = bidiState
         renderModeValue = .single
         recycleGeneration &+= 1
@@ -886,7 +942,7 @@ public final class BufferLine: CustomDebugStringConvertible {
                                                    widthState: .narrow)!
             }
         }
-        isWrapped = line.isWrapped
+        wrapCause = line.wrapCause
         semanticMarks = line.semanticMarks
         semanticHardContinuationGroup = line.semanticHardContinuationGroup
         bidiState = line.bidiState
@@ -913,7 +969,7 @@ public final class BufferLine: CustomDebugStringConvertible {
             // Snapshot arenas preserve terminal identifiers exactly.
             tailBlankCell = line.tailBlankCell
         }
-        isWrapped = line.isWrapped
+        wrapCause = line.wrapCause
         bidiState = line.bidiState
         renderMode = line.renderMode
         semanticMarks.removeAll(keepingCapacity: true)
@@ -935,6 +991,36 @@ public final class BufferLine: CustomDebugStringConvertible {
             }
         }
         return 0
+    }
+
+    /// The trimmed length of the first `limit` cells. Reflow uses it while a
+    /// row can still have old cells after the new width.
+    func getTrimmedLength (limit: Int) -> Int
+    {
+        let count = min (limit, storage.count)
+        for i in (0..<max (count, 0)).reversed() {
+            if storage.logicalCode(at: i) != 0 {
+                return min (i + Int(storage.width(at: i)), count)
+            }
+        }
+        return 0
+    }
+
+    /// True when `getTrimmedLength (limit: cols) >= cols - 1`. Only the
+    /// last three cells can give that length, so the cost has a limit.
+    @inline(__always)
+    func textReachesCellBeforeLast (cols: Int) -> Bool
+    {
+        let count = min (cols, storage.count)
+        var i = count - 1
+        let first = max (cols - 3, 0)
+        while i >= first {
+            if storage.logicalCode(at: i) != 0 {
+                return min (i + Int(storage.width(at: i)), count) >= cols - 1
+            }
+            i -= 1
+        }
+        return false
     }
 
     /// Copies a range of CharData elements from another bufferline into this one

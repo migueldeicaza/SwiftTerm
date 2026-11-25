@@ -33,7 +33,7 @@ struct TranslucentCellBackgroundTests {
 
     private func makeContext(_ view: TerminalView) -> SnapshotRenderContext {
         SnapshotRenderContext(viewState: FrameViewState(view: view), style: .empty,
-                              ansiColors: view.withTerminal { $0.ansiColors }, cols: 80)
+                              ansiColors: view.withTerminal { $0.ansiColors }, cols: 80, rows: 25)
     }
 
     private func colors(_ attribute: Attribute, view: TerminalView)

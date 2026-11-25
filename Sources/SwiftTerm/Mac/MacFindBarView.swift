@@ -7,12 +7,9 @@
 #if os(macOS)
 import AppKit
 
-final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate {
-    var onSearchChanged: ((String) -> Void)?
-    var onFindNext: (() -> Void)?
-    var onFindPrevious: (() -> Void)?
-    var onClose: (() -> Void)?
-    var onOptionsChanged: ((SearchOptions) -> Void)?
+/// The built-in find bar. Applications replace it with ``TerminalView/findBarProvider``.
+final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate, TerminalFindBar {
+    weak var findBarDelegate: TerminalFindBarDelegate?
 
     private let searchField = NSSearchField()
     private let previousButton = NSButton()
@@ -45,7 +42,7 @@ final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate {
         setup()
     }
 
-    func focus() {
+    func focusSearchField() {
         window?.makeFirstResponder(searchField)
     }
 
@@ -103,7 +100,8 @@ final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 6),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
-            searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 200)
+            searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            widthAnchor.constraint(lessThanOrEqualToConstant: 520)
         ])
     }
 
@@ -126,36 +124,33 @@ final class TerminalFindBarView: NSVisualEffectView, NSSearchFieldDelegate {
     }
 
     @objc private func searchFieldAction() {
-        if let event = NSApp.currentEvent, event.modifierFlags.contains(.shift) {
-            onFindPrevious?()
-        } else {
-            onFindNext?()
-        }
+        let backward = NSApp.currentEvent?.modifierFlags.contains(.shift) == true
+        findBarDelegate?.findBar(self, findNext: !backward)
     }
 
     @objc private func previousTapped() {
-        onFindPrevious?()
+        findBarDelegate?.findBar(self, findNext: false)
     }
 
     @objc private func nextTapped() {
-        onFindNext?()
+        findBarDelegate?.findBar(self, findNext: true)
     }
 
     @objc private func closeTapped() {
-        onClose?()
+        findBarDelegate?.findBarClose(self)
     }
 
     @objc private func optionChanged() {
-        onOptionsChanged?(options)
+        findBarDelegate?.findBarOptionsChanged(self)
     }
 
     func controlTextDidChange(_ obj: Notification) {
-        onSearchChanged?(searchField.stringValue)
+        findBarDelegate?.findBarSearchTextChanged(self)
     }
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-            onClose?()
+            findBarDelegate?.findBarClose(self)
             return true
         }
         if commandSelector == #selector(NSResponder.insertNewline(_:)) {

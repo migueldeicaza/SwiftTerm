@@ -14,6 +14,81 @@ import AppKit
 @MainActor
 @Suite(.serialized)
 struct FontResizeColumnsTests {
+    @Test func testFontChangeKeepsTheProgramsTerminalModes() {
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        view.feed(text: "\u{1b}[?1h\u{1b}[?7l\u{1b}[?6h\u{1b}[1;31m")
+        let colsBefore = view.withTerminal { $0.cols }
+
+        view.font = NSFont.monospacedSystemFont(ofSize: 24, weight: .regular)
+
+        view.feed(text: "X")
+        view.withTerminal { terminal in
+            #expect(terminal.cols < colsBefore)
+            #expect(terminal.applicationCursor)
+            #expect(!terminal.wraparound)
+            #expect(terminal.originMode)
+            #expect(terminal.getCharData(col: 0, row: 0)?.attribute.style.contains(.bold) == true)
+        }
+    }
+
+    private func drain() async {
+        await withCheckedContinuation { c in DispatchQueue.main.async { c.resume() } }
+    }
+
+    /// A view whose height is almost six rows, so a small line-spacing
+    /// change alters the cell pixels but keeps the rows and columns.
+    private func makeHalfRowView() -> TerminalView {
+        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let probe = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        probe.font = font
+        let height = probe.cellDimension.height * 5.9
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: height))
+        view.font = font
+        return view
+    }
+
+    @Test func testIdleFontChangeDrawsAFrame() async {
+        let view = makeHalfRowView()
+        view.frameDriver.invalidate()
+        let source = ManualTickSource()
+        let driver = FrameDriver(tickSource: source)
+        driver.onTick = { [weak view] in view?.frameTick() }
+        view.frameDriver = driver
+        defer { driver.invalidate() }
+
+        view.feed(text: "hello")
+        await drain(); source.tick(); await drain()
+        let grid = view.withTerminal { ($0.cols, $0.rows) }
+        let frames = driver.currentCounters.frames
+
+        view.lineSpacing = 1.1
+        await drain(); source.tick(); await drain()
+
+        #expect(view.withTerminal { ($0.cols, $0.rows) } == grid)
+        #expect(driver.currentCounters.frames > frames)
+    }
+
+    @Test func testPixelOnlyFontChangeNotifiesTheDelegate() {
+        let view = makeHalfRowView()
+        let delegate = FontSizeChangeRecorder()
+        view.terminalDelegate = delegate
+        let before = view.withTerminal { $0.pixelGeometry }
+        let grid = view.withTerminal { ($0.cols, $0.rows) }
+
+        view.lineSpacing = 1.1
+
+        let after = view.withTerminal { $0.pixelGeometry }
+        #expect(view.withTerminal { ($0.cols, $0.rows) } == grid)
+        #expect(after != before)
+        #expect(delegate.sizes.count == 1)
+        #expect(delegate.sizes.first?.cols == grid.0)
+        #expect(delegate.sizes.first?.rows == grid.1)
+
+        // Setting the same spacing again changes no pixels: no callback.
+        view.lineSpacing = 1.1
+        #expect(delegate.sizes.count == 1)
+    }
+
     @Test func testOverlayScrollerDoesNotRemoveColumns() {
         let frame = CGRect(x: 0, y: 0, width: 400, height: 200)
         let view = TerminalView(frame: frame)
@@ -92,5 +167,18 @@ struct FontResizeColumnsTests {
 
         #expect(colsAfterFontChange == colsAfterResize)
     }
+}
+
+private final class FontSizeChangeRecorder: TerminalViewDelegate {
+    var sizes: [(cols: Int, rows: Int)] = []
+
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        sizes.append((newCols, newRows))
+    }
+    func setTerminalTitle(source: TerminalView, title: String) {}
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
+    func send(source: TerminalView, data: ArraySlice<UInt8>) {}
+    func scrolled(source: TerminalView, position: Double) {}
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
 }
 #endif
