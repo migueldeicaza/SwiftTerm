@@ -43,7 +43,7 @@ export function decodeEvent(bytes: Uint8Array): HostEvent {
         operation: (['readPermission', 'writePermission', 'list', 'read', 'write', 'osc52Read'] as const)[u(4)],
         location: 'standard', name: object.name as string | undefined, mimeTypes: mimes, representations } };
     }
-    case 14: size(4); return { ...base, type: 'mouseMode', mode: u(0) };
+    case 14: size(8); if (u(4) > 1) bad(); return { ...base, type: 'mouseMode', mode: u(0), shiftCapture: !!u(4) };
     default: return { ...base, type: 'unknown', eventType: type, data: p.slice() };
   }
 }

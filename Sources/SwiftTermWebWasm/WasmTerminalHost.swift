@@ -13,14 +13,21 @@ final class WasmTerminalHost: TerminalDelegate {
     var cursorVisible = true
     let graphics = WasmGraphicsState()
     var synchronizedOutputDeadline: UInt64?
+    /// The mouse mode and Shift capture last queued for JavaScript, or `nil`
+    /// when the next change must be sent, such as after a reset.
+    var lastMouseModeValues: [UInt32]?
 
-    func event(_ type: UInt16, _ payload: [UInt8] = []) {
-        if !events.append(type: type, payload: payload) { queueFailure = true }
+    @discardableResult
+    func event(_ type: UInt16, _ payload: [UInt8] = []) -> Bool {
+        let queued = events.append(type: type, payload: payload)
+        if !queued { queueFailure = true }
+        return queued
     }
-    func words(_ type: UInt16, _ values: [UInt32]) {
+    @discardableResult
+    func words(_ type: UInt16, _ values: [UInt32]) -> Bool {
         var payload: [UInt8] = []
         for value in values { payload.append32(value) }
-        event(type, payload)
+        return event(type, payload)
     }
     func text(_ type: UInt16, _ value: String) {
         guard value.utf8.count <= ABI.maximumControl else { queueFailure = true; return }
@@ -121,6 +128,8 @@ final class WasmTerminalHost: TerminalDelegate {
         case .buttonEventTracking: value = 3
         case .anyEvent: value = 4
         }
-        words(14, [value])
+        let values = [value, source.mouseShiftCapture ? 1 : 0]
+        guard values != lastMouseModeValues else { return }
+        if words(14, values) { lastMouseModeValues = values }
     }
 }

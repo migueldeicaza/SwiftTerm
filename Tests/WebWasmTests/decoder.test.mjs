@@ -26,15 +26,18 @@ test('snapshot rejects truncated, overlapping, unaligned, and overflowing record
 const event=(type,payload=new Uint8Array())=>{const b=new Uint8Array(16+payload.length),v=new DataView(b.buffer);v.setUint16(0,type,true);v.setUint32(4,4,true);v.setUint32(8,payload.length,true);b.set(payload,16);return b;};
 const words=(...values)=>{const b=new Uint8Array(values.length*4),v=new DataView(b.buffer);values.forEach((n,i)=>v.setUint32(i*4,n,true));return b;};
 test('all version 1 host event records decode',()=>{
-  const payloads=[[],[65],[65],[65],[1,0,0,0,1,0,0,0,65,66],[0,255],words(80,24),[2,1,1,0],words(3,5,0xff0000ff),words(1,0xffffffff),words(1),[],[65],words(4)];
+  const payloads=[[],[65],[65],[65],[1,0,0,0,1,0,0,0,65,66],[0,255],words(80,24),[2,1,1,0],words(3,5,0xff0000ff),words(1,0xffffffff),words(1),[],[65],words(4,1)];
   const types=['bell','title','iconTitle','currentDirectory','notification','clipboardWrite','resizeRequest','cursorStyle','colorChange','progress','syncOutputChanged','syncOutputTimeout','currentDocument','mouseMode'];
   payloads.forEach((p,i)=>assert.equal(decodeEvent(event(i+1,Uint8Array.from(p))).type,types[i]));
   assert.equal(decodeEvent(event(10,words(1,0xffffffff))).progress,null);
+  assert.deepEqual([decodeEvent(event(14,words(3,1))).mode,decodeEvent(event(14,words(3,1))).shiftCapture],[3,true]);
   assert.equal(decodeEvent(event(99,Uint8Array.of(1))).type,'unknown');
 });
 test('event decoder rejects malformed payloads and lengths',()=>{
   for(const type of [1,5,7,8,9,10,11,12,14])assert.throws(()=>decodeEvent(event(type,Uint8Array.of(1))),SwiftTermError);
   assert.throws(()=>decodeEvent(event(2,Uint8Array.of(255))),SwiftTermError);
+  assert.throws(()=>decodeEvent(event(14,words(3))),SwiftTermError);
+  assert.throws(()=>decodeEvent(event(14,words(3,2))),SwiftTermError);
   const b=event(1);new DataView(b.buffer).setUint32(8,0xffffffff,true);assert.throws(()=>decodeEvent(b),SwiftTermError);
 });
 test('deterministic byte mutations cannot leak RangeError from binary decoders',()=>{

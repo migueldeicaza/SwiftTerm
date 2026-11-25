@@ -1113,9 +1113,15 @@ open class Terminal {
     
     public private(set) var mouseMode: MouseMode = .off {
         didSet {
-            tdel?.mouseModeChanged (source: self)
+            if !mouseModeChangesDeferred {
+                tdel?.mouseModeChanged (source: self)
+            }
         }
     }
+
+    /// Set while ``setup(isReset:)`` clears the mouse mode and the Shift
+    /// capture, so the delegate hears about both once, after the reset.
+    private var mouseModeChangesDeferred = false
 
     /// The latest pressure data from the pointer device. Callers must hold
     /// ``terminalLock`` when they read or change this state.
@@ -1148,7 +1154,7 @@ open class Terminal {
     /// A change notifies ``TerminalDelegate/mouseModeChanged(source:)``.
     public private(set) var mouseShiftCapture: Bool = false {
         didSet {
-            if mouseShiftCapture != oldValue {
+            if mouseShiftCapture != oldValue && !mouseModeChangesDeferred {
                 tdel?.mouseModeChanged (source: self)
             }
         }
@@ -1478,8 +1484,11 @@ open class Terminal {
         gLevel = 0
         setCurrentAttribute(CharData.defaultAttr)
         
+        mouseModeChangesDeferred = true
         mouseMode = .off
         mouseShiftCapture = false
+        mouseModeChangesDeferred = false
+        tdel?.mouseModeChanged (source: self)
 
         buffer.scrollTop = 0
         buffer.scrollBottom = rows-1
