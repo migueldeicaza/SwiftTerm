@@ -166,17 +166,37 @@ extension TerminalView {
             return
         }
         guard allowsLink(isExplicit: isExplicit) else { return }
+        let target = linkTarget(link, isExplicit: isExplicit)
+        TerminalLinkOpening.request(target, window: window, presentAlert: presentAlert) { [weak self] url in
+            guard let self, allowsLink(isExplicit: isExplicit) else { return }
+            approved(url)
+        }
+    }
+
+    /// The target that the view's default policy checks for a link.
+    ///
+    /// When `localLinkResolver` is set and OSC 7 does not name a remote host,
+    /// only the resolver turns a path into a file. A path that it does not
+    /// resolve is blocked, and the app or shell directory is not used.
+    func linkTarget(_ link: String, isExplicit: Bool) -> UntrustedTerminalLink {
         var pathBase = Self.linkPathBase(hostCurrentDirectory: withTerminal { $0.hostCurrentDirectory })
         // Only the host can tell that the session is local. A remote host in
         // OSC 7 still blocks local paths.
         if !resolvesLinksAgainstShellDirectory, pathBase != .remote {
             pathBase = .processDirectory
         }
-        let target = Self.defaultLinkTarget(link, isExplicit: isExplicit, pathBase: pathBase)
-        TerminalLinkOpening.request(target, window: window, presentAlert: presentAlert) { [weak self] url in
-            guard let self, allowsLink(isExplicit: isExplicit) else { return }
-            approved(url)
+        guard let localLinkResolver, pathBase != .remote else {
+            return Self.defaultLinkTarget(link, isExplicit: isExplicit, pathBase: pathBase)
         }
+        let original = UntrustedTerminalLink(link, isResolvedByHost: true)
+        guard original.canResolveAsLocalPath else {
+            return original
+        }
+        if let url = localLinkResolver(link), url.isFileURL {
+            return UntrustedTerminalLink(url.absoluteString)
+        }
+        // "custom:123" can be a URL. If the host has no file for it, keep the URL.
+        return original
     }
 
     /// A checked URL, and how to open it, for the deprecated delegate method.
@@ -229,9 +249,11 @@ extension TerminalLinkRequest {
     /// Checks a link with SwiftTerm's policy, then opens it with its default handler.
     ///
     /// Unsafe local files are blocked, and custom URL schemes need confirmation.
-    /// For an OSC 8 link, the target must have a scheme. A detected relative
+    /// For an OSC 8 link, the target must have a scheme unless the view's
+    /// `localLinkResolver` resolves it to a file URL. A detected relative
     /// path resolves against the shell's directory from OSC 7, when the shell
     /// reports one and the view's `resolvesLinksAgainstShellDirectory` is true.
+    /// A `localLinkResolver` takes precedence over this directory lookup.
     /// Alerts show as a sheet on the window of the view.
     ///
     /// You can call this method after `requestOpenLink(source:request:)` returns,
