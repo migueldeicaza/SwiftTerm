@@ -73,11 +73,92 @@ struct MacDefaultLinkTests {
     @Test @MainActor func previewsEscapeControlsAndRespectTheSetting() throws {
         let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
         view.previewUrl(payload: ";https://example.com/\u{202E}file\u{2028}end")
-        #expect(view.urlPreview?.stringValue == "https://example.com/\\u{202E}file\\u{2028}end")
+        #expect(view.urlPreview?.stringValue == "https://example.com/\\u{202E}file\\u{2028}end (blocked)")
         view.enableOsc8Hyperlinks = false
         #expect(view.urlPreview == nil)
         view.previewUrl(payload: ";https://example.com")
         #expect(view.urlPreview == nil)
+    }
+
+    @Test @MainActor func previewsShowTheTargetFromTheLocalResolver() throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathExtension("txt")
+        try Data("x".utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let view = TerminalView(frame: CGRect(x: 0, y: 0, width: 400, height: 200))
+        var calls: [String] = []
+        view.localLinkResolver = { link, _ in
+            calls.append(link)
+            return link == "report.txt" ? file : nil
+        }
+        let resolvedPath = file.standardizedFileURL.resolvingSymlinksInPath().path
+
+        // Mouse moves repeat the preview. The resolver runs once for the link.
+        view.previewUrl(payload: ";report.txt")
+        view.previewUrl(payload: ";report.txt")
+        #expect(view.urlPreview?.stringValue == resolvedPath)
+        #expect(calls == ["report.txt"])
+
+        // A path that the host does not resolve is not shown in the app directory.
+        view.previewUrl(payload: ";missing.txt")
+        #expect(view.urlPreview?.stringValue == "missing.txt (blocked)")
+        view.previewUrl(payload: ";src/report\u{202E}.txt")
+        #expect(view.urlPreview?.stringValue == "src/report\\u{202E}.txt (blocked)")
+        #expect(calls == ["report.txt", "missing.txt"])
+
+        // After the preview closes, the next preview asks the resolver again.
+        view.removePreviewUrl()
+        view.previewUrl(payload: ";report.txt")
+        #expect(calls == ["report.txt", "missing.txt", "report.txt"])
+    }
+
+    @Test @MainActor func replacingTheResolverInvalidatesThePreview() {
+        let view = TerminalView(frame: .zero)
+        view.localLinkResolver = { _, _ in URL(string: "file:///etc/hosts") }
+        view.previewUrl(payload: ";report.txt")
+        view.localLinkResolver = { _, _ in nil }
+        #expect(view.urlPreview == nil)
+        view.previewUrl(payload: ";report.txt")
+        #expect(view.urlPreview?.stringValue == "report.txt (blocked)")
+    }
+
+    @Test @MainActor func directoryChangesAndResetRefreshTheVisiblePreview() async {
+        let view = TerminalView(frame: .zero)
+        var directories: [URL?] = []
+        view.localLinkResolver = { _, directory in
+            #expect(!view.terminal.terminalLock.isLockedByCurrentThread)
+            view.withTerminal { _ in }
+            directories.append(directory)
+            return nil
+        }
+        defer { view.localLinkResolver = nil }
+        view.previewUrl(payload: ";report.txt")
+        let preview = view.urlPreview
+        let osc7 = "\u{1b}]7;file://localhost/tmp/project%20two\u{07}"
+        view.feed(text: osc7)
+        let deadline = ContinuousClock.now + .seconds(2)
+        while directories.count < 2, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(view.urlPreview === preview)
+        #expect(directories == [nil, URL(fileURLWithPath: "/tmp/project two", isDirectory: true)])
+
+        view.feed(text: osc7)
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        #expect(view.urlPreview === preview)
+        #expect(directories.count == 2)
+
+        view.feed(text: "\u{1b}c")
+        let resetDeadline = ContinuousClock.now + .seconds(2)
+        while directories.count < 3, ContinuousClock.now < resetDeadline {
+            await Task.yield()
+        }
+        #expect(view.urlPreview === preview)
+        #expect(directories == [nil, URL(fileURLWithPath: "/tmp/project two", isDirectory: true), nil])
+        view.previewUrl(payload: ";report.txt")
+        #expect(directories.count == 3)
     }
 
     @Test @MainActor func customSchemeConfirmationDefaultsToCancel() throws {

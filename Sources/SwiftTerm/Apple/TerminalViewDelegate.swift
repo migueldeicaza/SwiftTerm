@@ -62,7 +62,9 @@ public protocol TerminalViewDelegate: AnyObject {
     func setTerminalTitle(source: TerminalView, title: String)
   
     /**
-     * Invoked when the OSC command 7 for "current directory has changed" command is sent
+     * Invoked when the terminal receives an OSC 7 working directory report.
+     * A full terminal reset (RIS) that clears the reported directory also
+     * invokes this method with `directory` set to nil.
      */
     func hostCurrentDirectoryUpdate (source: TerminalView, directory: String?)
     
@@ -86,12 +88,15 @@ public protocol TerminalViewDelegate: AnyObject {
      *
      * On macOS, `request.openDefault(_:)` checks the link and opens it through
      * `NSWorkspace.shared.open`. It blocks unsafe local files and asks for
-     * confirmation before custom URL schemes. OSC 8 targets must have a scheme.
+     * confirmation before custom URL schemes. OSC 8 targets need a URL scheme
+     * or a file URL from the view's `localLinkResolver`.
      * You can call it later, for example after an async step, and with a rewrite
      * of the link, for example a relative path that you resolved.
-     * A later call uses the shell's current directory at that time. Resolve a
-     * relative path first if it must refer to the file at click time. If your
-     * app opens the link itself, it must check the untrusted target.
+     * A later call uses the session context at that time. Resolve a relative
+     * path first if it must refer to the file at click time. If your app opens
+     * the link itself, it must check the untrusted target. Set the view's
+     * `usesDefaultLinkPolicyForPreview` to false to show the original target
+     * in the macOS Command-hover preview.
      *
      * The default implementation calls ``requestOpenLink(source:link:params:)``.
      * On macOS, it checks the link first and gives that method the approved URL.

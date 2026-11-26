@@ -148,11 +148,12 @@ public protocol TerminalDelegate: AnyObject {
     func cursorStyleChanged (source: Terminal, newStyle: CursorStyle)
     
     /**
-     * This method is invoked when the client application has issued a command to report
-     * its current working directory (this is done with the OSC 7 command).   The value can be
-     * read by accessing the `hostCurrentDirectory` property.
+     * Invoked when the client application reports its working directory with OSC 7.
+     * A full terminal reset (RIS) that clears the directory also invokes this method.
+     * Read the current value from `source.hostCurrentDirectory`, which is nil after
+     * the reset.
      *
-     * The default implementaiton does nothing.
+     * The default implementation does nothing.
      */
     func hostCurrentDirectoryUpdated (source: Terminal)
     
@@ -8505,6 +8506,7 @@ open class Terminal {
         options.rows = rows
         options.cols = cols
         let savedCursorHidden = cursorHidden
+        let hadDirectory = hostCurrentDirectory != nil
         setup (isReset: true)
         clearAllKittyImages()
         cursorHidden = savedCursorHidden
@@ -8518,6 +8520,9 @@ open class Terminal {
         // contentOffset of a buffer that no longer exists and renders blank until
         // some unrelated layout pass happens to correct it.
         tdel?.bufferActivated (source: self)
+        if hadDirectory {
+            tdel?.hostCurrentDirectoryUpdated(source: self)
+        }
     }
 
     // Support for:

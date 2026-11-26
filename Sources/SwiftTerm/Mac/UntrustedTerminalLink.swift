@@ -60,12 +60,32 @@ struct UntrustedTerminalLink: Equatable {
     }
 
     let string: String
+    /// True when the host's `localLinkResolver` owns path resolution for this link.
+    /// Then a bare path is not resolved against the app directory, and a path
+    /// that the resolver did not find is an inaccessible file.
+    let isResolvedByHost: Bool
 
-    init(_ string: String) {
+    init(_ string: String, isResolvedByHost: Bool = false) {
         self.string = string
+        self.isResolvedByHost = isResolvedByHost
+    }
+
+    /// Path candidates use the default policy's scheme rules: "Makefile:12" and
+    /// "main.swift:12" can be resolved as files; "tel:5551234" stays a URL.
+    var canResolveAsLocalPath: Bool {
+        guard !string.isEmpty, !Self.containsUnsafeCharacters(string) else { return false }
+        return !TerminalView.hasURLScheme(string)
     }
 
     var decision: Decision {
+        let decision = baseDecision
+        if isResolvedByHost, decision == .deny(.malformedURL), canResolveAsLocalPath {
+            return .deny(.inaccessibleFile)
+        }
+        return decision
+    }
+
+    private var baseDecision: Decision {
         guard !string.isEmpty else { return .deny(.malformedURL) }
         // Check the source first. URL conversion can encode unsafe characters.
         guard !Self.containsUnsafeCharacters(string) else {
@@ -107,6 +127,11 @@ struct UntrustedTerminalLink: Equatable {
         value.unicodeScalars.contains(where: isUnsafeCharacter)
     }
 
+    /// Shows the original target on one line without resolving it.
+    var originalDisplayString: String {
+        Self.singleLineDisplayString(string)
+    }
+
     /// Shows the effective target on one line.
     var displayString: String {
         // URL(fileURLWithPath:) traps on an empty path.
@@ -117,14 +142,21 @@ struct UntrustedTerminalLink: Equatable {
             normalized = url.isFileURL
                 ? url.standardizedFileURL.resolvingSymlinksInPath().path
                 : string
+        } else if isResolvedByHost {
+            // The host did not resolve this path, so the app directory does not apply.
+            normalized = string
         } else {
             normalized = URL(fileURLWithPath: string).standardizedFileURL.path
         }
 
         // Escape after path conversion, which can decode unsafe characters.
+        return Self.singleLineDisplayString(normalized)
+    }
+
+    private static func singleLineDisplayString(_ value: String) -> String {
         var result = String()
-        result.reserveCapacity(normalized.count)
-        for scalar in normalized.unicodeScalars {
+        result.reserveCapacity(value.count)
+        for scalar in value.unicodeScalars {
             if Self.isUnsafeCharacter(scalar) {
                 result += "\\u{\(String(scalar.value, radix: 16, uppercase: true))}"
             } else {
@@ -140,9 +172,9 @@ private extension UntrustedTerminalLink {
         guard url.isFileURL, url.query == nil, url.fragment == nil else {
             return .deny(.malformedURL)
         }
-        if let host = url.host,
-           !host.isEmpty,
-           host.caseInsensitiveCompare("localhost") != .orderedSame {
+        // Reuse OSC 7's hostname aliases, including short names with or without
+        // ".local". A remote host can share the same name as this Mac.
+        if let host = url.host, !TerminalView.isLocalHost(host) {
             return .deny(.malformedURL)
         }
 

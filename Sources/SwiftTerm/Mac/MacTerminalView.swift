@@ -3954,6 +3954,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     }
     
     var urlPreview: NSTextField?
+    private var urlPreviewTarget: (link: String, display: String, directory: String?)?
     private var lastReportedLink: String?
     func previewUrl (payload: String)
     {
@@ -3962,7 +3963,25 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
         if let (target, _) = urlAndParamsFrom(payload: payload) {
-            let url = UntrustedTerminalLink(target).displayString
+            let directory = withTerminal { $0.hostCurrentDirectory }
+            let url: String
+            if let cached = urlPreviewTarget, cached.link == target, cached.directory == directory {
+                url = cached.display
+            } else {
+                if usesDefaultLinkPolicyForPreview {
+                    // linkTarget takes the nonrecursive terminal lock; call outside withTerminal.
+                    let resolved = linkTarget(target, isExplicit: true)
+                    if case .deny = resolved.decision {
+                        url = resolved.displayString + " (blocked)"
+                    } else {
+                        url = resolved.displayString
+                    }
+                } else {
+                    url = UntrustedTerminalLink(target).originalDisplayString
+                }
+                // Cache the display until the preview or session changes.
+                urlPreviewTarget = (target, url, directory)
+            }
             if let up = urlPreview {
                 up.stringValue = url
                 up.sizeToFit()
@@ -3985,8 +4004,16 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         }
     }
     
+    func refreshPreviewUrl ()
+    {
+        if let cached = urlPreviewTarget {
+            previewUrl(payload: ";" + cached.link)
+        }
+    }
+
     func removePreviewUrl ()
     {
+        urlPreviewTarget = nil
         if let urlPreview = self.urlPreview {
             urlPreview.removeFromSuperview()
             self.urlPreview = nil
@@ -4747,7 +4774,56 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// names another host, detected paths do not open, with either value.
     /// `LocalProcessTerminalView` sets it to true. A local shell can still
     /// start a remote session, for example with ssh; SwiftTerm cannot see that.
-    public var resolvesLinksAgainstShellDirectory = false
+    public var resolvesLinksAgainstShellDirectory = false {
+        didSet { removePreviewUrl() }
+    }
+
+    /// Resolves explicit and detected paths using the host's session context (macOS only).
+    ///
+    /// The view calls this closure when a link goes through its default opening
+    /// policy, except when OSC 7 names a remote host. The first argument is the link
+    /// text as the terminal output has it, for example "main.swift:12",
+    /// "Makefile:3" or "~/notes.txt". URLs such as "https://example.com" and
+    /// "tel:5551234" do not come to the resolver.
+    ///
+    /// The second argument is the local shell directory reported by OSC 7, or nil
+    /// when unavailable. It is provided even if `resolvesLinksAgainstShellDirectory`
+    /// is false; the host decides how to use it. OSC 7 does not prove session locality.
+    ///
+    /// Return a file URL, stripping any `:line` or `:line:column` suffix yourself.
+    /// The URL goes through the normal untrusted-link checks. A file URL does not
+    /// preserve a source location; use `requestOpenLink(source:request:)` to open
+    /// a file at a specific line or column.
+    /// When you return nil or a URL that is not a file URL, the path is blocked,
+    /// and SwiftTerm does not use the app or shell directory. A text such as
+    /// "custom:123" can also be a URL: when you return nil for it, SwiftTerm
+    /// handles it as a URL with a custom scheme.
+    ///
+    /// The view calls the resolver on the main thread, including for the OSC 8
+    /// preview while the Command key is down if `usesDefaultLinkPolicyForPreview`
+    /// is true.
+    /// Keep the resolver fast and do not block.
+    /// Preview resolution is cached until it closes or the resolver or shell
+    /// directory changes. Clicks always resolve and check the file again.
+    /// To resolve a path with an async step, implement
+    /// `requestOpenLink(source:request:)` and call `request.openDefault(_:)` later.
+    @MainActor
+    public var localLinkResolver: (@MainActor (String, URL?) -> URL?)? {
+        didSet { removePreviewUrl() }
+    }
+
+    /// Whether the Command-hover preview of an OSC 8 link shows the target
+    /// and blocked status from SwiftTerm's default opening policy. The default
+    /// is true. Set this to false if your link handler opens links itself to
+    /// show their original targets without resolving them or applying a verdict.
+    /// This setting applies only to previews.
+    public var usesDefaultLinkPolicyForPreview = true {
+        didSet {
+            if usesDefaultLinkPolicyForPreview != oldValue {
+                removePreviewUrl()
+            }
+        }
+    }
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}

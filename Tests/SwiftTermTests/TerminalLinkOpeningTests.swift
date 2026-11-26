@@ -32,6 +32,14 @@ struct TerminalLinkOpeningTests {
     // Uses the default requestOpenLink.
     private final class DefaultDelegate: StubDelegate {}
 
+    private final class CustomLinkLocalProcessView: LocalProcessTerminalView {
+        var openedLinks: [String] = []
+
+        override func requestOpenLink(source: TerminalView, request: TerminalLinkRequest) {
+            openedLinks.append(request.link)
+        }
+    }
+
     private func rewritingDelegate(_ rewrite: @escaping (String) -> String) -> Delegate {
         let delegate = Delegate()
         delegate.handle = { $0.openDefault(rewrite($0.link)) }
@@ -65,6 +73,10 @@ struct TerminalLinkOpeningTests {
     ])
     func customDelegateReceivesTheOriginalLink(link: String, isExplicit: Bool) {
         let view = TerminalView(frame: .zero)
+        view.localLinkResolver = { _, _ in
+            Issue.record("No resolution before a custom delegate")
+            return nil
+        }
         let delegate = Delegate()
         view.terminalDelegate = delegate
         withExtendedLifetime(delegate) {
@@ -77,6 +89,81 @@ struct TerminalLinkOpeningTests {
         #expect(delegate.requests.map(\.link) == [link])
         #expect(delegate.requests.map(\.params) == [["id": "test"]])
         #expect(delegate.requests.map(\.isExplicit) == [isExplicit])
+    }
+
+    @Test func customDelegatePreviewDoesNotResolveOrBlockTheLink() {
+        let view = TerminalView(frame: .zero)
+        let delegate = Delegate()
+        view.terminalDelegate = delegate
+        var calls = 0
+        view.localLinkResolver = { _, _ in
+            calls += 1
+            return nil
+        }
+        view.previewUrl(payload: ";report.txt")
+        #expect(calls == 1)
+        #expect(view.urlPreview?.stringValue == "report.txt (blocked)")
+        view.usesDefaultLinkPolicyForPreview = false
+        #expect(view.urlPreview == nil)
+        withExtendedLifetime(delegate) {
+            view.previewUrl(payload: ";report.txt")
+            #expect(view.urlPreview?.stringValue == "report.txt")
+            view.previewUrl(payload: ";src/report\u{202E}.txt")
+            #expect(view.urlPreview?.stringValue == "src/report\\u{202E}.txt")
+            view.activateLink("report.txt", params: [:], isExplicit: true)
+        }
+        #expect(calls == 1)
+        #expect(delegate.requests.map(\.link) == ["report.txt"])
+    }
+
+    @Test func defaultDelegatePreviewsTheResolvedTarget() throws {
+        let (directory, file) = try makeTemporaryFile()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let view = TerminalView(frame: .zero)
+        let delegate = DefaultDelegate()
+        view.terminalDelegate = delegate
+        var links: [String] = []
+        view.localLinkResolver = { link, _ in
+            links.append(link)
+            return file
+        }
+
+        let resolvedURL = file.resolvingSymlinksInPath()
+        var opened: [URL] = []
+        withExtendedLifetime(delegate) {
+            view.previewUrl(payload: ";report.txt")
+            #expect(view.urlPreview?.stringValue == resolvedURL.path)
+            view.activateLink("report.txt", params: [:], isExplicit: true) { _, _, _ in
+                Issue.record("A plain local file needs no alert")
+            } open: { opened.append($0) }
+        }
+        #expect(links == ["report.txt", "report.txt"])
+        #expect(opened == [resolvedURL])
+    }
+
+    @Test func localProcessPreviewUsesTheDefaultPolicy() {
+        let view = LocalProcessTerminalView(frame: .zero)
+        var calls = 0
+        view.localLinkResolver = { _, _ in
+            calls += 1
+            return nil
+        }
+        view.previewUrl(payload: ";report.txt")
+        #expect(calls == 1)
+        #expect(view.urlPreview?.stringValue == "report.txt (blocked)")
+    }
+
+    @Test func localProcessSubclassCanPreviewOriginalTargets() {
+        let view = CustomLinkLocalProcessView(frame: .zero)
+        view.usesDefaultLinkPolicyForPreview = false
+        view.localLinkResolver = { _, _ in
+            Issue.record("No resolution for the plain preview or custom handler")
+            return nil
+        }
+        view.previewUrl(payload: ";report.txt")
+        #expect(view.urlPreview?.stringValue == "report.txt")
+        view.activateLink("report.txt", params: [:], isExplicit: true)
+        #expect(view.openedLinks == ["report.txt"])
     }
 
     @Test func legacyDelegateReceivesTheCheckedURL() throws {
@@ -373,6 +460,204 @@ struct TerminalLinkOpeningTests {
     }
 
     @Test(arguments: [true, false])
+    func localResolverUsesTheHostSessionContext(isExplicit: Bool) throws {
+        let (directory, file) = try makeTemporaryFile()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let view = TerminalView(frame: .zero)
+        let delegate = DefaultDelegate()
+        view.terminalDelegate = delegate
+        defer { withExtendedLifetime(delegate) {} }
+        var resolved: [String] = []
+        view.localLinkResolver = { link, _ in
+            resolved.append(link)
+            return file
+        }
+        let links = ["main.txt", "main.txt:12:4", "/project/main.txt"]
+        var opened: [URL] = []
+        for link in links {
+            view.activateLink(link, params: [:], isExplicit: isExplicit) { _, _, _ in
+                Issue.record("A resolved plain file needs no alert")
+            } open: { opened.append($0) }
+        }
+        #expect(resolved == links)
+        #expect(opened == Array(repeating: file.resolvingSymlinksInPath(), count: links.count))
+    }
+
+    @Test(arguments: [nil, "file://localhost/tmp/project%20one"] as [String?], [true, false])
+    func localResolverReceivesTheShellDirectory(directory: String?, resolvesAgainstShellDirectory: Bool) {
+        let view = TerminalView(frame: .zero)
+        view.resolvesLinksAgainstShellDirectory = resolvesAgainstShellDirectory
+        if let directory {
+            view.feed(text: "\u{1b}]7;\(directory)\u{07}")
+        }
+        var calls = 0
+        view.localLinkResolver = { link, shellDirectory in
+            calls += 1
+            #expect(link == "main.swift:12:4")
+            #expect(shellDirectory == directory.map { _ in
+                URL(fileURLWithPath: "/tmp/project one", isDirectory: true)
+            })
+            #expect(!view.terminal.terminalLock.isLockedByCurrentThread)
+            return nil
+        }
+        defer { view.localLinkResolver = nil }
+        _ = view.linkTarget("main.swift:12:4", isExplicit: true)
+        #expect(calls == 1)
+    }
+
+    @Test(arguments: [true, false], [nil, URL(string: "https://example.com")] as [URL?])
+    func unresolvedLocalLinksDoNotFallBack(isExplicit: Bool, result: URL?) async throws {
+        let (directory, file) = try makeTemporaryFile()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let view = TerminalView(frame: .zero)
+        let delegate = DefaultDelegate()
+        view.terminalDelegate = delegate
+        defer { withExtendedLifetime(delegate) {} }
+        view.resolvesLinksAgainstShellDirectory = true
+        view.feed(text: "\u{1b}]7;file://localhost\(directory.path)\u{07}")
+        var resolved: [String] = []
+        view.localLinkResolver = { link, _ in
+            resolved.append(link)
+            return result
+        }
+        var alerts = 0
+        var opened: [URL] = []
+        let links = [file.path, "main.txt"]
+        for link in links {
+            view.activateLink(link, params: [:], isExplicit: isExplicit) { alert, _, completion in
+                alerts += 1
+                #expect(alert.buttons.map(\.title) == ["OK"])
+                #expect(alert.informativeText == UntrustedTerminalLink.DenialReason.inaccessibleFile.message)
+                completion(.alertFirstButtonReturn)
+            } open: { opened.append($0) }
+        }
+        await waitUntil { alerts == links.count }
+        #expect(resolved == links)
+        #expect(opened.isEmpty)
+    }
+
+    @Test(arguments: [true, false])
+    func resolvedLocalFilesStillPassTheSafetyChecks(isExplicit: Bool) async throws {
+        let (directory, file) = try makeTemporaryFile()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let unsafeFile = directory.appendingPathComponent("payload.command")
+        try FileManager.default.moveItem(at: file, to: unsafeFile)
+        let view = TerminalView(frame: .zero)
+        let delegate = DefaultDelegate()
+        view.terminalDelegate = delegate
+        defer { withExtendedLifetime(delegate) {} }
+        view.localLinkResolver = { _, _ in unsafeFile }
+        var alerts = 0
+        var opened: [URL] = []
+        view.activateLink("payload.command", params: [:], isExplicit: isExplicit) { alert, _, completion in
+            alerts += 1
+            #expect(alert.informativeText == UntrustedTerminalLink.DenialReason.unsafeFile.message)
+            completion(.alertFirstButtonReturn)
+        } open: { opened.append($0) }
+        await waitUntil { alerts == 1 }
+        #expect(opened.isEmpty)
+    }
+
+    @Test(arguments: [true, false])
+    func unsafePathsDoNotReachTheLocalResolver(isExplicit: Bool) async {
+        let view = TerminalView(frame: .zero)
+        let delegate = DefaultDelegate()
+        view.terminalDelegate = delegate
+        defer { withExtendedLifetime(delegate) {} }
+        view.localLinkResolver = { _, _ in
+            Issue.record("Unsafe characters must be checked before resolution")
+            return nil
+        }
+        var alerts = 0
+        view.activateLink("main\u{202E}.txt", params: [:], isExplicit: isExplicit) { alert, _, completion in
+            alerts += 1
+            #expect(alert.informativeText == UntrustedTerminalLink.DenialReason.unsafeCharacters.message)
+            completion(.alertFirstButtonReturn)
+        } open: { _ in Issue.record("An unsafe path must not open") }
+        await waitUntil { alerts == 1 }
+    }
+
+    @Test(arguments: ["README:12", "README", "~/main.txt", "src/main.txt:3:1"], [true, false])
+    func pathsWithoutAnExtensionUseOnlyTheLocalResolver(link: String, isExplicit: Bool) async throws {
+        // A file with this name in the shell directory must not open when the resolver says no.
+        let (directory, file) = try makeTemporaryFile()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.copyItem(at: file, to: directory.appendingPathComponent("README"))
+        let view = TerminalView(frame: .zero)
+        let delegate = DefaultDelegate()
+        view.terminalDelegate = delegate
+        defer { withExtendedLifetime(delegate) {} }
+        view.resolvesLinksAgainstShellDirectory = true
+        view.feed(text: "\u{1b}]7;file://localhost\(directory.path)\u{07}")
+        var resolved: [String] = []
+        view.localLinkResolver = { link, _ in
+            resolved.append(link)
+            return nil
+        }
+        var alerts = 0
+        view.activateLink(link, params: [:], isExplicit: isExplicit) { alert, _, completion in
+            alerts += 1
+            if link == "README:12" {
+                // Without a file, this text is also a URL with the scheme "README",
+                // as it is without a resolver. Cancel is the default.
+                #expect(alert.buttons.map(\.title) == ["Cancel", "Open Link"])
+            } else {
+                #expect(alert.informativeText == UntrustedTerminalLink.DenialReason.inaccessibleFile.message)
+            }
+            completion(.alertFirstButtonReturn)
+        } open: { _ in Issue.record("An unresolved path must not open") }
+        await waitUntil { alerts == 1 }
+        #expect(resolved == [link])
+    }
+
+    @Test(arguments: ["custom:123", "vscode:123"], [true, false])
+    func unresolvedSchemeLikeNamesStayURLs(link: String, isExplicit: Bool) async throws {
+        let view = TerminalView(frame: .zero)
+        let delegate = DefaultDelegate()
+        view.terminalDelegate = delegate
+        defer { withExtendedLifetime(delegate) {} }
+        var resolved: [String] = []
+        view.localLinkResolver = { link, _ in
+            resolved.append(link)
+            return nil
+        }
+        var opened: [URL] = []
+        view.activateLink(link, params: [:], isExplicit: isExplicit) { alert, _, completion in
+            #expect(alert.buttons.map(\.title) == ["Cancel", "Open Link"])
+            completion(.alertSecondButtonReturn)
+        } open: { opened.append($0) }
+        await waitUntil { opened.count == 1 }
+        #expect(resolved == [link])
+        #expect(opened == [URL(string: link)!])
+    }
+
+    @Test(arguments: ["https://example.com", "tel:5551234"], [true, false])
+    func urlsDoNotReachTheLocalResolver(link: String, isExplicit: Bool) async throws {
+        let (directory, file) = try makeTemporaryFile()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let view = TerminalView(frame: .zero)
+        let delegate = DefaultDelegate()
+        view.terminalDelegate = delegate
+        defer { withExtendedLifetime(delegate) {} }
+        view.resolvesLinksAgainstShellDirectory = true
+        view.feed(text: "\u{1b}]7;file://localhost\(directory.path)\u{07}")
+        view.localLinkResolver = { _, _ in
+            Issue.record("A URL must not be resolved as a local path")
+            return file
+        }
+        var prompts = 0
+        var opened: [URL] = []
+        view.activateLink(link, params: [:], isExplicit: isExplicit) { alert, _, completion in
+            prompts += 1
+            #expect(alert.buttons.map(\.title) == ["Cancel", "Open Link"])
+            completion(.alertSecondButtonReturn)
+        } open: { opened.append($0) }
+        await waitUntil { opened.count == 1 }
+        #expect(prompts == (link.hasPrefix("https:") ? 0 : 1))
+        #expect(opened == [URL(string: link)!])
+    }
+
+    @Test(arguments: [true, false])
     func detectedPathFromARemoteShellIsDenied(resolvesAgainstShellDirectory: Bool) async throws {
         let (directory, file) = try makeTemporaryFile()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -381,6 +666,10 @@ struct TerminalLinkOpeningTests {
         view.terminalDelegate = delegate
         defer { withExtendedLifetime(delegate) {} }
         view.resolvesLinksAgainstShellDirectory = resolvesAgainstShellDirectory
+        view.localLinkResolver = { _, _ in
+            Issue.record("A remote path must not be resolved locally")
+            return file
+        }
         view.feed(text: "\u{1b}]7;file://remote.example.com\(directory.path)\u{07}")
         var alerts = 0
         var opened: [URL] = []

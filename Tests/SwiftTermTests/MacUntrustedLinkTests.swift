@@ -1,5 +1,6 @@
 #if os(macOS) && !SWIFTTERM_EMBEDDED
 import Foundation
+import Darwin
 import Testing
 @testable import SwiftTerm
 
@@ -68,6 +69,27 @@ struct MacUntrustedLinkTests {
         let localHost = file.absoluteString.replacingOccurrences(of: "file:///", with: "file://localhost/")
         #expect(UntrustedTerminalLink(localHost).decision ==
                 .allow(file.standardizedFileURL.resolvingSymlinksInPath()))
+    }
+
+    @Test func acceptsTheMachineHostnameWithoutBypassingFileChecks() throws {
+        var buffer = [CChar](repeating: 0, count: Int(MAXHOSTNAMELEN) + 1)
+        try #require(gethostname(&buffer, buffer.count - 1) == 0)
+        let hostname = String(cString: buffer)
+        let shortName = hostname.hasSuffix(".local") ? String(hostname.dropLast(6)) : hostname
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let document = try makeFile("document.txt", in: directory)
+        let payload = try makeFile("payload.command", in: directory)
+        for host in [hostname, shortName, shortName + ".local", hostname.uppercased()] {
+            for file in [document, payload] {
+                var components = try #require(URLComponents(url: file, resolvingAgainstBaseURL: false))
+                components.host = host
+                let url = try #require(components.url)
+                let expected: UntrustedTerminalLink.Decision = file == document
+                    ? .allow(file.standardizedFileURL.resolvingSymlinksInPath()) : .deny(.unsafeFile)
+                #expect(UntrustedTerminalLink(url.absoluteString).decision == expected)
+            }
+        }
     }
 
     @Test(arguments: [
