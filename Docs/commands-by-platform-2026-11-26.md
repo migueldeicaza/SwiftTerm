@@ -24,6 +24,11 @@ Ví dụ trong `ExtraCommands.swift` / host: `help`, `config`, `pickFolder`, `ju
 
 ### 1.2 Catalogue native — **full** (`Resources/commandDictionary.plist`) — **158** khóa
 
+Bảng đầy đủ (nhóm, framework, symbol, full/mini) + CSV + dictionary mở rộng:  
+[`command-catalogue-full-2026-11-26.md`](command-catalogue-full-2026-11-26.md) · [`command-catalogue-full-2026-11-26.csv`](command-catalogue-full-2026-11-26.csv)
+
+### 1.2b Danh sách phẳng (158 khóa)
+
 ```
 alias, apropos, awk, base64, basename, bc, blink, calc, cat, cbc, cd, chdir,
 chflags, chmod, cksum, codex, compare, composite, compress, conjure, convert,
