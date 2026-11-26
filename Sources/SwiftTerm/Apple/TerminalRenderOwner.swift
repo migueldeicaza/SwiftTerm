@@ -872,6 +872,19 @@ final class TerminalRenderOwner: Sendable {
         }
     }
 
+    /// The visual column of a logical column on an absolute row, from the
+    /// BiDi layout of the last snapshot. Returns `nil` when the snapshot has
+    /// no BiDi layout for that row. It does not refresh the snapshot.
+    func snapshotVisualColumn (absoluteRow: Int, logicalColumn: Int) -> Int? {
+        withRenderState { _ in
+            guard let layout = currentSession()?.snapshot.row(atAbsolute: absoluteRow)?.bidiLayout,
+                  logicalColumn >= 0, logicalColumn < layout.logicalToVisualCol.count else {
+                return nil
+            }
+            return layout.logicalToVisualCol[logicalColumn]
+        }
+    }
+
     func inspection () -> TerminalRenderSnapshotInspection {
         withRenderState { _ in
             guard let snapshot = currentSession()?.snapshot else {

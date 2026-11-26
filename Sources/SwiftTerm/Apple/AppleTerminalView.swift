@@ -1789,12 +1789,22 @@ extension TerminalView {
         caretView.updateCursorStyle()
     }
     
-    /// The frame of the cell under the terminal cursor, in view coordinates.
+    /// The frame of the cell under the cursor, in view coordinates.
     ///
-    /// This is computed from the terminal's cursor, so it is correct also when
-    /// a GPU renderer draws the cursor and `caretView` is not on screen.
+    /// With Core Graphics, it is the frame of the caret view, at the cursor
+    /// that the last frame drew. With Metal, the renderer draws the cursor and
+    /// does not move the caret view. Then SwiftTerm calculates the frame from
+    /// the terminal's cursor.
+    ///
+    /// You can read this property in a delegate callback that holds the
+    /// terminal lock.
     public var caretFrame: CGRect {
-        return currentCaretRect() ?? caretView?.frame ?? CGRect.zero
+#if canImport(MetalKit)
+        if isUsingMetalRenderer, let rect = liveCaretRect() {
+            return rect
+        }
+#endif
+        return caretView?.frame ?? CGRect.zero
     }
     
     func setupOptions(width: CGFloat, height: CGFloat)
@@ -4471,45 +4481,54 @@ extension TerminalView {
                       height: cellDimension.height)
     }
 
-    /// The caret rectangle, in view coordinates, computed from the terminal's
-    /// cursor now. Returns `nil` when the cursor is not on a visible row.
+#if canImport(MetalKit)
+    /// Calculates the caret rectangle, in view coordinates, from the terminal's
+    /// live cursor. Use it only when Metal draws the cursor: Metal does not
+    /// move `caretView`.
     ///
-    /// The frame path sets `caretView.frame` only when it draws on the main
-    /// thread, which the Metal render loop does not do. This reads the terminal
-    /// directly, so it is correct for each renderer and between frames. It
-    /// does not refresh the render snapshot.
-    func currentCaretRect () -> CGRect?
+    /// When the cursor is not on a visible row (the user scrolled back), the
+    /// rectangle goes on the nearest visible row, at the cursor column.
+    ///
+    /// The terminal lock is not reentrant. When the calling thread holds the
+    /// lock (for example in a delegate callback), this function reads the
+    /// terminal directly. It cannot then enter the render owner, so it uses
+    /// the logical column also on a BiDi row.
+    ///
+    /// This function does not do a BiDi layout under the terminal lock. It
+    /// gets the visual column from the BiDi layout of the last render
+    /// snapshot, after it releases the lock.
+    func liveCaretRect () -> CGRect?
     {
-        guard cellDimension != nil else { return nil }
-        let cell: (screenRow: Int, absoluteRow: Int, visualCol: Int, columnWidth: Int,
-                   renderMode: BufferLine.RenderLineMode)? = withTerminal { terminal in
+        let lockHeld = terminal.terminalLock.isLockedByCurrentThread
+        let read = { (terminal: Terminal) -> (screenRow: Int, absoluteRow: Int, logicalCol: Int,
+                                               columnWidth: Int, renderMode: BufferLine.RenderLineMode,
+                                               onScreen: Bool)? in
             let buffer = terminal.displayBuffer
             let absoluteRow = buffer.yBase + buffer.y
+            guard terminal.rows > 0, absoluteRow >= 0, absoluteRow < buffer.lines.count else {
+                return nil
+            }
             let screenRow = absoluteRow - buffer.yDisp
-            guard screenRow >= 0, screenRow < terminal.rows,
-                  absoluteRow >= 0, absoluteRow < buffer.lines.count else { return nil }
+            let onScreen = screenRow >= 0 && screenRow < terminal.rows
             let line = buffer.lines[absoluteRow]
-            guard line.count > 0 else {
-                return (screenRow, absoluteRow, buffer.x, 1, line.renderMode)
-            }
-            // The same cell and column map the render snapshot uses for its cursor.
-            let logicalCol = max(0, min(buffer.x, line.count - 1))
-            let width = max(1, Int(line.packedView(at: logicalCol).width))
-            var visualCol = logicalCol
-            if let layout = TerminalBidi.layout(row: absoluteRow, buffer: buffer,
-                                                cols: terminal.cols, terminal: terminal,
-                                                font: fontSet.normal,
-                                                hostPolicy: bidiHostPolicy),
-               logicalCol < layout.logicalToVisualCol.count {
-                visualCol = layout.logicalToVisualCol[logicalCol]
-            }
-            return (screenRow, absoluteRow, visualCol, width, line.renderMode)
+            // The same cell that the render snapshot uses for its cursor.
+            let logicalCol = line.count > 0 ? max(0, min(buffer.x, line.count - 1)) : buffer.x
+            let width = line.count > 0 ? max(1, Int(line.packedView(at: logicalCol).width)) : 1
+            return (min(max(screenRow, 0), terminal.rows - 1), absoluteRow, logicalCol,
+                    width, line.renderMode, onScreen)
         }
-        guard let cell else { return nil }
-        return caretRect(screenRow: cell.screenRow, absoluteRow: cell.absoluteRow,
-                         visualCol: cell.visualCol, columnWidth: cell.columnWidth,
-                         renderMode: cell.renderMode)
+        guard let cursor = lockHeld ? read(terminal) : withTerminal(read) else { return nil }
+        var visualCol = cursor.logicalCol
+        if !lockHeld, cursor.onScreen,
+           let column = renderOwner.snapshotVisualColumn(absoluteRow: cursor.absoluteRow,
+                                                         logicalColumn: cursor.logicalCol) {
+            visualCol = column
+        }
+        return caretRect(screenRow: cursor.screenRow, absoluteRow: cursor.absoluteRow,
+                         visualCol: visualCol, columnWidth: cursor.columnWidth,
+                         renderMode: cursor.renderMode)
     }
+#endif
 
     /// Queues a frame without waiting for the next display-link callback.
     func updateDisplay ()

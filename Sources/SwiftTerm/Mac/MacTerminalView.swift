@@ -2654,8 +2654,8 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let overlayX: CGFloat = 0
         let cols = withTerminal { $0.cols }
         let overlayWidth = CGFloat(max(1, cols)) * cellDimension.width
-        // `caretFrame` reads the terminal's cursor. `caretView.frame` is not
-        // set under the Metal renderer, which draws the cursor itself.
+        // Use `caretFrame`, not `caretView.frame`: Metal draws the cursor
+        // itself and does not move `caretView`.
         let caret = caretFrame
         let caretX = max(0, caret.origin.x - overlayX)
         // The terminal moves a wide character that does not fit in the cells
