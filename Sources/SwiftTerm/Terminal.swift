@@ -140,6 +140,14 @@ public protocol TerminalDelegate: AnyObject {
      * The default implementation ignores the mouse change
      */
     func mouseModeChanged (source: Terminal)
+
+    /// Native pointer shapes the host can actually display. The default is empty.
+    /// Called on the terminal's processing thread with `terminalLock` held.
+    func supportedMousePointerShapes(source: Terminal) -> [MousePointerShape]
+
+    /// The active screen's native pointer shape changed. The default does nothing.
+    /// Copy `mousePointerShape` here and apply UI changes on the host's UI thread.
+    func mousePointerShapeChanged(source: Terminal)
     
     /**
      * This method is invoked when a request to change the cursor style has been issued
@@ -1350,6 +1358,7 @@ open class Terminal {
         if buffer === normalBuffer {
             return
         }
+        let previousPointerShape = mousePointerShape
         semanticNoteAlternateScreenSwitch()
 
         // A full-screen program can sit over thousands of normal-buffer scrollback lines. While
@@ -1373,12 +1382,14 @@ open class Terminal {
         _buffer = normalBuffer
         kittyGraphicsState.activeIsAlternate = false
         kittyGraphicsDidActivateScreen()
+        if mousePointerShape != previousPointerShape { tdel?.mousePointerShapeChanged(source: self) }
     }
     
     private func activateAltBuffer(fillAttr: Attribute?) {
         if buffer === altBuffer {
             return
         }
+        let previousPointerShape = mousePointerShape
         semanticNoteAlternateScreenSwitch()
         altBuffer.x = normalBuffer.x
         altBuffer.y = normalBuffer.y
@@ -1393,6 +1404,7 @@ open class Terminal {
         kittyGraphicsState.activeIsAlternate = true
         clearKittyImages(in: altBuffer, isAlternateBuffer: true)
         kittyGraphicsDidActivateScreen()
+        if mousePointerShape != previousPointerShape { tdel?.mousePointerShapeChanged(source: self) }
     }
 
     private func resizeNormalBufferToCurrentGridIfNeeded() {
@@ -1429,7 +1441,10 @@ open class Terminal {
         _rows = max (options.rows, MINIMUM_ROWS)
         
         if isReset {
+            let previousPointerShape = mousePointerShape
             clearProgramStatus()
+            normalBuffer.mousePointerShapes.removeAll()
+            altBuffer.mousePointerShapes.removeAll()
             resetNormalBuffer()
             activateNormalBuffer(clearAlt: false)
             // A full reset also clears the alternate screen, even when it is not
@@ -1437,6 +1452,7 @@ open class Terminal {
             clearKittyImages(in: altBuffer, isAlternateBuffer: true)
             altBuffer.clear ()
             resetSemanticPromptState(clearingScreenMarks: true)
+            if mousePointerShape != previousPointerShape { tdel?.mousePointerShapeChanged(source: self) }
         } else {
             normalBuffer.resize(newCols: cols, newRows: rows)
             altBuffer.resize(newCols: cols, newRows: rows)
@@ -10608,6 +10624,10 @@ final class ViewTerminal: Terminal {
 
 // Default implementations
 public extension TerminalDelegate {
+    func supportedMousePointerShapes(source: Terminal) -> [MousePointerShape] { [] }
+
+    func mousePointerShapeChanged(source: Terminal) {}
+
     func clipboardReadRequest(source: Terminal, selection: String) -> Bool { false }
 
     func cursorStyleChanged (source: Terminal, newStyle: CursorStyle)

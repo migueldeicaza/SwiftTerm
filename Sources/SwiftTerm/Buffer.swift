@@ -2309,4 +2309,8 @@ public final class Buffer {
         }
     }    
 #endif
+
+    /// OSC 22 state is separate for the normal and alternate screens. Keep cold
+    /// state last so it does not move the fields read by the parse/render paths.
+    var mousePointerShapes: [MousePointerShape] = []
 }
