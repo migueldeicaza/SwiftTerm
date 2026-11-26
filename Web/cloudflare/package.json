@@ -1,0 +1,11 @@
+{
+  "name": "swiftterm-cloudflare-web",
+  "private": true,
+  "scripts": {
+    "deploy": "wrangler pages deploy site --project-name=swiftterm-web",
+    "preview": "wrangler pages dev site"
+  },
+  "devDependencies": {
+    "wrangler": "4.45.0"
+  }
+}

@@ -105,4 +105,4 @@ Browser canvas ← snapshot ← write ← WS ← PTY output
 | Lệnh | `ios_system` + WASM in-app | PTY/SSH **bên ngoài** browser |
 | Catalogue 158 lệnh | Có | **Không** (là shell của server/WSL) |
 
-Xem thêm: [`host-ui-backend.md`](host-ui-backend.md) (iOS), [`wasm.md`](wasm.md), [`commands-by-platform-2026-11-26.md`](commands-by-platform-2026-11-26.md).
+Xem thêm: [`host-ui-backend.md`](host-ui-backend.md) (iOS), [`wasm.md`](wasm.md), [`commands-by-platform-2026-11-26.md`](commands-by-platform-2026-11-26.md), [`web-cloudflare-setup.md`](web-cloudflare-setup.md) (Pages/Tunnel).

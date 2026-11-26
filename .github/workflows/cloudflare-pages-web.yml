@@ -1,0 +1,59 @@
+name: Cloudflare Pages (Web WASM)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'Web/**'
+      - 'scripts/build-wasm.sh'
+      - 'scripts/prepare-cloudflare-web.sh'
+      - 'scripts/wasm-toolchain.env'
+      - '.github/workflows/cloudflare-pages-web.yml'
+
+# Requires repository secrets:
+#   CLOUDFLARE_API_TOKEN
+#   CLOUDFLARE_ACCOUNT_ID
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: Web/package-lock.json
+      - name: Install pinned Swift compiler and WASM SDK
+        shell: bash
+        run: |
+          source scripts/wasm-toolchain.env
+          sudo apt-get update
+          sudo apt-get install -y libcurl4-openssl-dev libedit2 libxml2-dev libncurses-dev libsqlite3-dev libz3-dev libpython3.12
+          curl --fail --location --retry 3 "https://download.swift.org/swift-6.4.0-release/ubuntu2404/$SWIFTTERM_TOOLCHAIN_ID/$SWIFTTERM_TOOLCHAIN_ID-ubuntu24.04.tar.gz" -o "$RUNNER_TEMP/swift.tar.gz"
+          mkdir -p "$RUNNER_TEMP/swift"
+          tar -xzf "$RUNNER_TEMP/swift.tar.gz" --strip-components=1 -C "$RUNNER_TEMP/swift"
+          echo "$RUNNER_TEMP/swift/usr/bin" >> "$GITHUB_PATH"
+          echo "SWIFTTERM_SWIFT=$RUNNER_TEMP/swift/usr/bin/swift" >> "$GITHUB_ENV"
+          curl --fail --location --retry 3 "https://download.swift.org/swift-6.4.0-release/wasm-sdk/$SWIFTTERM_TOOLCHAIN_ID/${SWIFTTERM_TOOLCHAIN_ID}_wasm.artifactbundle.tar.gz" -o "$RUNNER_TEMP/wasm-sdk.tar.gz"
+          "$RUNNER_TEMP/swift/usr/bin/swift" sdk install "$RUNNER_TEMP/wasm-sdk.tar.gz"
+      - name: Build embedded browser reactor
+        run: |
+          npm ci --prefix Web
+          scripts/build-wasm.sh embedded --browser --release
+      - name: Prepare Cloudflare site
+        run: bash scripts/prepare-cloudflare-web.sh
+      - name: Deploy to Cloudflare Pages
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
+        working-directory: Web/cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npm install
+          npx wrangler pages deploy site --project-name=swiftterm-web --commit-dirty=true
+      - name: Skip deploy notice
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN == '' || secrets.CLOUDFLARE_ACCOUNT_ID == '' }}
+        run: echo 'Set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID to deploy.'

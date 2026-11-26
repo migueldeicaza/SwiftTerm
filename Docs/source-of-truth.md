@@ -57,3 +57,6 @@ See `AppleTerminalView+HostHelpers.swift` and `Apps/README.md`.
 
 **Host capabilities gap (daemon / hooks / binaries):**  
 [`Docs/host-capabilities-gap-2026-11-26.md`](host-capabilities-gap-2026-11-26.md).
+
+**Web WASM on Cloudflare (Pages / Tunnel):**  
+[`Docs/web-cloudflare-setup.md`](web-cloudflare-setup.md).

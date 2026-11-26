@@ -1,0 +1,16 @@
+{
+  "name": "@swiftterm/wasm",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    },
+    "./swiftterm-full.wasm": "./swiftterm-full.wasm",
+    "./swiftterm-embedded.wasm": "./swiftterm-embedded.wasm"
+  },
+  "license": "MIT"
+}

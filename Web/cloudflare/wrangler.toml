@@ -1,0 +1,12 @@
+# Cloudflare Pages — SwiftTerm WASM Canvas demo (embedded)
+# Deploy:
+#   npx wrangler pages deploy Web/cloudflare/site --project-name=swiftterm-web
+# Or: npm run deploy --prefix Web/cloudflare
+#
+# Required env (local or GitHub Actions secrets):
+#   CLOUDFLARE_API_TOKEN   — Pages Edit permission
+#   CLOUDFLARE_ACCOUNT_ID  — account id from Cloudflare dashboard
+
+name = "swiftterm-web"
+compatibility_date = "2026-11-26"
+pages_build_output_dir = "site"
