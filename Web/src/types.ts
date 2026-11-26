@@ -41,7 +41,7 @@ export type HostEvent = EventBase & (
   | { readonly type: 'colorChange'; readonly kind: number; readonly index: number | null; readonly rgba: number | null }
   | { readonly type: 'progress'; readonly state: number; readonly progress: number | null }
   | { readonly type: 'syncOutputChanged'; readonly enabled: boolean }
-  | { readonly type: 'mouseMode'; readonly mode: number }
+  | { readonly type: 'mouseMode'; readonly mode: number; readonly shiftCapture: boolean }
   | { readonly type: 'unknown'; readonly eventType: number; readonly data: Uint8Array }
 );
 export const Capability = Object.freeze({ fullRuntime: 1, embeddedRuntime: 2, dirtyRange: 4, scrollInvariantRange: 8, hostEvents: 16, keyEncoding: 32, mouseEncoding: 64, inputModes: 128, paste: 256, clipboard: 512, kittyGraphics: 1024, sixel: 2048, iTermImages: 4096, poll: 8192, textInput: 16384, selection: 32768 });
