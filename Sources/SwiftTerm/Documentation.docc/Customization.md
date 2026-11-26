@@ -253,9 +253,10 @@ When a click/tap lands on an active link, ``TerminalView`` calls
   Text that is also a URL, such as `Makefile:12`, `README:12` or `custom:123`,
   still falls back to confirmation for a custom scheme when the resolver returns nil.
   The resolver is not called for URLs, or when OSC 7 names a different host.
-  It runs on the main actor, also for the OSC 8 preview with the default
-  delegate, so it must be fast. A custom delegate gets the original preview
-  without resolution or a blocked verdict, since it may open links itself.
+  It runs on the main actor, including for the OSC 8 preview when
+  `usesDefaultLinkPolicyForPreview` is true, so it must be fast. If your
+  delegate handles links itself, set `usesDefaultLinkPolicyForPreview` to false
+  to show the original target without resolution or a blocked verdict.
   The default preview marks blocked targets and caches resolution until it closes or
   the resolver or shell directory changes. Filesystem changes alone do not
   refresh it; a click always resolves and checks the target again.

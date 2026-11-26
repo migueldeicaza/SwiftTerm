@@ -32,6 +32,14 @@ struct TerminalLinkOpeningTests {
     // Uses the default requestOpenLink.
     private final class DefaultDelegate: StubDelegate {}
 
+    private final class CustomLinkLocalProcessView: LocalProcessTerminalView {
+        var openedLinks: [String] = []
+
+        override func requestOpenLink(source: TerminalView, request: TerminalLinkRequest) {
+            openedLinks.append(request.link)
+        }
+    }
+
     private func rewritingDelegate(_ rewrite: @escaping (String) -> String) -> Delegate {
         let delegate = Delegate()
         delegate.handle = { $0.openDefault(rewrite($0.link)) }
@@ -85,6 +93,8 @@ struct TerminalLinkOpeningTests {
 
     @Test func customDelegatePreviewDoesNotResolveOrBlockTheLink() {
         let view = TerminalView(frame: .zero)
+        let delegate = Delegate()
+        view.terminalDelegate = delegate
         var calls = 0
         view.localLinkResolver = { _, _ in
             calls += 1
@@ -92,16 +102,43 @@ struct TerminalLinkOpeningTests {
         }
         view.previewUrl(payload: ";report.txt")
         #expect(calls == 1)
-        let delegate = Delegate()
-        view.terminalDelegate = delegate
+        #expect(view.urlPreview?.stringValue == "report.txt (blocked)")
+        view.usesDefaultLinkPolicyForPreview = false
         #expect(view.urlPreview == nil)
         withExtendedLifetime(delegate) {
             view.previewUrl(payload: ";report.txt")
-            #expect(view.urlPreview?.stringValue == UntrustedTerminalLink("report.txt").displayString)
+            #expect(view.urlPreview?.stringValue == "report.txt")
+            view.previewUrl(payload: ";src/report\u{202E}.txt")
+            #expect(view.urlPreview?.stringValue == "src/report\\u{202E}.txt")
             view.activateLink("report.txt", params: [:], isExplicit: true)
         }
         #expect(calls == 1)
         #expect(delegate.requests.map(\.link) == ["report.txt"])
+    }
+
+    @Test func defaultDelegatePreviewsTheResolvedTarget() throws {
+        let (directory, file) = try makeTemporaryFile()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let view = TerminalView(frame: .zero)
+        let delegate = DefaultDelegate()
+        view.terminalDelegate = delegate
+        var links: [String] = []
+        view.localLinkResolver = { link, _ in
+            links.append(link)
+            return file
+        }
+
+        let resolvedURL = file.resolvingSymlinksInPath()
+        var opened: [URL] = []
+        withExtendedLifetime(delegate) {
+            view.previewUrl(payload: ";report.txt")
+            #expect(view.urlPreview?.stringValue == resolvedURL.path)
+            view.activateLink("report.txt", params: [:], isExplicit: true) { _, _, _ in
+                Issue.record("A plain local file needs no alert")
+            } open: { opened.append($0) }
+        }
+        #expect(links == ["report.txt", "report.txt"])
+        #expect(opened == [resolvedURL])
     }
 
     @Test func localProcessPreviewUsesTheDefaultPolicy() {
@@ -114,6 +151,19 @@ struct TerminalLinkOpeningTests {
         view.previewUrl(payload: ";report.txt")
         #expect(calls == 1)
         #expect(view.urlPreview?.stringValue == "report.txt (blocked)")
+    }
+
+    @Test func localProcessSubclassCanPreviewOriginalTargets() {
+        let view = CustomLinkLocalProcessView(frame: .zero)
+        view.usesDefaultLinkPolicyForPreview = false
+        view.localLinkResolver = { _, _ in
+            Issue.record("No resolution for the plain preview or custom handler")
+            return nil
+        }
+        view.previewUrl(payload: ";report.txt")
+        #expect(view.urlPreview?.stringValue == "report.txt")
+        view.activateLink("report.txt", params: [:], isExplicit: true)
+        #expect(view.openedLinks == ["report.txt"])
     }
 
     @Test func legacyDelegateReceivesTheCheckedURL() throws {

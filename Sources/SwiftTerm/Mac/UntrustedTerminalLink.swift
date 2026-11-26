@@ -127,6 +127,11 @@ struct UntrustedTerminalLink: Equatable {
         value.unicodeScalars.contains(where: isUnsafeCharacter)
     }
 
+    /// Shows the original target on one line without resolving it.
+    var originalDisplayString: String {
+        Self.singleLineDisplayString(string)
+    }
+
     /// Shows the effective target on one line.
     var displayString: String {
         // URL(fileURLWithPath:) traps on an empty path.
@@ -145,9 +150,13 @@ struct UntrustedTerminalLink: Equatable {
         }
 
         // Escape after path conversion, which can decode unsafe characters.
+        return Self.singleLineDisplayString(normalized)
+    }
+
+    private static func singleLineDisplayString(_ value: String) -> String {
         var result = String()
-        result.reserveCapacity(normalized.count)
-        for scalar in normalized.unicodeScalars {
+        result.reserveCapacity(value.count)
+        for scalar in value.unicodeScalars {
             if Self.isUnsafeCharacter(scalar) {
                 result += "\\u{\(String(scalar.value, radix: 16, uppercase: true))}"
             } else {
@@ -163,6 +172,8 @@ private extension UntrustedTerminalLink {
         guard url.isFileURL, url.query == nil, url.fragment == nil else {
             return .deny(.malformedURL)
         }
+        // Reuse OSC 7's hostname aliases, including short names with or without
+        // ".local". A remote host can share the same name as this Mac.
         if let host = url.host, !TerminalView.isLocalHost(host) {
             return .deny(.malformedURL)
         }

@@ -41,9 +41,10 @@ public protocol LocalProcessTerminalViewDelegate: AnyObject {
     func setTerminalTitle(source: LocalProcessTerminalView, title: String)
 
     /**
-     * Invoked when the OSC command 7 for "current directory has changed" command is sent
+     * Invoked when the terminal receives an OSC 7 working directory report
+     * or a full terminal reset (RIS) clears the reported directory.
      * - Parameter source: the sending instance
-     * - Parameter directory: the new working directory
+     * - Parameter directory: the new working directory, or nil after a reset
      */
     func hostCurrentDirectoryUpdate (source: TerminalView, directory: String?)
 
@@ -499,6 +500,8 @@ open class LocalProcessTerminalView: TerminalView, TerminalViewDelegate {
      * to check it with SwiftTerm's policy and open it. The default implementation
      * checks the link and calls ``requestOpenLink(source:link:params:)`` with
      * the approved URL.
+     * Set `usesDefaultLinkPolicyForPreview` to false to show the original
+     * target in the Command-hover preview when using your own link handling.
      */
     open func requestOpenLink (source: TerminalView, request: TerminalLinkRequest)
     {

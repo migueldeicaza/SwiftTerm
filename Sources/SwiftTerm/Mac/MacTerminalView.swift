@@ -251,7 +251,6 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
      */
     public weak var terminalDelegate: TerminalViewDelegate? {
         didSet {
-            removePreviewUrl()
             refreshKittyClipboardCapabilities()
         }
     }
@@ -3969,16 +3968,18 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             if let cached = urlPreviewTarget, cached.link == target, cached.directory == directory {
                 url = cached.display
             } else {
-                // linkTarget takes the nonrecursive terminal lock; call outside withTerminal.
-                // Cache resolution and file checks until the preview or session changes.
-                let usesDefaultPolicy = terminalDelegate == nil || terminalDelegate === self
-                let resolved = usesDefaultPolicy
-                    ? linkTarget(target, isExplicit: true) : UntrustedTerminalLink(target)
-                if usesDefaultPolicy, case .deny = resolved.decision {
-                    url = resolved.displayString + " (blocked)"
+                if usesDefaultLinkPolicyForPreview {
+                    // linkTarget takes the nonrecursive terminal lock; call outside withTerminal.
+                    let resolved = linkTarget(target, isExplicit: true)
+                    if case .deny = resolved.decision {
+                        url = resolved.displayString + " (blocked)"
+                    } else {
+                        url = resolved.displayString
+                    }
                 } else {
-                    url = resolved.displayString
+                    url = UntrustedTerminalLink(target).originalDisplayString
                 }
+                // Cache the display until the preview or session changes.
                 urlPreviewTarget = (target, url, directory)
             }
             if let up = urlPreview {
@@ -4798,9 +4799,9 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// "custom:123" can also be a URL: when you return nil for it, SwiftTerm
     /// handles it as a URL with a custom scheme.
     ///
-    /// The view calls the resolver on the main thread, and also for the OSC 8
-    /// preview while the Command key is down when using the default delegate.
-    /// A custom delegate gets a plain preview without resolution or a verdict.
+    /// The view calls the resolver on the main thread, including for the OSC 8
+    /// preview while the Command key is down if `usesDefaultLinkPolicyForPreview`
+    /// is true.
     /// Keep the resolver fast and do not block.
     /// Preview resolution is cached until it closes or the resolver or shell
     /// directory changes. Clicks always resolve and check the file again.
@@ -4808,6 +4809,19 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// `requestOpenLink(source:request:)` and call `request.openDefault(_:)` later.
     public var localLinkResolver: (@MainActor (String, URL?) -> URL?)? {
         didSet { removePreviewUrl() }
+    }
+
+    /// Whether the Command-hover preview of an OSC 8 link shows the target
+    /// and blocked status from SwiftTerm's default opening policy. The default
+    /// is true. Set this to false if your link handler opens links itself to
+    /// show their original targets without resolving them or applying a verdict.
+    /// This setting applies only to previews.
+    public var usesDefaultLinkPolicyForPreview = true {
+        didSet {
+            if usesDefaultLinkPolicyForPreview != oldValue {
+                removePreviewUrl()
+            }
+        }
     }
 }
 
