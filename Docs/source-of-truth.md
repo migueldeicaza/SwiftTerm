@@ -51,3 +51,6 @@ checkout as a read-only pin of fork v2.
 5. Terminal / buffer access (+ `feed` I/O used by a-Shell)
 
 See `AppleTerminalView+HostHelpers.swift` and `Apps/README.md`.
+
+**Command parity vs holzschu a-Shell (158 already identical):**  
+[`Docs/command-parity-vs-ashell-2026-11-26.md`](command-parity-vs-ashell-2026-11-26.md).
