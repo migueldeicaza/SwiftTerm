@@ -4807,6 +4807,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// directory changes. Clicks always resolve and check the file again.
     /// To resolve a path with an async step, implement
     /// `requestOpenLink(source:request:)` and call `request.openDefault(_:)` later.
+    @MainActor
     public var localLinkResolver: (@MainActor (String, URL?) -> URL?)? {
         didSet { removePreviewUrl() }
     }
