@@ -3962,8 +3962,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
             return
         }
         if let (target, _) = urlAndParamsFrom(payload: payload) {
-            let url = UntrustedTerminalLink(target).displayString
+            // A host resolver can map the same link to different files over time.
+            let url = UntrustedTerminalLink(target).displayString(normalizePath: localLinkResolver == nil)
             if let up = urlPreview {
+                guard up.stringValue != url else { return }
                 up.stringValue = url
                 up.sizeToFit()
             } else {
@@ -4748,6 +4750,25 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
     /// `LocalProcessTerminalView` sets it to true. A local shell can still
     /// start a remote session, for example with ssh; SwiftTerm cannot see that.
     public var resolvesLinksAgainstShellDirectory = false
+
+    /// Resolves explicit and detected paths using the host's session context.
+    ///
+    /// The view calls this closure when a link goes through its default opening
+    /// policy, except when OSC 7 names a remote host. The argument is the link
+    /// text as the terminal output has it, for example "main.swift:12",
+    /// "Makefile:3" or "~/notes.txt". Standard URL schemes and recognized
+    /// numeric URLs such as "tel:5551234" and "vscode:123" skip the resolver.
+    /// Other bare names with a numeric suffix are treated as paths.
+    ///
+    /// Return an absolute file URL. It still goes through the normal untrusted-link checks.
+    /// When you return nil or a URL that is not a file URL, the path is blocked,
+    /// and SwiftTerm does not use the app or shell directory.
+    ///
+    /// The view calls the resolver on the main thread when opening a link.
+    /// OSC 8 previews show the original target. Keep the resolver fast.
+    /// To resolve a path with an async step, implement
+    /// `requestOpenLink(source:request:)` and call `request.openDefault(_:)` later.
+    public var localLinkResolver: ((String) -> URL?)?
 }
 
 extension TerminalView: @MainActor NSTextInputClient {}
@@ -4860,10 +4881,12 @@ extension TerminalView {
     /// True when the link is a URL. Foundation parses "main.swift:12" as a URL
     /// with the scheme "main.swift", so a name with a location suffix is a path.
     /// A known scheme with a numeric target, such as "tel:5551234", stays a URL.
-    nonisolated static func hasURLScheme (_ link: String) -> Bool
+    nonisolated static func hasURLScheme (
+        _ link: String, additionalNumericSchemes: Set<String> = []
+    ) -> Bool
     {
-        guard let scheme = URL(string: link)?.scheme else { return false }
-        if numericURLSchemes.contains(scheme.lowercased()) {
+        guard let scheme = URL(string: link)?.scheme?.lowercased() else { return false }
+        if numericURLSchemes.contains(scheme) || additionalNumericSchemes.contains(scheme) {
             return true
         }
         return link.range(of: #"^[^:/]+:[0-9]+(?::[0-9]+)?$"#, options: .regularExpression) == nil
