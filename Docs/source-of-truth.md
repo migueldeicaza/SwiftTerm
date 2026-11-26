@@ -54,3 +54,6 @@ See `AppleTerminalView+HostHelpers.swift` and `Apps/README.md`.
 
 **Command parity vs holzschu a-Shell (158 already identical):**  
 [`Docs/command-parity-vs-ashell-2026-11-26.md`](command-parity-vs-ashell-2026-11-26.md).
+
+**Host capabilities gap (daemon / hooks / binaries):**  
+[`Docs/host-capabilities-gap-2026-11-26.md`](host-capabilities-gap-2026-11-26.md).
