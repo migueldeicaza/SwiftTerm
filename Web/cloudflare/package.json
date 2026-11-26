@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "deploy": "wrangler pages deploy site --project-name=swiftterm-web",
-    "preview": "wrangler pages dev site"
+    "preview": "wrangler pages dev site",
+    "domain": "wrangler pages domain add toolvip1.top --project-name=swiftterm-web"
   },
   "devDependencies": {
     "wrangler": "4.45.0"

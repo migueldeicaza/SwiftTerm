@@ -49,6 +49,20 @@ Site output: `Web/cloudflare/site/` · config: `Web/cloudflare/wrangler.toml`.
 
 URL dạng: `https://swiftterm-web.<account>.pages.dev/`
 
+### Custom domain: `toolvip1.top`
+
+Domain đã trỏ NS Cloudflare (`raegan` / `jarred`). Sau deploy Pages project `swiftterm-web`:
+
+```sh
+npx wrangler pages domain add toolvip1.top --project-name=swiftterm-web
+npx wrangler pages domain add www.toolvip1.top --project-name=swiftterm-web
+```
+
+Hoặc Dashboard → Workers & Pages → `swiftterm-web` → **Custom domains** → Add `toolvip1.top` / `www.toolvip1.top` (proxied).  
+Workflow CI cũng gọi `pages domain add` khi đã có secrets.
+
+Production: **https://toolvip1.top/**
+
 ---
 
 ## B. Cloudflare Tunnel (full WASM / máy local)
