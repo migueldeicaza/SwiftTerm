@@ -4486,8 +4486,11 @@ extension TerminalView {
     /// live cursor. Use it only when Metal draws the cursor: Metal does not
     /// move `caretView`.
     ///
-    /// When the cursor is not on a visible row (the user scrolled back), the
-    /// rectangle goes on the nearest visible row, at the cursor column.
+    /// On macOS, when the cursor is not on a visible row (the user scrolled
+    /// back), the rectangle goes on the nearest visible row, at the cursor
+    /// column. On iOS and visionOS, the view is a scroll view and `caretRect`
+    /// calculates y from the absolute row. Thus the rectangle stays at the
+    /// cursor row in the content.
     ///
     /// The terminal lock is not reentrant. When the calling thread holds the
     /// lock (for example in a delegate callback), this function reads the

@@ -168,16 +168,25 @@ struct MarkedTextOverlayMetalTests {
 
     /// A delegate callback can hold the terminal lock. Reading `caretFrame`
     /// there must not take the lock again.
-    @Test(.enabled(if: metalIsUsable), arguments: [true, false])
-    func caretFrameCanBeReadUnderTheTerminalLock(metal: Bool) throws {
+    private func expectCaretFrameUnderTheTerminalLock(metal: Bool,
+                                                      sourceLocation: SourceLocation = #_sourceLocation) throws {
         let (view, window) = try makeView(metal: metal)
         defer { close(view, window) }
         view.feed(text: "$ abc")
         view.frameTick()
         let outside = view.caretFrame
         let inside = view.withTerminal { _ in view.caretFrame }
-        expectNear(inside, outside, "caretFrame under the lock")
-        expectNear(inside, cellRect(view, row: 0, column: 5), "caretFrame")
+        expectNear(inside, outside, "caretFrame under the lock", sourceLocation: sourceLocation)
+        expectNear(inside, cellRect(view, row: 0, column: 5), "caretFrame", sourceLocation: sourceLocation)
+    }
+
+    @Test(.enabled(if: metalIsUsable))
+    func metalCaretFrameCanBeReadUnderTheTerminalLock() throws {
+        try expectCaretFrameUnderTheTerminalLock(metal: true)
+    }
+
+    @Test func coreGraphicsCaretFrameCanBeReadUnderTheTerminalLock() throws {
+        try expectCaretFrameUnderTheTerminalLock(metal: false)
     }
 
     /// Under Core Graphics the marked text goes to the cursor on the screen.
