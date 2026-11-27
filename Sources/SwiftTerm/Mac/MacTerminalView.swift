@@ -2686,7 +2686,10 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         let overlayX: CGFloat = 0
         let cols = withTerminal { $0.cols }
         let overlayWidth = CGFloat(max(1, cols)) * cellDimension.width
-        let caretX = max(0, caretView.frame.origin.x - overlayX)
+        // Use `caretFrame`, not `caretView.frame`: Metal draws the cursor
+        // itself and does not move `caretView`.
+        let caret = caretFrame
+        let caretX = max(0, caret.origin.x - overlayX)
         // The terminal moves a wide character that does not fit in the cells
         // left on the caret's row to the next row, so the overlay starts there.
         // After a write that fills the last column, the caret stays on that
@@ -2727,12 +2730,12 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // On the bottom row there is no row below the caret in the view, and
         // the view clips its subviews. The commit scrolls the terminal up one
         // row, so line 1 shows on the caret's row, where the text then lands.
-        let rowBelowIsInView = caretView.frame.minY - lineHeight >= bounds.minY - 0.5
-        let overlayTop = caretView.frame.maxY - (startsOnNextRow && rowBelowIsInView ? lineHeight : 0)
+        let rowBelowIsInView = caret.minY - lineHeight >= bounds.minY - 0.5
+        let overlayTop = caret.maxY - (startsOnNextRow && rowBelowIsInView ? lineHeight : 0)
         markedTextFirstLineRect = startsOnNextRow
             ? NSRect(x: overlayX, y: overlayTop - lineHeight,
                      width: CGFloat(max(1, firstColumns)) * cellDimension.width, height: lineHeight)
-            : caretView.frame
+            : caret
 
         overlay.frame = NSRect(
             x: overlayX,
@@ -2907,7 +2910,7 @@ open class TerminalView: NSView, NSUserInterfaceValidations, TerminalDelegate {
         // The IME puts its candidate window below this rect, so while marked
         // text shows it is line 1 of the overlay, which can be on the row
         // below the caret.
-        let anchor = markedTextOverlay != nil ? markedTextFirstLineRect ?? caretView!.frame : caretView!.frame
+        let anchor = markedTextOverlay != nil ? markedTextFirstLineRect ?? caretFrame : caretFrame
         if let r = window?.convertToScreen(convert(anchor, to: nil)) {
             return r
         }

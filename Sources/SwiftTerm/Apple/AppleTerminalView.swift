@@ -1789,8 +1789,21 @@ extension TerminalView {
         caretView.updateCursorStyle()
     }
     
-    /// The frame used by the caretView
+    /// The frame of the cell under the cursor, in view coordinates.
+    ///
+    /// With Core Graphics, it is the frame of the caret view, at the cursor
+    /// that the last frame drew. With Metal, the renderer draws the cursor and
+    /// does not move the caret view. Then SwiftTerm calculates the frame from
+    /// the terminal's cursor.
+    ///
+    /// You can read this property in a delegate callback that holds the
+    /// terminal lock.
     public var caretFrame: CGRect {
+#if canImport(MetalKit)
+        if isUsingMetalRenderer, let rect = liveCaretRect() {
+            return rect
+        }
+#endif
         return caretView?.frame ?? CGRect.zero
     }
     
@@ -4442,23 +4455,84 @@ extension TerminalView {
         } else if cursor.hidden && caretView.superview == self {
             caretView.removeFromSuperview()
         }
-        let doublePosition = cursor.renderMode == .single ? 1.0 : 2.0
-        #if os(iOS) || os(visionOS)
-        let offset = cellDimension.height * CGFloat(cursor.absoluteRow)
-        let lineOrigin = CGPoint(x: 0, y: offset)
-        #else
-        let offset = cellDimension.height * CGFloat(cursor.screenRow + 1)
-        let lineOrigin = CGPoint(x: 0, y: frame.height - offset)
-        #endif
-        caretView.frame.origin = CGPoint(
-            x: lineOrigin.x + cellDimension.width * doublePosition * CGFloat(cursor.visualCol),
-            y: lineOrigin.y)
-        caretView.frame.size.width = cellDimension.width * doublePosition *
-            CGFloat(cursor.columnWidth)
+        let rect = caretRect(screenRow: cursor.screenRow, absoluteRow: cursor.absoluteRow,
+                             visualCol: cursor.visualCol, columnWidth: cursor.columnWidth,
+                             renderMode: cursor.renderMode)
+        caretView.frame.origin = rect.origin
+        caretView.frame.size.width = rect.width
         caretView.powerlineRenderMode = cursor.renderMode
         caretView.setText(cursor.renderData)
     }
     
+    /// The caret rectangle, in view coordinates, for a cursor at these cells.
+    /// The height is one cell; `caretView` gets its height from `updateCaretView`.
+    func caretRect (screenRow: Int, absoluteRow: Int, visualCol: Int, columnWidth: Int,
+                    renderMode: BufferLine.RenderLineMode) -> CGRect
+    {
+        let doublePosition = renderMode == .single ? 1.0 : 2.0
+        #if os(iOS) || os(visionOS)
+        let y = cellDimension.height * CGFloat(absoluteRow)
+        #else
+        let y = frame.height - cellDimension.height * CGFloat(screenRow + 1)
+        #endif
+        return CGRect(x: cellDimension.width * doublePosition * CGFloat(visualCol),
+                      y: y,
+                      width: cellDimension.width * doublePosition * CGFloat(columnWidth),
+                      height: cellDimension.height)
+    }
+
+#if canImport(MetalKit)
+    /// Calculates the caret rectangle, in view coordinates, from the terminal's
+    /// live cursor. Use it only when Metal draws the cursor: Metal does not
+    /// move `caretView`.
+    ///
+    /// On macOS, when the cursor is not on a visible row (the user scrolled
+    /// back), the rectangle goes on the nearest visible row, at the cursor
+    /// column. On iOS and visionOS, the view is a scroll view and `caretRect`
+    /// calculates y from the absolute row. Thus the rectangle stays at the
+    /// cursor row in the content.
+    ///
+    /// The terminal lock is not reentrant. When the calling thread holds the
+    /// lock (for example in a delegate callback), this function reads the
+    /// terminal directly. It cannot then enter the render owner, so it uses
+    /// the logical column also on a BiDi row.
+    ///
+    /// This function does not do a BiDi layout under the terminal lock. It
+    /// gets the visual column from the BiDi layout of the last render
+    /// snapshot, after it releases the lock.
+    func liveCaretRect () -> CGRect?
+    {
+        let lockHeld = terminal.terminalLock.isLockedByCurrentThread
+        let read = { (terminal: Terminal) -> (screenRow: Int, absoluteRow: Int, logicalCol: Int,
+                                               columnWidth: Int, renderMode: BufferLine.RenderLineMode,
+                                               onScreen: Bool)? in
+            let buffer = terminal.displayBuffer
+            let absoluteRow = buffer.yBase + buffer.y
+            guard terminal.rows > 0, absoluteRow >= 0, absoluteRow < buffer.lines.count else {
+                return nil
+            }
+            let screenRow = absoluteRow - buffer.yDisp
+            let onScreen = screenRow >= 0 && screenRow < terminal.rows
+            let line = buffer.lines[absoluteRow]
+            // The same cell that the render snapshot uses for its cursor.
+            let logicalCol = line.count > 0 ? max(0, min(buffer.x, line.count - 1)) : buffer.x
+            let width = line.count > 0 ? max(1, Int(line.packedView(at: logicalCol).width)) : 1
+            return (min(max(screenRow, 0), terminal.rows - 1), absoluteRow, logicalCol,
+                    width, line.renderMode, onScreen)
+        }
+        guard let cursor = lockHeld ? read(terminal) : withTerminal(read) else { return nil }
+        var visualCol = cursor.logicalCol
+        if !lockHeld, cursor.onScreen,
+           let column = renderOwner.snapshotVisualColumn(absoluteRow: cursor.absoluteRow,
+                                                         logicalColumn: cursor.logicalCol) {
+            visualCol = column
+        }
+        return caretRect(screenRow: cursor.screenRow, absoluteRow: cursor.absoluteRow,
+                         visualCol: visualCol, columnWidth: cursor.columnWidth,
+                         renderMode: cursor.renderMode)
+    }
+#endif
+
     /// Queues a frame without waiting for the next display-link callback.
     func updateDisplay ()
     {
