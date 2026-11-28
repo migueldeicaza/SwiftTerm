@@ -77,6 +77,21 @@ final class ColorContrastTests {
 
     @MainActor
     @Test(arguments: [false, true])
+    func foregroundBrightnessPreservesMinimumContrast(customBlockGlyphs: Bool) throws {
+        let view = TerminalView(frame: .zero, options: TerminalOptions(cols: 12, rows: 4))
+        view.nativeBackgroundColor = .black
+        view.nativeForegroundColor = NSColor(srgbRed: 0.45, green: 0.45, blue: 0.45, alpha: 1)
+        view.minimumContrastRatio = 4.5
+        view.foregroundBrightness = 0.5
+        view.customBlockGlyphs = customBlockGlyphs
+        view.feed(text: "text")
+
+        let row = try renderFirstRow(view)
+        #expect(contrast(attributes(at: 0, in: row)[.foregroundColor], .black) >= 4.5)
+    }
+
+    @MainActor
+    @Test(arguments: [false, true])
     func fontRenderedShapesKeepTheirOriginalColors(dim: Bool) throws {
         let view = TerminalView(frame: .zero, font: nil, options: TerminalOptions(cols: 16, rows: 4, scrollback: 20))
         view.nativeBackgroundColor = .white

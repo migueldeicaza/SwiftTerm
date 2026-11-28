@@ -125,6 +125,8 @@ final class SnapshotTextBuilder {
     /// kept with its inputs.
     private var contrastedColors: [ContrastedColorKey: (adjusted: PlainColor, foreground: TTColor, background: TTColor)] = [:]
     private var contrastRatio: CGFloat = 1
+    private var brightness: CGFloat = 1
+    private var brightnessColors: [PlainColorKey: (adjusted: PlainColor, input: PlainColor)] = [:]
 
     private struct FallbackFontKey: Hashable {
         let baseFont: ObjectIdentifier
@@ -366,9 +368,9 @@ final class SnapshotTextBuilder {
             // still applies to it, as it does to any other color.
             foregroundColor = linkColor
         }
-        let shapeColor = foregroundColor
-        foregroundColor = foregroundColor.withContrast(atLeast: context.minimumContrastRatio,
-                                                       against: backgroundColor)
+        let shapeColor = foregroundColor.withBrightness(context.foregroundBrightness)
+        foregroundColor = shapeColor.withContrast(atLeast: context.minimumContrastRatio,
+                                                   against: backgroundColor)
         // SwiftTerm owns cell placement. A BiDi layout is already in visual
         // order, and rows on the legacy and explicit-LTR paths must keep
         // logical cell order, so CoreText must not reorder anything. Every row
@@ -392,6 +394,7 @@ final class SnapshotTextBuilder {
         if flags.contains(.underline) {
             let color = attribute.underlineColor.map {
                 mapColor(color: $0, isFg: true, isBold: false, context: context)
+                    .withBrightness(context.foregroundBrightness)
             } ?? foregroundColor
             let variant = attribute.underlineStyle == .none ? UnderlineStyle.single : attribute.underlineStyle
             result[.underlineColor] = color
@@ -915,8 +918,8 @@ final class SnapshotTextBuilder {
             foregroundColor = .color(dimmedColor(foregroundColor, towards: backgroundColor,
                                                  context: context))
         }
-        let shapeColor = foregroundColor
-        foregroundColor = contrastedColor(foregroundColor, against: backgroundColor, context: context)
+        let shapeColor = brightnessColor(foregroundColor, context: context)
+        foregroundColor = contrastedColor(shapeColor, against: backgroundColor, context: context)
         var style = PlainRunStyle(fontIndex: fontIndex,
                                   foreground: foregroundColor,
                                   shapeColor: shapeColor,
@@ -928,7 +931,8 @@ final class SnapshotTextBuilder {
         }
         if flags.contains(.underline) {
             let color = attribute.underlineColor.map {
-                plainColor($0, isFg: true, isBold: false, context: context)
+                let underlineColor = plainColor($0, isFg: true, isBold: false, context: context)
+                return brightnessColor(underlineColor, context: context)
             } ?? foregroundColor
             let variant = attribute.underlineStyle == .none ? UnderlineStyle.single : attribute.underlineStyle
             style.underline = PlainUnderline(color: color,
@@ -980,6 +984,21 @@ final class SnapshotTextBuilder {
         case .color(let color):
             return color
         }
+    }
+
+    private func brightnessColor(_ color: PlainColor, context: SnapshotRenderContext) -> PlainColor {
+        let factor = context.foregroundBrightness
+        guard factor < 1 else { return color }
+        if brightness != factor {
+            brightnessColors.removeAll(keepingCapacity: true)
+            brightness = factor
+        }
+        if let cached = brightnessColors[color.key] { return cached.adjusted }
+        let adjusted = PlainColor.color(platformColor(color, context: context).withBrightness(factor))
+        if brightnessColors.count >= 1_024 { brightnessColors.removeAll(keepingCapacity: true) }
+        // Retain object-valued inputs so cache keys cannot outlive their identities.
+        brightnessColors[color.key] = (adjusted, color)
+        return adjusted
     }
 
     private func dimmedColor (_ foreground: PlainColor, towards background: PlainColor,
