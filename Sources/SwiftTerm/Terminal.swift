@@ -595,9 +595,9 @@ open class Terminal {
 
     // The current buffers
     private var cellArena: CellArena
-    // If the live buffers themselves fill the table, retain the bounded
-    // fallback without rescanning them for every SGR in the same input batch.
-    private var styleReclamationBlocked = false
+    // When the live buffers still pin the table, avoid rescanning them on
+    // every input batch. Explicit history removal can lift the delay early.
+    private(set) var styleReclamationRetryBytes = 0
     var normalBuffer, altBuffer: Buffer
     /**
      * Returns the active buffer (either the normal buffer or the alternative buffer)
@@ -906,7 +906,7 @@ open class Terminal {
 
         var arenaChanged = false
         var styleID = cellArena.intern(attribute: attribute)
-        if styleID == nil && !styleReclamationBlocked {
+        if styleID == nil && styleReclamationRetryBytes == 0 {
             arenaChanged = reclaimStyles(for: attribute)
             styleID = cellArena.intern(attribute: attribute)
         }
@@ -943,10 +943,14 @@ open class Terminal {
         var referenced: Set<UInt16> = [0]
         normalBuffer.collectStyleIdentifiers(into: &referenced)
         altBuffer.collectStyleIdentifiers(into: &referenced)
-        // Reserve the requested style and its erase background. If all the
-        // styles are still live, the existing resource limit continues to apply.
-        guard referenced.count + 2 <= cellArena.attributeLimit + 1 else {
-            styleReclamationBlocked = true
+        // Leave enough space between remaps to amortize copying both buffers.
+        // The default style occupies a permanent slot.
+        let capacity = cellArena.attributeLimit
+        let liveStyles = referenced.count - 1
+        guard liveStyles <= capacity * 3 / 4, liveStyles + 2 <= capacity else {
+            let normalCells = saturatingProduct(normalBuffer.lines.count, normalBuffer.cols)
+            let alternateCells = saturatingProduct(altBuffer.lines.count, altBuffer.cols)
+            styleReclamationRetryBytes = min(1_048_576, max(65_536, normalCells, alternateCells))
             return false
         }
 
@@ -1458,7 +1462,7 @@ open class Terminal {
     }
     public func setup (isReset: Bool = false)
     {
-        styleReclamationBlocked = false
+        styleReclamationRetryBytes = 0
         // Sadly a duplicate of much of what lives in init() due to Swift not allowing me to
         // call this
         _cols = max (options.cols, MINIMUM_COLS)
@@ -4950,6 +4954,7 @@ open class Terminal {
             // Clear scrollback (everything not in viewport)
             let scrollBackSize = buffer.lines.count - rows
             if scrollBackSize > 0 {
+                styleReclamationRetryBytes = 0
                 buffer.lines.trimStart (count: scrollBackSize)
                 buffer.linesTop = 0
                 buffer.yBase = max (buffer.yBase - scrollBackSize, 0)
@@ -8129,7 +8134,9 @@ open class Terminal {
      */
     public func parse (buffer: ArraySlice<UInt8>)
     {
-        if parseDepth == 0 { styleReclamationBlocked = false }
+        if parseDepth == 0, styleReclamationRetryBytes > 0 {
+            styleReclamationRetryBytes = max(0, styleReclamationRetryBytes - buffer.count)
+        }
         parseDepth += 1
         defer {
             parseDepth -= 1
@@ -8159,7 +8166,9 @@ open class Terminal {
     /// Parses one borrowed batch and completes all parser effects before return.
     private func parseBorrowed(_ bytes: Span<UInt8>)
     {
-        if parseDepth == 0 { styleReclamationBlocked = false }
+        if parseDepth == 0, styleReclamationRetryBytes > 0 {
+            styleReclamationRetryBytes = max(0, styleReclamationRetryBytes - bytes.count)
+        }
         parseDepth += 1
         defer {
             parseDepth -= 1
@@ -9170,6 +9179,7 @@ open class Terminal {
     public func clearScrollback ()
     {
         // Only the normal buffer has scrollback
+        if normalBuffer.yBase > 0 { styleReclamationRetryBytes = 0 }
         normalBuffer.clearScrollback ()
         refresh (startRow: 0, endRow: self.rows - 1)
     }
@@ -9177,7 +9187,9 @@ open class Terminal {
     public func changeScrollback (_ newScrollback: Int?)
     {
         // Only the normal buffer has scrollback, the alt buffer should never have scrollback.
+        let previousLineCount = normalBuffer.lines.count
         normalBuffer.changeHistorySize(newScrollback)
+        if normalBuffer.lines.count < previousLineCount { styleReclamationRetryBytes = 0 }
 
         // Update the options to reflect the new scrollback size.
         options.scrollback = newScrollback ?? 0

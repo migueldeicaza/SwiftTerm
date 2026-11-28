@@ -75,8 +75,27 @@ struct StyleArenaReclamationTests {
         }
         terminal.feed(text: text)
         #expect(terminal.buffer.cellArena.attributeCount <= Int(UInt16.max))
+        let retryBytes = terminal.styleReclamationRetryBytes
+        #expect(retryBytes > 0)
+        let nextBatch = "\(esc)[38;2;231;42;122mX"
+        terminal.feed(text: nextBatch)
+        #expect(terminal.styleReclamationRetryBytes == retryBytes - nextBatch.utf8.count)
+
         terminal.feed(text: "\(esc)[3J\(esc)[2J\(esc)[H\(esc)[38;2;231;42;123mR")
         #expect(terminal.getCharData(col: 0, row: 0)?.attribute.fg == .trueColor(red: 231, green: 42, blue: 123))
+    }
+
+    @Test func nearFullLiveTableDoesNotRemapForAFewFreeStyles() {
+        let (terminal, _) = TerminalTestHarness.makeTerminal(cols: 80, rows: 2, scrollback: 1_000)
+        var text = ""
+        for color in 0..<65_500 {
+            text += "\(esc)[38;2;0;\(color >> 8);\(color & 255)mX"
+        }
+        terminal.feed(text: text)
+        let arena = terminal.buffer.cellArena
+        terminal.feed(text: "\(esc)[?1049h" + animation(100))
+        #expect(terminal.buffer.cellArena === arena)
+        #expect(terminal.styleReclamationRetryBytes > 0)
     }
 
     @Test func arenaAdoptionDoesNotReuseTrimmedRows() {
