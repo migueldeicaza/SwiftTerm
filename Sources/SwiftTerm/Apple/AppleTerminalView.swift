@@ -2876,10 +2876,10 @@ extension TerminalView {
         if flags.contains (.dim) {
             fgColor = fgColor.dimmedColor (towards: bgColor)
         }
-        fgColor = fgColor.withContrast (atLeast: minimumContrastRatio, against: bgColor)
 #if os(macOS)
         fgColor = fgColor.withBrightness(foregroundBrightness)
 #endif
+        fgColor = fgColor.withContrast (atLeast: minimumContrastRatio, against: bgColor)
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fgColor,

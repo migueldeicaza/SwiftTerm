@@ -369,9 +369,8 @@ final class SnapshotTextBuilder {
             foregroundColor = linkColor
         }
         let shapeColor = foregroundColor.withBrightness(context.foregroundBrightness)
-        foregroundColor = foregroundColor.withContrast(atLeast: context.minimumContrastRatio,
-                                                       against: backgroundColor)
-            .withBrightness(context.foregroundBrightness)
+        foregroundColor = shapeColor.withContrast(atLeast: context.minimumContrastRatio,
+                                                   against: backgroundColor)
         // SwiftTerm owns cell placement. A BiDi layout is already in visual
         // order, and rows on the legacy and explicit-LTR paths must keep
         // logical cell order, so CoreText must not reorder anything. Every row
@@ -920,8 +919,7 @@ final class SnapshotTextBuilder {
                                                  context: context))
         }
         let shapeColor = brightnessColor(foregroundColor, context: context)
-        foregroundColor = brightnessColor(
-            contrastedColor(foregroundColor, against: backgroundColor, context: context), context: context)
+        foregroundColor = contrastedColor(shapeColor, against: backgroundColor, context: context)
         var style = PlainRunStyle(fontIndex: fontIndex,
                                   foreground: foregroundColor,
                                   shapeColor: shapeColor,
